@@ -167,6 +167,154 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Performance Reviewer | `gpt-5.2` | 400K | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs. | `claude-opus-4-6` |
 | Interaction Gateway | `gemini-2.5-flash` | 1M tokens | Low Latency Classification: 0.32s time-to-first-token, ~250 tokens/sec, $0.30/M input. 1M context window handles full CI/CD log dumps without truncation. Includes thinking capabilities for ambiguous intent classification. | `gpt-5-mini` |
 
+### 3.2 Agent-to-Agent Data Flow & Typed Interfaces
+
+Every handoff between agents uses a typed interface. No agent receives raw, unstructured output from a predecessor — all inter-agent communication is serialized JSON conforming to these TypeScript types.
+
+```typescript
+// ── Workflow Input ──
+
+interface RepoWorkRequest {
+  workRequestId: string;           // UUID from WorkRequest table
+  repoId: string;                  // UUID from Repository table
+  contextSnapshotId: string;       // UUID — immutable snapshot created by Context Validator
+  planOverride?: string;           // Optional pre-approved plan (skips Planner)
+  slackChannel?: string;           // For audit trail notifications
+  parentWorkflowId?: string;       // Set when spawned by Epic Orchestrator
+}
+
+// ── Context Validator → Planner ──
+
+interface ContextSnapshot {
+  id: string;
+  workRequestId: string;
+  rawJiraEpic: Record<string, unknown> | null;
+  rawConfluence: Record<string, unknown> | null;
+  successCriteria: string[];       // Extracted acceptance criteria (immutable once persisted)
+  relevantFilePaths: string[];     // Files identified as impacted by the change
+  apiContracts: ApiContract[];     // Cross-repo contracts that must be preserved
+  historicalLessons: LessonSummary[]; // Retrieved from pgvector similarity search
+}
+
+interface ApiContract {
+  sourceRepo: string;
+  endpoint: string;
+  method: string;
+  requestSchema: Record<string, unknown>;  // JSON Schema
+  responseSchema: Record<string, unknown>;
+}
+
+interface LessonSummary {
+  lessonId: string;
+  summary: string;
+  failureType: string;             // 'CI_FAILURE' | 'REVIEW_REJECTION' | 'SECURITY_VIOLATION' | 'MERGE_CONFLICT'
+  similarity: number;              // Cosine similarity score (0-1)
+}
+
+// ── Planner → Implementer ──
+
+interface ExecutionPlan {
+  planId: string;
+  steps: PlanStep[];
+  testStrategy: TestStrategy;
+  estimatedFiles: string[];        // Files the implementer should touch
+  constraints: string[];           // Derived from successCriteria + security guidelines
+}
+
+interface PlanStep {
+  order: number;
+  description: string;             // Human-readable instruction
+  targetFiles: string[];           // Specific file paths
+  operation: 'CREATE' | 'MODIFY' | 'DELETE';
+  rationale: string;               // Why this step is necessary
+  dependsOn: number[];             // References to prior step `order` values
+}
+
+interface TestStrategy {
+  framework: string;               // 'jest' | 'pytest' | 'go test' | etc. (detected from repo)
+  testFiles: string[];             // Where tests should be written
+  coverageTargets: string[];       // Functions/modules that must be covered
+  runCommand: string;              // e.g., 'npm run test', 'pytest -x'
+}
+
+// ── Implementer → Review Network ──
+
+interface CodeResult {
+  branch: string;                  // Git branch name (e.g., 'auto/JIRA-1234')
+  headSha: string;                 // Latest commit SHA
+  diff: string;                    // Unified diff of all changes
+  filesChanged: FileChange[];
+  testResults: TestRunResult;
+  implementationNotes: string;     // Agent's rationale for key decisions
+}
+
+interface FileChange {
+  path: string;
+  operation: 'CREATE' | 'MODIFY' | 'DELETE';
+  language: string;
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+interface TestRunResult {
+  passed: boolean;
+  total: number;
+  passing: number;
+  failing: number;
+  stdout: string;                  // Truncated to 10KB
+  duration_ms: number;
+}
+
+// ── Review Network (each reviewer produces a ReviewVerdict) ──
+
+interface ReviewVerdict {
+  reviewer: 'SECURITY' | 'DOMAIN_LOGIC' | 'PERFORMANCE';
+  approved: boolean;
+  severity: 'PASS' | 'INFO' | 'WARNING' | 'CRITICAL';
+  findings: ReviewFinding[];
+}
+
+interface ReviewFinding {
+  file: string;
+  line?: number;
+  category: string;                // e.g., 'SQL_INJECTION', 'MISSING_EDGE_CASE', 'O(N^2)_LOOP'
+  description: string;
+  suggestedFix: string;            // Imperative instruction for the Implementer
+}
+
+interface AggregatedReviewResult {
+  approved: boolean;               // true only if ALL reviewers approve
+  verdicts: ReviewVerdict[];
+  codeResult: CodeResult;          // Passed through for PR creation
+  rejectionSummary?: string;       // Concatenated critical findings for Implementer retry
+}
+
+// ── Workflow Output ──
+
+interface WorkflowResult {
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT';
+  prNumber?: number;
+  prUrl?: string;
+  totalCIRetries: number;
+  totalReviewRetries: number;
+  apiContractsChanged: boolean;
+  lessonsGenerated: string[];      // UUIDs of AgentLesson records created
+}
+```
+
+**Data flow summary:**
+
+```
+WorkRequest
+  → Context Validator  →  ContextSnapshot
+  → Planner Agent      →  ExecutionPlan
+  → Implementer Agent  →  CodeResult
+  → Review Network     →  AggregatedReviewResult
+       ├─ (approved)   →  createOrUpdatePullRequest → await CI → await human merge
+       └─ (rejected)   →  CodeResult fed back to Implementer with rejectionSummary
+  → Memory Agent       →  AgentLesson (persisted with embedding)
+```
+
 ## 4. End-to-End Workflow Lifecycle (CI/CD & TDD Integrated)
 
 To support work requests spanning different repositories, the system utilizes Temporal's Parent-Child Workflow pattern. The Child workflow has been substantially upgraded to include local Test-Driven Development (TDD) loops, CI/CD pipeline webhooks, and explicit human merge gates.
