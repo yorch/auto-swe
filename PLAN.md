@@ -167,7 +167,75 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Performance Reviewer | `gpt-5.2` | 400K | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs. | `claude-opus-4-6` |
 | Interaction Gateway | `gemini-2.5-flash` | 1M tokens | Low Latency Classification: 0.32s time-to-first-token, ~250 tokens/sec, $0.30/M input. 1M context window handles full CI/CD log dumps without truncation. Includes thinking capabilities for ambiguous intent classification. | `gpt-5-mini` |
 
-### 3.2 Agent-to-Agent Data Flow & Typed Interfaces
+### 3.2 Cost Management & Rate-Limit Strategy
+
+Running multiple LLM providers per workflow requires explicit cost controls and rate-limit handling.
+
+#### Per-Workflow Token Budget
+
+Every workflow is assigned a token budget at creation time. The budget is tracked in the `ActiveWorkflow` metadata and decremented after each LLM call.
+
+| Budget Tier | Max Input Tokens | Max Output Tokens | Typical Use Case |
+|---|---|---|---|
+| STANDARD | 2M | 500K | Single-repo feature or bug fix |
+| LARGE | 8M | 2M | Multi-file refactor or cross-repo epic child |
+| EPIC | 20M | 5M | Parent epic orchestrator (sum of all children) |
+
+**Enforcement:** Each activity that makes an LLM call reads the remaining budget from the workflow metadata before calling the provider API. If the estimated call would exceed the remaining budget, the activity:
+1. Logs a warning with the current spend breakdown
+2. Attempts the call with a reduced `max_tokens` output cap
+3. If the budget is fully exhausted, fails the activity with `BUDGET_EXCEEDED` error → workflow transitions to `FAILED` with Slack notification
+
+#### Cost Estimation Per Workflow
+
+Based on current provider pricing (February 2026):
+
+| Agent | Model | Avg Input/Call | Avg Output/Call | Calls/Workflow | Est. Cost/Workflow |
+|---|---|---|---|---|---|
+| Gateway Classifier | `gemini-2.5-flash` | 5K tokens | 500 tokens | 1 | $0.002 |
+| Context Validator | `gemini-2.5-pro` | 200K tokens | 20K tokens | 1 | $0.45 |
+| Planner | `claude-opus-4-6` | 50K tokens | 10K tokens | 1 | $0.50 |
+| Implementer (per TDD iter.) | `claude-opus-4-6` | 80K tokens | 30K tokens | 3 avg | $2.65 |
+| Security Auditor | `claude-opus-4-6` | 40K tokens | 5K tokens | 1 | $0.33 |
+| Domain Reviewer | `claude-opus-4-6` | 40K tokens | 5K tokens | 1 | $0.33 |
+| Performance Reviewer | `gpt-5.2` | 40K tokens | 5K tokens | 1 | $0.14 |
+| Memory Summarizer | `claude-opus-4-6` | 20K tokens | 3K tokens | 1 | $0.18 |
+| Embedding Generation | `text-embedding-3-large` | 2K tokens | — | 2 | $0.001 |
+| **Total (STANDARD, happy path)** | | | | **~11 calls** | **~$4.60** |
+
+**With CI retries (worst case: 3 CI failures + 3 review rejections):** ~$15-20 per workflow.
+
+#### Rate-Limit Handling
+
+Each provider has different rate limits. The system handles them at the Mastra tool-call layer:
+
+| Provider | Rate Limit Strategy |
+|---|---|
+| Anthropic (`claude-opus-4-6`) | Respect `retry-after` header. Exponential backoff starting at 30s. If 429 persists for >5m, fail activity (Temporal will retry per policy). |
+| OpenAI (`gpt-5.2`, `text-embedding-3-large`) | Respect `x-ratelimit-reset-tokens` header. Queue requests with token bucket (10K TPM reserve). |
+| Google (`gemini-2.5-pro`, `gemini-2.5-flash`) | Respect `Retry-After` header. Fall back to Vertex AI endpoint if AI Studio quota is exhausted. |
+
+**Provider failover:** If the primary model returns 5 consecutive 429s or 500s within a 10-minute window, the activity automatically switches to the fallback model specified in Section 3.1. This is logged as an OTel event and a Slack audit message.
+
+#### Cost Observability
+
+All LLM calls emit OTel spans with the following attributes:
+
+```typescript
+span.setAttributes({
+  'llm.model': 'claude-opus-4-6',
+  'llm.provider': 'anthropic',
+  'llm.input_tokens': usage.input_tokens,
+  'llm.output_tokens': usage.output_tokens,
+  'llm.cost_usd': calculateCost(model, usage),
+  'workflow.id': workflowId,
+  'workflow.budget_remaining_tokens': remainingBudget,
+});
+```
+
+The Web Dashboard (Phase 4) aggregates these spans to display per-workflow and per-agent cost breakdowns.
+
+### 3.3 Agent-to-Agent Data Flow & Typed Interfaces
 
 Every handoff between agents uses a typed interface. No agent receives raw, unstructured output from a predecessor — all inter-agent communication is serialized JSON conforming to these TypeScript types.
 
