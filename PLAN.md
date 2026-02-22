@@ -1130,7 +1130,121 @@ Jira tickets trigger work strictly within isolated clones of Target Repositories
 - **Volume Sandboxing:** The MCP tools configured for the agent are hard-chrooted to `/workspace/target-repo`. The agent cannot traverse up the file tree to read host node configuration or the agent framework source code.
 - **Just-In-Time (JIT) Credential Scoping:** The agent is never provided global admin GitHub tokens. The Control Plane generates a short-lived, repository-scoped Installation Access Token permitting only read/write access to the assigned branch.
 
-### 6.2 The TDD (Test-Driven Development) Loop
+### 6.2 Custom Executor Image Build Pipeline
+
+The `Repository.executorImage` field references a pre-built Docker image. This section defines who builds these images, where they're stored, and how they're kept current.
+
+#### Image Registry
+
+All executor images are stored in a private Amazon ECR (Elastic Container Registry) repository:
+
+```
+<aws-account-id>.dkr.ecr.<region>.amazonaws.com/auto-swe/executors/<org>-<repo>
+```
+
+Example: `123456789.dkr.ecr.us-east-1.amazonaws.com/auto-swe/executors/acme-payments-api`
+
+#### Image Build Process
+
+Each onboarded repository can optionally include a `.auto-swe/Dockerfile` in its root. If absent, a default image is used.
+
+```dockerfile
+# Example: .auto-swe/Dockerfile for a Node.js project with internal registry
+FROM node:20-alpine
+
+# Internal corporate CA certificate
+COPY .auto-swe/certs/internal-ca.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
+# Configure npm to use internal registry
+RUN npm config set registry https://npm.internal.acme.com
+
+# Pre-install global tools used by the agent
+RUN npm install -g typescript jest ts-jest
+
+WORKDIR /workspace/target-repo
+```
+
+#### Build Trigger & CI Pipeline
+
+Executor images are built via a GitHub Actions workflow in the **Control Plane repository** (not the target repo):
+
+```yaml
+# .github/workflows/build-executor.yml
+name: Build Executor Image
+on:
+  workflow_dispatch:
+    inputs:
+      repo_id:
+        description: 'Repository UUID from the database'
+        required: true
+  # Also triggered by the Repository Onboarding API
+  repository_dispatch:
+    types: [build-executor]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # For OIDC → ECR auth
+    steps:
+      - name: Fetch repo config
+        run: |
+          # Query the Gateway API for repo details
+          REPO=$(curl -s -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
+            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ github.event.inputs.repo_id }}")
+          echo "ORG=$(echo $REPO | jq -r '.data.organizationName')" >> $GITHUB_ENV
+          echo "REPO_NAME=$(echo $REPO | jq -r '.data.repoName')" >> $GITHUB_ENV
+
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ORG }}/${{ env.REPO_NAME }}
+          token: ${{ secrets.GITHUB_APP_TOKEN }}
+
+      - name: Build and push to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          DOCKERFILE=".auto-swe/Dockerfile"
+          if [ ! -f "$DOCKERFILE" ]; then
+            DOCKERFILE="defaults/Dockerfile.node20"  # Fallback to default
+          fi
+          IMAGE_TAG="${{ env.ORG }}-${{ env.REPO_NAME }}:$(date +%Y%m%d)-${GITHUB_SHA::8}"
+          docker build -f "$DOCKERFILE" -t "$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG"
+
+      - name: Update repository config
+        run: |
+          curl -X PATCH -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"executorImage\": \"$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG\"}" \
+            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ github.event.inputs.repo_id }}"
+```
+
+#### Image Freshness
+
+| Trigger | When | What Happens |
+|---|---|---|
+| Repository onboarding | `POST /api/v1/repositories` | Gateway fires `repository_dispatch` event → builds initial image |
+| Manual rebuild | Admin clicks "Rebuild Image" in Web Dashboard | Gateway fires `workflow_dispatch` → rebuilds from latest `.auto-swe/Dockerfile` |
+| Scheduled rebuild | Weekly cron (Sunday 02:00 UTC) | Rebuilds all active repository images to pick up OS/dependency patches |
+| Dockerfile change | PR merged to target repo that modifies `.auto-swe/Dockerfile` | GitHub webhook → Gateway detects path change → triggers rebuild |
+
+#### K8s Image Pull Credentials
+
+The agent worker nodes authenticate to ECR using IAM Roles for Service Accounts (IRSA). No long-lived credentials are stored in the cluster:
+
+```yaml
+# k8s/agent-worker-sa.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-worker
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/auto-swe-ecr-pull
+```
+
+### 6.3 The TDD (Test-Driven Development) Loop
 
 LLM code generation can be syntactically perfect but functionally broken.
 
