@@ -940,6 +940,116 @@ model AgentLesson {
 }
 ```
 
+### 5.2 Embedding Pipeline & Semantic Memory Retrieval
+
+The `AgentLesson` table stores vector embeddings alongside structured metadata. This section defines exactly how embeddings are generated, indexed, and retrieved.
+
+#### Embedding Generation
+
+Embeddings are generated at two points in the lifecycle:
+
+1. **On lesson creation** (`commitToMemory` activity, after workflow completion)
+2. **On lesson retrieval** (query-time embedding of the search text)
+
+```typescript
+// lib/embeddings.ts
+import OpenAI from 'openai';
+
+const openai = new OpenAI(); // Uses OPENAI_API_KEY from env
+
+const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_DIMENSIONS = 1536;
+
+export async function generateEmbedding(text: string): Promise<number[]> {
+  const response = await openai.embeddings.create({
+    model: EMBEDDING_MODEL,
+    input: text,
+    dimensions: EMBEDDING_DIMENSIONS,
+  });
+  return response.data[0].embedding;
+}
+```
+
+**Why `text-embedding-3-large`:** At 1536 dimensions it provides the best retrieval accuracy among OpenAI embedding models. The `dimensions` parameter allows future reduction (e.g., 512) for cost/speed tradeoff without re-embedding.
+
+#### Database Index
+
+The HNSW index is created via a Prisma migration (raw SQL, since pgvector is not natively supported by Prisma v7):
+
+```sql
+-- migrations/XXXX_add_hnsw_index.sql
+CREATE INDEX idx_agent_lessons_embedding
+  ON agent_lessons
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 200);
+```
+
+**Index parameters:**
+- `m = 16`: Each node connects to 16 neighbors. Balances recall vs. index size.
+- `ef_construction = 200`: Build-time beam width. Higher = better recall, slower build. 200 is suitable for <100K lessons.
+- `vector_cosine_ops`: Cosine similarity operator class (normalized comparison).
+
+#### Similarity Search (Retrieval)
+
+Used by the Context Validator and Planner agents to inject historical lessons into their context.
+
+```typescript
+// lib/lessonRetrieval.ts
+import { prisma } from '../db';
+import { generateEmbedding } from './embeddings';
+
+interface RetrievedLesson {
+  id: string;
+  lessonSummary: string;
+  failureType: string | null;
+  similarity: number;
+  createdAt: Date;
+}
+
+export async function retrieveSimilarLessons(
+  queryText: string,
+  repoId: string,
+  limit: number = 5,
+  similarityThreshold: number = 0.7
+): Promise<RetrievedLesson[]> {
+  const queryEmbedding = await generateEmbedding(queryText);
+
+  // pgvector cosine distance: 1 - cosine_similarity
+  // Lower distance = higher similarity
+  const lessons = await prisma.$queryRaw<RetrievedLesson[]>`
+    SELECT
+      id,
+      lesson_summary AS "lessonSummary",
+      failure_type AS "failureType",
+      1 - (embedding <=> ${queryEmbedding}::vector) AS similarity,
+      created_at AS "createdAt"
+    FROM agent_lessons
+    WHERE repo_id = ${repoId}::uuid
+      AND embedding IS NOT NULL
+      AND 1 - (embedding <=> ${queryEmbedding}::vector) >= ${similarityThreshold}
+    ORDER BY embedding <=> ${queryEmbedding}::vector ASC
+    LIMIT ${limit}
+  `;
+
+  return lessons;
+}
+```
+
+**Retrieval strategy:**
+- **Scope:** Lessons are filtered by `repo_id` first (relational filter), then ranked by cosine similarity. This ensures the Planner only sees lessons relevant to the repository it's working on.
+- **Threshold:** 0.7 cosine similarity minimum. Below this, lessons are too dissimilar to be useful and may inject noise.
+- **Limit:** Default 5 lessons. This keeps the injected context small (~2-3KB) while covering the most relevant historical failures.
+- **Injection point:** Retrieved lessons are included in the `ContextSnapshot.historicalLessons` field and passed to both the Planner and Implementer agents as part of their system context.
+
+#### Embedding Lifecycle
+
+| Event | Action | Who Generates |
+|---|---|---|
+| Workflow completes (success or failure) | Memory Agent summarizes workflow → `generateEmbedding(summary)` → INSERT into `agent_lessons` | `commitToMemory` activity |
+| Human rejects PR with feedback | Feedback text → `generateEmbedding(feedback)` → INSERT into `agent_lessons` with `failureType: 'REVIEW_REJECTION'` | Gateway webhook handler |
+| Context Validator runs | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons` → inject into `ContextSnapshot.historicalLessons` | `executeImplementation` activity |
+| Admin deletes lesson | DELETE from `agent_lessons` WHERE id = :id (embedding removed with row) | Gateway API (`DELETE /api/v1/lessons/:id`) |
+
 ## 6. Security, Guardrails, & Workspace Isolation
 
 To ensure system stability, the agentic system acts purely as an orchestrator and worker—it must never modify its own source code or bypass human QA workflows.
