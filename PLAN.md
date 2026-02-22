@@ -394,6 +394,331 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
 }
 ```
 
+### 4.3 Activity Implementations
+
+Each activity referenced by the workflow is a Temporal activity function executed by the worker process. Activities are the boundary between Temporal's deterministic replay and the non-deterministic outside world (LLM calls, Docker, GitHub API, database writes).
+
+#### `executeImplementation` — The Core Agent Loop
+
+This is the most complex activity. It provisions a sandboxed workspace, runs the Mastra agent network, and returns a `CodeResult`.
+
+```typescript
+// activities/executeImplementation.ts
+import { Mastra } from '@mastra/core';
+import { k8sClient } from '../infra/k8s';
+import { prisma } from '../db';
+
+export async function executeImplementation(
+  planOverride: string | undefined,
+  contextSnapshotId: string
+): Promise<CodeResult> {
+  // 1. Load context snapshot + repository config
+  const snapshot = await prisma.contextSnapshot.findUniqueOrThrow({
+    where: { id: contextSnapshotId },
+    include: { workRequest: { include: { activeWorkflows: { include: { repository: true } } } } }
+  });
+  const repo = snapshot.workRequest.activeWorkflows[0].repository!;
+
+  // 2. Retrieve relevant historical lessons via pgvector similarity search
+  const lessons = await retrieveSimilarLessons(snapshot.successCriteria.join(' '), repo.id);
+
+  // 3. Provision isolated workspace (K8s Job with custom executor image)
+  const workspace = await k8sClient.createJob({
+    image: repo.executorImage ?? 'node:20-alpine',
+    command: ['sleep', 'infinity'],  // Kept alive for agent tool calls
+    volumes: [{ name: 'workspace', mountPath: '/workspace/target-repo' }],
+    env: {
+      GITHUB_TOKEN: await generateScopedInstallationToken(repo),
+      REPO_URL: `https://github.com/${repo.organizationName}/${repo.repoName}.git`,
+      BRANCH: `auto/${snapshot.workRequest.externalTicketId}`,
+    },
+  });
+
+  try {
+    // 4. Clone repo into workspace
+    await workspace.exec('git', ['clone', '--depth=50', '-b', repo.defaultBranch, '$REPO_URL', '.']);
+    await workspace.exec('git', ['checkout', '-b', '$BRANCH']);
+
+    // 5. Run Planner Agent (if no plan override provided)
+    const plan: ExecutionPlan = planOverride
+      ? JSON.parse(planOverride)
+      : await runPlannerAgent(snapshot, lessons);
+
+    // 6. Run Implementer Agent with TDD loop
+    const mastra = new Mastra({ /* agent config */ });
+    const implementer = mastra.getAgent('implementer');
+
+    let testResult: TestRunResult = { passed: false, total: 0, passing: 0, failing: 0, stdout: '', duration_ms: 0 };
+    let iteration = 0;
+    const MAX_TDD_ITERATIONS = 5;
+
+    while (!testResult.passed && iteration < MAX_TDD_ITERATIONS) {
+      // Implementer writes/modifies code and tests based on plan
+      await implementer.generate([
+        { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT },
+        { role: 'user', content: JSON.stringify({
+          plan,
+          contextSnapshot: snapshot,
+          previousTestResult: iteration > 0 ? testResult : undefined,
+          iteration,
+        })},
+      ], { toolChoice: 'auto' });  // Agent uses MCP tools (writeFile, editFile, bash)
+
+      // Run tests in the DinD sandbox
+      const testOutput = await workspace.exec(plan.testStrategy.runCommand);
+      testResult = parseTestOutput(testOutput, plan.testStrategy.framework);
+      iteration++;
+    }
+
+    // 7. Collect diff and build CodeResult
+    const diff = await workspace.exec('git', ['diff', repo.defaultBranch]);
+    const headSha = await workspace.exec('git', ['rev-parse', 'HEAD']);
+
+    return {
+      branch: `auto/${snapshot.workRequest.externalTicketId}`,
+      headSha: headSha.trim(),
+      diff,
+      filesChanged: parseDiffToFileChanges(diff),
+      testResults: testResult,
+      implementationNotes: `Completed in ${iteration} TDD iterations`,
+    };
+  } finally {
+    // 8. Tear down K8s Job (workspace is ephemeral)
+    await k8sClient.deleteJob(workspace.jobId);
+  }
+}
+```
+
+#### `runReviewNetwork` — Parallel Multi-Agent Review
+
+Runs all reviewers concurrently via `Promise.allSettled`, then aggregates verdicts.
+
+```typescript
+// activities/runReviewNetwork.ts
+export async function runReviewNetwork(
+  codeResult: CodeResult,
+  contextSnapshotId: string
+): Promise<AggregatedReviewResult> {
+  const snapshot = await prisma.contextSnapshot.findUniqueOrThrow({ where: { id: contextSnapshotId } });
+
+  // Run all reviewers in parallel — each is an independent Mastra agent call
+  const [securityVerdict, domainVerdict, perfVerdict] = await Promise.allSettled([
+    runSecurityAuditor(codeResult),
+    runDomainLogicReviewer(codeResult, snapshot),
+    runPerformanceReviewer(codeResult),
+  ]).then(results => results.map(r =>
+    r.status === 'fulfilled' ? r.value : { reviewer: 'UNKNOWN', approved: false, severity: 'CRITICAL', findings: [{ file: '', category: 'REVIEWER_CRASH', description: (r as PromiseRejectedResult).reason.message, suggestedFix: 'Manual review required' }] } as ReviewVerdict
+  ));
+
+  const verdicts = [securityVerdict, domainVerdict, perfVerdict];
+  const approved = verdicts.every(v => v.approved);
+
+  return {
+    approved,
+    verdicts,
+    codeResult,
+    rejectionSummary: approved ? undefined : verdicts
+      .filter(v => !v.approved)
+      .flatMap(v => v.findings)
+      .map(f => `[${f.category}] ${f.file}:${f.line ?? '?'} — ${f.suggestedFix}`)
+      .join('\n'),
+  };
+}
+
+// Each reviewer follows the same pattern: Mastra agent → structured output → ReviewVerdict
+async function runSecurityAuditor(codeResult: CodeResult): Promise<ReviewVerdict> {
+  const mastra = new Mastra({ /* config */ });
+  const auditor = mastra.getAgent('security-auditor');
+  const result = await auditor.generate([
+    { role: 'system', content: SECURITY_AUDITOR_PROMPT },
+    { role: 'user', content: JSON.stringify({ diff: codeResult.diff, filesChanged: codeResult.filesChanged }) },
+  ], { output: ReviewVerdictSchema });  // Zod schema enforces structured output
+  return result.object;
+}
+```
+
+#### `createOrUpdatePullRequest` — GitHub PR Management
+
+```typescript
+// activities/createOrUpdatePullRequest.ts
+export async function createOrUpdatePullRequest(
+  reviewResult: AggregatedReviewResult
+): Promise<{ prNumber: number; prUrl: string }> {
+  const { codeResult } = reviewResult;
+  const repo = await getRepoForBranch(codeResult.branch);
+  const token = await generateScopedInstallationToken(repo);
+  const octokit = new Octokit({ auth: token });
+
+  // Push the branch
+  // (agent has already committed locally in the workspace)
+  // The workspace exec pushes via the scoped token
+
+  // Check if PR already exists for this branch
+  const existing = await prisma.pullRequest.findFirst({
+    where: { repository: { id: repo.id }, workflow: { assignedBranch: codeResult.branch }, status: 'OPEN' },
+  });
+
+  if (existing) {
+    // Force-push updated branch; PR auto-updates
+    await prisma.pullRequest.update({
+      where: { id: existing.id },
+      data: { headSha: codeResult.headSha, ciStatus: 'PENDING' },
+    });
+    return { prNumber: existing.prNumber!, prUrl: `https://github.com/${repo.organizationName}/${repo.repoName}/pull/${existing.prNumber}` };
+  }
+
+  // Create new PR
+  const { data: pr } = await octokit.pulls.create({
+    owner: repo.organizationName,
+    repo: repo.repoName,
+    title: `[Auto] ${codeResult.branch}`,
+    body: formatPRBody(reviewResult),
+    head: codeResult.branch,
+    base: repo.defaultBranch,
+  });
+
+  await prisma.pullRequest.create({
+    data: {
+      prNumber: pr.number,
+      headSha: codeResult.headSha,
+      status: 'OPEN',
+      ciStatus: 'PENDING',
+      repository: { connect: { id: repo.id } },
+      workflow: { connect: { id: (await getWorkflowForBranch(codeResult.branch)).id } },
+    },
+  });
+
+  return { prNumber: pr.number, prUrl: pr.html_url };
+}
+```
+
+#### `fetchCILogs` + `executeCIFixImplementation` — CI Self-Healing
+
+```typescript
+// activities/ciFixLoop.ts
+export async function fetchCILogs(logsUrl?: string): Promise<string> {
+  if (!logsUrl) return 'No logs URL provided by CI webhook';
+  const response = await fetch(logsUrl, {
+    headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+  });
+  const fullLog = await response.text();
+  // Truncate to last 50KB to fit in LLM context
+  return fullLog.slice(-50_000);
+}
+
+export async function executeCIFixImplementation(
+  ciLogs: string,
+  previousCodeResult: CodeResult
+): Promise<CodeResult> {
+  // Re-uses the same implementation activity but injects CI failure context
+  // The agent sees: "Your previous code passed local tests but failed CI. Here are the logs."
+  const mastra = new Mastra({ /* config */ });
+  const implementer = mastra.getAgent('implementer');
+
+  // Provision workspace, checkout the existing branch, apply fix
+  const workspace = await provisionWorkspace(previousCodeResult.branch);
+  try {
+    await implementer.generate([
+      { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify({
+        mode: 'CI_FIX',
+        ciLogs,
+        previousDiff: previousCodeResult.diff,
+        previousTestResults: previousCodeResult.testResults,
+      })},
+    ], { toolChoice: 'auto' });
+
+    // Re-run local tests after fix
+    const testOutput = await workspace.exec('npm run test');
+    const testResult = parseTestOutput(testOutput, 'jest');
+
+    const diff = await workspace.exec('git', ['diff', 'origin/main']);
+    const headSha = await workspace.exec('git', ['rev-parse', 'HEAD']);
+
+    return {
+      ...previousCodeResult,
+      headSha: headSha.trim(),
+      diff,
+      filesChanged: parseDiffToFileChanges(diff),
+      testResults: testResult,
+      implementationNotes: `CI fix iteration. Logs analyzed: ${ciLogs.length} chars`,
+    };
+  } finally {
+    await k8sClient.deleteJob(workspace.jobId);
+  }
+}
+```
+
+#### `commitToMemory` — Workflow Summary → pgvector
+
+```typescript
+// activities/commitToMemory.ts
+export async function commitToMemory(workflowId: string, repoId: string): Promise<void> {
+  const workflow = await prisma.activeWorkflow.findUniqueOrThrow({
+    where: { temporalWorkflowId: workflowId },
+    include: { pullRequests: true, agentLessons: true },
+  });
+
+  // Memory Agent summarizes the full workflow lifecycle
+  const mastra = new Mastra({ /* config */ });
+  const memoryAgent = mastra.getAgent('memory-summarizer');
+  const summary = await memoryAgent.generate([
+    { role: 'system', content: 'Summarize this engineering workflow into a concise lesson learned. Focus on: what went wrong, what was fixed, and what should be avoided next time.' },
+    { role: 'user', content: JSON.stringify(workflow) },
+  ], { output: LessonSummarySchema });
+
+  // Generate embedding and store
+  const embedding = await generateEmbedding(summary.object.lessonSummary);
+  await prisma.$executeRaw`
+    INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
+    VALUES (gen_random_uuid(), ${workflow.id}::uuid, ${repoId}::uuid, ${summary.object.rationale},
+            ${summary.object.lessonSummary}, ${embedding}::vector, ${summary.object.failureType}, ${summary.object.metadata}::jsonb, now())
+  `;
+}
+```
+
+#### Utility Activities
+
+```typescript
+// activities/utilities.ts
+export async function updateDomainState(workflowId: string, status: string, repoId: string): Promise<void> {
+  await prisma.activeWorkflow.update({
+    where: { temporalWorkflowId: workflowId },
+    data: { currentStatus: status },
+  });
+}
+
+export async function postSlackThreadAudit(workflowId: string, message: string): Promise<void> {
+  const workflow = await prisma.activeWorkflow.findUniqueOrThrow({
+    where: { temporalWorkflowId: workflowId },
+    include: { workRequest: true },
+  });
+  if (workflow.workRequest?.slackMessageTs) {
+    await slackClient.chat.postMessage({
+      channel: workflow.workRequest.slackMessageTs,
+      thread_ts: workflow.workRequest.slackMessageTs,
+      text: message,
+    });
+  }
+}
+
+export async function notifyHumanGate(
+  slackChannel: string | undefined,
+  message: string,
+  gateType: 'PR_READY' | 'PLAN_APPROVAL'
+): Promise<void> {
+  if (!slackChannel) return;
+  await slackClient.chat.postMessage({
+    channel: slackChannel,
+    text: message,
+    blocks: [{
+      type: 'actions',
+      elements: [{ type: 'button', text: { type: 'plain_text', text: 'View PR' }, action_id: `view_${gateType}` }],
+    }],
+  });
+}
+```
+
 ## 5. Multi-Repo Data Architecture & State Management (Prisma)
 
 To safely track PRs, handle branch collisions, and orchestrate cross-repo epics, we formalize our database using Prisma v7.
