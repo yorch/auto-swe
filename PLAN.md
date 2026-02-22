@@ -328,71 +328,154 @@ The gateway triggers this master workflow. It evaluates global impact, orchestra
 This is the standard, isolated agent loop that operates strictly within the confines of a single repository.
 
 ```typescript
-import { workflowInfo, defineSignal, setHandler, condition } from '@temporalio/workflow';
-import type * as activities from './activities';
+import { workflowInfo, defineSignal, setHandler, condition, proxyActivities } from '@temporalio/workflow';
+import type * as activitiesType from './activities';
 
-// Signal to receive payload from external CI/CD webhook (e.g. GitHub Actions)
+// ── Activity Proxies with Retry Policies & Timeouts ──
+
+// Short-lived, idempotent DB writes. Retry aggressively on transient failures.
+const stateActivities = proxyActivities<Pick<typeof activitiesType,
+  'updateDomainState' | 'postSlackThreadAudit' | 'notifyHumanGate'
+>>({
+  startToCloseTimeout: '30s',
+  retry: { maximumAttempts: 5, initialInterval: '1s', backoffCoefficient: 2, maximumInterval: '30s' },
+});
+
+// Long-running LLM agent loops. Must heartbeat to prove liveness.
+// Single attempt — retries are handled internally by the TDD loop.
+const agentActivities = proxyActivities<Pick<typeof activitiesType,
+  'executeImplementation' | 'executeCIFixImplementation' | 'runReviewNetwork'
+>>({
+  startToCloseTimeout: '30m',     // Agent may run multiple TDD iterations
+  heartbeatTimeout: '5m',         // If no heartbeat for 5m, assume agent is stuck
+  retry: { maximumAttempts: 2, initialInterval: '30s', backoffCoefficient: 2, maximumInterval: '2m' },
+});
+
+// GitHub API calls. Moderate timeout, retry on rate limits (HTTP 429).
+const githubActivities = proxyActivities<Pick<typeof activitiesType,
+  'createOrUpdatePullRequest' | 'fetchCILogs'
+>>({
+  startToCloseTimeout: '2m',
+  retry: { maximumAttempts: 4, initialInterval: '5s', backoffCoefficient: 3, maximumInterval: '2m' },
+});
+
+// Memory commit. Involves LLM summarization + embedding generation + DB write.
+const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
+  startToCloseTimeout: '5m',
+  retry: { maximumAttempts: 3, initialInterval: '5s', backoffCoefficient: 2, maximumInterval: '1m' },
+});
+
+// ── Workflow Signals ──
+
 export const ciPipelineSignal = defineSignal<{ passed: boolean, logsUrl?: string }>('ciPipelineSignal');
-// Signal to confirm a human has merged the PR
 export const humanMergeSignal = defineSignal<boolean>('humanMergeSignal');
+
+// ── Workflow Constants ──
+
+const MAX_CI_RETRIES = 3;           // Max times the agent will attempt to fix CI failures
+const MAX_REVIEW_RETRIES = 3;       // Max times code cycles through the review network
+const CI_SIGNAL_TIMEOUT = '4h';     // Max wait for CI pipeline to report back
+const HUMAN_MERGE_TIMEOUT = '7d';   // Max wait for a human to merge the PR
+
+// ── Workflow Implementation ──
 
 export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<WorkflowResult> {
   const { workflowId, parent } = workflowInfo();
   let ciResult: { passed: boolean, logsUrl?: string } | null = null;
   let humanMerged = false;
+  let totalCIRetries = 0;
+  let totalReviewRetries = 0;
 
   setHandler(ciPipelineSignal, (payload) => { ciResult = payload; });
   setHandler(humanMergeSignal, () => { humanMerged = true; });
 
-  await activities.updateDomainState(workflowId, 'IMPLEMENTING', request.repoId);
+  await stateActivities.updateDomainState(workflowId, 'IMPLEMENTING', request.repoId);
 
   // 1. Implementation Phase (Includes local TDD Loop)
-  // The Custom Executor Image provisions. Agent writes code AND unit tests.
-  // It runs `npm run test` locally and loops until tests pass before returning.
-  let codeResult = await activities.executeImplementation(request.planOverride, request.contextSnapshotId);
+  let codeResult = await agentActivities.executeImplementation(request.planOverride, request.contextSnapshotId);
 
   let isReadyForMerge = false;
 
   while (!isReadyForMerge) {
-      await activities.updateDomainState(workflowId, 'IN_REVIEW', request.repoId);
+      await stateActivities.updateDomainState(workflowId, 'IN_REVIEW', request.repoId);
 
-      // 2. Internal Review Loop (Security, Style, Domain, Performance)
-      const reviewResult = await activities.runReviewNetwork(codeResult, request.contextSnapshotId);
+      // 2. Internal Review Loop
+      const reviewResult = await agentActivities.runReviewNetwork(codeResult, request.contextSnapshotId);
+
+      if (!reviewResult.approved) {
+          totalReviewRetries++;
+          if (totalReviewRetries >= MAX_REVIEW_RETRIES) {
+              await stateActivities.notifyHumanGate(request.slackChannel, 'Review network rejected code after max retries. Manual intervention required.', 'PR_READY');
+              return { status: 'FAILED', totalCIRetries, totalReviewRetries, apiContractsChanged: false, lessonsGenerated: [] };
+          }
+          // Feed rejection back to implementer
+          codeResult = await agentActivities.executeCIFixImplementation(reviewResult.rejectionSummary!, codeResult);
+          continue;
+      }
 
       // 3. Open PR & Await External CI/CD Pipeline
-      await activities.updateDomainState(workflowId, 'AWAITING_CI', request.repoId);
-      const prData = await activities.createOrUpdatePullRequest(reviewResult);
+      await stateActivities.updateDomainState(workflowId, 'AWAITING_CI', request.repoId);
+      const prData = await githubActivities.createOrUpdatePullRequest(reviewResult);
 
-      // Workflow suspends without consuming resources until Jenkins/GitHub Actions finishes
-      await condition(() => ciResult !== null);
+      // Wait for CI signal with timeout
+      const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
+      if (!ciSignalReceived) {
+          await stateActivities.postSlackThreadAudit(workflowId, '⏰ CI pipeline did not report within timeout. Marking as failed.');
+          return { status: 'TIMED_OUT', prNumber: prData.prNumber, totalCIRetries, totalReviewRetries, apiContractsChanged: false, lessonsGenerated: [] };
+      }
 
       if (ciResult!.passed) {
           isReadyForMerge = true;
       } else {
+          totalCIRetries++;
+          if (totalCIRetries >= MAX_CI_RETRIES) {
+              await stateActivities.postSlackThreadAudit(workflowId, `❌ CI failed ${MAX_CI_RETRIES} times. Escalating to human.`);
+              return { status: 'FAILED', prNumber: prData.prNumber, totalCIRetries, totalReviewRetries, apiContractsChanged: false, lessonsGenerated: [] };
+          }
           // 4. CI/CD Fix Loop
-          await activities.postSlackThreadAudit(workflowId, `❌ External CI failed. Reading logs and retrying implementation...`);
-          const failedLogs = await activities.fetchCILogs(ciResult!.logsUrl);
-          codeResult = await activities.executeCIFixImplementation(failedLogs, codeResult);
-          ciResult = null; // Reset for next iteration
+          await stateActivities.postSlackThreadAudit(workflowId, `❌ External CI failed (attempt ${totalCIRetries}/${MAX_CI_RETRIES}). Reading logs and retrying...`);
+          const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
+          codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
+          ciResult = null;
       }
   }
 
   // 5. Hand-off to Human Engineers
-  // The agent NEVER calls the merge API. It respects existing branch protection rules.
-  await activities.updateDomainState(workflowId, 'AWAITING_HUMAN_MERGE', request.repoId);
-  await activities.notifyHumanGate(request.slackChannel, "PR is green and awaiting human review/merge.", 'PR_READY');
+  await stateActivities.updateDomainState(workflowId, 'AWAITING_HUMAN_MERGE', request.repoId);
+  await stateActivities.notifyHumanGate(request.slackChannel, 'PR is green and awaiting human review/merge.', 'PR_READY');
 
-  // Workflow suspends until the GitHub webhook confirms a human clicked "Merge"
-  await condition(() => humanMerged === true);
+  // Wait for human merge with timeout
+  const merged = await condition(() => humanMerged === true, HUMAN_MERGE_TIMEOUT);
+  if (!merged) {
+      await stateActivities.postSlackThreadAudit(workflowId, '⏰ PR was not merged within 7 days. Workflow expired.');
+      return { status: 'TIMED_OUT', totalCIRetries, totalReviewRetries, apiContractsChanged: false, lessonsGenerated: [] };
+  }
 
   // 6. Memory Commit
-  // Summarizes the entire cycle (including CI failures) into pgvector
-  await activities.commitToMemory(workflowId, request.repoId);
+  await memoryActivities.commitToMemory(workflowId, request.repoId);
 
-  await activities.updateDomainState(workflowId, 'COMPLETED', request.repoId);
-  return { status: 'SUCCESS', apiContractsChanged: true };
+  await stateActivities.updateDomainState(workflowId, 'COMPLETED', request.repoId);
+  return { status: 'SUCCESS', apiContractsChanged: true, totalCIRetries, totalReviewRetries, lessonsGenerated: [] };
 }
 ```
+
+**Retry & timeout strategy summary:**
+
+| Activity Category | Timeout | Heartbeat | Max Attempts | Rationale |
+|---|---|---|---|---|
+| State updates (DB writes, Slack) | 30s | — | 5 | Idempotent, fast. Retry aggressively on transient DB/network errors. |
+| Agent loops (implementation, review) | 30m | 5m heartbeat | 2 | Long-running LLM calls. Heartbeat detects stuck agents. Internal TDD loop handles code-level retries. |
+| GitHub API (PR creation, log fetch) | 2m | — | 4 | Rate limits (429) are common. Exponential backoff with 3x coefficient accommodates GitHub's reset windows. |
+| Memory commit (summarize + embed) | 5m | — | 3 | Involves LLM call + embedding API + DB write. Moderate retry for transient failures. |
+
+**Workflow-level safety bounds:**
+
+| Bound | Value | Behavior on Breach |
+|---|---|---|
+| Max CI retries | 3 | Workflow fails, escalates to human via Slack |
+| Max review retries | 3 | Workflow fails, escalates to human via Slack |
+| CI signal timeout | 4 hours | Workflow times out with TIMED_OUT status |
+| Human merge timeout | 7 days | Workflow expires with TIMED_OUT status |
 
 ### 4.3 Activity Implementations
 
