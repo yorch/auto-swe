@@ -15,7 +15,74 @@ The system is designed to ingest ambiguous work requests from platforms like Sla
 - **Durable & Resilient Execution:** Leveraging Temporal.io, the system ensures that long-running tasks—which may wait days for human approval—are resilient to infrastructure crashes or transient API rate limits.
 - **Continuous Self-Improvement (Episodic Memory):** Through the integration of pgvector mapped via Prisma v7, the system captures the "why" behind every human rejection, CI/CD failure, or security audit, creating a semantic feedback loop.
 
-## 2. Architectural Design & Boundaries
+## 2. Phased Delivery Roadmap
+
+The system is delivered incrementally across four phases. Each phase produces a working, testable system that builds on the previous one. No phase depends on infrastructure that hasn't been delivered yet.
+
+### Phase 1: Single-Repo Agent Loop (MVP)
+
+**Goal:** A single Temporal workflow that accepts a work request, runs an agent to implement code in an isolated workspace, executes tests, opens a PR, and waits for human merge.
+
+**Delivers:**
+- PostgreSQL + pgvector database with Prisma schema (Users, Repositories, WorkRequests, ActiveWorkflows, PullRequests)
+- Temporal server + single worker process
+- `EngineeringWorkflow` (child workflow only — no parent orchestrator)
+- Implementer Agent (Mastra + `claude-opus-4-6`) with bash and GitHub MCP tools
+- Local TDD loop (agent writes tests, runs them in DinD, iterates until green)
+- `createOrUpdatePullRequest` activity via GitHub API
+- Human merge signal webhook (`POST /api/v1/webhooks/git`)
+- CLI trigger (`POST /api/v1/work-requests`) with hardcoded ADMIN role
+- Docker Compose for local development (Postgres, Temporal, Gateway, Worker)
+
+**Does NOT include:** Multi-repo epics, review network, CI/CD webhook listener, Slack integration, Web UI, RBAC enforcement, semantic memory.
+
+**Exit criteria:** A Jira ticket ID submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
+
+### Phase 2: Review Network + CI/CD Integration
+
+**Goal:** Add the internal review agents and close the CI/CD feedback loop so the agent self-heals on pipeline failures.
+
+**Delivers:**
+- Security Auditor, Domain Logic Reviewer, and Performance Reviewer agents
+- `runReviewNetwork` activity that orchestrates all reviewers and aggregates verdicts
+- `SecurityReviewProcessor` middleware on Implementer write operations
+- CI/CD webhook handler (`POST /api/v1/webhooks/ci`) that fires `ciPipelineSignal`
+- `fetchCILogs` + `executeCIFixImplementation` activities for the CI fix loop
+- Context Validator agent + `ContextSnapshot` persistence
+- OTel tracing integration (Langfuse/SigNoz export)
+
+**Exit criteria:** An agent-opened PR that fails CI triggers automatic log reading, code fix, force-push, and re-run — without human intervention — until CI passes.
+
+### Phase 3: Multi-Repo Epics + RBAC + Slack
+
+**Goal:** Support cross-repository work requests orchestrated by a parent workflow, with full RBAC enforcement and Slack-based human-in-the-loop approval.
+
+**Delivers:**
+- Epic Orchestrator (parent workflow) with dependency graph execution
+- Planner Agent that decomposes epics into per-repo child workflows
+- Slack App integration (interactive messages, approval buttons, thread audit trails)
+- RBAC middleware on all Gateway endpoints (JWT + Slack ID resolution)
+- Slack approval gates (role-checked: only LEAD/ADMIN can approve architecture plans)
+- Human merge gate with Slack notification
+
+**Exit criteria:** A multi-repo Jira epic submitted via Slack produces PRs across 2+ repositories in dependency order, with Slack-based architectural approval from a LEAD role.
+
+### Phase 4: Semantic Memory + Web Dashboard + Production Hardening
+
+**Goal:** Close the learning loop and provide operational visibility.
+
+**Delivers:**
+- Memory Agent that summarizes workflow outcomes (rejections, CI failures, fixes) into `AgentLesson` embeddings
+- Embedding pipeline (text-embedding-3-large via OpenAI, HNSW index, cosine similarity search)
+- Lesson retrieval injected into Planner and Implementer agent context
+- Next.js Web Dashboard (Epic Visualizer, Context Inspector, RBAC Policy Editor, Repository Onboarding)
+- KEDA autoscaling for agent worker pods
+- Custom Executor Image build pipeline (GitHub Actions + ECR)
+- Cost tracking and per-workflow token budget enforcement
+
+**Exit criteria:** The Planner Agent retrieves relevant historical lessons when generating a new plan, and the dashboard shows real-time workflow state for all active epics.
+
+## 3. Architectural Design & Boundaries
 
 The architecture strictly enforces the separation of concerns by bifurcating the system into a **Control Plane** (Orchestration, State, and Memory) and an **Execution Plane** (Ephemeral, stateless agent activities).
 
@@ -81,24 +148,24 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 |---|---|---|
 | Orchestration | Temporal.io | Rationale: Handles complex, multi-day parent/child workflows and asynchronous signal waiting (e.g., waiting for GitHub Actions to complete). |
 | Agent Framework | Mastra 1.0 (TypeScript) | Rationale: The most robust, pure TS framework for creating deterministic agent networks. |
-| Data Access / ORM | Prisma v7 | Rationale: Provides strict, end-to-end type safety for Postgres, mapping directly to pgvector and OTel tracing. |
+| Data Access / ORM | Prisma v7.x | Rationale: Rust-free TS-native architecture (90% smaller bundle, 3x faster queries). Provides strict, end-to-end type safety for Postgres with OTel tracing. pgvector columns require raw SQL/TypedSQL (native support pending). |
 | Memory Store | PostgreSQL 17 + pgvector | Rationale: Unifies relational metadata and high-dimensional vector embeddings via pgvectorscale and HNSW indexes. |
 | Web UI / Dashboard | Next.js (React) + Tailwind | Rationale: Provides a fast, real-time SPA for tracking Temporal workflow states, administrating agent memory, and managing RBAC. |
 | Observability | OpenTelemetry (OTel) | Rationale: Traces every token generated, tool called, and reasoning step taken. Exports to Langfuse or SigNoz. |
 | Execution Isolation | Kubernetes + KEDA + DinD | Rationale: Workflows launch ephemeral K8s Jobs. DinD allows execution of repository-specific test suites inside custom container images. |
 | Tooling Layer | Model Context Protocol (MCP) | Rationale: Standardizes how agents interact with the outside world (GitHub, Jira, bash). |
 
-### 3.1 Unrestricted LLM Model Strategy (Best-in-Class Allocation)
+### 3.1 LLM Model Strategy (Best-in-Class Allocation)
 
-| Agent / Task | Recommended LLM | Rationale & Strengths |
-|---|---|---|
-| Context Validator | gemini-3-pro | Massive Context: Ingests entire monorepos, multiple microservices, and sprawling Jira epics simultaneously. |
-| Planner Agent | gpt-5.1 | Architectural Supremacy: Capable of designing robust, multi-repo architectures and sequential dependency graphs. |
-| Implementer Agent | claude-4.6-sonnet | Surgical Coding & Tool Mastery: The absolute best model available for strictly obeying complex MCP JSON schemas and executing TDD loops in bash. |
-| Security Auditor | gpt-5.1 | Adversarial Simulation: Acts as a relentless, zero-hallucination processor gate to intercept injection flaws. |
-| Domain Logic Reviewer | claude-4.6-opus | Deep QA & Edge Cases: Renowned for nuanced understanding of complex business requirements. Acts as QA lead. |
-| Performance Reviewer | gpt-5.2-codex | Algorithmic Specialization: Specialized for deep AST parsing and identifying Big-O inefficiencies. |
-| Interaction Gateway | gpt-4.5-mini | Low Latency Classification: Used strictly for classifying incoming intent and parsing CI/CD logs quickly. |
+| Agent / Task | Model ID | Context Window | Rationale & Strengths | Fallback |
+|---|---|---|---|---|
+| Context Validator | `gemini-2.5-pro` | 1M tokens | Massive Context: 100% recall up to 530K tokens, 99.7% at 1M. Natively handles text, code, and images in a single pass — ideal for ingesting entire monorepos, Jira epics, and Confluence docs simultaneously. 64K output cap enables comprehensive context snapshots in one shot. | `claude-opus-4-6` (1M beta) |
+| Planner Agent | `claude-opus-4-6` | 200K (1M beta) | Architectural Reasoning: 80.8% on SWE-Bench Verified — strongest score for real-world multi-file reasoning. Adaptive thinking mode dynamically allocates compute to architecturally complex reasoning steps. Plans more carefully and sustains agentic tasks for longer in large codebases. | `gpt-5` (400K context) |
+| Implementer Agent | `claude-opus-4-6` | 200K (1M beta) | Surgical Coding & TDD: 80.8% SWE-Bench, 128K output token limit (writes substantial patches + full test suites in one generation). Best-in-class MCP JSON schema adherence and tool call accuracy. Self-corrects during multi-turn TDD loops. | `gpt-5` |
+| Security Auditor | `claude-opus-4-6` | 200K | Adversarial Simulation: Autonomously discovered 500+ validated high-severity vulnerabilities across major OSS libraries with zero hallucinated CVEs. MRCR v2 score of 76% for multi-file diff analysis. Lowest hallucination rate on code review tasks. | `gpt-5` |
+| Domain Logic Reviewer | `claude-opus-4-6` | 200K | Deep QA & Edge Cases: MRCR v2 leader for nuanced multi-file reasoning. Adaptive thinking mode enables extended deliberation on ambiguous business logic edge cases. Acts as QA lead. | `gemini-2.5-pro` |
+| Performance Reviewer | `gpt-5.2` | 400K | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs. | `claude-opus-4-6` |
+| Interaction Gateway | `gemini-2.5-flash` | 1M tokens | Low Latency Classification: 0.32s time-to-first-token, ~250 tokens/sec, $0.30/M input. 1M context window handles full CI/CD log dumps without truncation. Includes thinking capabilities for ambiguous intent classification. | `gpt-5-mini` |
 
 ## 4. End-to-End Workflow Lifecycle (CI/CD & TDD Integrated)
 
@@ -191,7 +258,9 @@ This schema adds User tracking for RBAC and executorImage to support custom exec
 // schema.prisma
 generator client {
   provider        = "prisma-client"
-  previewFeatures = ["postgresqlExtensions", "tracing"]
+  previewFeatures = ["tracing"]
+  // Note: postgresqlExtensions preview feature is deprecated in v7.x.
+  // Extensions are now configured via the Prisma config file.
 }
 
 datasource db {
@@ -339,7 +408,7 @@ LLM code generation can be syntactically perfect but functionally broken.
 The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for Implementation agents.
 
 1. **Intercept Phase:** Every Mastra MCP tool call to `writeFile` or `editFile` triggers this output processor.
-2. **Audit Phase:** A gpt-5.1 model compares the requested code diff against the "Security Guideline" dataset.
+2. **Audit Phase:** A `claude-opus-4-6` model compares the requested code diff against the "Security Guideline" dataset.
 3. **Self-Correction Phase:** If a violation is detected (e.g., SQL Injection risk), the processor denies the write access and returns a retry instruction forcing immediate remediation.
 
 ## 7. Interaction Gateway & Role-Based Access Control (RBAC)
@@ -394,12 +463,18 @@ services:
       - "5432:5432"
 
   temporal:
-    image: temporalio/admin-tools:1.22.0
+    image: temporalio/auto-setup:1.25.2
     depends_on:
       - postgres
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=password
+      - POSTGRES_SEEDS=postgres
     ports:
       - "7233:7233"
-      - "8080:8080"
+      - "8233:8233"
 
   otel-collector:
     image: otel/opentelemetry-collector:latest
@@ -416,11 +491,16 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://interaction-gateway:8080
+    depends_on:
+      - interaction-gateway
 
   interaction-gateway:
     build: ./gateway
     ports:
       - "8080:8080"
+    depends_on:
+      - postgres
+      - temporal
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
       - TEMPORAL_ADDRESS=temporal:7233
@@ -440,31 +520,31 @@ services:
 
 ### 10.1 The Implementer Agent (Surgical Coder & Tester)
 
-**(Model: claude-4.6-sonnet)**
+**(Model: claude-opus-4-6)**
 
 > "You are a highly constrained Surgical Coder operating within a customized, isolated repository environment. Execute the plan.md exactly as written. TDD MANDATE: Before submitting your code for review, you MUST write corresponding unit/integration tests and execute them using the bash MCP tool. You must iteratively fix your code until your test suite passes. Adhere perfectly to the injected 'Global Guidelines' and refer to the Semantic Registry for any cross-repo API contracts. If your output is rejected by any Review Processor or the external CI/CD pipeline, do not attempt to justify your code. Read the logs and immediately refactor to comply."
 
 ### 10.2 The Context Validator (Global Analyst)
 
-**(Model: gemini-3-pro)**
+**(Model: gemini-2.5-pro)**
 
 > "You are the Global Context Validator. Trace all dependencies across Jira and Confluence. You must extract an exhaustive list of explicit 'Success Criteria' from these documents. These extracted criteria will form the immutable Context Snapshot."
 
 ### 10.3 The Epic Planner Agent (System Architect)
 
-**(Model: gpt-5.1)**
+**(Model: claude-opus-4-6)**
 
 > "You are the Lead System Architect orchestrating a multi-repo Epic. Analyze the provided ticket, the cross-repo codebase schemas, and the immutable 'Context Snapshot'. Your execution graph must strictly map to the 'Success Criteria'. Carefully review the 'Historical Failures' section to circumvent known integration pitfalls."
 
 ### 10.4 The Domain Logic & Correctness Reviewer
 
-**(Model: claude-4.6-opus)**
+**(Model: claude-opus-4-6)**
 
 > "You are the QA and Domain Logic Lead. You have been provided the immutable 'Context Snapshot'. Treat this array as a strict checklist. If you cannot conclusively verify that the PR satisfies every single criterion from the snapshot, reject the code."
 
 ### 10.5 The Security Auditor Agent
 
-**(Model: gpt-5.1)**
+**(Model: claude-opus-4-6)**
 
 > "You are the merciless Security Auditor. Review the diffs produced by the Implementer Agent. Your sole priority is identifying vulnerabilities. If you find a High or Critical severity issue, reject the code and provide the imperative instruction on how to fix it."
 
