@@ -563,30 +563,164 @@ The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for I
 
 The Interaction Gateway exposes a RESTful API to manage the lifecycle of automated workflows. To prevent unauthorized actions, all inbound requests (API or Slack) pass through an RBAC middleware mapped to the `User` Prisma table.
 
-### 7.1 RBAC Matrices
+### 7.1 Authentication & Session Strategy
 
-- **ADMIN:** Can onboard repositories, modify global guidelines, manually terminate workflows, and delete vector embeddings from the memory layer.
-- **LEAD:** Can trigger Epic Workflows, approve architectural plans via Slack/Web, and force a retry on a failed CI/CD pipeline.
-- **ENGINEER:** Can view workflow status, read agent thought threads, and review PRs, but cannot bypass the architectural approval gates.
+All API requests (except webhooks, which use HMAC signature verification) require a Bearer JWT in the `Authorization` header.
 
-### 7.2 Webhooks (Slack & External CI/CD)
+- **Token issuance:** `POST /api/v1/auth/login` accepts email + password or a Slack OAuth callback. Returns a signed JWT (RS256, 1h expiry) containing `{ sub: userId, role: 'ADMIN' | 'LEAD' | 'ENGINEER', slackId?: string }`.
+- **Token refresh:** `POST /api/v1/auth/refresh` accepts a refresh token (7d expiry, stored hashed in DB) and returns a new JWT.
+- **Slack ID resolution:** When a request arrives from a Slack interactive webhook, the Gateway resolves `slack_id` from the signed Slack payload → looks up the `User` record → extracts the role. No JWT is involved for Slack-originated actions.
 
-**1. Slack Interactive Webhook (HITL):**
+### 7.2 RBAC Permission Matrix
 
-When a user clicks [Approve] on a Slack message, the Gateway checks the user's `slack_id` against the `User` table. If the role is insufficient (e.g., Engineer trying to approve a Core Architecture Epic), the Gateway rejects the request with an ephemeral error message in Slack.
+| Action | Endpoint | ADMIN | LEAD | ENGINEER |
+|---|---|---|---|---|
+| Submit work request | `POST /api/v1/work-requests` | Y | Y | Y |
+| Trigger epic orchestration | `POST /api/v1/epics` | Y | Y | N |
+| Approve architectural plan | `POST /api/v1/workflows/:id/approve` | Y | Y | N |
+| View workflow status | `GET /api/v1/workflows/:id` | Y | Y | Y |
+| List all workflows | `GET /api/v1/workflows` | Y | Y | Y |
+| Terminate workflow | `DELETE /api/v1/workflows/:id` | Y | N | N |
+| Retry failed CI | `POST /api/v1/workflows/:id/retry-ci` | Y | Y | N |
+| Onboard repository | `POST /api/v1/repositories` | Y | N | N |
+| Manage users/roles | `POST /api/v1/users` | Y | N | N |
+| Delete memory embeddings | `DELETE /api/v1/lessons/:id` | Y | N | N |
+| View agent lessons | `GET /api/v1/lessons` | Y | Y | Y |
 
-**2. CI/CD Webhook Handler:**
+### 7.3 Gateway API Specification
 
-Listens for payload events from GitHub Actions / GitLab CI.
+All responses follow a standard envelope:
 
-- **Endpoint:** `POST /api/v1/webhooks/ci`
-- **Behavior:** If the payload indicates a build failure for an agent-owned branch, the Gateway locates the running Temporal Workflow and fires the `ciPipelineSignal` with `passed: false` and the logs URL, waking the agent up to fix the code.
+```typescript
+interface ApiResponse<T> {
+  data: T;
+  error?: { code: string; message: string };
+  meta?: { page: number; pageSize: number; total: number };
+}
+```
 
-**3. Git Provider Webhook (Human Merge Gate):**
+**Work Requests:**
 
-The system relies on human engineers and existing repository branch protection rules (e.g., "Requires 1 human approval," "Requires passing tests") for the final merge.
+```
+POST /api/v1/work-requests
+  Body: { externalTicketId: string, repoIds: string[], slackChannel?: string }
+  Response: ApiResponse<{ workRequestId: string, workflowIds: string[] }>
+  RBAC: ENGINEER+
+```
 
-- **Behavior:** When a human clicks "Squash and Merge" in the GitHub UI, the webhook fires. The Gateway sends the `humanMergeSignal` to the Temporal workflow, allowing the Epic Orchestrator to officially mark the Epic as 'DONE' and trigger the Memory Agent.
+**Epic Orchestration:**
+
+```
+POST /api/v1/epics
+  Body: { externalTicketId: string, repoIds: string[], dependencyGraph: { repoId: string, dependsOn: string[] }[] }
+  Response: ApiResponse<{ epicWorkflowId: string, childWorkflowIds: Record<string, string> }>
+  RBAC: LEAD+
+```
+
+**Workflow Management:**
+
+```
+GET    /api/v1/workflows                    → ApiResponse<ActiveWorkflow[]>           RBAC: ENGINEER+
+GET    /api/v1/workflows/:id                → ApiResponse<ActiveWorkflow & { pullRequests: PullRequest[], agentLessons: AgentLesson[] }>  RBAC: ENGINEER+
+POST   /api/v1/workflows/:id/approve        → ApiResponse<{ approved: true }>         RBAC: LEAD+
+POST   /api/v1/workflows/:id/retry-ci       → ApiResponse<{ signalSent: true }>       RBAC: LEAD+
+DELETE /api/v1/workflows/:id                → ApiResponse<{ terminated: true }>       RBAC: ADMIN
+```
+
+**Repository Management:**
+
+```
+GET    /api/v1/repositories                 → ApiResponse<Repository[]>               RBAC: ENGINEER+
+POST   /api/v1/repositories                 → ApiResponse<Repository>                 RBAC: ADMIN
+  Body: { organizationName: string, repoName: string, defaultBranch?: string, mcpServerRef: string, executorImage?: string }
+PATCH  /api/v1/repositories/:id             → ApiResponse<Repository>                 RBAC: ADMIN
+```
+
+**User Management:**
+
+```
+GET    /api/v1/users                        → ApiResponse<User[]>                     RBAC: ADMIN
+POST   /api/v1/users                        → ApiResponse<User>                       RBAC: ADMIN
+  Body: { email: string, slackId?: string, role: 'ADMIN' | 'LEAD' | 'ENGINEER' }
+PATCH  /api/v1/users/:id                    → ApiResponse<User>                       RBAC: ADMIN
+```
+
+**Agent Lessons (Memory):**
+
+```
+GET    /api/v1/lessons                      → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+
+GET    /api/v1/lessons/search               → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+
+  Query: { q: string, repoId?: string, limit?: number }  (semantic similarity search)
+DELETE /api/v1/lessons/:id                  → ApiResponse<{ deleted: true }>          RBAC: ADMIN
+```
+
+### 7.4 Webhook Endpoints
+
+Webhook endpoints use HMAC-SHA256 signature verification (no JWT). The secret is configured per integration.
+
+**1. CI/CD Pipeline Webhook:**
+
+```
+POST /api/v1/webhooks/ci
+  Headers: X-Hub-Signature-256: sha256=<hmac>
+  Body: GitHub Actions check_run or check_suite event payload
+  Behavior:
+    1. Verify HMAC signature against stored webhook secret
+    2. Extract repo, branch, conclusion, and logs_url from payload
+    3. Look up ActiveWorkflow by (repoId, assignedBranch)
+    4. Fire ciPipelineSignal({ passed: conclusion === 'success', logsUrl })
+    5. Return 200 OK (idempotent — duplicate signals are safe)
+```
+
+**2. Git Provider Merge Webhook:**
+
+```
+POST /api/v1/webhooks/git
+  Headers: X-Hub-Signature-256: sha256=<hmac>
+  Body: GitHub pull_request event payload (action: 'closed', merged: true)
+  Behavior:
+    1. Verify HMAC signature
+    2. Extract repo, PR number, merge commit SHA
+    3. Look up ActiveWorkflow via PullRequest.prNumber + repoId
+    4. Fire humanMergeSignal(true)
+    5. Update PullRequest.status → 'MERGED'
+```
+
+**3. Slack Interactive Webhook:**
+
+```
+POST /api/v1/webhooks/slack
+  Headers: X-Slack-Signature, X-Slack-Request-Timestamp
+  Body: Slack interaction payload (button click, modal submission)
+  Behavior:
+    1. Verify Slack request signature (v0 signing secret)
+    2. Resolve User by slack_id → check role against required action
+    3. If role insufficient: return ephemeral error message to Slack
+    4. If role sufficient: fire appropriate Temporal signal (approve plan, retry CI, etc.)
+    5. Update Slack message to reflect action taken
+```
+
+### 7.5 Standard Error Responses
+
+```typescript
+// 400 Bad Request
+{ error: { code: 'VALIDATION_ERROR', message: 'repoIds must contain at least one repository' } }
+
+// 401 Unauthorized
+{ error: { code: 'AUTH_REQUIRED', message: 'Missing or expired Bearer token' } }
+
+// 403 Forbidden
+{ error: { code: 'INSUFFICIENT_ROLE', message: 'LEAD role required to approve architectural plans' } }
+
+// 404 Not Found
+{ error: { code: 'WORKFLOW_NOT_FOUND', message: 'No active workflow with id abc-123' } }
+
+// 409 Conflict
+{ error: { code: 'WORKFLOW_ALREADY_EXISTS', message: 'An active workflow already exists for this branch' } }
+
+// 429 Too Many Requests
+{ error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded. Retry after 30s' }, meta: { retryAfter: 30 } }
+```
 
 ## 8. Web Interface & Admin Control Center
 
