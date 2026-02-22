@@ -57,7 +57,7 @@ model Repository {
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
-  mcpServerRef     String           @map("mcp_server_ref")
+  mcpServerRef     String?          @map("mcp_server_ref")
 
   // Custom Docker image containing internal tools/certs/npm registries
   executorImage    String?          @default("node:20-alpine") @map("executor_image")
@@ -74,6 +74,7 @@ model Repository {
 model WorkRequest {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId String           @map("external_ticket_id")
+  description      String           @default("")
   requestPayload   String           @map("request_payload")
   slackMessageTs   String?          @map("slack_message_ts")
   isCrossRepo      Boolean          @default(false) @map("is_cross_repo")
@@ -410,7 +411,6 @@ The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for I
 ## 4. Infrastructure & Deployment (Local Lab)
 
 ```yaml
-version: '3.8'
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -419,17 +419,34 @@ services:
       POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Temporal gets its own Postgres instance to avoid schema conflicts with pgvector
+  postgres-temporal:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   temporal:
     image: temporalio/auto-setup:1.25.2
     depends_on:
-      - postgres
+      postgres-temporal:
+        condition: service_healthy
     environment:
       - DB=postgresql
       - DB_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PWD=password
-      - POSTGRES_SEEDS=postgres
+      - POSTGRES_SEEDS=postgres-temporal
     ports:
       - "7233:7233"
       - "8233:8233"
@@ -457,8 +474,10 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
-      - temporal
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
       - TEMPORAL_ADDRESS=temporal:7233
@@ -472,4 +491,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 ```

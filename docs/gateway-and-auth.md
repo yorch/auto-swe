@@ -184,55 +184,69 @@ export async function refresh(req: Request): Promise<Response> {
 }
 ```
 
-### RBAC Middleware
+### RBAC Hook (Fastify `onRequest` Hook)
 
-The middleware extracts the JWT from the `Authorization` header, verifies it, and checks the user's role against the minimum role required by the route.
+The RBAC check is implemented as a Fastify `onRequest` hook via a plugin. Routes declare their minimum role in `route.config`, and the hook enforces it.
 
 ```typescript
-// middleware/rbac.ts
+// plugins/rbac.ts
+import fp from 'fastify-plugin';
 import { verifyAccessToken } from '../auth/jwt';
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 
 // Role hierarchy: ADMIN > LEAD > ENGINEER
 const ROLE_HIERARCHY: Record<string, number> = { ENGINEER: 1, LEAD: 2, ADMIN: 3 };
 
 type MinimumRole = 'ENGINEER' | 'LEAD' | 'ADMIN';
 
-export function requireRole(minimumRole: MinimumRole) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
+// Augment Fastify types to carry user context and route-level RBAC config
+declare module 'fastify' {
+  interface FastifyRequest {
+    user?: { id: string; role: MinimumRole; slackId?: string };
+  }
+  interface FastifyContextConfig {
+    requiredRole?: MinimumRole;
+  }
+}
+
+const rbacPlugin: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    const minimumRole = request.routeOptions.config.requiredRole;
+    if (!minimumRole) return; // No role requirement on this route (e.g., health check)
+
+    const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: { code: 'AUTH_REQUIRED', message: 'Missing Bearer token' } });
+      return reply.status(401).send({ error: { code: 'AUTH_REQUIRED', message: 'Missing Bearer token' } });
     }
 
     try {
       const payload = verifyAccessToken(authHeader.slice(7));
 
-      // Check if role meets minimum requirement
       const userLevel = ROLE_HIERARCHY[payload.role] ?? 0;
       const requiredLevel = ROLE_HIERARCHY[minimumRole];
 
       if (userLevel < requiredLevel) {
-        return res.status(403).json({
+        return reply.status(403).send({
           error: { code: 'INSUFFICIENT_ROLE', message: `${minimumRole} role required. Your role: ${payload.role}` },
         });
       }
 
-      // Attach user context to request for downstream handlers
-      req.user = { id: payload.sub, role: payload.role as MinimumRole, slackId: payload.slackId };
-      next();
+      request.user = { id: payload.sub, role: payload.role as MinimumRole, slackId: payload.slackId };
     } catch (err) {
       if (err instanceof jwt.TokenExpiredError) {
-        return res.status(401).json({ error: { code: 'TOKEN_EXPIRED', message: 'Access token has expired' } });
+        return reply.status(401).send({ error: { code: 'TOKEN_EXPIRED', message: 'Access token has expired' } });
       }
-      return res.status(401).json({ error: { code: 'INVALID_TOKEN', message: 'Token verification failed' } });
+      return reply.status(401).send({ error: { code: 'INVALID_TOKEN', message: 'Token verification failed' } });
     }
-  };
-}
+  });
+};
 
-// Route registration example:
-// router.post('/api/v1/epics', requireRole('LEAD'), epicController.create);
-// router.delete('/api/v1/workflows/:id', requireRole('ADMIN'), workflowController.terminate);
-// router.get('/api/v1/workflows', requireRole('ENGINEER'), workflowController.list);
+export default fp(rbacPlugin, { fastify: '5.x', name: 'rbac' });
+
+// Route registration example (role declared in config):
+// app.post('/api/v1/epics', { config: { requiredRole: 'LEAD' } }, epicHandler);
+// app.delete('/api/v1/workflows/:id', { config: { requiredRole: 'ADMIN' } }, terminateHandler);
+// app.get('/api/v1/workflows', { config: { requiredRole: 'ENGINEER' } }, listHandler);
 ```
 
 ### Slack OAuth Flow (Linking slack_id to User)
@@ -309,51 +323,53 @@ export async function slackCallback(req: Request): Promise<Response> {
 
 ### Slack Webhook Authentication (for Interactive Messages)
 
-When Slack sends an interactive webhook (button click, modal submit), the request does not carry a JWT. Instead, the Gateway verifies the request using Slack's signing secret and resolves the user's role from the embedded `slack_id`.
+When Slack sends an interactive webhook (button click, modal submit), the request does not carry a JWT. Instead, the Gateway verifies the request using Slack's signing secret and resolves the user's role from the embedded `slack_id`. Raw body access is provided by `fastify-raw-body`.
 
 ```typescript
-// middleware/slackAuth.ts
+// hooks/slackAuth.ts
 import crypto from 'crypto';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 
-export async function verifySlackRequest(req: Request, res: Response, next: NextFunction) {
-  const timestamp = req.headers['x-slack-request-timestamp'] as string;
-  const signature = req.headers['x-slack-signature'] as string;
+// Requires fastify-raw-body plugin registered with { global: false, runFirst: true }
+// Slack webhook routes opt in with: { config: { rawBody: true } }
+
+export async function verifySlackRequest(request: FastifyRequest, reply: FastifyReply) {
+  const timestamp = request.headers['x-slack-request-timestamp'] as string;
+  const signature = request.headers['x-slack-signature'] as string;
 
   // Reject requests older than 5 minutes (replay protection)
   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
-    return res.status(401).json({ error: { code: 'SLACK_REPLAY', message: 'Request too old' } });
+    return reply.status(401).send({ error: { code: 'SLACK_REPLAY', message: 'Request too old' } });
   }
 
-  // Compute expected signature
-  const sigBasestring = `v0:${timestamp}:${req.rawBody}`;
+  // Compute expected signature using raw body from fastify-raw-body
+  const sigBasestring = `v0:${timestamp}:${request.rawBody}`;
   const expected = 'v0=' + crypto
     .createHmac('sha256', process.env.SLACK_SIGNING_SECRET!)
     .update(sigBasestring)
     .digest('hex');
 
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return res.status(401).json({ error: { code: 'SLACK_SIGNATURE_INVALID', message: 'Signature mismatch' } });
+    return reply.status(401).send({ error: { code: 'SLACK_SIGNATURE_INVALID', message: 'Signature mismatch' } });
   }
 
   // Resolve user by slack_id from the payload
-  const payload = JSON.parse(req.body.payload);
+  const payload = JSON.parse((request.body as any).payload);
   const slackUserId = payload.user.id;
 
   const user = await prisma.user.findUnique({ where: { slackId: slackUserId } });
   if (!user || !user.isActive) {
-    // Return ephemeral Slack message (visible only to the user)
-    return res.json({
+    return reply.send({
       response_type: 'ephemeral',
       text: 'Your Slack account is not linked to the engineering system. Visit the dashboard to connect.',
     });
   }
 
-  req.user = { id: user.id, role: user.role as MinimumRole, slackId: slackUserId };
-  next();
+  request.user = { id: user.id, role: user.role as MinimumRole, slackId: slackUserId };
 }
 
 // Used in Slack webhook route:
-// router.post('/api/v1/webhooks/slack', verifySlackRequest, requireSlackRole('LEAD'), slackController.handle);
+// app.post('/api/v1/webhooks/slack', { config: { rawBody: true }, preHandler: [verifySlackRequest] }, slackHandler);
 ```
 
 ## 2. RBAC Permission Matrix

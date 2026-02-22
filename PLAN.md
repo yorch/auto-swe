@@ -150,6 +150,8 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 
 | Component | Technology | Decision Rationale & Deep Technical Implications |
 |---|---|---|
+| HTTP Framework | Fastify 5.x | Rationale: High-performance, schema-first HTTP framework with built-in validation (JSON Schema / Zod via type providers), plugin-based architecture, and encapsulated error handling. ~3x throughput vs Express with lower latency. |
+| Package Manager | Yarn 4.x (Berry) | Rationale: Non-zero-installs mode (`nodeLinker: node-modules`) for maximum tool compatibility. `workspace:` protocol for monorepo package references. Corepack-managed for reproducible installs. |
 | Orchestration | Temporal.io | Rationale: Handles complex, multi-day parent/child workflows and asynchronous signal waiting (e.g., waiting for GitHub Actions to complete). |
 | Agent Framework | Mastra 1.0 (TypeScript) | Rationale: The most robust, pure TS framework for creating deterministic agent networks. |
 | Data Access / ORM | Prisma v7.x | Rationale: Rust-free TS-native architecture (90% smaller bundle, 3x faster queries). Provides strict, end-to-end type safety for Postgres with OTel tracing. pgvector columns require raw SQL/TypedSQL (native support pending). |

@@ -118,7 +118,7 @@ These are explicitly out of scope and must not be built during Phase 1:
 
 ### 5.1 Interaction Gateway (MVP Scope)
 
-A minimal Express.js HTTP server. No JWT authentication — the MVP uses a hardcoded ADMIN role on all requests.
+A minimal Fastify 5.x HTTP server. No JWT authentication — the MVP uses a hardcoded ADMIN role on all requests. Validation uses Fastify's built-in Zod type provider (`fastify-type-provider-zod`). Raw body access for HMAC webhook verification uses `fastify-raw-body`.
 
 **Endpoints (MVP only):**
 
@@ -130,7 +130,7 @@ A minimal Express.js HTTP server. No JWT authentication — the MVP uses a hardc
 | `GET` | `/api/v1/workflows/:id` | Get workflow detail (debug) |
 
 The gateway is responsible for:
-1. Validating the request body (Zod schema validation)
+1. Validating the request body (Zod schemas via Fastify type provider — automatic 400 on invalid input)
 2. Creating `WorkRequest` and `ActiveWorkflow` records in Postgres
 3. Starting the `EngineeringWorkflow` on Temporal via the Temporal client SDK
 4. Forwarding GitHub merge webhooks as Temporal signals
@@ -255,7 +255,7 @@ Four services for local development:
 |---|---|---|---|
 | `postgres` | `pgvector/pgvector:pg17` | 5432 | Primary database |
 | `temporal` | `temporalio/auto-setup:1.25.2` | 7233 (gRPC), 8233 (Web UI) | Workflow orchestration |
-| `gateway` | Built from `./gateway` | 8080 | HTTP API |
+| `gateway` | Built from `./gateway` | 8080 | Fastify HTTP API |
 | `worker` | Built from `./worker` | — | Temporal worker (no exposed port) |
 
 **Not included in MVP Docker Compose:** OTel collector, web dashboard.
@@ -285,6 +285,9 @@ The MVP has simplified error handling compared to the full system:
 
 ## 9. Design Decisions & Rationale
 
+### Why Fastify instead of Express?
+Fastify 5.x offers ~3x throughput, built-in schema validation (Zod type provider gives automatic request/response typing), encapsulated error handlers via plugins, and a proper plugin system for clean separation of concerns. The `fastify-raw-body` plugin provides the raw body access needed for HMAC webhook verification without the awkward middleware ordering Express requires.
+
 ### Why no review network in MVP?
 The review agents (security, domain, performance) add complexity without validating the core hypothesis: can an LLM agent produce a mergeable PR from a ticket? The human reviewer serves as the quality gate in Phase 1.
 
@@ -292,7 +295,7 @@ The review agents (security, domain, performance) add complexity without validat
 CI/CD webhook handling requires reliable signal routing and a fix-loop that doubles the workflow complexity. The MVP validates the implement-and-PR path; CI integration layers on top in Phase 2.
 
 ### Why hardcoded ADMIN role instead of auth?
-JWT auth, refresh tokens, and RBAC middleware are significant work. The MVP runs locally behind Docker Compose — there's no external access to protect. Phase 3 adds full RBAC.
+JWT auth, refresh tokens, and RBAC hooks are significant work. The MVP runs locally behind Docker Compose — there's no external access to protect. Phase 3 adds full RBAC.
 
 ### Why Docker-in-Docker instead of K8s Jobs?
 K8s requires a cluster. The MVP runs entirely in Docker Compose. DinD workspace containers provide the same isolation model with zero infrastructure beyond Docker.

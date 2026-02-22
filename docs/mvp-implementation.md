@@ -9,8 +9,9 @@ auto-swe/
 ├── docker-compose.yml
 ├── .env                          # Local secrets (git-ignored)
 ├── .env.example                  # Template for .env
-├── package.json                  # Root workspace config (pnpm)
-├── pnpm-workspace.yaml
+├── .gitignore
+├── .yarnrc.yml                   # Yarn 4 config (node-modules linker)
+├── package.json                  # Root workspace config (Yarn 4)
 ├── tsconfig.base.json            # Shared TS config
 │
 ├── packages/
@@ -23,25 +24,26 @@ auto-swe/
 │   │       │   └── api.ts        # ApiResponse, request/response DTOs
 │   │       ├── prisma/
 │   │       │   ├── schema.prisma
+│   │       │   ├── seed.ts
 │   │       │   └── migrations/
-│   │       └── index.ts
+│   │       ├── db.ts             # Singleton PrismaClient export
+│   │       └── index.ts          # Barrel export
 │   │
-│   ├── gateway/                  # Interaction Gateway (Express.js)
+│   ├── gateway/                  # Interaction Gateway (Fastify 5.x)
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   ├── Dockerfile
 │   │   └── src/
-│   │       ├── index.ts          # Express app bootstrap
+│   │       ├── index.ts          # Fastify app bootstrap
+│   │       ├── plugins/
+│   │       │   ├── temporal.ts   # Temporal client plugin (fastify-plugin)
+│   │       │   └── prisma.ts     # Prisma client plugin (fastify-plugin)
 │   │       ├── routes/
 │   │       │   ├── workRequests.ts
 │   │       │   ├── workflows.ts
 │   │       │   └── webhooks.ts
-│   │       ├── middleware/
-│   │       │   └── validation.ts # Zod schema validation
-│   │       ├── services/
-│   │       │   └── temporal.ts   # Temporal client wrapper
 │   │       └── lib/
-│   │           └── github.ts     # HMAC verification
+│   │           └── github.ts     # HMAC verification helper
 │   │
 │   └── worker/                   # Temporal Worker
 │       ├── package.json
@@ -58,7 +60,7 @@ auto-swe/
 │           │   ├── state.ts      # updateDomainState
 │           │   └── workspace.ts  # Docker container management
 │           └── agents/
-│               ├── implementer.ts  # Mastra agent config
+│               ├── implementer.ts  # Mastra agent config + tool bindings
 │               └── prompts.ts      # System prompts
 ```
 
@@ -68,12 +70,12 @@ The implementation should proceed in this exact order. Each step produces a test
 
 | Step | What | Depends On | Validation |
 |---|---|---|---|
-| 1 | Monorepo scaffold + toolchain | — | `pnpm install` succeeds |
-| 2 | Prisma schema + Docker Compose (Postgres + Temporal) | Step 1 | `pnpm prisma migrate dev` succeeds, `docker compose up` runs |
-| 3 | Shared types package | Step 1 | TypeScript compiles |
-| 4 | Gateway: Express bootstrap + health endpoint | Steps 1-3 | `curl localhost:8080/health` returns 200 |
+| 1 | Monorepo scaffold + toolchain (Yarn 4) | — | `yarn install` succeeds |
+| 2 | Prisma schema + Docker Compose (Postgres + Temporal) | Step 1 | `yarn prisma migrate dev` succeeds, `docker compose up` runs |
+| 3 | Shared types package + Prisma client singleton | Step 1 | TypeScript compiles |
+| 4 | Gateway: Fastify bootstrap + health endpoint | Steps 1-3 | `curl localhost:8080/health` returns 200 |
 | 5 | Gateway: `POST /api/v1/work-requests` | Steps 2-4 | Creates DB records, returns `workRequestId` |
-| 6 | Gateway: Temporal client integration | Steps 2, 5 | Work request starts a Temporal workflow |
+| 6 | Gateway: Temporal client plugin | Steps 2, 5 | Work request starts a Temporal workflow |
 | 7 | Worker: Bootstrap + register workflow | Steps 2, 3 | Worker connects to Temporal, workflow appears in Temporal Web UI |
 | 8 | Worker: `updateDomainState` activity | Steps 2, 7 | Workflow updates `active_workflows.current_status` |
 | 9 | Worker: Workspace provisioning (Docker container) | Step 7 | Container created, repo cloned, container destroyed |
@@ -86,12 +88,12 @@ The implementation should proceed in this exact order. Each step produces a test
 
 ## 3. Step-by-Step Implementation
 
-### Step 1: Monorepo Scaffold
+### Step 1: Monorepo Scaffold (Yarn 4)
 
-**pnpm-workspace.yaml:**
-```yaml
-packages:
-  - 'packages/*'
+```bash
+# Initialize Yarn 4 via corepack (ships with Node.js 20+)
+corepack enable
+corepack use yarn@4.12.0
 ```
 
 **package.json (root):**
@@ -99,19 +101,29 @@ packages:
 {
   "name": "auto-swe",
   "private": true,
+  "packageManager": "yarn@4.12.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "pnpm -r build",
-    "dev:gateway": "pnpm --filter gateway dev",
-    "dev:worker": "pnpm --filter worker dev",
-    "db:migrate": "pnpm --filter shared prisma migrate dev",
-    "db:generate": "pnpm --filter shared prisma generate",
-    "db:seed": "pnpm --filter shared prisma db seed"
+    "build": "yarn workspaces foreach -A run build",
+    "dev:gateway": "yarn workspace @auto-swe/gateway dev",
+    "dev:worker": "yarn workspace @auto-swe/worker dev",
+    "db:migrate": "yarn workspace @auto-swe/shared prisma migrate dev",
+    "db:generate": "yarn workspace @auto-swe/shared prisma generate",
+    "db:seed": "yarn workspace @auto-swe/shared prisma db seed",
+    "db:studio": "yarn workspace @auto-swe/shared prisma studio"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=20.0.0"
   }
 }
+```
+
+**.yarnrc.yml:**
+```yaml
+nodeLinker: node-modules
+enableGlobalCache: false
 ```
 
 **tsconfig.base.json:**
@@ -152,14 +164,73 @@ GITHUB_TOKEN=ghp_...
 GITHUB_WEBHOOK_SECRET=whsec_...
 ```
 
+**.gitignore (additions for Yarn 4 non-zero-installs):**
+```
+node_modules/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+dist/
+.env
+```
+
 ### Step 2: Prisma Schema + Docker Compose
+
+**packages/shared/package.json:**
+```json
+{
+  "name": "@auto-swe/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./db": "./dist/db.js",
+    "./types/workflow": "./dist/types/workflow.js",
+    "./types/api": "./dist/types/api.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prisma": "prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.4.0",
+    "bcrypt": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
+    "prisma": "^7.4.0",
+    "typescript": "^5.7.0"
+  },
+  "prisma": {
+    "schema": "src/prisma/schema.prisma",
+    "seed": "tsx src/prisma/seed.ts"
+  }
+}
+```
+
+**packages/shared/tsconfig.json:**
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/prisma/migrations"]
+}
+```
 
 **packages/shared/src/prisma/schema.prisma:**
 ```prisma
 generator client {
   provider        = "prisma-client"
   previewFeatures = ["tracing"]
-  output          = "../generated/prisma"
 }
 
 datasource db {
@@ -203,7 +274,7 @@ model Repository {
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
-  mcpServerRef     String           @map("mcp_server_ref")
+  mcpServerRef     String?          @map("mcp_server_ref")
   executorImage    String?          @default("node:20-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
 
@@ -218,6 +289,7 @@ model Repository {
 model WorkRequest {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId String           @map("external_ticket_id")
+  description      String           @default("")
   requestPayload   String           @map("request_payload")
   slackMessageTs   String?          @map("slack_message_ts")
   isCrossRepo      Boolean          @default(false) @map("is_cross_repo")
@@ -290,15 +362,34 @@ model AgentLesson {
 }
 ```
 
+**packages/shared/src/db.ts:**
+```typescript
+import { PrismaClient } from '@prisma/client';
+
+// Singleton PrismaClient — shared across the process.
+// Import as: import { prisma } from '@auto-swe/shared/db';
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+```
+
+**packages/shared/src/index.ts:**
+```typescript
+export { prisma } from './db';
+export type * from './types/workflow';
+export type * from './types/api';
+```
+
 **packages/shared/src/prisma/seed.ts:**
 ```typescript
-import { PrismaClient } from '../generated/prisma';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  // Seed admin user (MVP: hardcoded, no login flow)
   await prisma.user.upsert({
     where: { email: 'admin@auto-swe.local' },
     update: {},
@@ -319,8 +410,6 @@ main()
 
 **docker-compose.yml:**
 ```yaml
-version: '3.8'
-
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -340,17 +429,30 @@ services:
   temporal:
     image: temporalio/auto-setup:1.25.2
     depends_on:
-      postgres:
+      postgres-temporal:
         condition: service_healthy
     environment:
       - DB=postgresql
       - DB_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PWD=password
-      - POSTGRES_SEEDS=postgres
+      - POSTGRES_SEEDS=postgres-temporal
     ports:
       - "7233:7233"
       - "8233:8233"
+
+  # Temporal gets its own Postgres to avoid schema conflicts with pgvector
+  postgres-temporal:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: password
+    volumes:
+      - pgdata-temporal:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   gateway:
     build:
@@ -388,6 +490,7 @@ services:
 
 volumes:
   pgdata:
+  pgdata-temporal:
 ```
 
 ### Step 3: Shared Types
@@ -401,6 +504,7 @@ export interface RepoWorkRequest {
   workRequestId: string;
   repoId: string;
   externalTicketId: string;
+  description: string;          // What the agent should implement
   requestPayload: string;
 }
 
@@ -453,6 +557,7 @@ export interface ApiResponse<T> {
 
 export interface CreateWorkRequestBody {
   externalTicketId: string;
+  description: string;           // Human-readable description of what to implement
   repoIds: string[];
 }
 
@@ -469,15 +574,16 @@ export interface GitWebhookBody {
     head: { sha: string; ref: string };
     base: { repo: { full_name: string } };
   };
+  repository: { full_name: string };
 }
 ```
 
-### Step 4: Gateway Bootstrap
+### Step 4: Gateway Bootstrap (Fastify 5.x)
 
 **packages/gateway/package.json:**
 ```json
 {
-  "name": "gateway",
+  "name": "@auto-swe/gateway",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -486,183 +592,357 @@ export interface GitWebhookBody {
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "express": "^5.0.0",
+    "fastify": "^5.7.0",
+    "fastify-plugin": "^5.0.0",
+    "fastify-raw-body": "^5.0.0",
+    "fastify-type-provider-zod": "^4.0.0",
     "zod": "^3.24.0",
     "@temporalio/client": "^1.11.0",
-    "shared": "workspace:*"
+    "@auto-swe/shared": "workspace:*"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
 ```
 
+**packages/gateway/tsconfig.json:**
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"]
+}
+```
+
 **packages/gateway/src/index.ts:**
 ```typescript
-import express from 'express';
-import { workRequestRouter } from './routes/workRequests';
-import { workflowRouter } from './routes/workflows';
-import { webhookRouter } from './routes/webhooks';
+import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import fastifyRawBody from 'fastify-raw-body';
+import { temporalPlugin } from './plugins/temporal';
+import { prismaPlugin } from './plugins/prisma';
+import { workRequestRoutes } from './routes/workRequests';
+import { workflowRoutes } from './routes/workflows';
+import { webhookRoutes } from './routes/webhooks';
 
-const app = express();
-const PORT = process.env.PORT ?? 8080;
+async function start() {
+  const app = Fastify({ logger: true });
 
-// Webhooks need raw body for HMAC verification
-app.use('/api/v1/webhooks', express.raw({ type: 'application/json' }));
-app.use(express.json());
+  // Zod validation + serialization
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
 
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+  // Raw body for HMAC webhook verification (opt-in per route)
+  await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });
 
-// Routes
-app.use('/api/v1/work-requests', workRequestRouter);
-app.use('/api/v1/workflows', workflowRouter);
-app.use('/api/v1/webhooks', webhookRouter);
+  // Plugins (decorate app with .temporal and .prisma)
+  await app.register(prismaPlugin);
+  await app.register(temporalPlugin);
 
-app.listen(PORT, () => {
-  console.log(`Gateway listening on port ${PORT}`);
+  // Global error handler
+  app.setErrorHandler(async (error, request, reply) => {
+    request.log.error(error);
+    const statusCode = error.statusCode ?? 500;
+    return reply.status(statusCode).send({
+      error: {
+        code: error.code ?? 'INTERNAL_ERROR',
+        message: error.message,
+      },
+    });
+  });
+
+  // Health check
+  app.get('/health', async () => ({ status: 'ok' }));
+
+  // Route plugins
+  await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+  await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
+  await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
+
+  const port = Number(process.env.PORT ?? 8080);
+  await app.listen({ port, host: '0.0.0.0' });
+}
+
+start().catch((err) => {
+  console.error('Gateway failed to start:', err);
+  process.exit(1);
 });
 ```
 
-### Step 5: Work Request Endpoint
+### Step 5: Gateway Plugins
+
+**packages/gateway/src/plugins/prisma.ts:**
+```typescript
+import fp from 'fastify-plugin';
+import { PrismaClient } from '@prisma/client';
+import type { FastifyPluginAsync } from 'fastify';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    prisma: PrismaClient;
+  }
+}
+
+const prismaPlugin: FastifyPluginAsync = async (fastify) => {
+  const prisma = new PrismaClient();
+  await prisma.$connect();
+
+  fastify.decorate('prisma', prisma);
+
+  fastify.addHook('onClose', async () => {
+    await prisma.$disconnect();
+  });
+};
+
+export { prismaPlugin };
+export default fp(prismaPlugin, { fastify: '5.x', name: 'prisma' });
+```
+
+**packages/gateway/src/plugins/temporal.ts:**
+```typescript
+import fp from 'fastify-plugin';
+import { Client, Connection } from '@temporalio/client';
+import type { FastifyPluginAsync } from 'fastify';
+import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    temporal: {
+      startWorkflow: (workflowId: string, request: RepoWorkRequest) => Promise<void>;
+      signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
+    };
+  }
+}
+
+const temporalPlugin: FastifyPluginAsync = async (fastify) => {
+  const connection = await Connection.connect({
+    address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+  });
+  const client = new Client({ connection });
+
+  fastify.decorate('temporal', {
+    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
+      await client.workflow.start('EngineeringWorkflow', {
+        taskQueue: 'engineering-workflow',
+        workflowId,
+        args: [request],
+      });
+    },
+
+    async signalWorkflow(workflowId: string, signalName: string, args: unknown[] = []): Promise<void> {
+      const handle = client.workflow.getHandle(workflowId);
+      await handle.signal(signalName, ...args);
+    },
+  });
+
+  fastify.addHook('onClose', async () => {
+    await connection.close();
+  });
+};
+
+export { temporalPlugin };
+export default fp(temporalPlugin, { fastify: '5.x', name: 'temporal' });
+```
+
+### Step 6: Work Request Route
 
 **packages/gateway/src/routes/workRequests.ts:**
 ```typescript
-import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { PrismaClient } from 'shared/generated/prisma';
-import { startWorkflow } from '../services/temporal';
-
-const prisma = new PrismaClient();
-const router = Router();
+import type { FastifyPluginAsync } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
 const CreateWorkRequestSchema = z.object({
   externalTicketId: z.string().min(1),
+  description: z.string().min(1, 'description is required — tell the agent what to implement'),
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
-router.post('/', async (req: Request, res: Response) => {
-  const parsed = CreateWorkRequestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0].message },
-    });
-  }
+export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  const { externalTicketId, repoIds } = parsed.data;
-
-  // Verify repository exists
-  const repo = await prisma.repository.findUnique({ where: { id: repoIds[0] } });
-  if (!repo || !repo.isActive) {
-    return res.status(404).json({
-      error: { code: 'REPO_NOT_FOUND', message: `Repository ${repoIds[0]} not found or inactive` },
-    });
-  }
-
-  // Create work request
-  const workRequest = await prisma.workRequest.create({
-    data: {
-      externalTicketId,
-      requestPayload: JSON.stringify(req.body),
+  app.post('/', {
+    schema: {
+      body: CreateWorkRequestSchema,
     },
-  });
+  }, async (request, reply) => {
+    const { externalTicketId, description, repoIds } = request.body;
 
-  // Generate Temporal workflow ID (deterministic for idempotency)
-  const temporalWorkflowId = `eng-${externalTicketId}-${repo.repoName}`;
-  const branch = `auto/${externalTicketId}`;
-
-  // Create ActiveWorkflow record
-  const activeWorkflow = await prisma.activeWorkflow.create({
-    data: {
-      temporalWorkflowId,
-      workRequestId: workRequest.id,
-      repoId: repo.id,
-      currentStatus: 'IMPLEMENTING',
-      assignedBranch: branch,
-    },
-  });
-
-  // Start Temporal workflow
-  try {
-    await startWorkflow(temporalWorkflowId, {
-      workRequestId: workRequest.id,
-      repoId: repo.id,
-      externalTicketId,
-      requestPayload: JSON.stringify(req.body),
-    });
-  } catch (err: any) {
-    // If workflow already exists (idempotent retry), that's fine
-    if (err.name === 'WorkflowExecutionAlreadyStartedError') {
-      return res.status(409).json({
-        error: { code: 'WORKFLOW_ALREADY_EXISTS', message: `Workflow already running for ${externalTicketId}` },
+    // Verify repository exists
+    const repo = await fastify.prisma.repository.findUnique({ where: { id: repoIds[0] } });
+    if (!repo || !repo.isActive) {
+      return reply.status(404).send({
+        error: { code: 'REPO_NOT_FOUND', message: `Repository ${repoIds[0]} not found or inactive` },
       });
     }
-    throw err;
-  }
 
-  return res.status(201).json({
-    data: {
-      workRequestId: workRequest.id,
-      workflowIds: [activeWorkflow.id],
-    },
-  });
-});
-
-export { router as workRequestRouter };
-```
-
-### Step 6: Temporal Client Integration
-
-**packages/gateway/src/services/temporal.ts:**
-```typescript
-import { Client, Connection } from '@temporalio/client';
-import type { RepoWorkRequest } from 'shared/types/workflow';
-
-let client: Client | null = null;
-
-async function getClient(): Promise<Client> {
-  if (!client) {
-    const connection = await Connection.connect({
-      address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+    // Create work request
+    const workRequest = await fastify.prisma.workRequest.create({
+      data: {
+        externalTicketId,
+        description,
+        requestPayload: JSON.stringify(request.body),
+      },
     });
-    client = new Client({ connection });
-  }
-  return client;
-}
 
-export async function startWorkflow(
-  workflowId: string,
-  request: RepoWorkRequest,
-): Promise<void> {
-  const c = await getClient();
-  await c.workflow.start('EngineeringWorkflow', {
-    taskQueue: 'engineering-workflow',
-    workflowId,
-    args: [request],
+    // Generate Temporal workflow ID (deterministic for idempotency)
+    const temporalWorkflowId = `eng-${externalTicketId}-${repo.repoName}`;
+    const branch = `auto/${externalTicketId}`;
+
+    // Create ActiveWorkflow record
+    const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+      data: {
+        temporalWorkflowId,
+        workRequestId: workRequest.id,
+        repoId: repo.id,
+        currentStatus: 'IMPLEMENTING',
+        assignedBranch: branch,
+      },
+    });
+
+    // Start Temporal workflow
+    try {
+      await fastify.temporal.startWorkflow(temporalWorkflowId, {
+        workRequestId: workRequest.id,
+        repoId: repo.id,
+        externalTicketId,
+        description,
+        requestPayload: JSON.stringify(request.body),
+      });
+    } catch (err: any) {
+      if (err.name === 'WorkflowExecutionAlreadyStartedError') {
+        return reply.status(409).send({
+          error: { code: 'WORKFLOW_ALREADY_EXISTS', message: `Workflow already running for ${externalTicketId}` },
+        });
+      }
+      throw err;
+    }
+
+    return reply.status(201).send({
+      data: {
+        workRequestId: workRequest.id,
+        workflowIds: [activeWorkflow.id],
+      },
+    });
   });
-}
-
-export async function signalWorkflow(
-  workflowId: string,
-  signalName: string,
-  args: unknown[] = [],
-): Promise<void> {
-  const c = await getClient();
-  const handle = c.workflow.getHandle(workflowId);
-  await handle.signal(signalName, ...args);
-}
+};
 ```
 
-### Step 7: Worker Bootstrap
+### Step 7: Workflow Routes (Debug)
+
+**packages/gateway/src/routes/workflows.ts:**
+```typescript
+import type { FastifyPluginAsync } from 'fastify';
+
+export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
+  // GET /api/v1/workflows
+  fastify.get('/', async () => {
+    const workflows = await fastify.prisma.activeWorkflow.findMany({
+      include: { repository: true, pullRequests: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return { data: workflows };
+  });
+
+  // GET /api/v1/workflows/:id
+  fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const workflow = await fastify.prisma.activeWorkflow.findUnique({
+      where: { id: request.params.id },
+      include: { repository: true, pullRequests: true, workRequest: true },
+    });
+    if (!workflow) {
+      return reply.status(404).send({
+        error: { code: 'WORKFLOW_NOT_FOUND', message: `No workflow with id ${request.params.id}` },
+      });
+    }
+    return { data: workflow };
+  });
+};
+```
+
+### Step 8: Webhook Route (Git Merge)
+
+**packages/gateway/src/routes/webhooks.ts:**
+```typescript
+import crypto from 'node:crypto';
+import type { FastifyPluginAsync } from 'fastify';
+
+export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
+  // POST /api/v1/webhooks/git
+  // Uses fastify-raw-body for HMAC verification
+  fastify.post('/git', {
+    config: { rawBody: true },
+  }, async (request, reply) => {
+    // Verify GitHub HMAC signature
+    const signature = request.headers['x-hub-signature-256'] as string;
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+    if (!secret || !signature) {
+      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
+    }
+
+    const expected =
+      'sha256=' +
+      crypto.createHmac('sha256', secret).update(request.rawBody!).digest('hex');
+
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
+    }
+
+    const payload = request.body as any;
+
+    // Only handle merged pull_request events
+    if (payload.action !== 'closed' || !payload.pull_request?.merged) {
+      return { data: { ignored: true } };
+    }
+
+    const prNumber = payload.pull_request.number;
+    const repoFullName = payload.repository.full_name;
+    const [org, repoName] = repoFullName.split('/');
+
+    // Find the tracked PR
+    const pullRequest = await fastify.prisma.pullRequest.findFirst({
+      where: {
+        prNumber,
+        repository: { organizationName: org, repoName },
+        status: 'OPEN',
+      },
+      include: { workflow: true },
+    });
+
+    if (!pullRequest?.workflow) {
+      return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
+    }
+
+    // Update PR status
+    await fastify.prisma.pullRequest.update({
+      where: { id: pullRequest.id },
+      data: { status: 'MERGED' },
+    });
+
+    // Signal the Temporal workflow
+    await fastify.temporal.signalWorkflow(
+      pullRequest.workflow.temporalWorkflowId,
+      'humanMergeSignal',
+      [true],
+    );
+
+    return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };
+  });
+};
+```
+
+### Step 9: Worker Bootstrap
 
 **packages/worker/package.json:**
 ```json
 {
-  "name": "worker",
+  "name": "@auto-swe/worker",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -675,13 +955,26 @@ export async function signalWorkflow(
     "@temporalio/workflow": "^1.11.0",
     "@temporalio/activity": "^1.11.0",
     "@mastra/core": "^1.0.0",
+    "@mastra/anthropic": "^1.0.0",
     "@octokit/rest": "^21.0.0",
-    "shared": "workspace:*"
+    "@auto-swe/shared": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
+}
+```
+
+**packages/worker/tsconfig.json:**
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"]
 }
 ```
 
@@ -699,6 +992,8 @@ async function run() {
     connection,
     namespace: 'default',
     taskQueue: 'engineering-workflow',
+    // Temporal bundles workflows separately (V8 isolate).
+    // Only type-only imports are allowed in workflow files.
     workflowsPath: require.resolve('./workflows/engineering'),
     activities,
   });
@@ -713,9 +1008,12 @@ run().catch((err) => {
 });
 ```
 
-### Step 8–13: Workflow + Activities
+### Step 10: Workflow + Activities
 
 **packages/worker/src/workflows/engineering.ts:**
+
+> **Important Temporal constraint:** Workflow files run in a V8 isolate, not Node.js. Only `import type` is allowed for external packages. All runtime imports must come from `@temporalio/workflow`.
+
 ```typescript
 import {
   proxyActivities,
@@ -724,7 +1022,7 @@ import {
   condition,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities';
-import type { RepoWorkRequest, WorkflowResult } from 'shared/types/workflow';
+import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
 
 // ── Activity Proxies ──
 
@@ -825,9 +1123,7 @@ export async function EngineeringWorkflow(
 
 **packages/worker/src/activities/state.ts:**
 ```typescript
-import { PrismaClient } from 'shared/generated/prisma';
-
-const prisma = new PrismaClient();
+import { prisma } from '@auto-swe/shared/db';
 
 export async function updateDomainState(
   workRequestId: string,
@@ -842,8 +1138,8 @@ export async function updateDomainState(
 
 **packages/worker/src/activities/workspace.ts:**
 ```typescript
-import { execSync, ExecSyncOptions } from 'child_process';
-import crypto from 'crypto';
+import { execSync, type ExecSyncOptions } from 'node:child_process';
+import crypto from 'node:crypto';
 
 export interface Workspace {
   containerId: string;
@@ -867,27 +1163,31 @@ export function createWorkspace(
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
-  // Start container
   const authedUrl = repoUrl.replace(
     'https://',
     `https://x-access-token:${githubToken}@`,
   );
 
+  // Start container with git installed
   execSync(
     `docker run -d --name ${containerName} ${image} sleep infinity`,
     EXEC_OPTS,
   );
 
-  const exec = (command: string): string => {
+  // Initial exec function (root of container)
+  const rootExec = (command: string): string => {
     return execSync(
       `docker exec ${containerName} sh -c '${command.replace(/'/g, "'\\''")}'`,
       EXEC_OPTS,
     ) as string;
   };
 
+  // Install git if not present (alpine images may not have it)
+  rootExec('which git || apk add --no-cache git');
+
   // Clone repo
-  exec(`git clone --depth=50 -b ${defaultBranch} ${authedUrl} /workspace/target-repo`);
-  exec(`cd /workspace/target-repo && git checkout -b ${branch}`);
+  rootExec(`git clone --depth=50 -b ${defaultBranch} '${authedUrl}' /workspace/target-repo`);
+  rootExec(`cd /workspace/target-repo && git checkout -b '${branch}'`);
 
   return {
     containerId: containerName,
@@ -911,19 +1211,17 @@ export function createWorkspace(
 **packages/worker/src/activities/executeImplementation.ts:**
 ```typescript
 import { heartbeat } from '@temporalio/activity';
-import { Mastra } from '@mastra/core';
-import { PrismaClient } from 'shared/generated/prisma';
-import type { RepoWorkRequest, CodeResult, TestRunResult } from 'shared/types/workflow';
+import { prisma } from '@auto-swe/shared/db';
+import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace } from './workspace';
+import { createImplementerAgent } from '../agents/implementer';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts';
 
-const prisma = new PrismaClient();
 const MAX_TDD_ITERATIONS = 5;
 
 export async function executeImplementation(
   request: RepoWorkRequest,
 ): Promise<CodeResult> {
-  // Load repository config
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
   });
@@ -932,7 +1230,6 @@ export async function executeImplementation(
   const branch = `auto/${request.externalTicketId}`;
   const githubToken = process.env.GITHUB_TOKEN!;
 
-  // Provision workspace
   const workspace = createWorkspace(
     repoUrl,
     branch,
@@ -944,34 +1241,29 @@ export async function executeImplementation(
   try {
     heartbeat('workspace provisioned');
 
-    // Detect test framework from workspace
+    // Detect test framework
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Initialize Mastra agent
-    const mastra = new Mastra({});
-    const implementer = mastra.getAgent('implementer');
+    // Create Mastra agent with tools bound to workspace
+    const { agent } = createImplementerAgent(workspace);
 
     let testResult: TestRunResult = {
-      passed: false,
-      total: 0,
-      passing: 0,
-      failing: 0,
-      stdout: '',
-      duration_ms: 0,
+      passed: false, total: 0, passing: 0, failing: 0, stdout: '', duration_ms: 0,
     };
 
     // TDD loop
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
 
-      await implementer.generate(
+      await agent.generate(
         [
           { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT },
           {
             role: 'user',
             content: JSON.stringify({
-              request: request.requestPayload,
+              description: request.description,
+              externalTicketId: request.externalTicketId,
               iteration,
               previousTestResult: iteration > 0 ? testResult : undefined,
             }),
@@ -985,30 +1277,24 @@ export async function executeImplementation(
         const startTime = Date.now();
         const testOutput = workspace.exec(testCommand);
         testResult = parseTestOutput(testOutput, Date.now() - startTime);
-
         if (testResult.passed) break;
       } catch (err: any) {
         testResult = {
-          passed: false,
-          total: 0,
-          passing: 0,
-          failing: 1,
+          passed: false, total: 0, passing: 0, failing: 1,
           stdout: err.stdout?.slice(-10_000) ?? err.message,
           duration_ms: 0,
         };
       }
     }
 
-    // Commit changes
+    // Commit and push
     workspace.exec('git add -A');
     workspace.exec(`git commit -m "auto: implement ${request.externalTicketId}"`);
+    workspace.exec(`git push origin '${branch}'`);
 
     // Collect results
-    const diff = workspace.exec(`git diff ${repo.defaultBranch}`);
+    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
-
-    // Push branch
-    workspace.exec(`git push origin ${branch}`);
 
     return {
       branch,
@@ -1016,11 +1302,15 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       testResults: testResult,
-      implementationNotes: `Completed in ${Math.min(testResult.passed ? 0 : MAX_TDD_ITERATIONS, MAX_TDD_ITERATIONS)} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: `Completed in ${iteration(testResult)} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
     };
   } finally {
     workspace.destroy();
   }
+}
+
+function iteration(result: TestRunResult): string {
+  return result.passed ? '≤5' : '5 (max)';
 }
 
 function detectTestCommand(packageJsonStr: string): string {
@@ -1034,10 +1324,8 @@ function detectTestCommand(packageJsonStr: string): string {
 }
 
 function parseTestOutput(output: string, durationMs: number): TestRunResult {
-  // Simple heuristic — works for Jest and most Node test runners
   const passMatch = output.match(/(\d+)\s+pass/i);
   const failMatch = output.match(/(\d+)\s+fail/i);
-
   const passing = passMatch ? parseInt(passMatch[1]) : 0;
   const failing = failMatch ? parseInt(failMatch[1]) : 0;
 
@@ -1079,10 +1367,8 @@ function parseDiffToFileChanges(diff: string) {
 **packages/worker/src/activities/createOrUpdatePullRequest.ts:**
 ```typescript
 import { Octokit } from '@octokit/rest';
-import { PrismaClient } from 'shared/generated/prisma';
-import type { RepoWorkRequest, CodeResult } from 'shared/types/workflow';
-
-const prisma = new PrismaClient();
+import { prisma } from '@auto-swe/shared/db';
+import type { RepoWorkRequest, CodeResult } from '@auto-swe/shared/types/workflow';
 
 export async function createOrUpdatePullRequest(
   request: RepoWorkRequest,
@@ -1104,7 +1390,6 @@ export async function createOrUpdatePullRequest(
   });
 
   if (existingPR) {
-    // Update existing PR record
     await prisma.pullRequest.update({
       where: { id: existingPR.id },
       data: { headSha: codeResult.headSha },
@@ -1126,7 +1411,6 @@ export async function createOrUpdatePullRequest(
     base: repo.defaultBranch,
   });
 
-  // Track in database
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { workRequestId: request.workRequestId },
   });
@@ -1153,6 +1437,7 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
   return [
     `## auto-swe: ${request.externalTicketId}`,
     '',
+    `**Description:** ${request.description}`,
     `**Test Status:** ${testStatus}`,
     `**Files Changed:** ${codeResult.filesChanged.length}`,
     '',
@@ -1170,125 +1455,14 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
 }
 ```
 
-### Step 14: Git Merge Webhook
-
-**packages/gateway/src/routes/webhooks.ts:**
-```typescript
-import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
-import { PrismaClient } from 'shared/generated/prisma';
-import { signalWorkflow } from '../services/temporal';
-
-const prisma = new PrismaClient();
-const router = Router();
-
-// POST /api/v1/webhooks/git
-router.post('/git', async (req: Request, res: Response) => {
-  // Verify GitHub HMAC signature
-  const signature = req.headers['x-hub-signature-256'] as string;
-  const secret = process.env.GITHUB_WEBHOOK_SECRET;
-
-  if (!secret || !signature) {
-    return res.status(401).json({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
-  }
-
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(req.body as Buffer).digest('hex');
-
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return res.status(401).json({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
-  }
-
-  const payload = JSON.parse((req.body as Buffer).toString());
-
-  // Only handle merged pull_request events
-  if (
-    payload.action !== 'closed' ||
-    !payload.pull_request?.merged
-  ) {
-    return res.status(200).json({ data: { ignored: true } });
-  }
-
-  const prNumber = payload.pull_request.number;
-  const repoFullName = payload.repository.full_name;
-  const [org, repoName] = repoFullName.split('/');
-
-  // Find the tracked PR
-  const pullRequest = await prisma.pullRequest.findFirst({
-    where: {
-      prNumber,
-      repository: { organizationName: org, repoName },
-      status: 'OPEN',
-    },
-    include: { workflow: true },
-  });
-
-  if (!pullRequest?.workflow) {
-    return res.status(200).json({ data: { ignored: true, reason: 'No tracked workflow for this PR' } });
-  }
-
-  // Update PR status
-  await prisma.pullRequest.update({
-    where: { id: pullRequest.id },
-    data: { status: 'MERGED' },
-  });
-
-  // Signal the Temporal workflow
-  await signalWorkflow(
-    pullRequest.workflow.temporalWorkflowId,
-    'humanMergeSignal',
-    [true],
-  );
-
-  return res.status(200).json({ data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } });
-});
-
-export { router as webhookRouter };
-```
-
-**packages/gateway/src/routes/workflows.ts:**
-```typescript
-import { Router, Request, Response } from 'express';
-import { PrismaClient } from 'shared/generated/prisma';
-
-const prisma = new PrismaClient();
-const router = Router();
-
-// GET /api/v1/workflows
-router.get('/', async (_req: Request, res: Response) => {
-  const workflows = await prisma.activeWorkflow.findMany({
-    include: { repository: true, pullRequests: true },
-    orderBy: { updatedAt: 'desc' },
-  });
-  return res.json({ data: workflows });
-});
-
-// GET /api/v1/workflows/:id
-router.get('/:id', async (req: Request, res: Response) => {
-  const workflow = await prisma.activeWorkflow.findUnique({
-    where: { id: req.params.id },
-    include: { repository: true, pullRequests: true, workRequest: true },
-  });
-  if (!workflow) {
-    return res.status(404).json({
-      error: { code: 'WORKFLOW_NOT_FOUND', message: `No workflow with id ${req.params.id}` },
-    });
-  }
-  return res.json({ data: workflow });
-});
-
-export { router as workflowRouter };
-```
-
-### Step 10 (Agent): Implementer Agent Configuration
+### Step 11: Implementer Agent with Tool Bindings
 
 **packages/worker/src/agents/prompts.ts:**
 ```typescript
 export const IMPLEMENTER_SYSTEM_PROMPT = `You are a highly constrained Surgical Coder operating within an isolated repository environment.
 
 INSTRUCTIONS:
-1. Read the work request carefully. Understand what needs to be implemented.
+1. Read the description carefully. Understand what needs to be implemented.
 2. Explore the codebase using readFile and listDirectory to understand the existing code structure, patterns, and conventions.
 3. Write your implementation code following the existing patterns in the repository.
 4. TDD MANDATE: Write corresponding unit/integration tests BEFORE or alongside your implementation.
@@ -1310,29 +1484,90 @@ If provided with a previousTestResult, focus on fixing the failures described th
 ```typescript
 import { Mastra } from '@mastra/core';
 import { anthropic } from '@mastra/anthropic';
+import { createTool } from '@mastra/core';
+import { z } from 'zod';
+import type { Workspace } from '../activities/workspace';
 
-export function createImplementerAgent() {
+/**
+ * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
+ * Each tool call is translated to a `docker exec` command inside the workspace.
+ */
+export function createImplementerAgent(workspace: Workspace) {
+  // Tool: Read a file from the workspace
+  const readFile = createTool({
+    id: 'readFile',
+    description: 'Read the contents of a file in the workspace',
+    inputSchema: z.object({ path: z.string().describe('Relative path from repo root') }),
+    execute: async ({ context }) => {
+      try {
+        return workspace.exec(`cat '${context.path}'`);
+      } catch (err: any) {
+        return `Error reading file: ${err.message}`;
+      }
+    },
+  });
+
+  // Tool: Write/overwrite a file in the workspace
+  const writeFile = createTool({
+    id: 'writeFile',
+    description: 'Create or overwrite a file in the workspace',
+    inputSchema: z.object({
+      path: z.string().describe('Relative path from repo root'),
+      content: z.string().describe('Full file content'),
+    }),
+    execute: async ({ context }) => {
+      workspace.exec(`mkdir -p "$(dirname '${context.path}')"`);
+      // Write via base64 to avoid shell escaping issues
+      const b64 = Buffer.from(context.content).toString('base64');
+      workspace.exec(`echo '${b64}' | base64 -d > '${context.path}'`);
+      return `File written: ${context.path}`;
+    },
+  });
+
+  // Tool: List directory contents
+  const listDirectory = createTool({
+    id: 'listDirectory',
+    description: 'List files and directories at a given path',
+    inputSchema: z.object({ path: z.string().default('.').describe('Relative path from repo root') }),
+    execute: async ({ context }) => {
+      try {
+        return workspace.exec(`ls -la '${context.path}'`);
+      } catch (err: any) {
+        return `Error listing directory: ${err.message}`;
+      }
+    },
+  });
+
+  // Tool: Execute a bash command in the workspace
+  const bash = createTool({
+    id: 'bash',
+    description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
+    inputSchema: z.object({ command: z.string().describe('Shell command to execute') }),
+    execute: async ({ context }) => {
+      try {
+        return workspace.exec(context.command);
+      } catch (err: any) {
+        return `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}`;
+      }
+    },
+  });
+
   const mastra = new Mastra({
     agents: {
       implementer: {
         name: 'implementer',
         model: anthropic('claude-opus-4-6'),
         instructions: '', // Set per-call via system message
-        tools: {
-          // MCP tools are configured to operate within the workspace container.
-          // The actual tool bindings depend on the Mastra MCP integration.
-          // In the MVP, agent tool calls are translated to docker exec commands
-          // by the executeImplementation activity.
-        },
+        tools: { readFile, writeFile, listDirectory, bash },
       },
     },
   });
 
-  return mastra;
+  return { agent: mastra.getAgent('implementer'), mastra };
 }
 ```
 
-### Step 15: Activity Barrel Export
+### Step 12: Activity Barrel Export
 
 **packages/worker/src/activities/index.ts:**
 ```typescript
@@ -1348,20 +1583,23 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest';
 FROM node:20-alpine AS builder
 RUN corepack enable
 WORKDIR /app
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY .yarnrc.yml yarn.lock package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
-RUN pnpm install --frozen-lockfile
+RUN yarn install --immutable
 COPY packages/shared packages/shared
 COPY packages/gateway packages/gateway
-RUN pnpm --filter shared build && pnpm --filter gateway build
+RUN yarn workspace @auto-swe/shared prisma generate
+RUN yarn workspace @auto-swe/shared build && yarn workspace @auto-swe/gateway build
 
 FROM node:20-alpine
 RUN corepack enable
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/shared/generated ./packages/shared/generated
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder /app/packages/gateway/node_modules ./packages/gateway/node_modules
 COPY --from=builder /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder /app/packages/gateway/package.json ./packages/gateway/
 CMD ["node", "packages/gateway/dist/index.js"]
@@ -1372,21 +1610,25 @@ CMD ["node", "packages/gateway/dist/index.js"]
 FROM node:20-alpine AS builder
 RUN corepack enable
 WORKDIR /app
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY .yarnrc.yml yarn.lock package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/worker/package.json packages/worker/
-RUN pnpm install --frozen-lockfile
+RUN yarn install --immutable
 COPY packages/shared packages/shared
 COPY packages/worker packages/worker
-RUN pnpm --filter shared build && pnpm --filter worker build
+RUN yarn workspace @auto-swe/shared prisma generate
+RUN yarn workspace @auto-swe/shared build && yarn workspace @auto-swe/worker build
 
-FROM node:20-dind
+FROM node:20-alpine
 # Worker needs Docker CLI to manage workspace containers
+RUN apk add --no-cache docker-cli
 RUN corepack enable
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/shared/generated ./packages/shared/generated
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder /app/packages/worker/node_modules ./packages/worker/node_modules
 COPY --from=builder /app/packages/worker/dist ./packages/worker/dist
 COPY --from=builder /app/packages/worker/package.json ./packages/worker/
 CMD ["node", "packages/worker/dist/index.js"]
@@ -1420,30 +1662,35 @@ Configure on the target repository:
 # 1. Clone and install
 git clone <repo-url> auto-swe
 cd auto-swe
-pnpm install
+corepack enable
+yarn install
 
 # 2. Start infrastructure
 cp .env.example .env
 # Edit .env with your API keys
-docker compose up postgres temporal -d
+docker compose up postgres postgres-temporal temporal -d
 
 # 3. Run migrations and seed
-pnpm db:migrate
-pnpm db:generate
-pnpm db:seed
+yarn db:migrate
+yarn db:generate
+yarn db:seed
 
-# 4. Register a target repository (manual DB insert for MVP)
-# Use prisma studio: pnpm --filter shared prisma studio
-# Insert a Repository record with organizationName, repoName, defaultBranch
+# 4. Register a target repository
+yarn db:studio
+# In Prisma Studio: insert a Repository record with organizationName, repoName, defaultBranch
 
 # 5. Start services
-pnpm dev:gateway   # Terminal 1
-pnpm dev:worker    # Terminal 2
+yarn dev:gateway   # Terminal 1
+yarn dev:worker    # Terminal 2
 
 # 6. Submit a work request
 curl -X POST http://localhost:8080/api/v1/work-requests \
   -H 'Content-Type: application/json' \
-  -d '{"externalTicketId": "JIRA-1234", "repoIds": ["<repo-uuid>"]}'
+  -d '{
+    "externalTicketId": "JIRA-1234",
+    "description": "Add a GET /api/health endpoint that returns { status: ok }",
+    "repoIds": ["<repo-uuid>"]
+  }'
 
 # 7. Monitor
 # Temporal Web UI: http://localhost:8233
@@ -1456,7 +1703,7 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 
 | Component | What to Test | Framework |
 |---|---|---|
-| Gateway routes | Request validation, error responses, DB record creation | Vitest + Supertest |
+| Gateway routes | Request validation, error responses, DB record creation | Vitest + `light-my-request` (Fastify's built-in test helper) |
 | Temporal workflow | Signal handling, timeout behavior, state transitions | `@temporalio/testing` (TestWorkflowEnvironment) |
 | Activities | Mocked Prisma + mocked Docker exec | Vitest |
 | Workspace | Container lifecycle (create, exec, destroy) | Vitest (integration, requires Docker) |
@@ -1471,7 +1718,7 @@ A single E2E script that validates the full MVP path:
 // 2. Poll GET /api/v1/workflows until status = 'AWAITING_HUMAN_MERGE'
 // 3. Verify PR exists on GitHub
 // 4. Merge the PR manually (or simulate via API)
-// 5. POST /api/v1/webhooks/git with a mock merge payload
+// 5. POST /api/v1/webhooks/git with a mock merge payload (signed with HMAC)
 // 6. Poll GET /api/v1/workflows until status = 'COMPLETED'
 // 7. Assert: workflow completed, PR marked as MERGED
 ```
