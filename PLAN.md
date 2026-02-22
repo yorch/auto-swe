@@ -23,6 +23,10 @@ The system is delivered incrementally across four phases. Each phase produces a 
 
 **Goal:** A single Temporal workflow that accepts a work request, runs an agent to implement code in an isolated workspace, executes tests, opens a PR, and waits for human merge.
 
+> **Dedicated MVP documents:**
+> - **[docs/mvp-architecture.md](docs/mvp-architecture.md)** — MVP architecture, component design, data flow, and design rationale
+> - **[docs/mvp-implementation.md](docs/mvp-implementation.md)** — Step-by-step implementation guide with project structure, code, and build order
+
 **Delivers:**
 - PostgreSQL + pgvector database with Prisma schema (Users, Repositories, WorkRequests, ActiveWorkflows, PullRequests)
 - Temporal server + single worker process
