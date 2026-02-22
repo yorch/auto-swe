@@ -88,7 +88,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 
 > **Critical Boundary:** The Control Plane code and the Execution Plane code are completely distinct from the "Target Repositories." Agents operate in an isolated vacuum, completely unaware of the host system running them.
 
-### 2.1 Extended Component Diagram
+### 3.1 Extended Component Diagram
 
 ```
                                ┌───────────────────────────────────────────┐
@@ -142,7 +142,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 3. Tech Stack & Engineering Decisions
+## 4. Tech Stack & Engineering Decisions
 
 | Component | Technology | Decision Rationale & Deep Technical Implications |
 |---|---|---|
@@ -155,7 +155,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Execution Isolation | Kubernetes + KEDA + DinD | Rationale: Workflows launch ephemeral K8s Jobs. DinD allows execution of repository-specific test suites inside custom container images. |
 | Tooling Layer | Model Context Protocol (MCP) | Rationale: Standardizes how agents interact with the outside world (GitHub, Jira, bash). |
 
-### 3.1 LLM Model Strategy (Best-in-Class Allocation)
+### 4.1 LLM Model Strategy (Best-in-Class Allocation)
 
 | Agent / Task | Model ID | Context Window | Rationale & Strengths | Fallback |
 |---|---|---|---|---|
@@ -167,7 +167,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Performance Reviewer | `gpt-5.2` | 400K | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs. | `claude-opus-4-6` |
 | Interaction Gateway | `gemini-2.5-flash` | 1M tokens | Low Latency Classification: 0.32s time-to-first-token, ~250 tokens/sec, $0.30/M input. 1M context window handles full CI/CD log dumps without truncation. Includes thinking capabilities for ambiguous intent classification. | `gpt-5-mini` |
 
-### 3.2 Cost Management & Rate-Limit Strategy
+### 4.2 Cost Management & Rate-Limit Strategy
 
 Running multiple LLM providers per workflow requires explicit cost controls and rate-limit handling.
 
@@ -235,7 +235,7 @@ span.setAttributes({
 
 The Web Dashboard (Phase 4) aggregates these spans to display per-workflow and per-agent cost breakdowns.
 
-### 3.3 Agent-to-Agent Data Flow & Typed Interfaces
+### 4.3 Agent-to-Agent Data Flow & Typed Interfaces
 
 Every handoff between agents uses a typed interface. No agent receives raw, unstructured output from a predecessor — all inter-agent communication is serialized JSON conforming to these TypeScript types.
 
@@ -383,15 +383,15 @@ WorkRequest
   → Memory Agent       →  AgentLesson (persisted with embedding)
 ```
 
-## 4. End-to-End Workflow Lifecycle (CI/CD & TDD Integrated)
+## 5. End-to-End Workflow Lifecycle (CI/CD & TDD Integrated)
 
 To support work requests spanning different repositories, the system utilizes Temporal's Parent-Child Workflow pattern. The Child workflow has been substantially upgraded to include local Test-Driven Development (TDD) loops, CI/CD pipeline webhooks, and explicit human merge gates.
 
-### 4.1 The Epic Orchestrator (Parent Workflow)
+### 5.1 The Epic Orchestrator (Parent Workflow)
 
 The gateway triggers this master workflow. It evaluates global impact, orchestrates the dependency graph, and waits for all child repos to be successfully merged by human engineers.
 
-### 4.2 The Repo-Specific Workflow (Child Workflow with CI/CD & TDD)
+### 5.2 The Repo-Specific Workflow (Child Workflow with CI/CD & TDD)
 
 This is the standard, isolated agent loop that operates strictly within the confines of a single repository.
 
@@ -545,7 +545,7 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
 | CI signal timeout | 4 hours | Workflow times out with TIMED_OUT status |
 | Human merge timeout | 7 days | Workflow expires with TIMED_OUT status |
 
-### 4.3 Activity Implementations
+### 5.3 Activity Implementations
 
 Each activity referenced by the workflow is a Temporal activity function executed by the worker process. Activities are the boundary between Temporal's deterministic replay and the non-deterministic outside world (LLM calls, Docker, GitHub API, database writes).
 
@@ -870,11 +870,11 @@ export async function notifyHumanGate(
 }
 ```
 
-## 5. Multi-Repo Data Architecture & State Management (Prisma)
+## 6. Multi-Repo Data Architecture & State Management (Prisma)
 
 To safely track PRs, handle branch collisions, and orchestrate cross-repo epics, we formalize our database using Prisma v7.
 
-### 5.1 Prisma Data Model (Relational Domain Schema & RBAC)
+### 6.1 Prisma Data Model (Relational Domain Schema & RBAC)
 
 This schema adds User tracking for RBAC and executorImage to support custom execution environments per repository.
 
@@ -1008,7 +1008,7 @@ model AgentLesson {
 }
 ```
 
-### 5.2 Embedding Pipeline & Semantic Memory Retrieval
+### 6.2 Embedding Pipeline & Semantic Memory Retrieval
 
 The `AgentLesson` table stores vector embeddings alongside structured metadata. This section defines exactly how embeddings are generated, indexed, and retrieved.
 
@@ -1118,11 +1118,11 @@ export async function retrieveSimilarLessons(
 | Context Validator runs | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons` → inject into `ContextSnapshot.historicalLessons` | `executeImplementation` activity |
 | Admin deletes lesson | DELETE from `agent_lessons` WHERE id = :id (embedding removed with row) | Gateway API (`DELETE /api/v1/lessons/:id`) |
 
-## 6. Security, Guardrails, & Workspace Isolation
+## 7. Security, Guardrails, & Workspace Isolation
 
 To ensure system stability, the agentic system acts purely as an orchestrator and worker—it must never modify its own source code or bypass human QA workflows.
 
-### 6.1 Ephemeral Workspace & Custom Executors (Anti-Self-Modification)
+### 7.1 Ephemeral Workspace & Custom Executors (Anti-Self-Modification)
 
 Jira tickets trigger work strictly within isolated clones of Target Repositories.
 
@@ -1130,7 +1130,7 @@ Jira tickets trigger work strictly within isolated clones of Target Repositories
 - **Volume Sandboxing:** The MCP tools configured for the agent are hard-chrooted to `/workspace/target-repo`. The agent cannot traverse up the file tree to read host node configuration or the agent framework source code.
 - **Just-In-Time (JIT) Credential Scoping:** The agent is never provided global admin GitHub tokens. The Control Plane generates a short-lived, repository-scoped Installation Access Token permitting only read/write access to the assigned branch.
 
-### 6.2 Custom Executor Image Build Pipeline
+### 7.2 Custom Executor Image Build Pipeline
 
 The `Repository.executorImage` field references a pre-built Docker image. This section defines who builds these images, where they're stored, and how they're kept current.
 
@@ -1244,14 +1244,14 @@ metadata:
     eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/auto-swe-ecr-pull
 ```
 
-### 6.3 The TDD (Test-Driven Development) Loop
+### 7.3 The TDD (Test-Driven Development) Loop
 
 LLM code generation can be syntactically perfect but functionally broken.
 
 - The Implementer Agent is strictly instructed to write unit and integration tests based on the repository's native testing framework (e.g., Jest, PyTest) before asking for a review.
 - The agent uses its bash MCP tool to run the tests in the DinD sandbox. It reads the standard output/error, and iteratively fixes its own code until the test suite is green.
 
-### 6.3 Mastra Security Review Processor
+### 7.4 Mastra Security Review Processor
 
 The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for Implementation agents.
 
@@ -1259,11 +1259,11 @@ The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for I
 2. **Audit Phase:** A `claude-opus-4-6` model compares the requested code diff against the "Security Guideline" dataset.
 3. **Self-Correction Phase:** If a violation is detected (e.g., SQL Injection risk), the processor denies the write access and returns a retry instruction forcing immediate remediation.
 
-## 7. Interaction Gateway & Role-Based Access Control (RBAC)
+## 8. Interaction Gateway & Role-Based Access Control (RBAC)
 
 The Interaction Gateway exposes a RESTful API to manage the lifecycle of automated workflows. To prevent unauthorized actions, all inbound requests (API or Slack) pass through an RBAC middleware mapped to the `User` Prisma table.
 
-### 7.1 Authentication & Session Strategy
+### 8.1 Authentication & Session Strategy
 
 All API requests (except webhooks, which use HMAC signature verification) require a Bearer JWT in the `Authorization` header.
 
@@ -1271,7 +1271,7 @@ All API requests (except webhooks, which use HMAC signature verification) requir
 - **Token refresh:** `POST /api/v1/auth/refresh` accepts a refresh token (7d expiry, stored hashed in DB) and returns a new JWT.
 - **Slack ID resolution:** When a request arrives from a Slack interactive webhook, the Gateway resolves `slack_id` from the signed Slack payload → looks up the `User` record → extracts the role. No JWT is involved for Slack-originated actions.
 
-### 7.2 RBAC Permission Matrix
+### 8.2 RBAC Permission Matrix
 
 | Action | Endpoint | ADMIN | LEAD | ENGINEER |
 |---|---|---|---|---|
@@ -1287,7 +1287,7 @@ All API requests (except webhooks, which use HMAC signature verification) requir
 | Delete memory embeddings | `DELETE /api/v1/lessons/:id` | Y | N | N |
 | View agent lessons | `GET /api/v1/lessons` | Y | Y | Y |
 
-### 7.3 Gateway API Specification
+### 8.3 Gateway API Specification
 
 All responses follow a standard envelope:
 
@@ -1354,7 +1354,7 @@ GET    /api/v1/lessons/search               → ApiResponse<AgentLesson[]>      
 DELETE /api/v1/lessons/:id                  → ApiResponse<{ deleted: true }>          RBAC: ADMIN
 ```
 
-### 7.4 Webhook Endpoints
+### 8.4 Webhook Endpoints
 
 Webhook endpoints use HMAC-SHA256 signature verification (no JWT). The secret is configured per integration.
 
@@ -1400,7 +1400,7 @@ POST /api/v1/webhooks/slack
     5. Update Slack message to reflect action taken
 ```
 
-### 7.5 Standard Error Responses
+### 8.5 Standard Error Responses
 
 ```typescript
 // 400 Bad Request
@@ -1422,7 +1422,7 @@ POST /api/v1/webhooks/slack
 { error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded. Retry after 30s' }, meta: { retryAfter: 30 } }
 ```
 
-## 8. Web Interface & Admin Control Center
+## 9. Web Interface & Admin Control Center
 
 Built with Next.js and Tailwind CSS, this dashboard consumes the Interaction Gateway API to provide deep visibility and administrative control over the agentic workforce.
 
@@ -1431,7 +1431,7 @@ Built with Next.js and Tailwind CSS, this dashboard consumes the Interaction Gat
 - **RBAC Policy Editor (Admins Only):** Interface for mapping new engineers and assigning their roles.
 - **Repository Onboarding:** Interface to register new repositories, configure their specific `defaultBranch`, and specify their `executorImage`.
 
-## 9. Infrastructure & Deployment (Local Lab)
+## 10. Infrastructure & Deployment (Local Lab)
 
 ```yaml
 version: '3.8'
@@ -1498,33 +1498,33 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
 ```
 
-## 10. Agent Operating Instructions (Advanced System Prompts)
+## 11. Agent Operating Instructions (Advanced System Prompts)
 
-### 10.1 The Implementer Agent (Surgical Coder & Tester)
+### 11.1 The Implementer Agent (Surgical Coder & Tester)
 
 **(Model: claude-opus-4-6)**
 
 > "You are a highly constrained Surgical Coder operating within a customized, isolated repository environment. Execute the plan.md exactly as written. TDD MANDATE: Before submitting your code for review, you MUST write corresponding unit/integration tests and execute them using the bash MCP tool. You must iteratively fix your code until your test suite passes. Adhere perfectly to the injected 'Global Guidelines' and refer to the Semantic Registry for any cross-repo API contracts. If your output is rejected by any Review Processor or the external CI/CD pipeline, do not attempt to justify your code. Read the logs and immediately refactor to comply."
 
-### 10.2 The Context Validator (Global Analyst)
+### 11.2 The Context Validator (Global Analyst)
 
 **(Model: gemini-2.5-pro)**
 
 > "You are the Global Context Validator. Trace all dependencies across Jira and Confluence. You must extract an exhaustive list of explicit 'Success Criteria' from these documents. These extracted criteria will form the immutable Context Snapshot."
 
-### 10.3 The Epic Planner Agent (System Architect)
+### 11.3 The Epic Planner Agent (System Architect)
 
 **(Model: claude-opus-4-6)**
 
 > "You are the Lead System Architect orchestrating a multi-repo Epic. Analyze the provided ticket, the cross-repo codebase schemas, and the immutable 'Context Snapshot'. Your execution graph must strictly map to the 'Success Criteria'. Carefully review the 'Historical Failures' section to circumvent known integration pitfalls."
 
-### 10.4 The Domain Logic & Correctness Reviewer
+### 11.4 The Domain Logic & Correctness Reviewer
 
 **(Model: claude-opus-4-6)**
 
 > "You are the QA and Domain Logic Lead. You have been provided the immutable 'Context Snapshot'. Treat this array as a strict checklist. If you cannot conclusively verify that the PR satisfies every single criterion from the snapshot, reject the code."
 
-### 10.5 The Security Auditor Agent
+### 11.5 The Security Auditor Agent
 
 **(Model: claude-opus-4-6)**
 
