@@ -71,7 +71,7 @@ These docs have `⚠️ PHASE X` banners on out-of-scope sections. Respect them.
 
 | Component | Technology | Version |
 |---|---|---|
-| Runtime | Node.js | >=20.0.0 |
+| Runtime | Node.js | >=24.0.0 |
 | Package Manager | Yarn 4 (Berry) | 4.12.0 (via corepack) |
 | HTTP Framework | Fastify | ^5.7.0 |
 | Orchestration | Temporal.io | auto-setup:1.25.2 |

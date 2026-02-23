@@ -430,7 +430,7 @@ mobile to a hamburger menu.
   │  GitHub API URL:  [________________________] (optional)        │
   │     Default: https://api.github.com (GHE: <host>/api/v3)      │
   │  MCP Server Ref:  [________________________] (optional)        │
-  │  Executor Image:  [____node:20-alpine______] (optional)        │
+  │  Executor Image:  [____node:24-alpine______] (optional)        │
   │                                                                │
   │                              [Cancel]  [Create]                │
   └────────────────────────────────────────────────────────────────┘

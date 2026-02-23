@@ -172,7 +172,7 @@ The only LLM agent in the MVP. Powered by Mastra 1.0 with `claude-opus-4-6`.
 
 In the MVP, workspace isolation uses **Docker-in-Docker** via `docker run` from the worker process (not K8s Jobs — that's production). The worker:
 
-1. Runs `docker run -d --name workspace-<id> node:20-alpine sleep infinity`
+1. Runs `docker run -d --name workspace-<id> node:24-alpine sleep infinity`
 2. Uses `docker exec` to clone the repo, run agent commands, execute tests
 3. Tears down the container when the activity completes
 

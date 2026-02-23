@@ -65,7 +65,7 @@ model Repository {
   mcpServerRef     String?          @map("mcp_server_ref")
 
   // Custom Docker image containing internal tools/certs/npm registries
-  executorImage    String?          @default("node:20-alpine") @map("executor_image")
+  executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
 
   activeWorkflows  ActiveWorkflow[]
@@ -288,7 +288,7 @@ Work requests trigger execution strictly within isolated clones of Target Reposi
 
 ### 3.2 Custom Executor Image Build Pipeline
 
-> ⚠️ **PHASE 4** — Custom executor images are not part of the MVP. The MVP uses the default `node:20-alpine` image. This section documents the production build pipeline for later phases.
+> ⚠️ **PHASE 4** — Custom executor images are not part of the MVP. The MVP uses the default `node:24-alpine` image. This section documents the production build pipeline for later phases.
 
 The `Repository.executorImage` field references a pre-built Docker image. This section defines who builds these images, where they're stored, and how they're kept current.
 
@@ -308,7 +308,7 @@ Each onboarded repository can optionally include a `.auto-swe/Dockerfile` in its
 
 ```dockerfile
 # Example: .auto-swe/Dockerfile for a Node.js project with internal registry
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Internal corporate CA certificate
 COPY .auto-swe/certs/internal-ca.crt /usr/local/share/ca-certificates/

@@ -135,7 +135,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 │  │                                │         ┌────────▼────────┐    │  ┌───────────────────┐  │  │
 │  │   ┌──────────────┐             │         │ Security Review │◀───┘  │ Docker-in-Docker  │  │  │
 │  │   │ Memory Agent │             └─────────┤ Processor (HITL)│       │ (Custom Image:    │  │  │
-│  │   │ (Summarizer) │                       └────────┬────────┘       │  e.g., node-20-   │  │  │
+│  │   │ (Summarizer) │                       └────────┬────────┘       │  e.g., node-24-   │  │  │
 │  │   └──────────────┘                                │                │  internal-reg)    │  │  │
 │  │          ▲                                        ▼                └───────────────────┘  │  │
 │  │          │                               ┌─────────────────┐                              │  │

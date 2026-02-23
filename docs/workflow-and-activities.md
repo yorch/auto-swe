@@ -349,7 +349,7 @@ export async function executeImplementation(
 
   // 3. Provision isolated workspace (K8s Job with custom executor image)
   const workspace = await k8sClient.createJob({
-    image: repo.executorImage ?? 'node:20-alpine',
+    image: repo.executorImage ?? 'node:24-alpine',
     command: ['sleep', 'infinity'],  // Kept alive for agent tool calls
     volumes: [{ name: 'workspace', mountPath: '/workspace/target-repo' }],
     env: {
@@ -498,8 +498,8 @@ export async function createOrUpdatePullRequest(
   const { data: pr } = await octokit.pulls.create({
     owner: repo.organizationName,
     repo: repo.repoName,
-    title: `[Auto] ${codeResult.branch}`,
-    body: formatPRBody(reviewResult),
+    title: formatPRTitle(codeResult),     // Configurable via PR_TITLE_TEMPLATE env var
+    body: formatPRBody(reviewResult),    // Configurable via PR_BODY_TEMPLATE env var
     head: codeResult.branch,
     base: repo.defaultBranch,
   });
