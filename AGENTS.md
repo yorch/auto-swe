@@ -40,11 +40,14 @@ Follow the **15-step build order** in `mvp-implementation.md` Section 2. Each st
 | Feature | Phase |
 |---|---|
 | JWT authentication or RBAC middleware | 3 |
+| Team CRUD API endpoints or membership management | 3 |
+| Team-scoped RBAC enforcement (`requiredTeamRole`) | 3 |
+| Team filtering on list endpoints (workflows, repos, lessons) | 3 |
 | Review network (Security Auditor, Domain Logic Reviewer, Performance Reviewer) | 2 |
 | CI/CD webhook listener or CI self-healing loop | 2 |
 | Context Validator agent or ContextSnapshot persistence | 2 |
 | Slack integration (OAuth, interactive webhooks, approval buttons) | 3 |
-| Web UI / Admin Dashboard | 4 |
+| Web UI / Admin Dashboard in `packages/web/` (incl. Teams List, Team Detail pages) | 4 |
 | Semantic memory (AgentLesson embeddings, pgvector search) | 4 |
 | Cost tracking or per-workflow token budgets | 4 |
 | Custom executor image build pipeline | 4 |
@@ -58,10 +61,10 @@ These describe Phase 2-4 features. Read for context only — do NOT implement fr
 
 | Document | Contains | Phase |
 |---|---|---|
-| `docs/gateway-and-auth.md` | JWT auth, RBAC middleware, Slack OAuth, full API spec | 3 |
-| `docs/data-and-infra.md` | Embedding pipeline, K8s executor images, SecurityReviewProcessor | 2-4 |
+| `docs/gateway-and-auth.md` | JWT auth, RBAC middleware (incl. team-scoped), Team API endpoints, Slack OAuth, full API spec | 3 |
+| `docs/data-and-infra.md` | Embedding pipeline, K8s executor images, SecurityReviewProcessor (Team/TeamMembership models are in schema but tables-only in Phase 1) | 2-4 |
 | `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit, K8s workspace | 2-4 |
-| `docs/wireframes.md` | Web dashboard wireframes | 4 |
+| `docs/wireframes.md` | Web dashboard wireframes (incl. Teams List, Team Detail pages) | 4 |
 
 These docs have `⚠️ PHASE X` banners on out-of-scope sections. Respect them.
 
@@ -80,6 +83,11 @@ These docs have `⚠️ PHASE X` banners on out-of-scope sections. Respect them.
 | Database | PostgreSQL 17 + pgvector | pgvector/pgvector:pg17 |
 | LLM (MVP) | claude-opus-4-6 (Anthropic) | — |
 | Language | TypeScript | ^5.7.0 |
+| Web Dashboard | Next.js 16 + React 19 + Tailwind CSS 4 | ^16.1.0 / ^19.2.0 / ^4.2.0 |
+| UI Components | shadcn/ui + Radix UI (unified) | copy-paste / ^1.4.0 |
+| Server State | TanStack Query (React Query) | ^5.90.0 |
+| Client State | Zustand | ^5.0.0 |
+| Charts | Recharts | ^3.7.0 |
 | Testing | Vitest | ^3.0.0 |
 
 ---
@@ -100,11 +108,14 @@ auto-swe/
 │   │       ├── plugins/ # prisma.ts, temporal.ts (fastify-plugin)
 │   │       ├── routes/  # workRequests.ts, workflows.ts, webhooks.ts
 │   │       └── index.ts # App bootstrap
-│   └── worker/          # Temporal worker + Mastra agents
+│   ├── worker/          # Temporal worker + Mastra agents
+│   │   └── src/
+│   │       ├── workflows/    # engineering.ts (V8 isolate — import type only)
+│   │       ├── activities/   # executeImplementation, createOrUpdatePullRequest, state, workspace
+│   │       └── agents/       # implementer.ts, prompts.ts
+│   └── web/             # Web Dashboard (Next.js 16 + React 19 + Tailwind CSS 4) — Phase 4
 │       └── src/
-│           ├── workflows/    # engineering.ts (V8 isolate — import type only)
-│           ├── activities/   # executeImplementation, createOrUpdatePullRequest, state, workspace
-│           └── agents/       # implementer.ts, prompts.ts
+│           └── app/     # Next.js App Router pages
 ├── docker-compose.yml   # Postgres, Temporal, Gateway, Worker
 ├── tsconfig.base.json   # Shared TypeScript config
 ├── vitest.config.ts     # Test configuration
@@ -133,6 +144,8 @@ auto-swe/
 | Git branch | `<BRANCH_PREFIX>/<ticketId>` | `auto/JIRA-1234` (default prefix: `auto`) |
 | Docker workspace container | `workspace-<random-hex>` | `workspace-a1b2c3d4` |
 | Prisma table mapping | `snake_case` via `@@map` | `active_workflows` |
+| Team slug | `lowercase-kebab-case` | `payments`, `platform-eng` |
+| Team membership composite key | `(user_id, team_id)` unique | — |
 | TypeScript interfaces | `PascalCase` | `RepoWorkRequest` |
 | Activity functions | `camelCase`, verb-first | `executeImplementation` |
 
@@ -254,5 +267,5 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | No auth in MVP | Hardcoded ADMIN role | MVP runs locally in Docker Compose — no external access to protect |
 | DinD over K8s | `docker run`/`exec` | No cluster needed; same isolation model, zero infra beyond Docker |
 | Single PAT | One GitHub token | JIT-scoped tokens require a GitHub App (Phase 3) |
-| Full Prisma schema | All 8 models created | Forward compatibility — unused tables have zero runtime cost |
+| Full Prisma schema | All 10 models created (incl. Team, TeamMembership) | Forward compatibility — unused tables have zero runtime cost |
 | Yarn 4 `node-modules` linker | Not PnP | Maximum tool compatibility with Prisma, Temporal, Docker |

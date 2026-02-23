@@ -28,7 +28,9 @@ The system is delivered incrementally across four phases. Each phase produces a 
 > - **[docs/mvp-implementation.md](docs/mvp-implementation.md)** — Step-by-step implementation guide with project structure, code, and build order
 
 **Delivers:**
-- PostgreSQL + pgvector database with Prisma schema (Users, Repositories, WorkRequests, ActiveWorkflows, PullRequests)
+- PostgreSQL + pgvector database with Prisma schema (Users, Teams, TeamMemberships, Repositories, WorkRequests, ActiveWorkflows, PullRequests)
+- Team + TeamMembership tables and nullable Repository.teamId FK (tables only — no RBAC enforcement)
+- Seed: "Default Team" with admin user and sample repository assigned
 - Temporal server + single worker process
 - `EngineeringWorkflow` (child workflow only — no parent orchestrator)
 - Implementer Agent (Mastra + `claude-opus-4-6`) with bash and GitHub MCP tools
@@ -38,7 +40,7 @@ The system is delivered incrementally across four phases. Each phase produces a 
 - CLI trigger (`POST /api/v1/work-requests`) with hardcoded ADMIN role
 - Docker Compose for local development (Postgres, Temporal, Gateway, Worker)
 
-**Does NOT include:** Multi-repo epics, review network, CI/CD webhook listener, Slack integration, Web UI, RBAC enforcement, semantic memory.
+**Does NOT include:** Multi-repo epics, review network, CI/CD webhook listener, Slack integration, Web UI, RBAC enforcement (including team-scoped RBAC), semantic memory.
 
 **Exit criteria:** An external ticket ID submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
 
@@ -66,6 +68,10 @@ The system is delivered incrementally across four phases. Each phase produces a 
 - Planner Agent that decomposes epics into per-repo child workflows
 - Slack App integration (interactive messages, approval buttons, thread audit trails)
 - RBAC middleware on all Gateway endpoints (JWT + Slack ID resolution)
+- Team CRUD + membership API endpoints (`/api/v1/teams`, `/api/v1/teams/:id/members`)
+- Team-scoped RBAC middleware (`requiredTeamRole`) — dual-layer permission model (platform role + team role)
+- Team filtering on existing list endpoints (workflows, repositories, lessons)
+- Repository.teamId enforcement (non-null)
 - Slack approval gates (role-checked: only LEAD/ADMIN can approve architecture plans)
 - Human merge gate with Slack notification
 
@@ -79,7 +85,7 @@ The system is delivered incrementally across four phases. Each phase produces a 
 - Memory Agent that summarizes workflow outcomes (rejections, CI failures, fixes) into `AgentLesson` embeddings
 - Embedding pipeline (text-embedding-3-large via OpenAI, HNSW index, cosine similarity search)
 - Lesson retrieval injected into Planner and Implementer agent context
-- Next.js Web Dashboard (Epic Visualizer, Context Inspector, RBAC Policy Editor, Repository Onboarding)
+- Next.js Web Dashboard (Epic Visualizer, Context Inspector, RBAC Policy Editor, Repository Onboarding, Teams List + Team Detail pages, team selector in sidebar/top bar, team columns in tables)
 - KEDA autoscaling for agent worker pods
 - Custom Executor Image build pipeline (GitHub Actions + ECR)
 - Cost tracking and per-workflow token budget enforcement
@@ -156,7 +162,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Agent Framework | Mastra 1.0 (TypeScript) | Rationale: The most robust, pure TS framework for creating deterministic agent networks. |
 | Data Access / ORM | Prisma v7.x | Rationale: Rust-free TS-native architecture (90% smaller bundle, 3x faster queries). Provides strict, end-to-end type safety for Postgres with OTel tracing. pgvector columns require raw SQL/TypedSQL (native support pending). |
 | Memory Store | PostgreSQL 17 + pgvector | Rationale: Unifies relational metadata and high-dimensional vector embeddings via pgvectorscale and HNSW indexes. |
-| Web UI / Dashboard | Next.js (React) + Tailwind | Rationale: Provides a fast, real-time SPA for tracking Temporal workflow states, administrating agent memory, and managing RBAC. |
+| Web UI / Dashboard | Next.js 16 + React 19 + Tailwind CSS 4 + shadcn/ui + Radix UI + TanStack Query + Zustand + Recharts | Rationale: Provides a fast, real-time SPA for tracking Temporal workflow states, administrating agent memory, and managing RBAC. shadcn/ui provides accessible, customizable components; TanStack Query handles server state with caching/refetch; Zustand for lightweight client state. |
 | Observability | OpenTelemetry (OTel) | Rationale: Traces every token generated, tool called, and reasoning step taken. Exports to Langfuse or SigNoz. |
 | Execution Isolation | Kubernetes + KEDA + DinD | Rationale: Workflows launch ephemeral K8s Jobs. DinD allows execution of repository-specific test suites inside custom container images. |
 | Tooling Layer | Model Context Protocol (MCP) | Rationale: Standardizes how agents interact with the outside world (GitHub, issue trackers, bash). |
