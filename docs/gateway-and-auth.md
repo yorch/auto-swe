@@ -2,6 +2,8 @@
 
 > Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for the Gateway service.
 
+> ⚠️ **PHASE 3+ DOCUMENT** — This document describes the full authentication, RBAC, and Slack integration layer. **None of this is part of the Phase 1 MVP.** The MVP uses a hardcoded ADMIN role with no JWT auth (see `mvp-implementation.md`). Read this for future context only — do not implement during Phase 1.
+
 ## 1. Authentication & Session Strategy
 
 All API requests (except webhooks, which use HMAC signature verification) require a Bearer JWT in the `Authorization` header.
@@ -404,7 +406,7 @@ interface ApiResponse<T> {
 
 ```
 POST /api/v1/work-requests
-  Body: { externalTicketId: string, repoIds: string[], slackChannel?: string }
+  Body: { externalTicketId: string, description: string, repoIds: string[], slackChannel?: string }
   Response: ApiResponse<{ workRequestId: string, workflowIds: string[] }>
   RBAC: ENGINEER+
 ```

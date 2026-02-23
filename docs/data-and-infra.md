@@ -2,6 +2,8 @@
 
 > Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for data, infra, and security.
 
+> ⚠️ **MULTI-PHASE DOCUMENT** — This document covers data and infrastructure across all phases. Sections are labeled with their target phase. For Phase 1 MVP, use the Prisma schema and Docker Compose from `mvp-implementation.md` — they are the authoritative source. This document extends them with Phase 2-4 additions.
+
 ## 1. Prisma Data Model (Relational Domain Schema & RBAC)
 
 This schema adds User tracking for RBAC and executorImage to support custom execution environments per repository.
@@ -17,6 +19,7 @@ generator client {
 
 datasource db {
   provider   = "postgresql"
+  url        = env("DATABASE_URL")
   extensions = [vector]
 }
 
@@ -159,6 +162,8 @@ model AgentLesson {
 
 ## 2. Embedding Pipeline & Semantic Memory Retrieval
 
+> ⚠️ **PHASE 4** — Semantic memory is not part of the MVP. The `AgentLesson` table exists in the schema for forward compatibility but has no code paths in Phase 1.
+
 The `AgentLesson` table stores vector embeddings alongside structured metadata. This section defines exactly how embeddings are generated, indexed, and retrieved.
 
 ### Embedding Generation
@@ -281,6 +286,8 @@ Jira tickets trigger work strictly within isolated clones of Target Repositories
 
 ### 3.2 Custom Executor Image Build Pipeline
 
+> ⚠️ **PHASE 4** — Custom executor images are not part of the MVP. The MVP uses the default `node:20-alpine` image. This section documents the production build pipeline for later phases.
+
 The `Repository.executorImage` field references a pre-built Docker image. This section defines who builds these images, where they're stored, and how they're kept current.
 
 #### Image Registry
@@ -402,6 +409,8 @@ LLM code generation can be syntactically perfect but functionally broken.
 
 ### 3.4 Mastra Security Review Processor
 
+> ⚠️ **PHASE 2** — The SecurityReviewProcessor is part of the review network, not the MVP.
+
 The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for Implementation agents.
 
 1. **Intercept Phase:** Every Mastra MCP tool call to `writeFile` or `editFile` triggers this output processor.
@@ -409,6 +418,8 @@ The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for I
 3. **Self-Correction Phase:** If a violation is detected (e.g., SQL Injection risk), the processor denies the write access and returns a retry instruction forcing immediate remediation.
 
 ## 4. Infrastructure & Deployment (Local Lab)
+
+> ⚠️ **FULL SYSTEM (Phase 3+)** — This Docker Compose includes all services (OTel, web dashboard). For the MVP, use the Docker Compose in `mvp-implementation.md` which only runs Postgres, Temporal, Gateway, and Worker. Note: the MVP uses service names `gateway` and `worker`; this full-system compose uses `interaction-gateway` and `agent-worker`.
 
 ```yaml
 services:

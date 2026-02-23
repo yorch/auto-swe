@@ -2,6 +2,8 @@
 
 > Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for the Temporal worker.
 
+> ⚠️ **PHASE 2+ DOCUMENT** — This document describes the **full** workflow with review network, CI self-healing, memory commit, and K8s workspace provisioning. **None of this is part of the Phase 1 MVP.** The MVP workflow is a simplified linear flow: Implement → PR → Await Human Merge → Done. See `mvp-implementation.md` for the MVP workflow code.
+
 ## 1. Agent-to-Agent Data Flow & Typed Interfaces
 
 Every handoff between agents uses a typed interface. No agent receives raw, unstructured output from a predecessor — all inter-agent communication is serialized JSON conforming to these TypeScript types.
@@ -9,13 +11,22 @@ Every handoff between agents uses a typed interface. No agent receives raw, unst
 ```typescript
 // ── Workflow Input ──
 
+// NOTE: This is the FULL (Phase 2+) version of RepoWorkRequest.
+// The MVP version in mvp-implementation.md has fewer fields:
+//   { workRequestId, repoId, externalTicketId, description, requestPayload }
+// Fields like contextSnapshotId, planOverride, slackChannel, and parentWorkflowId
+// are added in later phases as their dependent features are built.
+
 interface RepoWorkRequest {
   workRequestId: string;           // UUID from WorkRequest table
   repoId: string;                  // UUID from Repository table
-  contextSnapshotId: string;       // UUID — immutable snapshot created by Context Validator
-  planOverride?: string;           // Optional pre-approved plan (skips Planner)
-  slackChannel?: string;           // For audit trail notifications
-  parentWorkflowId?: string;       // Set when spawned by Epic Orchestrator
+  externalTicketId: string;        // e.g., "JIRA-1234" (present in all phases)
+  description: string;             // What the agent should implement (present in all phases)
+  requestPayload: string;          // Raw JSON of the original API body (present in all phases)
+  contextSnapshotId?: string;      // UUID — added in Phase 2 (Context Validator)
+  planOverride?: string;           // Optional pre-approved plan (Phase 2+, skips Planner)
+  slackChannel?: string;           // For audit trail notifications (Phase 3+)
+  parentWorkflowId?: string;       // Set when spawned by Epic Orchestrator (Phase 3+)
 }
 
 // ── Context Validator → Planner ──
