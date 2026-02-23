@@ -1,0 +1,10 @@
+# Default executor image for Node.js projects
+FROM node:24-alpine
+
+# Install git (required for workspace operations)
+RUN apk add --no-cache git
+
+# Pre-install common global tools
+RUN npm install -g typescript
+
+WORKDIR /workspace/target-repo

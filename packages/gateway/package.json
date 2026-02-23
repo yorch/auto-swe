@@ -8,15 +8,20 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@auto-swe/shared": "*",
+    "@slack/web-api": "^7.14.1",
+    "@temporalio/client": "^1.11.0",
+    "bcrypt": "^6.0.0",
     "fastify": "^5.7.0",
     "fastify-plugin": "^5.0.0",
     "fastify-raw-body": "^5.0.0",
     "fastify-type-provider-zod": "^4.0.0",
-    "zod": "^3.24.0",
-    "@temporalio/client": "^1.11.0",
-    "@auto-swe/shared": "*"
+    "jsonwebtoken": "^9.0.3",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

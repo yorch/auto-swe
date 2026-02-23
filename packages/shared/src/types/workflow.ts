@@ -1,12 +1,17 @@
-// ── MVP Workflow Types ──
-// Subset of the full system types — only what Phase 1 needs.
+// ── Workflow Types ──
 
 export interface RepoWorkRequest {
   workRequestId: string;
   repoId: string;
   externalTicketId: string;
-  description: string;          // What the agent should implement
+  description: string;
   requestPayload: string;
+  // Phase 2+ fields
+  contextSnapshotId?: string;
+  planOverride?: string;
+  // Phase 3+ fields
+  slackChannel?: string;
+  parentWorkflowId?: string;
 }
 
 export interface CodeResult {
@@ -35,14 +40,60 @@ export interface TestRunResult {
   duration_ms: number;
 }
 
+// ── Review Network Types (Phase 2) ──
+
+export interface ReviewVerdict {
+  reviewer: 'SECURITY' | 'DOMAIN_LOGIC' | 'PERFORMANCE';
+  approved: boolean;
+  severity: 'PASS' | 'INFO' | 'WARNING' | 'CRITICAL';
+  findings: ReviewFinding[];
+}
+
+export interface ReviewFinding {
+  file: string;
+  line?: number;
+  category: string;
+  description: string;
+  suggestedFix: string;
+}
+
+export interface AggregatedReviewResult {
+  approved: boolean;
+  verdicts: ReviewVerdict[];
+  codeResult: CodeResult;
+  rejectionSummary?: string;
+}
+
+// ── Semantic Memory Types (Phase 2) ──
+
+export interface LessonSummary {
+  lessonId: string;
+  summary: string;
+  failureType: string | null;
+  similarity: number;
+}
+
+export type FailureType =
+  | 'CI_FAILURE'
+  | 'REVIEW_REJECTION'
+  | 'SECURITY_VIOLATION'
+  | 'MERGE_CONFLICT';
+
+// ── Workflow Result ──
+
 export interface WorkflowResult {
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT';
   prNumber?: number;
   prUrl?: string;
+  totalCIRetries?: number;
+  totalReviewRetries?: number;
+  lessonsGenerated?: string[];
 }
 
 export type WorkflowStatus =
   | 'IMPLEMENTING'
+  | 'IN_REVIEW'
+  | 'AWAITING_CI'
   | 'AWAITING_HUMAN_MERGE'
   | 'COMPLETED'
   | 'FAILED'

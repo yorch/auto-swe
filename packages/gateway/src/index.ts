@@ -3,9 +3,16 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import fastifyRawBody from 'fastify-raw-body';
 import { temporalPlugin } from './plugins/temporal.js';
 import { prismaPlugin } from './plugins/prisma.js';
+import { authPlugin } from './plugins/auth.js';
 import { workRequestRoutes } from './routes/workRequests.js';
 import { workflowRoutes } from './routes/workflows.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { authRoutes } from './routes/auth.js';
+import { teamRoutes } from './routes/teams.js';
+import { userRoutes } from './routes/users.js';
+import { repositoryRoutes } from './routes/repositories.js';
+import { lessonRoutes } from './routes/lessons.js';
+import { slackRoutes } from './routes/slack.js';
 
 async function start() {
   const app = Fastify({ logger: true });
@@ -17,9 +24,10 @@ async function start() {
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });
 
-  // Plugins (decorate app with .temporal and .prisma)
+  // Plugins (decorate app with .temporal, .prisma, .auth)
   await app.register(prismaPlugin);
   await app.register(temporalPlugin);
+  await app.register(authPlugin);
 
   // Global error handler
   app.setErrorHandler(async (error: any, request, reply) => {
@@ -36,10 +44,18 @@ async function start() {
   // Health check
   app.get('/health', async () => ({ status: 'ok' }));
 
-  // Route plugins
+  // ── Public routes (no auth) ──
+  await app.register(authRoutes, { prefix: '/api/v1/auth' });
+
+  // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
+  await app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  await app.register(userRoutes, { prefix: '/api/v1/users' });
+  await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
+  await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
+  await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ port, host: '0.0.0.0' });

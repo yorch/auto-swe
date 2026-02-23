@@ -22,7 +22,7 @@ const stateActivities = proxyActivities<
 });
 
 const agentActivities = proxyActivities<
-  Pick<typeof activitiesType, 'executeImplementation'>
+  Pick<typeof activitiesType, 'executeImplementation' | 'executeCIFixImplementation' | 'runReviewNetwork'>
 >({
   startToCloseTimeout: '30m',
   heartbeatTimeout: '5m',
@@ -35,7 +35,7 @@ const agentActivities = proxyActivities<
 });
 
 const githubActivities = proxyActivities<
-  Pick<typeof activitiesType, 'createOrUpdatePullRequest'>
+  Pick<typeof activitiesType, 'createOrUpdatePullRequest' | 'fetchCILogs'>
 >({
   startToCloseTimeout: '2m',
   retry: {
@@ -46,12 +46,28 @@ const githubActivities = proxyActivities<
   },
 });
 
+const memoryActivities = proxyActivities<
+  Pick<typeof activitiesType, 'commitToMemory'>
+>({
+  startToCloseTimeout: '5m',
+  retry: {
+    maximumAttempts: 3,
+    initialInterval: '5s',
+    backoffCoefficient: 2,
+    maximumInterval: '1m',
+  },
+});
+
 // ── Signals ──
 
 export const humanMergeSignal = defineSignal<[boolean]>('humanMergeSignal');
+export const ciPipelineSignal = defineSignal<[{ passed: boolean; logsUrl?: string }]>('ciPipelineSignal');
 
 // ── Constants ──
 
+const MAX_CI_RETRIES = 3;
+const MAX_REVIEW_RETRIES = 3;
+const CI_SIGNAL_TIMEOUT = '4h';
 const HUMAN_MERGE_TIMEOUT = '7d';
 
 // ── Workflow ──
@@ -59,28 +75,98 @@ const HUMAN_MERGE_TIMEOUT = '7d';
 export async function EngineeringWorkflow(
   request: RepoWorkRequest,
 ): Promise<WorkflowResult> {
+  let ciResult: { passed: boolean; logsUrl?: string } | null = null;
   let humanMerged = false;
+  let totalCIRetries = 0;
+  let totalReviewRetries = 0;
 
+  setHandler(ciPipelineSignal, (payload) => {
+    ciResult = payload;
+  });
   setHandler(humanMergeSignal, () => {
     humanMerged = true;
   });
 
-  // 1. Implement
+  // 1. Implementation Phase
   await stateActivities.updateDomainState(request.workRequestId, 'IMPLEMENTING');
 
-  const codeResult = await agentActivities.executeImplementation(request);
+  let codeResult = await agentActivities.executeImplementation(request);
 
-  // 2. Open PR
-  const prData = await githubActivities.createOrUpdatePullRequest(
-    request,
-    codeResult,
-  );
+  let isReadyForMerge = false;
 
-  // 3. Wait for human merge
-  await stateActivities.updateDomainState(
-    request.workRequestId,
-    'AWAITING_HUMAN_MERGE',
-  );
+  while (!isReadyForMerge) {
+    // 2. Review Network
+    await stateActivities.updateDomainState(request.workRequestId, 'IN_REVIEW');
+
+    const reviewResult = await agentActivities.runReviewNetwork(codeResult);
+
+    if (!reviewResult.approved) {
+      totalReviewRetries++;
+      if (totalReviewRetries >= MAX_REVIEW_RETRIES) {
+        await stateActivities.updateDomainState(request.workRequestId, 'FAILED');
+        return {
+          status: 'FAILED',
+          totalCIRetries,
+          totalReviewRetries,
+          lessonsGenerated: [],
+        };
+      }
+      // Feed rejection back to implementer for fix
+      codeResult = await agentActivities.executeCIFixImplementation(
+        reviewResult.rejectionSummary!,
+        codeResult,
+      );
+      continue;
+    }
+
+    // 3. Open/Update PR
+    await stateActivities.updateDomainState(request.workRequestId, 'AWAITING_CI');
+
+    const prData = await githubActivities.createOrUpdatePullRequest(
+      request,
+      codeResult,
+    );
+
+    // 4. Wait for CI pipeline signal
+    const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
+
+    if (!ciSignalReceived) {
+      await stateActivities.updateDomainState(request.workRequestId, 'TIMED_OUT');
+      return {
+        status: 'TIMED_OUT',
+        prNumber: prData.prNumber,
+        prUrl: prData.prUrl,
+        totalCIRetries,
+        totalReviewRetries,
+        lessonsGenerated: [],
+      };
+    }
+
+    if (ciResult!.passed) {
+      isReadyForMerge = true;
+    } else {
+      totalCIRetries++;
+      if (totalCIRetries >= MAX_CI_RETRIES) {
+        await stateActivities.updateDomainState(request.workRequestId, 'FAILED');
+        return {
+          status: 'FAILED',
+          prNumber: prData.prNumber,
+          prUrl: prData.prUrl,
+          totalCIRetries,
+          totalReviewRetries,
+          lessonsGenerated: [],
+        };
+      }
+
+      // 5. CI Fix Loop
+      const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
+      codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
+      ciResult = null; // Reset for next CI signal
+    }
+  }
+
+  // 6. Wait for human merge
+  await stateActivities.updateDomainState(request.workRequestId, 'AWAITING_HUMAN_MERGE');
 
   const merged = await condition(() => humanMerged, HUMAN_MERGE_TIMEOUT);
 
@@ -88,17 +174,31 @@ export async function EngineeringWorkflow(
     await stateActivities.updateDomainState(request.workRequestId, 'TIMED_OUT');
     return {
       status: 'TIMED_OUT',
-      prNumber: prData.prNumber,
-      prUrl: prData.prUrl,
+      totalCIRetries,
+      totalReviewRetries,
+      lessonsGenerated: [],
     };
   }
 
-  // 4. Complete
+  // 7. Memory Commit
+  const lessonsGenerated: string[] = [];
+  try {
+    const lessonId = await memoryActivities.commitToMemory(
+      `eng-${request.externalTicketId}`,
+      request.repoId,
+    );
+    if (lessonId) lessonsGenerated.push(lessonId);
+  } catch {
+    // Memory commit failure should not fail the workflow
+  }
+
+  // 8. Complete
   await stateActivities.updateDomainState(request.workRequestId, 'COMPLETED');
 
   return {
     status: 'SUCCESS',
-    prNumber: prData.prNumber,
-    prUrl: prData.prUrl,
+    totalCIRetries,
+    totalReviewRetries,
+    lessonsGenerated,
   };
 }

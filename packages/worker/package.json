@@ -8,14 +8,15 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@auto-swe/shared": "*",
+    "@mastra/core": "^0.10.0",
+    "@octokit/rest": "^21.0.0",
+    "@temporalio/activity": "^1.11.0",
     "@temporalio/worker": "^1.11.0",
     "@temporalio/workflow": "^1.11.0",
-    "@temporalio/activity": "^1.11.0",
-    "@mastra/core": "^0.10.0",
-    "@ai-sdk/anthropic": "^1.0.0",
-    "@octokit/rest": "^21.0.0",
-    "zod": "^3.24.0",
-    "@auto-swe/shared": "*"
+    "openai": "^4.104.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

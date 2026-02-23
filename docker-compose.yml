@@ -57,6 +57,10 @@ services:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
       - TEMPORAL_ADDRESS=temporal:7233
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
       - PORT=8080
 
   worker:
@@ -73,8 +77,21 @@ services:
       - TEMPORAL_ADDRESS=temporal:7233
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DinD access
+
+  # Phase 4: Web Dashboard
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+    environment:
+      - NEXT_PUBLIC_API_URL=http://gateway:8080
 
 volumes:
   pgdata:
