@@ -16,34 +16,48 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # For OIDC -> ECR auth
+      id-token: write # For OIDC -> ECR auth
 
     steps:
       - name: Determine repo ID
         id: repo
         run: |
           if [ -n "${{ github.event.inputs.repo_id }}" ]; then
-            echo "REPO_ID=${{ github.event.inputs.repo_id }}" >> $GITHUB_ENV
+            echo "id=${{ github.event.inputs.repo_id }}" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ github.event.client_payload.repo_id }}" ]; then
-            echo "REPO_ID=${{ github.event.client_payload.repo_id }}" >> $GITHUB_ENV
+            echo "id=${{ github.event.client_payload.repo_id }}" >> "$GITHUB_OUTPUT"
           else
             echo "No repo_id provided. Scheduled builds should iterate all repos."
             exit 0
           fi
 
       - name: Fetch repo config from Gateway API
+        id: config
         run: |
           REPO=$(curl -sf -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${REPO_ID}")
-          echo "ORG=$(echo $REPO | jq -r '.data.organizationName')" >> $GITHUB_ENV
-          echo "REPO_NAME=$(echo $REPO | jq -r '.data.repoName')" >> $GITHUB_ENV
-          echo "EXECUTOR_IMAGE=$(echo $REPO | jq -r '.data.executorImage // \"node:24-alpine\"')" >> $GITHUB_ENV
+            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ steps.repo.outputs.id }}")
+          echo "org=$(echo "$REPO" | jq -r '.data.organizationName')" >> "$GITHUB_OUTPUT"
+          echo "name=$(echo "$REPO" | jq -r '.data.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.ORG }}/${{ env.REPO_NAME }}
+          repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
+
+      - name: Resolve Dockerfile
+        id: dockerfile
+        run: |
+          if [ -f ".auto-swe/Dockerfile" ]; then
+            echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            # Fetch default executor Dockerfile from the control-plane repo
+            mkdir -p .auto-swe
+            curl -sf -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://raw.githubusercontent.com/${{ github.repository }}/main/defaults/Dockerfile.node24" \
+              -o .auto-swe/Dockerfile
+            echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -52,35 +66,38 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
+        id: ecr-login
 
-      - name: Build and push executor image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ steps.ecr-login.outputs.registry }}/auto-swe/executors/${{ steps.config.outputs.org }}-${{ steps.config.outputs.name }}
+          tags: |
+            type=raw,value={{date 'YYYYMMDD'}}-{{sha}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.dockerfile.outputs.path }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update repository executor image in Gateway
         run: |
-          DOCKERFILE=".auto-swe/Dockerfile"
-          if [ ! -f "$DOCKERFILE" ]; then
-            # Use default executor Dockerfile from control plane
-            DOCKERFILE="defaults/Dockerfile.node24"
-            # Fetch default from control plane repo
-            curl -sf -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://raw.githubusercontent.com/${{ github.repository }}/main/defaults/Dockerfile.node24" \
-              -o "$DOCKERFILE" || true
-          fi
-
-          IMAGE_TAG="${ORG}-${REPO_NAME}:$(date +%Y%m%d)-${GITHUB_SHA::8}"
-          FULL_IMAGE="${ECR_REGISTRY}/auto-swe/executors/${IMAGE_TAG}"
-
-          docker build -f "$DOCKERFILE" -t "$FULL_IMAGE" .
-          docker push "$FULL_IMAGE"
-
-          echo "IMAGE_TAG=${FULL_IMAGE}" >> $GITHUB_ENV
-
-      - name: Update repository executor image
-        run: |
+          # Use the first tag (date-sha) as the pinned image reference
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
           curl -sf -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "{\"executorImage\": \"${IMAGE_TAG}\"}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${REPO_ID}"
+            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ steps.repo.outputs.id }}"
