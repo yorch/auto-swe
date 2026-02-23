@@ -425,6 +425,10 @@ mobile to a hamburger menu.
   │  Organization:    [________________________]                   │
   │  Repo Name:       [________________________]                   │
   │  Default Branch:  [____main________________]                   │
+  │  GitHub URL:      [________________________] (optional)        │
+  │     Default: https://github.com (set for GHE instances)        │
+  │  GitHub API URL:  [________________________] (optional)        │
+  │     Default: https://api.github.com (GHE: <host>/api/v3)      │
   │  MCP Server Ref:  [________________________] (optional)        │
   │  Executor Image:  [____node:20-alpine______] (optional)        │
   │                                                                │

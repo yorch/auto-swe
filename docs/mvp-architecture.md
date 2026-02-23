@@ -268,6 +268,8 @@ Four services for local development:
 | `ANTHROPIC_API_KEY` | worker | For `claude-opus-4-6` (Implementer) |
 | `GITHUB_TOKEN` | worker | PAT or App installation token for GitHub API |
 | `GITHUB_WEBHOOK_SECRET` | gateway | HMAC secret for verifying GitHub webhooks |
+| `GITHUB_URL` | worker | Base URL for git clone (default: `https://github.com`; set for GHE) |
+| `GITHUB_API_URL` | worker | Octokit base URL (default: `https://api.github.com`; GHE: `https://<host>/api/v3`) |
 
 ## 8. Error Handling (MVP)
 

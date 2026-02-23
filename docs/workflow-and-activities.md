@@ -354,7 +354,7 @@ export async function executeImplementation(
     volumes: [{ name: 'workspace', mountPath: '/workspace/target-repo' }],
     env: {
       GITHUB_TOKEN: await generateScopedInstallationToken(repo),
-      REPO_URL: `https://github.com/${repo.organizationName}/${repo.repoName}.git`,
+      REPO_URL: `${repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com'}/${repo.organizationName}/${repo.repoName}.git`,
       BRANCH: `auto/${snapshot.workRequest.externalTicketId}`,
     },
   });
@@ -472,7 +472,8 @@ export async function createOrUpdatePullRequest(
   const { codeResult } = reviewResult;
   const repo = await getRepoForBranch(codeResult.branch);
   const token = await generateScopedInstallationToken(repo);
-  const octokit = new Octokit({ auth: token });
+  const githubApiUrl = repo.githubApiUrl ?? process.env.GITHUB_API_URL ?? undefined;
+  const octokit = new Octokit({ auth: token, ...(githubApiUrl && { baseUrl: githubApiUrl }) });
 
   // Push the branch
   // (agent has already committed locally in the workspace)
@@ -489,7 +490,8 @@ export async function createOrUpdatePullRequest(
       where: { id: existing.id },
       data: { headSha: codeResult.headSha, ciStatus: 'PENDING' },
     });
-    return { prNumber: existing.prNumber!, prUrl: `https://github.com/${repo.organizationName}/${repo.repoName}/pull/${existing.prNumber}` };
+    const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+    return { prNumber: existing.prNumber!, prUrl: `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existing.prNumber}` };
   }
 
   // Create new PR

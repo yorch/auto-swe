@@ -159,9 +159,11 @@ TEMPORAL_ADDRESS=localhost:7233
 # LLM (Implementer Agent)
 ANTHROPIC_API_KEY=sk-ant-...
 
-# GitHub
+# GitHub (supports github.com and GitHub Enterprise Server)
 GITHUB_TOKEN=ghp_...
 GITHUB_WEBHOOK_SECRET=whsec_...
+GITHUB_URL=https://github.com                  # Base URL for git clone (omit for github.com)
+GITHUB_API_URL=https://api.github.com          # API base URL for Octokit (omit for github.com)
 ```
 
 **.gitignore (additions for Yarn 4 non-zero-installs):**
@@ -274,6 +276,8 @@ model Repository {
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
+  githubUrl        String?          @map("github_url")        // e.g., "https://github.acme.com" (null = use GITHUB_URL env or github.com)
+  githubApiUrl     String?          @map("github_api_url")    // e.g., "https://github.acme.com/api/v3" (null = use GITHUB_API_URL env or api.github.com)
   mcpServerRef     String?          @map("mcp_server_ref")
   executorImage    String?          @default("node:20-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
@@ -1249,7 +1253,8 @@ export async function executeImplementation(
     where: { id: request.repoId },
   });
 
-  const repoUrl = `https://github.com/${repo.organizationName}/${repo.repoName}.git`;
+  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const branch = `auto/${request.externalTicketId}`;
   const githubToken = process.env.GITHUB_TOKEN!;
 
@@ -1401,7 +1406,11 @@ export async function createOrUpdatePullRequest(
     where: { id: request.repoId },
   });
 
-  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const githubApiUrl = repo.githubApiUrl ?? process.env.GITHUB_API_URL ?? undefined;
+  const octokit = new Octokit({
+    auth: process.env.GITHUB_TOKEN,
+    ...(githubApiUrl && { baseUrl: githubApiUrl }),  // GitHub Enterprise Server: e.g., "https://github.acme.com/api/v3"
+  });
 
   // Check if PR already exists
   const existingPR = await prisma.pullRequest.findFirst({
@@ -1418,9 +1427,10 @@ export async function createOrUpdatePullRequest(
       data: { headSha: codeResult.headSha },
     });
 
+    const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
     return {
       prNumber: existingPR.prNumber!,
-      prUrl: `https://github.com/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`,
+      prUrl: `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`,
     };
   }
 
@@ -1729,6 +1739,8 @@ CMD ["node", "packages/worker/dist/index.js"]
 | `ANTHROPIC_API_KEY` | Yes | — | API key for claude-opus-4-6 |
 | `GITHUB_TOKEN` | Yes | — | GitHub PAT with `repo` scope |
 | `GITHUB_WEBHOOK_SECRET` | Yes | — | HMAC secret for GitHub webhook verification |
+| `GITHUB_URL` | No | `https://github.com` | Base URL for git operations (set for GitHub Enterprise Server) |
+| `GITHUB_API_URL` | No | `https://api.github.com` | Octokit base URL (GHE: `https://github.acme.com/api/v3`) |
 | `PORT` | No | `8080` | Gateway listen port |
 
 ### GitHub Webhook Setup

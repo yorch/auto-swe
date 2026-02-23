@@ -60,6 +60,8 @@ model Repository {
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
+  githubUrl        String?          @map("github_url")        // e.g., "https://github.acme.com" (null = use GITHUB_URL env or github.com)
+  githubApiUrl     String?          @map("github_api_url")    // e.g., "https://github.acme.com/api/v3" (null = use GITHUB_API_URL env or api.github.com)
   mcpServerRef     String?          @map("mcp_server_ref")
 
   // Custom Docker image containing internal tools/certs/npm registries

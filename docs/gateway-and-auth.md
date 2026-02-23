@@ -435,7 +435,7 @@ DELETE /api/v1/workflows/:id                → ApiResponse<{ terminated: true }
 ```
 GET    /api/v1/repositories                 → ApiResponse<Repository[]>               RBAC: ENGINEER+
 POST   /api/v1/repositories                 → ApiResponse<Repository>                 RBAC: ADMIN
-  Body: { organizationName: string, repoName: string, defaultBranch?: string, mcpServerRef: string, executorImage?: string }
+  Body: { organizationName: string, repoName: string, defaultBranch?: string, githubUrl?: string, githubApiUrl?: string, mcpServerRef?: string, executorImage?: string }
 PATCH  /api/v1/repositories/:id             → ApiResponse<Repository>                 RBAC: ADMIN
 ```
 

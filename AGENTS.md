@@ -30,7 +30,7 @@ Follow the **15-step build order** in `mvp-implementation.md` Section 2. Each st
 - `EngineeringWorkflow` (linear: Implement → PR → Await Merge → Done)
 - Implementer Agent (Mastra + `claude-opus-4-6`) with bash/file MCP tools
 - TDD loop (agent writes tests, runs them in Docker-in-Docker, iterates until green)
-- PR creation via GitHub API (Octokit)
+- PR creation via GitHub API (Octokit — supports github.com and GitHub Enterprise Server)
 - Human merge signal via webhook
 - CLI trigger (`POST /api/v1/work-requests`) with hardcoded ADMIN role
 - Docker Compose for local dev
