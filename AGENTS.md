@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**auto-swe** is an autonomous agentic software engineering system built as a Yarn 4 TypeScript monorepo. It accepts work requests (Jira ticket IDs), runs LLM-powered agents to implement code in isolated Docker workspaces, opens pull requests, and waits for human merge.
+**auto-swe** is an autonomous agentic software engineering system built as a Yarn 4 TypeScript monorepo. It accepts work requests (external ticket IDs from any issue tracker), runs LLM-powered agents to implement code in isolated Docker workspaces, opens pull requests, and waits for human merge.
 
 The system is delivered in 4 phases. **Phase 1 (MVP) is the current build target.**
 

@@ -4,7 +4,7 @@
 
 This system defines a production-grade, deterministic architecture for an autonomous, agent-driven software engineering workflow. It addresses the "last mile" of engineering automation by moving beyond simple code generation into a fully integrated, self-healing, and self-improving ecosystem.
 
-The system is designed to ingest ambiguous work requests from platforms like Slack or Jira, validate context through deep codebase awareness, execute precise implementation plans in isolated environments, and continuously refine its own performance through a "Lessons Learned" semantic memory layer.
+The system is designed to ingest ambiguous work requests from platforms like Slack or any issue tracker (Jira, Linear, GitHub Issues), validate context through deep codebase awareness, execute precise implementation plans in isolated environments, and continuously refine its own performance through a "Lessons Learned" semantic memory layer.
 
 ### 1.1 Core Value Proposition & System Implications
 
@@ -40,7 +40,7 @@ The system is delivered incrementally across four phases. Each phase produces a 
 
 **Does NOT include:** Multi-repo epics, review network, CI/CD webhook listener, Slack integration, Web UI, RBAC enforcement, semantic memory.
 
-**Exit criteria:** A Jira ticket ID submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
+**Exit criteria:** An external ticket ID submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
 
 ### Phase 2: Review Network + CI/CD Integration
 
@@ -69,7 +69,7 @@ The system is delivered incrementally across four phases. Each phase produces a 
 - Slack approval gates (role-checked: only LEAD/ADMIN can approve architecture plans)
 - Human merge gate with Slack notification
 
-**Exit criteria:** A multi-repo Jira epic submitted via Slack produces PRs across 2+ repositories in dependency order, with Slack-based architectural approval from a LEAD role.
+**Exit criteria:** A multi-repo epic submitted via Slack produces PRs across 2+ repositories in dependency order, with Slack-based architectural approval from a LEAD role.
 
 ### Phase 4: Semantic Memory + Web Dashboard + Production Hardening
 
@@ -97,7 +97,7 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 ```
                                ┌───────────────────────────────────────────┐
                                │           EXTERNAL TRIGGER LAYER          │
-                               │  [ Slack App ]  [ Jira Webhooks ] [ CLI ] │
+                               │  [ Slack App ]  [ Issue Tracker ] [ CLI ]  │
                                └─────────────────────┬─────────────────────┘
                                                      │ (RBAC Authenticated)
                                                      ▼
@@ -159,13 +159,13 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Web UI / Dashboard | Next.js (React) + Tailwind | Rationale: Provides a fast, real-time SPA for tracking Temporal workflow states, administrating agent memory, and managing RBAC. |
 | Observability | OpenTelemetry (OTel) | Rationale: Traces every token generated, tool called, and reasoning step taken. Exports to Langfuse or SigNoz. |
 | Execution Isolation | Kubernetes + KEDA + DinD | Rationale: Workflows launch ephemeral K8s Jobs. DinD allows execution of repository-specific test suites inside custom container images. |
-| Tooling Layer | Model Context Protocol (MCP) | Rationale: Standardizes how agents interact with the outside world (GitHub, Jira, bash). |
+| Tooling Layer | Model Context Protocol (MCP) | Rationale: Standardizes how agents interact with the outside world (GitHub, issue trackers, bash). |
 
 ### 4.1 LLM Model Strategy (Best-in-Class Allocation)
 
 | Agent / Task | Model ID | Context Window | Rationale & Strengths | Fallback |
 |---|---|---|---|---|
-| Context Validator | `gemini-2.5-pro` | 1M tokens | Massive Context: 100% recall up to 530K tokens, 99.7% at 1M. Natively handles text, code, and images in a single pass — ideal for ingesting entire monorepos, Jira epics, and Confluence docs simultaneously. 64K output cap enables comprehensive context snapshots in one shot. | `claude-opus-4-6` (1M beta) |
+| Context Validator | `gemini-2.5-pro` | 1M tokens | Massive Context: 100% recall up to 530K tokens, 99.7% at 1M. Natively handles text, code, and images in a single pass — ideal for ingesting entire monorepos, issue tracker epics, and documentation simultaneously. 64K output cap enables comprehensive context snapshots in one shot. | `claude-opus-4-6` (1M beta) |
 | Planner Agent | `claude-opus-4-6` | 200K (1M beta) | Architectural Reasoning: 80.8% on SWE-Bench Verified — strongest score for real-world multi-file reasoning. Adaptive thinking mode dynamically allocates compute to architecturally complex reasoning steps. Plans more carefully and sustains agentic tasks for longer in large codebases. | `gpt-5` (400K context) |
 | Implementer Agent | `claude-opus-4-6` | 200K (1M beta) | Surgical Coding & TDD: 80.8% SWE-Bench, 128K output token limit (writes substantial patches + full test suites in one generation). Best-in-class MCP JSON schema adherence and tool call accuracy. Self-corrects during multi-turn TDD loops. | `gpt-5` |
 | Security Auditor | `claude-opus-4-6` | 200K | Adversarial Simulation: Autonomously discovered 500+ validated high-severity vulnerabilities across major OSS libraries with zero hallucinated CVEs. MRCR v2 score of 76% for multi-file diff analysis. Lowest hallucination rate on code review tasks. | `gpt-5` |
@@ -306,7 +306,7 @@ Built with Next.js and Tailwind CSS, this dashboard consumes the Interaction Gat
 
 **(Model: gemini-2.5-pro)**
 
-> "You are the Global Context Validator. Trace all dependencies across Jira and Confluence. You must extract an exhaustive list of explicit 'Success Criteria' from these documents. These extracted criteria will form the immutable Context Snapshot."
+> "You are the Global Context Validator. Trace all dependencies across the linked issue tracker tickets and documentation pages. You must extract an exhaustive list of explicit 'Success Criteria' from these sources. These extracted criteria will form the immutable Context Snapshot."
 
 ### 9.3 The Epic Planner Agent (System Architect)
 

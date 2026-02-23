@@ -34,8 +34,8 @@ interface RepoWorkRequest {
 interface ContextSnapshot {
   id: string;
   workRequestId: string;
-  rawJiraEpic: Record<string, unknown> | null;
-  rawConfluence: Record<string, unknown> | null;
+  rawTicketData: Record<string, unknown> | null;      // External ticket (Jira, Linear, GitHub Issues, etc.)
+  rawDocumentation: Record<string, unknown> | null;   // External docs (Confluence, Notion, wiki, etc.)
   successCriteria: string[];       // Extracted acceptance criteria (immutable once persisted)
   relevantFilePaths: string[];     // Files identified as impacted by the change
   apiContracts: ApiContract[];     // Cross-repo contracts that must be preserved

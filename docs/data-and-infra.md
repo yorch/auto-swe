@@ -94,8 +94,8 @@ model ContextSnapshot {
   workRequestId    String       @unique @map("work_request_id") @db.Uuid
   workRequest      WorkRequest  @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
 
-  rawJiraEpic      Json?        @map("raw_jira_epic")
-  rawConfluence    Json?        @map("raw_confluence")
+  rawTicketData    Json?        @map("raw_jira_epic")    // External ticket data (Jira, Linear, GitHub Issues, etc.)
+  rawDocumentation Json?        @map("raw_confluence")   // External docs (Confluence, Notion, wiki, etc.)
   successCriteria  String[]     @map("success_criteria")
 
   capturedAt       DateTime     @default(now()) @map("captured_at") @db.Timestamptz
@@ -278,7 +278,7 @@ To ensure system stability, the agentic system acts purely as an orchestrator an
 
 ### 3.1 Ephemeral Workspace & Custom Executors
 
-Jira tickets trigger work strictly within isolated clones of Target Repositories.
+Work requests trigger execution strictly within isolated clones of Target Repositories.
 
 - **Custom Executor Images:** Instead of a generic environment, the K8s Job dynamically pulls the pre-configured Docker image specified in `Repository.executorImage`. This allows the agent to immediately execute `npm install` or `mvn test` using internal corporate registries, pre-cached certificates, and specific language versions without complex setup scripting.
 - **Volume Sandboxing:** The MCP tools configured for the agent are hard-chrooted to `/workspace/target-repo`. The agent cannot traverse up the file tree to read host node configuration or the agent framework source code.

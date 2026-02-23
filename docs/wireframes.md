@@ -311,11 +311,12 @@ mobile to a hamburger menu.
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ RAW JIRA EPIC                                         [JSON]  │  │
+│  │ TICKET DATA                                           [JSON]  │  │
 │  │                                                               │  │
 │  │  Title: Payment webhook retry mechanism                       │  │
 │  │  Type: Story                                                  │  │
 │  │  Priority: High                                               │  │
+│  │  Source: Jira / Linear / GitHub Issues / etc.                 │  │
 │  │  Description:                                                 │  │
 │  │    As a payments team member, I want webhook delivery          │  │
 │  │    to automatically retry on failure so that we don't          │  │
@@ -324,10 +325,10 @@ mobile to a hamburger menu.
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ RAW CONFLUENCE                                        [JSON]  │  │
+│  │ DOCUMENTATION                                         [JSON]  │  │
 │  │                                                               │  │
 │  │  Page: Payments Architecture Guide                            │  │
-│  │  Space: Engineering                                           │  │
+│  │  Source: Confluence / Notion / wiki / etc.                    │  │
 │  │  Content preview:                                             │  │
 │  │    ## Webhook Processing                                      │  │
 │  │    The payments service receives webhooks from Stripe...      │  │

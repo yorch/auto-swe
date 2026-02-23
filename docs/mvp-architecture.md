@@ -6,7 +6,7 @@
 
 A single Temporal workflow that accepts a work request via CLI, runs an AI agent to implement code in an isolated workspace, executes tests in a TDD loop, opens a pull request, and completes when a human merges it.
 
-**Exit Criteria:** A Jira ticket ID submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
+**Exit Criteria:** An external ticket ID (e.g., `JIRA-1234`, `GH-42`, `LINEAR-99`) submitted via CLI produces a green PR on a target repository, and the workflow completes when a human merges it.
 
 ## 2. What the MVP Includes
 
