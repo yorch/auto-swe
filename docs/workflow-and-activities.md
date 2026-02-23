@@ -29,6 +29,12 @@ interface RepoWorkRequest {
   parentWorkflowId?: string;       // Set when spawned by Epic Orchestrator (Phase 3+)
 }
 
+// NOTE: Team context is resolved via Repository.teamId — no teamId field is needed on
+// RepoWorkRequest or WorkflowResult. The RBAC middleware resolves the team from the
+// repository before the workflow starts, and any team-scoped permission checks during
+// the workflow lifecycle (e.g., approval, termination) follow the chain:
+//   WorkRequest → ActiveWorkflow → Repository → Team
+
 // ── Context Validator → Planner ──
 
 interface ContextSnapshot {

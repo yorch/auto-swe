@@ -1,9 +1,11 @@
 # Web Dashboard — ASCII Wireframes
 
-> **Tech stack:** Next.js 14 + React + Tailwind CSS
+> **Tech stack:** Next.js 16 + React 19 + Tailwind CSS 4 + shadcn/ui + Radix UI + Recharts
 > **API base:** `GET/POST/PATCH/DELETE /api/v1/*` (gateway on `:8080`)
 > **Auth:** RS256 JWT in `Authorization: Bearer <token>` header
 > **Roles:** `ADMIN > LEAD > ENGINEER` (numeric hierarchy 3 > 2 > 1)
+>
+> See [Web UI Technical Stack](#web-ui-technical-stack) at the end of this document for full library details.
 
 ---
 
@@ -21,6 +23,8 @@
 10. [Lessons Browser `/lessons`](#10-lessons-browser)
 11. [Settings `/settings`](#11-settings)
 12. [Login `/login`](#12-login)
+13. [Teams List `/teams`](#13-teams-list)
+14. [Team Detail `/teams/:id`](#14-team-detail)
 
 ---
 
@@ -32,22 +36,22 @@ mobile to a hamburger menu.
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  TOP BAR                                                             │
-│  ┌──────────┐                          ┌────────┐ ┌───────────────┐  │
-│  │ ≡  Logo  │       auto-swe           │ ? Help │ │ ● J. Doe  ▾  │  │
-│  └──────────┘                          └────────┘ └───────────────┘  │
+│  ┌──────────┐    ┌───────────────┐     ┌────────┐ ┌───────────────┐  │
+│  │ ≡  Logo  │    │ Team: Acme ▾  │     │ ? Help │ │ ● J. Doe  ▾  │  │
+│  └──────────┘    └───────────────┘     └────────┘ └───────────────┘  │
 ├────────────┬─────────────────────────────────────────────────────────┤
 │  SIDEBAR   │                                                         │
 │            │                                                         │
 │  Dashboard │              PAGE CONTENT AREA                          │
 │  Workflows │              (scrollable)                               │
 │  Epics     │                                                         │
+│  Teams     │                                                         │
 │  Lessons   │                                                         │
 │  ────────  │                                                         │
 │  Repos ¹   │                                                         │
 │  Users ¹   │                                                         │
 │  ────────  │                                                         │
 │  Settings  │                                                         │
-│            │                                                         │
 │            │                                                         │
 │            │                                                         │
 │  [Logout]  │                                                         │
@@ -59,7 +63,9 @@ mobile to a hamburger menu.
 **RBAC notes:**
 - ¹ "Repos" and "Users" sidebar links visible only to `ADMIN`.
 - "Epics" link visible to `LEAD+`.
+- "Teams" link visible to all authenticated users.
 - User dropdown shows role badge: `[ADMIN]`, `[LEAD]`, or `[ENG]`.
+- Team selector dropdown in top bar filters Workflows, Repos, and Lessons by selected team. "All Teams" option shows combined view (ADMIN sees all teams; others see only their teams).
 
 ---
 
@@ -116,19 +122,19 @@ mobile to a hamburger menu.
 │  WORKFLOWS                                         [+ New Request]   │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ Filter: [Status ▾] [Repository ▾] [Search ticket ID...]      │  │
+│  │ Filter: [Status ▾] [Team ▾] [Repository ▾] [Search ticket..] │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  ┌──┬────────────┬──────────────┬──────────┬──────────┬──────────┐  │
-│  │☐ │ Ticket     │ Repository   │ Status   │ Branch   │ Updated  │  │
-│  ├──┼────────────┼──────────────┼──────────┼──────────┼──────────┤  │
-│  │☐ │ JIRA-910   │ web-app      │ ● IMPL   │ auto/910 │ 2m ago   │  │
-│  │☐ │ JIRA-892   │ payments-api │ ◉ FAIL   │ auto/892 │ 15m ago  │  │
-│  │☐ │ JIRA-901   │ web-app      │ ○ MERGE  │ auto/901 │ 1h ago   │  │
-│  │☐ │ JIRA-888   │ user-svc     │ ● REVIEW │ auto/888 │ 2h ago   │  │
-│  │☐ │ JIRA-876   │ user-svc     │ ✕ TIMED  │ auto/876 │ 3h ago   │  │
-│  │☐ │ JIRA-865   │ payments-api │ ✓ DONE   │ auto/865 │ 1d ago   │  │
-│  └──┴────────────┴──────────────┴──────────┴──────────┴──────────┘  │
+│  ┌──┬────────────┬──────────┬──────────────┬──────────┬──────────┬──────────┐  │
+│  │☐ │ Ticket     │ Team     │ Repository   │ Status   │ Branch   │ Updated  │  │
+│  ├──┼────────────┼──────────┼──────────────┼──────────┼──────────┼──────────┤  │
+│  │☐ │ JIRA-910   │ Frontend │ web-app      │ ● IMPL   │ auto/910 │ 2m ago   │  │
+│  │☐ │ JIRA-892   │ Payments │ payments-api │ ◉ FAIL   │ auto/892 │ 15m ago  │  │
+│  │☐ │ JIRA-901   │ Frontend │ web-app      │ ○ MERGE  │ auto/901 │ 1h ago   │  │
+│  │☐ │ JIRA-888   │ Platform │ user-svc     │ ● REVIEW │ auto/888 │ 2h ago   │  │
+│  │☐ │ JIRA-876   │ Platform │ user-svc     │ ✕ TIMED  │ auto/876 │ 3h ago   │  │
+│  │☐ │ JIRA-865   │ Payments │ payments-api │ ✓ DONE   │ auto/865 │ 1d ago   │  │
+│  └──┴────────────┴──────────┴──────────────┴──────────┴──────────┴──────────┘  │
 │                                                                      │
 │  ☐ Select all    [Retry CI] ² [Terminate] ³        « 1 2 3 ... »    │
 │                                                                      │
@@ -365,14 +371,14 @@ mobile to a hamburger menu.
 │  │ Search: [Filter by email or Slack ID...]                      │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  ┌───────────────────┬──────────┬───────────────┬────────┬────────┐  │
-│  │ Email             │ Role     │ Slack ID      │ Active │ Action │  │
-│  ├───────────────────┼──────────┼───────────────┼────────┼────────┤  │
-│  │ alice@co.com      │ [ADMIN▾] │ U0123ALICE    │   ●    │ [Edit] │  │
-│  │ bob@co.com        │ [LEAD ▾] │ U0456BOB      │   ●    │ [Edit] │  │
-│  │ carol@co.com      │ [ENG  ▾] │ —             │   ●    │ [Edit] │  │
-│  │ dave@co.com       │ [ENG  ▾] │ U0789DAVE     │   ○    │ [Edit] │  │
-│  └───────────────────┴──────────┴───────────────┴────────┴────────┘  │
+│  ┌───────────────────┬──────────┬──────────────────┬───────────────┬────────┬────────┐  │
+│  │ Email             │ Role     │ Teams            │ Slack ID      │ Active │ Action │  │
+│  ├───────────────────┼──────────┼──────────────────┼───────────────┼────────┼────────┤  │
+│  │ alice@co.com      │ [ADMIN▾] │ Payments, Frontend│ U0123ALICE   │   ●    │ [Edit] │  │
+│  │ bob@co.com        │ [LEAD ▾] │ Platform         │ U0456BOB      │   ●    │ [Edit] │  │
+│  │ carol@co.com      │ [ENG  ▾] │ Frontend         │ —             │   ●    │ [Edit] │  │
+│  │ dave@co.com       │ [ENG  ▾] │ Payments         │ U0789DAVE     │   ○    │ [Edit] │  │
+│  └───────────────────┴──────────┴──────────────────┴───────────────┴────────┴────────┘  │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 
@@ -410,6 +416,7 @@ mobile to a hamburger menu.
 │  │ 📦 payments-api  │ │ 📦 user-svc      │ │ 📦 web-app       │     │
 │  │                  │ │                  │ │                  │     │
 │  │ acme/payments    │ │ acme/user-svc    │ │ acme/web-app     │     │
+│  │ Team: Payments   │ │ Team: Platform   │ │ Team: Frontend   │     │
 │  │ Branch: main     │ │ Branch: main     │ │ Branch: develop  │     │
 │  │ Active: ●        │ │ Active: ●        │ │ Active: ●        │     │
 │  │ Workflows: 4     │ │ Workflows: 2     │ │ Workflows: 6     │     │
@@ -424,6 +431,7 @@ mobile to a hamburger menu.
   │                                                                │
   │  Organization:    [________________________]                   │
   │  Repo Name:       [________________________]                   │
+  │  Team:            [____Payments ▾__________]                   │
   │  Default Branch:  [____main________________]                   │
   │  GitHub URL:      [________________________] (optional)        │
   │     Default: https://github.com (set for GHE instances)        │
@@ -587,6 +595,107 @@ mobile to a hamburger menu.
 
 ---
 
+## 13. Teams List
+
+**Route:** `/teams`
+**RBAC:** `ENGINEER+` (filtered to own teams; ADMIN sees all)
+**Data:** `GET /api/v1/teams`
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  TEAMS                                               [+ New Team] ¹  │
+│                                                                      │
+│  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐     │
+│  │ Payments         │ │ Platform         │ │ Frontend         │     │
+│  │                  │ │                  │ │                  │     │
+│  │ Your role: LEAD  │ │ Your role: ENG   │ │ Your role: ADMIN │     │
+│  │ Members: 5       │ │ Members: 3       │ │ Members: 4       │     │
+│  │ Repos: 2         │ │ Repos: 1         │ │ Repos: 3         │     │
+│  │ Active: ●        │ │ Active: ●        │ │ Active: ●        │     │
+│  │                  │ │                  │ │                  │     │
+│  │ [View]           │ │ [View]           │ │ [View]           │     │
+│  └──────────────────┘ └──────────────────┘ └──────────────────┘     │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────── MODAL ──────────────────────────────┐
+  │  CREATE TEAM                                                    │
+  │                                                                │
+  │  Name:         [________________________]                      │
+  │  Slug:         [________________________] (auto-generated)     │
+  │  Description:  [________________________] (optional)           │
+  │                                                                │
+  │                              [Cancel]  [Create]                │
+  └────────────────────────────────────────────────────────────────┘
+```
+
+**Interactions:**
+- ¹ `[+ New Team]` visible to Platform ADMIN only → `POST /api/v1/teams`.
+- `[View]` → `/teams/:id`.
+- Card shows user's own role badge in that team.
+- Member and repo counts fetched from team detail.
+
+---
+
+## 14. Team Detail
+
+**Route:** `/teams/:id`
+**RBAC:** Team `ENGINEER+`
+**Data:** `GET /api/v1/teams/:id` (includes `memberships[]`, `repositories[]`)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  ← Back to Teams                                                     │
+│                                                                      │
+│  Payments Team                                       Active: ●       │
+│  Slug: payments · Your role: ADMIN                                   │
+│  Description: Handles payment processing services                    │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ MEMBERS                                   [+ Add Member] ¹    │  │
+│  │                                                               │  │
+│  │ ┌───────────────────┬──────────────┬────────────────────────┐ │  │
+│  │ │ User              │ Team Role    │ Action                 │ │  │
+│  │ ├───────────────────┼──────────────┼────────────────────────┤ │  │
+│  │ │ alice@co.com      │ [ADMIN ▾] ¹  │ [Remove] ¹             │ │  │
+│  │ │ bob@co.com        │ [LEAD  ▾] ¹  │ [Remove] ¹             │ │  │
+│  │ │ carol@co.com      │ [ENG   ▾] ¹  │ [Remove] ¹             │ │  │
+│  │ │ dave@co.com       │ [ENG   ▾] ¹  │ [Remove] ¹             │ │  │
+│  │ │ eve@co.com        │ [ENG   ▾] ¹  │ [Remove] ¹             │ │  │
+│  │ └───────────────────┴──────────────┴────────────────────────┘ │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ REPOSITORIES                                                   │  │
+│  │                                                               │  │
+│  │ ┌──────────────────┐ ┌──────────────────┐                     │  │
+│  │ │ 📦 payments-api  │ │ 📦 payments-web  │                     │  │
+│  │ │ acme/payments    │ │ acme/pay-web     │                     │  │
+│  │ │ Workflows: 4     │ │ Workflows: 2     │                     │  │
+│  │ └──────────────────┘ └──────────────────┘                     │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ TEAM SETTINGS ¹                                               │  │
+│  │                                                               │  │
+│  │ Name:         [____Payments_______________]                   │  │
+│  │ Description:  [____Handles payment proc..._]                  │  │
+│  │                                                               │  │
+│  │                              [Save Changes]                   │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Interactions:**
+- ¹ Member management (add, role change, remove) and team settings visible to Team ADMIN only.
+- `[+ Add Member]` opens a modal with user search → `POST /api/v1/teams/:id/members`.
+- Role dropdown inline-editable → `PATCH /api/v1/teams/:id/members/:userId`.
+- `[Remove]` → `DELETE /api/v1/teams/:id/members/:userId` with confirmation.
+- Repository cards link to `/workflows?repo=:id`.
+- Team settings → `PATCH /api/v1/teams/:id`.
+
+---
+
 ## Route Summary
 
 | Route                      | Page               | Min Role   |
@@ -598,7 +707,112 @@ mobile to a hamburger menu.
 | `/workflows/:id/context`   | Context Inspector  | ENGINEER   |
 | `/epics`                   | Epic List          | LEAD       |
 | `/epics/:id`               | Epic Visualizer    | LEAD       |
+| `/teams`                   | Teams List         | ENGINEER   |
+| `/teams/:id`               | Team Detail        | ENGINEER (team member)  |
 | `/lessons`                 | Lessons Browser    | ENGINEER   |
 | `/repositories`            | Repositories       | ENGINEER   |
 | `/users`                   | RBAC / Users       | ADMIN      |
 | `/settings`                | Settings           | ENGINEER   |
+
+---
+
+## Web UI Technical Stack
+
+### Package Dependencies (`packages/web/package.json`)
+
+| Category | Library | Version | Purpose |
+|---|---|---|---|
+| **Framework** | Next.js | `^16.1.0` | App Router, RSC, API route proxying, middleware for auth redirect |
+| **Runtime** | React | `^19.2.0` | UI rendering, Server Components, `use` hook for data streaming |
+| **Styling** | Tailwind CSS | `^4.2.0` | Utility-first CSS with CSS-first `@theme` configuration (v4) |
+| **UI Primitives** | Radix UI | `^1.4.0` | Accessible, unstyled headless components (unified `radix-ui` package) |
+| **Component Library** | shadcn/ui | (copy-paste) | Pre-styled Radix-based components — not an npm dependency; components are copied into `src/components/ui/` via `npx shadcn add` |
+| **Server State** | TanStack Query | `^5.90.0` | Server-state caching, background refetch, optimistic updates for all Gateway API calls |
+| **Client State** | Zustand | `^5.0.0` | Lightweight client-side state (team selector, sidebar collapse, theme preference) |
+| **URL State** | nuqs | `^2.8.0` | Type-safe URL search params (`?status=FAILED&teamId=xxx`) synced with React state |
+| **Charts** | Recharts | `^3.7.0` | Declarative SVG charts for dashboard status cards, workflow timelines, cost breakdowns |
+| **Forms** | React Hook Form + Zod | `^7.54.0` / `^3.24.0` | Form state management with Zod schema validation (shared with Gateway) |
+| **Icons** | Lucide React | `^0.475.0` | Tree-shakable SVG icon set (default for shadcn/ui) |
+| **Date Formatting** | date-fns | `^4.1.0` | Lightweight date utilities ("2m ago", "Jan 15, 2026") |
+
+### Architecture Decisions
+
+**App Router (Server Components by default):**
+- List pages (`/workflows`, `/teams`, `/repositories`) use RSC with `fetch()` for initial data, hydrated client-side by TanStack Query for refetch/mutations.
+- Interactive components (`DataTable`, `TeamSelector`, modals) are `"use client"` components.
+
+**API Communication Pattern:**
+- All Gateway calls go through a shared `api` client module (`src/lib/api.ts`) that wraps `fetch` with the JWT `Authorization` header, base URL, and error handling.
+- TanStack Query hooks (`useWorkflows`, `useTeams`, `useRepositories`) encapsulate query keys, stale times, and refetch intervals.
+- Mutations use TanStack Query's `useMutation` with optimistic updates and automatic cache invalidation.
+
+**Auth Flow:**
+- Next.js middleware (`middleware.ts`) checks for a valid JWT cookie on every request. Redirects to `/login` if missing/expired.
+- JWT + refresh token stored in `httpOnly` cookies (not localStorage) for XSS protection.
+- Refresh token rotation handled transparently by the `api` client — 401 responses trigger a refresh before retrying.
+
+**Component Structure:**
+```
+packages/web/src/
+├── app/                      # Next.js App Router
+│   ├── layout.tsx            # Root layout (sidebar, top bar, team selector)
+│   ├── page.tsx              # Dashboard Home
+│   ├── login/page.tsx
+│   ├── workflows/
+│   │   ├── page.tsx          # Workflow List
+│   │   └── [id]/
+│   │       ├── page.tsx      # Workflow Detail
+│   │       └── context/page.tsx  # Context Inspector
+│   ├── teams/
+│   │   ├── page.tsx          # Teams List
+│   │   └── [id]/page.tsx     # Team Detail
+│   ├── epics/
+│   │   ├── page.tsx          # Epic List
+│   │   └── [id]/page.tsx     # Epic Visualizer
+│   ├── repositories/page.tsx
+│   ├── users/page.tsx
+│   ├── lessons/page.tsx
+│   └── settings/page.tsx
+├── components/
+│   ├── ui/                   # shadcn/ui components (Button, Dialog, Table, Select, etc.)
+│   ├── layout/               # Sidebar, TopBar, TeamSelector, UserMenu
+│   ├── workflows/            # WorkflowTable, WorkflowTimeline, StatusBadge
+│   ├── teams/                # TeamCard, MemberTable, AddMemberModal
+│   └── shared/               # DataTable, ConfirmDialog, EmptyState, Pagination
+├── hooks/                    # TanStack Query hooks (useWorkflows, useTeams, etc.)
+├── lib/
+│   ├── api.ts                # Fetch wrapper with auth, base URL, error handling
+│   ├── auth.ts               # JWT cookie helpers, refresh logic
+│   └── utils.ts              # cn() helper (clsx + tailwind-merge), formatters
+├── stores/                   # Zustand stores (team-selector.ts, ui-preferences.ts)
+└── middleware.ts              # Auth redirect middleware
+```
+
+**shadcn/ui Components Used:**
+
+The following shadcn/ui components cover the wireframe requirements:
+
+| Component | Used In |
+|---|---|
+| `Button` | All action buttons (Submit, Retry CI, Terminate, Save, etc.) |
+| `Dialog` / `AlertDialog` | Modals (New Request, Onboard Repo, Add Member, confirmations) |
+| `Table` | Workflow List, Members table, Users table |
+| `Select` | Role dropdowns, Status filter, Team filter, Repository filter |
+| `Card` | Dashboard status cards, Repo cards, Team cards |
+| `Badge` | Status badges (IMPLEMENTING, FAILED, etc.), role badges |
+| `Input` / `Textarea` | Form fields in modals and settings |
+| `DropdownMenu` | User menu, bulk actions |
+| `Tabs` | Workflow Detail sections |
+| `Tooltip` | Truncated text, icon-only buttons |
+| `Skeleton` | Loading states for all data-fetching pages |
+| `Sonner` (toast) | Success/error notifications after mutations |
+| `Command` | Combobox search (Add Member user search) |
+| `Sidebar` | App sidebar navigation (shadcn/ui sidebar component) |
+
+**Recharts Usage:**
+
+| Chart Type | Used In | Data Source |
+|---|---|---|
+| `BarChart` | Dashboard — workflows per day/week | `GET /api/v1/workflows` (aggregated client-side) |
+| `PieChart` | Dashboard — status distribution | `GET /api/v1/workflows` (grouped by status) |
+| Custom timeline | Workflow Detail — lifecycle timeline | `GET /api/v1/workflows/:id` (status timestamps) |
