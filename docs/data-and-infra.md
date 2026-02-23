@@ -29,12 +29,13 @@ model User {
   email          String         @unique
   passwordHash   String         @map("password_hash")
   slackId        String?        @unique @map("slack_id")
-  role           String         @default("ENGINEER") // ADMIN, LEAD, ENGINEER
+  role           String         @default("ENGINEER") // ADMIN, LEAD, ENGINEER (platform role)
   isActive       Boolean        @default(true) @map("is_active")
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   refreshTokens  RefreshToken[]
+  memberships    TeamMembership[]
 
   @@map("users")
 }
@@ -54,6 +55,37 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+// --- Teams ---
+model Team {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  slug        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  memberships  TeamMembership[]
+  repositories Repository[]
+
+  @@map("teams")
+}
+
+model TeamMembership {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId    String   @map("team_id") @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role      String   @default("ENGINEER") // ADMIN, LEAD, ENGINEER (team-scoped role)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([userId, teamId])
+  @@index([userId])
+  @@index([teamId])
+  @@map("team_memberships")
+}
+
 // --- Repository Configuration ---
 model Repository {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -63,6 +95,10 @@ model Repository {
   githubUrl        String?          @map("github_url")        // e.g., "https://github.acme.com" (null = use GITHUB_URL env or github.com)
   githubApiUrl     String?          @map("github_api_url")    // e.g., "https://github.acme.com/api/v3" (null = use GITHUB_API_URL env or api.github.com)
   mcpServerRef     String?          @map("mcp_server_ref")
+
+  // Team ownership (nullable for backward compatibility; Phase 3 enforces non-null)
+  teamId           String?          @map("team_id") @db.Uuid
+  team             Team?            @relation(fields: [teamId], references: [id])
 
   // Custom Docker image containing internal tools/certs/npm registries
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
@@ -474,7 +510,9 @@ services:
       - "4318:4318"
 
   web-dashboard:
-    build: ./web
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
     ports:
       - "3000:3000"
     environment:

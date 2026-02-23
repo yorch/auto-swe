@@ -253,12 +253,13 @@ model User {
   email          String         @unique
   passwordHash   String         @map("password_hash")
   slackId        String?        @unique @map("slack_id")
-  role           String         @default("ENGINEER")
+  role           String         @default("ENGINEER") // Platform role: ADMIN, LEAD, ENGINEER
   isActive       Boolean        @default(true) @map("is_active")
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   refreshTokens  RefreshToken[]
+  memberships    TeamMembership[]
 
   @@map("users")
 }
@@ -278,6 +279,36 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+model Team {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  slug        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  memberships  TeamMembership[]
+  repositories Repository[]
+
+  @@map("teams")
+}
+
+model TeamMembership {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId    String   @map("team_id") @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role      String   @default("ENGINEER") // Team-scoped role: ADMIN, LEAD, ENGINEER
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([userId, teamId])
+  @@index([userId])
+  @@index([teamId])
+  @@map("team_memberships")
+}
+
 model Repository {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationName String           @map("organization_name")
@@ -286,6 +317,8 @@ model Repository {
   githubUrl        String?          @map("github_url")        // e.g., "https://github.acme.com" (null = use GITHUB_URL env or github.com)
   githubApiUrl     String?          @map("github_api_url")    // e.g., "https://github.acme.com/api/v3" (null = use GITHUB_API_URL env or api.github.com)
   mcpServerRef     String?          @map("mcp_server_ref")
+  teamId           String?          @map("team_id") @db.Uuid  // Nullable for backward compat; Phase 3 enforces non-null
+  team             Team?            @relation(fields: [teamId], references: [id])
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
 
@@ -413,6 +446,30 @@ async function main() {
   });
   console.log(`Seed: admin user created (${admin.id})`);
 
+  // Seed default team
+  const team = await prisma.team.upsert({
+    where: { slug: 'default' },
+    update: {},
+    create: {
+      name: 'Default Team',
+      slug: 'default',
+      description: 'Default team for local development',
+    },
+  });
+  console.log(`Seed: default team created (${team.id})`);
+
+  // Add admin to default team as ADMIN
+  await prisma.teamMembership.upsert({
+    where: { userId_teamId: { userId: admin.id, teamId: team.id } },
+    update: {},
+    create: {
+      userId: admin.id,
+      teamId: team.id,
+      role: 'ADMIN',
+    },
+  });
+  console.log(`Seed: admin added to default team`);
+
   // Seed a sample repository for local development.
   // Update organizationName and repoName to match your target GitHub repo.
   const repo = await prisma.repository.upsert({
@@ -427,6 +484,7 @@ async function main() {
       organizationName: 'your-org',
       repoName: 'your-repo',
       defaultBranch: 'main',
+      teamId: team.id,
     },
   });
   console.log(`Seed: sample repository created (${repo.id})`);
@@ -1973,3 +2031,4 @@ A single E2E script that validates the full MVP path:
 | Docker-in-Docker | Not suitable for production K8s | Phase 3 (K8s Jobs) |
 | No OTel tracing | Limited observability | Phase 2 |
 | Hardcoded test detection | Only detects `npm test` | Phase 2 (improved heuristics) |
+| No team-scoped RBAC enforcement | Team models exist (tables + seed) but team role checks are not enforced | Phase 3 |
