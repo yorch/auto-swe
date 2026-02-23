@@ -130,7 +130,7 @@ auto-swe/
 | Thing | Pattern | Example |
 |---|---|---|
 | Temporal workflow ID | `eng-<ticketId>-<repoName>` | `eng-JIRA-1234-payments-api` |
-| Git branch | `auto/<ticketId>` | `auto/JIRA-1234` |
+| Git branch | `<BRANCH_PREFIX>/<ticketId>` | `auto/JIRA-1234` (default prefix: `auto`) |
 | Docker workspace container | `workspace-<random-hex>` | `workspace-a1b2c3d4` |
 | Prisma table mapping | `snake_case` via `@@map` | `active_workflows` |
 | TypeScript interfaces | `PascalCase` | `RepoWorkRequest` |

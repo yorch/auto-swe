@@ -165,6 +165,9 @@ GITHUB_WEBHOOK_SECRET=whsec_...
 GITHUB_URL=https://github.com                  # Base URL for git clone (omit for github.com)
 GITHUB_API_URL=https://api.github.com          # API base URL for Octokit (omit for github.com)
 
+# Branch naming (optional — default: auto)
+# BRANCH_PREFIX=auto                           # Branches created as auto/<ticketId>
+
 # PR Templates (optional — defaults shown)
 # PR_TITLE_TEMPLATE=[auto-swe] {{ticketId}}
 # PR_BODY_TEMPLATE=see createOrUpdatePullRequest.ts for default
@@ -823,7 +826,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Generate Temporal workflow ID (deterministic for idempotency)
     const temporalWorkflowId = `eng-${externalTicketId}-${repo.repoName}`;
-    const branch = `auto/${externalTicketId}`;
+    const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
+    const branch = `${branchPrefix}/${externalTicketId}`;
 
     // Create ActiveWorkflow record
     const activeWorkflow = await fastify.prisma.activeWorkflow.create({
@@ -1259,7 +1263,8 @@ export async function executeImplementation(
 
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const branch = `auto/${request.externalTicketId}`;
+  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
+  const branch = `${branchPrefix}/${request.externalTicketId}`;
   const githubToken = process.env.GITHUB_TOKEN!;
 
   const workspace = createWorkspace(
@@ -1779,6 +1784,7 @@ CMD ["node", "packages/worker/dist/index.js"]
 | `GITHUB_WEBHOOK_SECRET` | Yes | — | HMAC secret for GitHub webhook verification |
 | `GITHUB_URL` | No | `https://github.com` | Base URL for git operations (set for GitHub Enterprise Server) |
 | `GITHUB_API_URL` | No | `https://api.github.com` | Octokit base URL (GHE: `https://github.acme.com/api/v3`) |
+| `BRANCH_PREFIX` | No | `auto` | Git branch prefix (branches created as `<prefix>/<ticketId>`) |
 | `PR_TITLE_TEMPLATE` | No | `[auto-swe] {{ticketId}}` | PR title template (supports `{{ticketId}}`, `{{description}}`) |
 | `PR_BODY_TEMPLATE` | No | *(see code)* | PR body markdown template (supports `{{ticketId}}`, `{{description}}`, `{{branch}}`, `{{testStatus}}`, `{{filesChanged}}`, `{{fileList}}`, `{{notes}}`) |
 | `PORT` | No | `8080` | Gateway listen port |

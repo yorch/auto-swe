@@ -355,7 +355,7 @@ export async function executeImplementation(
     env: {
       GITHUB_TOKEN: await generateScopedInstallationToken(repo),
       REPO_URL: `${repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com'}/${repo.organizationName}/${repo.repoName}.git`,
-      BRANCH: `auto/${snapshot.workRequest.externalTicketId}`,
+      BRANCH: `${process.env.BRANCH_PREFIX ?? 'auto'}/${snapshot.workRequest.externalTicketId}`,
     },
   });
 
@@ -400,7 +400,7 @@ export async function executeImplementation(
     const headSha = await workspace.exec('git', ['rev-parse', 'HEAD']);
 
     return {
-      branch: `auto/${snapshot.workRequest.externalTicketId}`,
+      branch: `${process.env.BRANCH_PREFIX ?? 'auto'}/${snapshot.workRequest.externalTicketId}`,
       headSha: headSha.trim(),
       diff,
       filesChanged: parseDiffToFileChanges(diff),
