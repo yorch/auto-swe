@@ -46,11 +46,16 @@ import { AUTH_CONFIG } from '../config/auth';
 
 interface JwtPayload {
   sub: string;        // User UUID
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  role: 'ADMIN' | 'LEAD' | 'ENGINEER';  // Platform role (system-wide)
   slackId?: string;
   iat: number;
   exp: number;
 }
+
+// NOTE: Team memberships are NOT embedded in the JWT.
+// They are resolved per-request from the DB via an indexed query on
+// team_memberships(user_id, team_id). This avoids stale membership data
+// in long-lived tokens — memberships change frequently as users join/leave teams.
 
 const privateKey = readFileSync(AUTH_CONFIG.jwt.privateKeyPath);
 const publicKey = readFileSync(AUTH_CONFIG.jwt.publicKeyPath);
@@ -188,7 +193,12 @@ export async function refresh(req: Request): Promise<Response> {
 
 ### RBAC Hook (Fastify `onRequest` Hook)
 
-The RBAC check is implemented as a Fastify `onRequest` hook via a plugin. Routes declare their minimum role in `route.config`, and the hook enforces it.
+The system uses a **dual-layer permission model**:
+
+1. **Platform role** (`User.role`): Governs system-wide operations (user CRUD, team creation, system settings). Platform ADMIN bypasses all team checks.
+2. **Team role** (`TeamMembership.role`): Governs team-scoped operations (work requests, workflow approval, repo onboarding within a team's repos).
+
+Routes declare their requirements in `route.config`: `requiredRole` for platform-level checks, and `requiredTeamRole` for team-scoped checks. Both can be combined.
 
 ```typescript
 // plugins/rbac.ts
@@ -196,7 +206,7 @@ import fp from 'fastify-plugin';
 import { verifyAccessToken } from '../auth/jwt';
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 
-// Role hierarchy: ADMIN > LEAD > ENGINEER
+// Role hierarchy: ADMIN > LEAD > ENGINEER (same hierarchy for both platform and team roles)
 const ROLE_HIERARCHY: Record<string, number> = { ENGINEER: 1, LEAD: 2, ADMIN: 3 };
 
 type MinimumRole = 'ENGINEER' | 'LEAD' | 'ADMIN';
@@ -205,16 +215,18 @@ type MinimumRole = 'ENGINEER' | 'LEAD' | 'ADMIN';
 declare module 'fastify' {
   interface FastifyRequest {
     user?: { id: string; role: MinimumRole; slackId?: string };
+    teamRole?: MinimumRole;  // Resolved team role for the current request's team context
   }
   interface FastifyContextConfig {
-    requiredRole?: MinimumRole;
+    requiredRole?: MinimumRole;       // Platform-level check
+    requiredTeamRole?: MinimumRole;   // Team-scoped check (resolved via repo's team or :teamId param)
   }
 }
 
 const rbacPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    const minimumRole = request.routeOptions.config.requiredRole;
-    if (!minimumRole) return; // No role requirement on this route (e.g., health check)
+    const { requiredRole, requiredTeamRole } = request.routeOptions.config;
+    if (!requiredRole && !requiredTeamRole) return; // No role requirement (e.g., health check)
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -223,17 +235,50 @@ const rbacPlugin: FastifyPluginAsync = async (fastify) => {
 
     try {
       const payload = verifyAccessToken(authHeader.slice(7));
-
       const userLevel = ROLE_HIERARCHY[payload.role] ?? 0;
-      const requiredLevel = ROLE_HIERARCHY[minimumRole];
 
-      if (userLevel < requiredLevel) {
-        return reply.status(403).send({
-          error: { code: 'INSUFFICIENT_ROLE', message: `${minimumRole} role required. Your role: ${payload.role}` },
-        });
+      // 1. Platform role check
+      if (requiredRole) {
+        const requiredLevel = ROLE_HIERARCHY[requiredRole];
+        if (userLevel < requiredLevel) {
+          return reply.status(403).send({
+            error: { code: 'INSUFFICIENT_ROLE', message: `${requiredRole} platform role required. Your role: ${payload.role}` },
+          });
+        }
       }
 
       request.user = { id: payload.sub, role: payload.role as MinimumRole, slackId: payload.slackId };
+
+      // 2. Team role check (Platform ADMIN bypasses all team checks)
+      if (requiredTeamRole && payload.role !== 'ADMIN') {
+        const teamId = await resolveTeamId(request, fastify);
+        if (!teamId) {
+          return reply.status(400).send({
+            error: { code: 'TEAM_CONTEXT_REQUIRED', message: 'Cannot determine team context for this request' },
+          });
+        }
+
+        const membership = await fastify.prisma.teamMembership.findUnique({
+          where: { userId_teamId: { userId: payload.sub, teamId } },
+        });
+
+        if (!membership) {
+          return reply.status(403).send({
+            error: { code: 'NOT_TEAM_MEMBER', message: 'You are not a member of this team' },
+          });
+        }
+
+        const memberLevel = ROLE_HIERARCHY[membership.role] ?? 0;
+        const requiredLevel = ROLE_HIERARCHY[requiredTeamRole];
+
+        if (memberLevel < requiredLevel) {
+          return reply.status(403).send({
+            error: { code: 'INSUFFICIENT_TEAM_ROLE', message: `${requiredTeamRole} team role required. Your team role: ${membership.role}` },
+          });
+        }
+
+        request.teamRole = membership.role as MinimumRole;
+      }
     } catch (err) {
       if (err instanceof jwt.TokenExpiredError) {
         return reply.status(401).send({ error: { code: 'TOKEN_EXPIRED', message: 'Access token has expired' } });
@@ -243,12 +288,46 @@ const rbacPlugin: FastifyPluginAsync = async (fastify) => {
   });
 };
 
+/**
+ * Resolves the team ID from the request context. Checks (in order):
+ * 1. Explicit :teamId route param (team CRUD routes)
+ * 2. teamId in request body (repo onboarding)
+ * 3. Repository's teamId (workflow/work-request routes via repoId)
+ */
+async function resolveTeamId(request: FastifyRequest, fastify: any): Promise<string | null> {
+  const params = request.params as Record<string, string>;
+  if (params.teamId) return params.teamId;
+
+  const body = request.body as Record<string, unknown> | undefined;
+  if (body?.teamId && typeof body.teamId === 'string') return body.teamId;
+
+  // Resolve via repository → team
+  const repoId = params.repoId ?? (body?.repoIds as string[])?.[0] ?? params.id;
+  if (repoId) {
+    const repo = await fastify.prisma.repository.findUnique({
+      where: { id: repoId },
+      select: { teamId: true },
+    });
+    if (repo?.teamId) return repo.teamId;
+  }
+
+  return null;
+}
+
 export default fp(rbacPlugin, { fastify: '5.x', name: 'rbac' });
 
-// Route registration example (role declared in config):
-// app.post('/api/v1/epics', { config: { requiredRole: 'LEAD' } }, epicHandler);
-// app.delete('/api/v1/workflows/:id', { config: { requiredRole: 'ADMIN' } }, terminateHandler);
-// app.get('/api/v1/workflows', { config: { requiredRole: 'ENGINEER' } }, listHandler);
+// Route registration examples:
+//
+// Platform-only check:
+// app.post('/api/v1/users', { config: { requiredRole: 'ADMIN' } }, createUserHandler);
+// app.post('/api/v1/teams', { config: { requiredRole: 'ADMIN' } }, createTeamHandler);
+//
+// Team-only check (Platform ADMIN bypasses):
+// app.post('/api/v1/work-requests', { config: { requiredTeamRole: 'ENGINEER' } }, workRequestHandler);
+// app.post('/api/v1/workflows/:id/approve', { config: { requiredTeamRole: 'LEAD' } }, approveHandler);
+//
+// Combined platform + team check:
+// app.delete('/api/v1/workflows/:id', { config: { requiredTeamRole: 'ADMIN' } }, terminateHandler);
 ```
 
 ### Slack OAuth Flow (Linking slack_id to User)
@@ -374,21 +453,25 @@ export async function verifySlackRequest(request: FastifyRequest, reply: Fastify
 // app.post('/api/v1/webhooks/slack', { config: { rawBody: true }, preHandler: [verifySlackRequest] }, slackHandler);
 ```
 
-## 2. RBAC Permission Matrix
+## 2. RBAC Permission Matrix (Dual-Layer: Platform + Team)
 
-| Action | Endpoint | ADMIN | LEAD | ENGINEER |
-|---|---|---|---|---|
-| Submit work request | `POST /api/v1/work-requests` | Y | Y | Y |
-| Trigger epic orchestration | `POST /api/v1/epics` | Y | Y | N |
-| Approve architectural plan | `POST /api/v1/workflows/:id/approve` | Y | Y | N |
-| View workflow status | `GET /api/v1/workflows/:id` | Y | Y | Y |
-| List all workflows | `GET /api/v1/workflows` | Y | Y | Y |
-| Terminate workflow | `DELETE /api/v1/workflows/:id` | Y | N | N |
-| Retry failed CI | `POST /api/v1/workflows/:id/retry-ci` | Y | Y | N |
-| Onboard repository | `POST /api/v1/repositories` | Y | N | N |
-| Manage users/roles | `POST /api/v1/users` | Y | N | N |
-| Delete memory embeddings | `DELETE /api/v1/lessons/:id` | Y | N | N |
-| View agent lessons | `GET /api/v1/lessons` | Y | Y | Y |
+The system uses a dual-layer permission model. **Platform role** (`User.role`) governs system-wide operations. **Team role** (`TeamMembership.role`) governs team-scoped operations. Platform ADMIN bypasses all team checks (implicit ADMIN in every team).
+
+| Action | Endpoint | Platform Check | Team Check |
+|---|---|---|---|
+| Submit work request | `POST /api/v1/work-requests` | — | ENGINEER+ in repo's team |
+| Trigger epic orchestration | `POST /api/v1/epics` | — | LEAD+ in repo's team |
+| Approve architectural plan | `POST /api/v1/workflows/:id/approve` | — | LEAD+ in repo's team |
+| View workflow status | `GET /api/v1/workflows/:id` | — | ENGINEER+ in repo's team |
+| List all workflows | `GET /api/v1/workflows` | — | Filtered to user's teams |
+| Terminate workflow | `DELETE /api/v1/workflows/:id` | — | ADMIN in repo's team |
+| Retry failed CI | `POST /api/v1/workflows/:id/retry-ci` | — | LEAD+ in repo's team |
+| Onboard repository | `POST /api/v1/repositories` | — | ADMIN in target team |
+| Manage users/roles | `POST /api/v1/users` | ADMIN | — |
+| Create team | `POST /api/v1/teams` | ADMIN | — |
+| Manage team members | `POST /api/v1/teams/:id/members` | — | ADMIN in team |
+| Delete memory embeddings | `DELETE /api/v1/lessons/:id` | ADMIN | — |
+| View agent lessons | `GET /api/v1/lessons` | — | Filtered to user's teams |
 
 ## 3. Gateway API Specification
 
@@ -402,13 +485,61 @@ interface ApiResponse<T> {
 }
 ```
 
+**Teams:**
+
+```
+POST   /api/v1/teams
+  Body: { name: string, slug: string, description?: string }
+  Response: ApiResponse<Team>
+  RBAC: Platform ADMIN
+
+GET    /api/v1/teams
+  Response: ApiResponse<Team[]>
+  RBAC: Platform ENGINEER+ (filtered to own teams; ADMIN sees all)
+
+GET    /api/v1/teams/:id
+  Response: ApiResponse<Team & { memberships: TeamMembership[], repositories: Repository[] }>
+  RBAC: Team ENGINEER+
+
+PATCH  /api/v1/teams/:id
+  Body: { name?: string, description?: string, isActive?: boolean }
+  Response: ApiResponse<Team>
+  RBAC: Team ADMIN
+
+DELETE /api/v1/teams/:id
+  Response: ApiResponse<{ deleted: true }>
+  RBAC: Platform ADMIN (soft-delete: sets isActive = false)
+```
+
+**Team Members:**
+
+```
+GET    /api/v1/teams/:id/members
+  Response: ApiResponse<(TeamMembership & { user: User })[]>
+  RBAC: Team ENGINEER+
+
+POST   /api/v1/teams/:id/members
+  Body: { userId: string, role?: 'ADMIN' | 'LEAD' | 'ENGINEER' }
+  Response: ApiResponse<TeamMembership>
+  RBAC: Team ADMIN
+
+PATCH  /api/v1/teams/:id/members/:userId
+  Body: { role: 'ADMIN' | 'LEAD' | 'ENGINEER' }
+  Response: ApiResponse<TeamMembership>
+  RBAC: Team ADMIN
+
+DELETE /api/v1/teams/:id/members/:userId
+  Response: ApiResponse<{ removed: true }>
+  RBAC: Team ADMIN
+```
+
 **Work Requests:**
 
 ```
 POST /api/v1/work-requests
   Body: { externalTicketId: string, description: string, repoIds: string[], slackChannel?: string }
   Response: ApiResponse<{ workRequestId: string, workflowIds: string[] }>
-  RBAC: ENGINEER+
+  RBAC: Team ENGINEER+ in repo's team
 ```
 
 **Epic Orchestration:**
@@ -423,8 +554,8 @@ POST /api/v1/epics
 **Workflow Management:**
 
 ```
-GET    /api/v1/workflows                    → ApiResponse<ActiveWorkflow[]>           RBAC: ENGINEER+
-GET    /api/v1/workflows/:id                → ApiResponse<ActiveWorkflow & { pullRequests: PullRequest[], agentLessons: AgentLesson[] }>  RBAC: ENGINEER+
+GET    /api/v1/workflows                    → ApiResponse<ActiveWorkflow[]>           RBAC: ENGINEER+ (filtered to user's teams; optional ?teamId filter)
+GET    /api/v1/workflows/:id                → ApiResponse<ActiveWorkflow & { pullRequests: PullRequest[], agentLessons: AgentLesson[] }>  RBAC: Team ENGINEER+ in repo's team
 POST   /api/v1/workflows/:id/approve        → ApiResponse<{ approved: true }>         RBAC: LEAD+
 POST   /api/v1/workflows/:id/retry-ci       → ApiResponse<{ signalSent: true }>       RBAC: LEAD+
 DELETE /api/v1/workflows/:id                → ApiResponse<{ terminated: true }>       RBAC: ADMIN
@@ -433,10 +564,10 @@ DELETE /api/v1/workflows/:id                → ApiResponse<{ terminated: true }
 **Repository Management:**
 
 ```
-GET    /api/v1/repositories                 → ApiResponse<Repository[]>               RBAC: ENGINEER+
-POST   /api/v1/repositories                 → ApiResponse<Repository>                 RBAC: ADMIN
-  Body: { organizationName: string, repoName: string, defaultBranch?: string, githubUrl?: string, githubApiUrl?: string, mcpServerRef?: string, executorImage?: string }
-PATCH  /api/v1/repositories/:id             → ApiResponse<Repository>                 RBAC: ADMIN
+GET    /api/v1/repositories                 → ApiResponse<Repository[]>               RBAC: ENGINEER+ (filtered to user's teams; optional ?teamId filter)
+POST   /api/v1/repositories                 → ApiResponse<Repository>                 RBAC: Team ADMIN in target team
+  Body: { organizationName: string, repoName: string, teamId: string, defaultBranch?: string, githubUrl?: string, githubApiUrl?: string, mcpServerRef?: string, executorImage?: string }
+PATCH  /api/v1/repositories/:id             → ApiResponse<Repository>                 RBAC: Team ADMIN in repo's team
 ```
 
 **User Management:**
@@ -451,10 +582,10 @@ PATCH  /api/v1/users/:id                    → ApiResponse<User>               
 **Agent Lessons (Memory):**
 
 ```
-GET    /api/v1/lessons                      → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+
-GET    /api/v1/lessons/search               → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+
-  Query: { q: string, repoId?: string, limit?: number }  (semantic similarity search)
-DELETE /api/v1/lessons/:id                  → ApiResponse<{ deleted: true }>          RBAC: ADMIN
+GET    /api/v1/lessons                      → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+ (filtered to user's teams; optional ?teamId filter)
+GET    /api/v1/lessons/search               → ApiResponse<AgentLesson[]>              RBAC: ENGINEER+ (filtered to user's teams)
+  Query: { q: string, repoId?: string, teamId?: string, limit?: number }  (semantic similarity search)
+DELETE /api/v1/lessons/:id                  → ApiResponse<{ deleted: true }>          RBAC: Platform ADMIN
 ```
 
 ## 4. Webhook Endpoints
