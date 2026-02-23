@@ -8,7 +8,8 @@
     ".": "./dist/index.js",
     "./db": "./dist/db.js",
     "./types/workflow": "./dist/types/workflow.js",
-    "./types/api": "./dist/types/api.js"
+    "./types/api": "./dist/types/api.js",
+    "./lib/workflowId": "./dist/lib/workflowId.js"
   },
   "scripts": {
     "build": "tsc",

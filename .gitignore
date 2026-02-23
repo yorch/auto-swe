@@ -8,3 +8,9 @@ node_modules/
 dist/
 .env
 *.tsbuildinfo
+
+# Prisma generated client — regenerated via `yarn db:generate`
+packages/shared/src/generated/
+
+# Next.js
+.next/

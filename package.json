@@ -5,13 +5,14 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -ws",
-    "dev:gateway": "npm run dev -w @auto-swe/gateway",
-    "dev:worker": "npm run dev -w @auto-swe/worker",
-    "db:migrate": "npx -w @auto-swe/shared prisma migrate dev",
-    "db:generate": "npx -w @auto-swe/shared prisma generate",
-    "db:seed": "npx -w @auto-swe/shared prisma db seed",
-    "db:studio": "npx -w @auto-swe/shared prisma studio",
+    "build": "yarn workspaces foreach -A run build",
+    "dev:gateway": "yarn workspace @auto-swe/gateway dev",
+    "dev:worker": "yarn workspace @auto-swe/worker dev",
+    "dev:web": "yarn workspace @auto-swe/web dev",
+    "db:migrate": "yarn workspace @auto-swe/shared prisma migrate dev",
+    "db:generate": "yarn workspace @auto-swe/shared prisma generate",
+    "db:seed": "yarn workspace @auto-swe/shared prisma db seed",
+    "db:studio": "yarn workspace @auto-swe/shared prisma studio",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -3,17 +3,17 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Copy root package files
-COPY package.json package-lock.json ./
+COPY package.json yarn.lock ./
 
 # Copy package sources
 COPY packages/web/package.json packages/web/
 COPY packages/shared/package.json packages/shared/
 
-RUN npm ci --workspace=@auto-swe/web
+RUN yarn install --frozen-lockfile
 
 COPY packages/web packages/web
 
-RUN npm run build -w @auto-swe/web
+RUN yarn workspace @auto-swe/web build
 
 # ── Runtime ──
 FROM node:24-alpine AS runtime

@@ -45,6 +45,11 @@ export function createWorkspace(
   // Install git if not present (alpine images may not have it)
   rootExec('which git || apk add --no-cache git');
 
+  // Configure git identity — required for commits in ephemeral containers.
+  // Without this, `git commit` fails with "Author identity unknown".
+  rootExec("git config --global user.name 'auto-swe'");
+  rootExec("git config --global user.email 'auto-swe@localhost'");
+
   // Clone repo
   rootExec(`git clone --depth=50 -b ${defaultBranch} '${authedUrl}' /workspace/target-repo`);
   rootExec(`cd /workspace/target-repo && git checkout -b '${branch}'`);

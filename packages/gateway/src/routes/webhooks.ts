@@ -1,27 +1,32 @@
-import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
+import { verifyGitHubSignature } from '../lib/github.js';
+
+function verifyWebhookOrReject(
+  request: any,
+  reply: any,
+): boolean {
+  const signature = request.headers['x-hub-signature-256'] as string;
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+  if (!secret || !signature) {
+    reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
+    return false;
+  }
+
+  if (!verifyGitHubSignature(request.rawBody!, signature, secret)) {
+    reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
+    return false;
+  }
+
+  return true;
+}
 
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/webhooks/git
-  // Uses fastify-raw-body for HMAC verification
   fastify.post('/git', {
     config: { rawBody: true },
   }, async (request, reply) => {
-    // Verify GitHub HMAC signature
-    const signature = request.headers['x-hub-signature-256'] as string;
-    const secret = process.env.GITHUB_WEBHOOK_SECRET;
-
-    if (!secret || !signature) {
-      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
-    }
-
-    const expected =
-      'sha256=' +
-      crypto.createHmac('sha256', secret).update((request as any).rawBody!).digest('hex');
-
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
-    }
+    if (!verifyWebhookOrReject(request, reply)) return;
 
     const payload = request.body as any;
 
@@ -65,25 +70,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /api/v1/webhooks/ci
-  // Receives CI/CD pipeline status from GitHub Actions (check_run/check_suite)
   fastify.post('/ci', {
     config: { rawBody: true },
   }, async (request, reply) => {
-    // Verify GitHub HMAC signature
-    const signature = request.headers['x-hub-signature-256'] as string;
-    const secret = process.env.GITHUB_WEBHOOK_SECRET;
-
-    if (!secret || !signature) {
-      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
-    }
-
-    const expected =
-      'sha256=' +
-      crypto.createHmac('sha256', secret).update((request as any).rawBody!).digest('hex');
-
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-      return reply.status(401).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
-    }
+    if (!verifyWebhookOrReject(request, reply)) return;
 
     const payload = request.body as any;
 
@@ -96,10 +86,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     const repoFullName = payload.repository.full_name;
     const [org, repoName] = repoFullName.split('/');
     const headSha = checkRun.head_sha;
-    const conclusion = checkRun.conclusion; // success, failure, cancelled, etc.
+    const conclusion = checkRun.conclusion;
     const logsUrl = checkRun.html_url;
 
-    // Find the tracked workflow by branch/repo
+    // Find tracked PRs by commit SHA
     const pullRequests = await fastify.prisma.pullRequest.findMany({
       where: {
         headSha,

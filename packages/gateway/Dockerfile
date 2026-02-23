@@ -2,26 +2,26 @@
 FROM node:24-alpine AS builder
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json yarn.lock ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
-RUN npm ci --workspace=@auto-swe/shared --workspace=@auto-swe/gateway --include-workspace-root
+RUN yarn install --frozen-lockfile
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
 COPY packages/gateway/ packages/gateway/
-RUN npx -w @auto-swe/shared prisma generate \
- && npm run build -w @auto-swe/shared \
- && npm run build -w @auto-swe/gateway
+RUN yarn workspace @auto-swe/shared prisma generate \
+ && yarn workspace @auto-swe/shared build \
+ && yarn workspace @auto-swe/gateway build
 
 # ── Stage 2: Production dependencies only ──
 FROM node:24-alpine AS prod-deps
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json yarn.lock ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
-RUN npm ci --workspace=@auto-swe/shared --workspace=@auto-swe/gateway --include-workspace-root --omit=dev
+RUN yarn install --frozen-lockfile --production
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { generateWorkflowId, generateBranchName } from '@auto-swe/shared/lib/workflowId';
 
 const CreateWorkRequestSchema = z.object({
   externalTicketId: z.string().min(1),
@@ -26,35 +27,20 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    // Create work request
-    const workRequest = await fastify.prisma.workRequest.create({
-      data: {
-        externalTicketId,
-        description,
-        requestPayload: JSON.stringify(request.body),
-      },
-    });
+    // Generate deterministic workflow ID (includes org to prevent cross-org collisions)
+    const temporalWorkflowId = generateWorkflowId(
+      externalTicketId,
+      repo.organizationName,
+      repo.repoName,
+    );
+    const branch = generateBranchName(externalTicketId);
 
-    // Generate Temporal workflow ID (deterministic for idempotency)
-    const temporalWorkflowId = `eng-${externalTicketId}-${repo.repoName}`;
-    const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-    const branch = `${branchPrefix}/${externalTicketId}`;
-
-    // Create ActiveWorkflow record
-    const activeWorkflow = await fastify.prisma.activeWorkflow.create({
-      data: {
-        temporalWorkflowId,
-        workRequestId: workRequest.id,
-        repoId: repo.id,
-        currentStatus: 'IMPLEMENTING',
-        assignedBranch: branch,
-      },
-    });
-
-    // Start Temporal workflow
+    // Start Temporal workflow FIRST — this is the idempotency gate.
+    // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
+    // and we haven't written any orphan DB rows yet.
     try {
       await fastify.temporal.startWorkflow(temporalWorkflowId, {
-        workRequestId: workRequest.id,
+        workRequestId: '', // Placeholder — workflow reads from DB via repoId
         repoId: repo.id,
         externalTicketId,
         description,
@@ -68,6 +54,27 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       }
       throw err;
     }
+
+    // Workflow started — now persist to DB.
+    // If DB write fails, the Temporal workflow will eventually time out,
+    // which is preferable to orphan DB rows that block future retries.
+    const workRequest = await fastify.prisma.workRequest.create({
+      data: {
+        externalTicketId,
+        description,
+        requestPayload: JSON.stringify(request.body),
+      },
+    });
+
+    const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+      data: {
+        temporalWorkflowId,
+        workRequestId: workRequest.id,
+        repoId: repo.id,
+        currentStatus: 'IMPLEMENTING',
+        assignedBranch: branch,
+      },
+    });
 
     return reply.status(201).send({
       data: {
