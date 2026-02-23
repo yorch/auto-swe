@@ -1,0 +1,55 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { workRequestRoutes } from './workRequests.js';
+
+describe('POST /api/v1/work-requests', () => {
+  const app = Fastify();
+
+  beforeAll(async () => {
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+
+    // Mock prisma and temporal on the app instance (cast as any to bypass strict typing)
+    app.decorate('prisma', {
+      repository: {
+        findUnique: async () => ({ id: 'repo-1', isActive: true, repoName: 'test', organizationName: 'org' }),
+      },
+      workRequest: { create: async (args: any) => ({ id: 'wr-1', ...args.data }) },
+      activeWorkflow: { create: async (args: any) => ({ id: 'wf-1', ...args.data }) },
+    } as any);
+    app.decorate('temporal', {
+      startWorkflow: async () => {},
+      signalWorkflow: async () => {},
+    });
+
+    await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+    await app.ready();
+  });
+
+  afterAll(() => app.close());
+
+  it('rejects missing description', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-requests',
+      payload: { externalTicketId: 'JIRA-1', repoIds: ['00000000-0000-0000-0000-000000000001'] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('creates a work request', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-requests',
+      payload: {
+        externalTicketId: 'JIRA-1',
+        description: 'Add health endpoint',
+        repoIds: ['00000000-0000-0000-0000-000000000001'],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.data.workRequestId).toBeDefined();
+  });
+});

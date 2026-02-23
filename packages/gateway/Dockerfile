@@ -1,0 +1,52 @@
+# ── Stage 1: Build ──
+FROM node:24-alpine AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/gateway/package.json packages/gateway/
+RUN npm ci --workspace=@auto-swe/shared --workspace=@auto-swe/gateway --include-workspace-root
+
+COPY tsconfig.base.json ./
+COPY packages/shared/ packages/shared/
+COPY packages/gateway/ packages/gateway/
+RUN npx -w @auto-swe/shared prisma generate \
+ && npm run build -w @auto-swe/shared \
+ && npm run build -w @auto-swe/gateway
+
+# ── Stage 2: Production dependencies only ──
+FROM node:24-alpine AS prod-deps
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/gateway/package.json packages/gateway/
+RUN npm ci --workspace=@auto-swe/shared --workspace=@auto-swe/gateway --include-workspace-root --omit=dev
+
+# ── Stage 3: Runtime ──
+FROM node:24-alpine
+WORKDIR /app
+
+# Production node_modules (hoisted root deps)
+COPY --from=prod-deps /app/node_modules ./node_modules
+
+# Prisma generated client (lives inside node_modules)
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Workspace package.json files (for symlink resolution)
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder /app/packages/gateway/package.json ./packages/gateway/
+
+# Built output
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/gateway/dist ./packages/gateway/dist
+
+# Workspace node_modules (symlinks)
+COPY --from=prod-deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=prod-deps /app/packages/gateway/node_modules ./packages/gateway/node_modules
+
+# Root package.json (for workspace symlink resolution)
+COPY package.json ./
+
+CMD ["node", "packages/gateway/dist/index.js"]

@@ -1,0 +1,31 @@
+{
+  "name": "@auto-swe/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./db": "./dist/db.js",
+    "./types/workflow": "./dist/types/workflow.js",
+    "./types/api": "./dist/types/api.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prisma": "prisma"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.4.1",
+    "@prisma/client": "^7.4.0",
+    "bcrypt": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
+    "prisma": "^7.4.0",
+    "typescript": "^5.7.0"
+  },
+  "prisma": {
+    "schema": "src/prisma/schema.prisma",
+    "seed": "tsx src/prisma/seed.ts"
+  }
+}

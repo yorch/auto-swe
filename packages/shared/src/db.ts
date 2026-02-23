@@ -1,0 +1,21 @@
+import { PrismaClient } from './generated/prisma/client.js';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+// Re-export PrismaClient for use by other packages
+export { PrismaClient } from './generated/prisma/client.js';
+
+// Singleton PrismaClient — shared across the process.
+// Import as: import { prisma } from '@auto-swe/shared/db';
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
+
+function createPrismaClient(): PrismaClient {
+  return new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: process.env.DATABASE_URL!,
+    }),
+  });
+}
+
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
