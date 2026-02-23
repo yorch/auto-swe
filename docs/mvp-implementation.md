@@ -390,7 +390,8 @@ import bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function main() {
-  await prisma.user.upsert({
+  // Seed admin user
+  const admin = await prisma.user.upsert({
     where: { email: 'admin@auto-swe.local' },
     update: {},
     create: {
@@ -399,8 +400,30 @@ async function main() {
       role: 'ADMIN',
     },
   });
+  console.log(`Seed: admin user created (${admin.id})`);
 
-  console.log('Seed complete: admin user created');
+  // Seed a sample repository for local development.
+  // Update organizationName and repoName to match your target GitHub repo.
+  const repo = await prisma.repository.upsert({
+    where: {
+      organizationName_repoName: {
+        organizationName: 'your-org',
+        repoName: 'your-repo',
+      },
+    },
+    update: {},
+    create: {
+      organizationName: 'your-org',
+      repoName: 'your-repo',
+      defaultBranch: 'main',
+    },
+  });
+  console.log(`Seed: sample repository created (${repo.id})`);
+  console.log('');
+  console.log('  To submit a work request, use this repo ID:');
+  console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);
+  console.log(`      -H 'Content-Type: application/json' \\`);
+  console.log(`      -d '{"externalTicketId":"JIRA-1","description":"Add health endpoint","repoIds":["${repo.id}"]}'`);
 }
 
 main()
@@ -1302,14 +1325,14 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       testResults: testResult,
-      implementationNotes: `Completed in ${iteration(testResult)} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: `Completed in ${formatIterationCount(testResult)} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
     };
   } finally {
     workspace.destroy();
   }
 }
 
-function iteration(result: TestRunResult): string {
+function formatIterationCount(result: TestRunResult): string {
   return result.passed ? '≤5' : '5 (max)';
 }
 
@@ -1457,6 +1480,8 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
 
 ### Step 11: Implementer Agent with Tool Bindings
 
+> ⚠️ **VERIFY MASTRA API BEFORE IMPLEMENTING** — The code below is based on pre-release Mastra 1.0 documentation. The constructor shape (`new Mastra({ agents: { ... } })`), tool creation pattern (`createTool`), and model binding (`anthropic('claude-opus-4-6')`) must be verified against the actual released `@mastra/core` and `@mastra/anthropic` packages. Install them first, check their exported APIs, and adapt if needed. The intent and architecture are correct — only the exact API surface may differ.
+
 **packages/worker/src/agents/prompts.ts:**
 ```typescript
 export const IMPLEMENTER_SYSTEM_PROMPT = `You are a highly constrained Surgical Coder operating within an isolated repository environment.
@@ -1578,59 +1603,118 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest';
 
 ### Dockerfiles
 
+> **Yarn 4 monorepo Docker strategy:** These use a 3-stage build pattern:
+> 1. **builder** — Full `yarn install --immutable` (validates lockfile) + TypeScript compile
+> 2. **prod-deps** — `yarn workspaces focus <pkg> --production` (strips devDependencies, ignores unrelated workspaces)
+> 3. **runtime** — Minimal image with only production `node_modules` + compiled output
+>
+> With `nodeLinker: node-modules`, Yarn 4 hoists most dependencies to the root `node_modules/`. Workspace cross-references (`@auto-swe/shared`) become symlinks. The root `package.json` is copied to runtime so Node can resolve these symlinks. Prisma's generated client lives in `node_modules/.prisma` and `node_modules/@prisma`, so those are copied explicitly.
+
 **packages/gateway/Dockerfile:**
 ```dockerfile
+# ── Stage 1: Build ──
 FROM node:20-alpine AS builder
 RUN corepack enable
 WORKDIR /app
+
 COPY .yarnrc.yml yarn.lock package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
 RUN yarn install --immutable
-COPY packages/shared packages/shared
-COPY packages/gateway packages/gateway
-RUN yarn workspace @auto-swe/shared prisma generate
-RUN yarn workspace @auto-swe/shared build && yarn workspace @auto-swe/gateway build
 
-FROM node:20-alpine
+COPY packages/shared/ packages/shared/
+COPY packages/gateway/ packages/gateway/
+RUN yarn workspace @auto-swe/shared prisma generate \
+ && yarn workspace @auto-swe/shared build \
+ && yarn workspace @auto-swe/gateway build
+
+# ── Stage 2: Production dependencies only ──
+FROM node:20-alpine AS prod-deps
 RUN corepack enable
 WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+
+COPY .yarnrc.yml yarn.lock package.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/gateway/package.json packages/gateway/
+RUN yarn workspaces focus @auto-swe/gateway --production
+
+# ── Stage 3: Runtime ──
+FROM node:20-alpine
+WORKDIR /app
+
+# Production node_modules (hoisted root deps)
+COPY --from=prod-deps /app/node_modules ./node_modules
+
+# Prisma generated client (lives inside node_modules)
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Workspace package.json files (for symlink resolution)
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/
-COPY --from=builder /app/packages/gateway/node_modules ./packages/gateway/node_modules
-COPY --from=builder /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder /app/packages/gateway/package.json ./packages/gateway/
+
+# Built output
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/gateway/dist ./packages/gateway/dist
+
+# Root package.json (for workspace symlink resolution)
+COPY package.json ./
+
 CMD ["node", "packages/gateway/dist/index.js"]
 ```
 
 **packages/worker/Dockerfile:**
 ```dockerfile
+# ── Stage 1: Build ──
 FROM node:20-alpine AS builder
 RUN corepack enable
 WORKDIR /app
+
 COPY .yarnrc.yml yarn.lock package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/worker/package.json packages/worker/
 RUN yarn install --immutable
-COPY packages/shared packages/shared
-COPY packages/worker packages/worker
-RUN yarn workspace @auto-swe/shared prisma generate
-RUN yarn workspace @auto-swe/shared build && yarn workspace @auto-swe/worker build
 
-FROM node:20-alpine
-# Worker needs Docker CLI to manage workspace containers
-RUN apk add --no-cache docker-cli
+COPY packages/shared/ packages/shared/
+COPY packages/worker/ packages/worker/
+RUN yarn workspace @auto-swe/shared prisma generate \
+ && yarn workspace @auto-swe/shared build \
+ && yarn workspace @auto-swe/worker build
+
+# ── Stage 2: Production dependencies only ──
+FROM node:20-alpine AS prod-deps
 RUN corepack enable
 WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+
+COPY .yarnrc.yml yarn.lock package.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/worker/package.json packages/worker/
+RUN yarn workspaces focus @auto-swe/worker --production
+
+# ── Stage 3: Runtime ──
+FROM node:20-alpine
+# Worker needs Docker CLI to manage workspace containers (DinD)
+RUN apk add --no-cache docker-cli
+WORKDIR /app
+
+# Production node_modules (hoisted root deps)
+COPY --from=prod-deps /app/node_modules ./node_modules
+
+# Prisma generated client (lives inside node_modules)
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Workspace package.json files (for symlink resolution)
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/
-COPY --from=builder /app/packages/worker/node_modules ./packages/worker/node_modules
-COPY --from=builder /app/packages/worker/dist ./packages/worker/dist
 COPY --from=builder /app/packages/worker/package.json ./packages/worker/
+
+# Built output
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/worker/dist ./packages/worker/dist
+
+# Root package.json (for workspace symlink resolution)
+COPY package.json ./
+
 CMD ["node", "packages/worker/dist/index.js"]
 ```
 
@@ -1676,8 +1760,9 @@ yarn db:generate
 yarn db:seed
 
 # 4. Register a target repository
-yarn db:studio
-# In Prisma Studio: insert a Repository record with organizationName, repoName, defaultBranch
+# Edit packages/shared/src/prisma/seed.ts — set organizationName and repoName to your GitHub repo
+yarn db:seed
+# The seed output will print the repo UUID for use in work requests
 
 # 5. Start services
 yarn dev:gateway   # Terminal 1
@@ -1707,6 +1792,100 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | Temporal workflow | Signal handling, timeout behavior, state transitions | `@temporalio/testing` (TestWorkflowEnvironment) |
 | Activities | Mocked Prisma + mocked Docker exec | Vitest |
 | Workspace | Container lifecycle (create, exec, destroy) | Vitest (integration, requires Docker) |
+
+### Test Configuration
+
+**vitest.config.ts (root):**
+```typescript
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    include: ['packages/*/src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      include: ['packages/*/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/prisma/migrations/**'],
+    },
+  },
+});
+```
+
+Add to **package.json (root)** scripts:
+```json
+{
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}
+```
+
+### Example Unit Test
+
+**packages/gateway/src/routes/workRequests.test.ts:**
+```typescript
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { workRequestRoutes } from './workRequests';
+
+describe('POST /api/v1/work-requests', () => {
+  const app = Fastify();
+
+  beforeAll(async () => {
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+
+    // Mock prisma and temporal on the app instance
+    app.decorate('prisma', {
+      repository: {
+        findUnique: async () => ({ id: 'repo-1', isActive: true, repoName: 'test', organizationName: 'org' }),
+      },
+      workRequest: { create: async (args: any) => ({ id: 'wr-1', ...args.data }) },
+      activeWorkflow: { create: async (args: any) => ({ id: 'wf-1', ...args.data }) },
+    });
+    app.decorate('temporal', {
+      startWorkflow: async () => {},
+      signalWorkflow: async () => {},
+    });
+
+    await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+    await app.ready();
+  });
+
+  afterAll(() => app.close());
+
+  it('rejects missing description', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-requests',
+      payload: { externalTicketId: 'JIRA-1', repoIds: ['repo-1'] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('creates a work request', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-requests',
+      payload: {
+        externalTicketId: 'JIRA-1',
+        description: 'Add health endpoint',
+        repoIds: ['repo-1'],
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.data.workRequestId).toBeDefined();
+  });
+});
+```
 
 ### End-to-End Test
 

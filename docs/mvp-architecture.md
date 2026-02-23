@@ -54,7 +54,7 @@ These are explicitly out of scope and must not be built during Phase 1:
 │                                                                  │
 │  ┌────────────────────────┐     ┌────────────────────────────┐  │
 │  │  Interaction Gateway   │────▶│  Temporal Server           │  │
-│  │  (Express.js, no auth) │     │  (auto-setup:1.25.2)       │  │
+│  │  (Fastify 5.x, no auth)│     │  (auto-setup:1.25.2)       │  │
 │  │                        │◀────│                            │  │
 │  │  - POST /work-requests │     └────────────┬───────────────┘  │
 │  │  - POST /webhooks/git  │                  │                  │
@@ -156,7 +156,6 @@ The only LLM agent in the MVP. Powered by Mastra 1.0 with `claude-opus-4-6`.
 **Tools available to the agent (MCP):**
 - `bash` — Execute shell commands in the DinD workspace
 - `writeFile` — Create/overwrite files in `/workspace/target-repo`
-- `editFile` — Edit existing files
 - `readFile` — Read file contents
 - `listDirectory` — List directory contents
 
