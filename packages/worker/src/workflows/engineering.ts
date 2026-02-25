@@ -185,7 +185,7 @@ export async function EngineeringWorkflow(
   const lessonsGenerated: string[] = [];
   try {
     const lessonId = await memoryActivities.commitToMemory(
-      `eng-${request.externalTicketId}`,
+      workflowInfo().workflowId,
       request.repoId,
     );
     if (lessonId) lessonsGenerated.push(lessonId);
