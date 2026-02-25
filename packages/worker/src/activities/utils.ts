@@ -2,16 +2,25 @@ import type { TestRunResult, FileChange } from '@auto-swe/shared/types/workflow'
 
 /**
  * Detect the test command from a package.json string.
- * Falls back to 'npm test' if no recognizable test script is found.
+ * Returns the most appropriate test runner command based on the project's
+ * scripts and devDependencies. Falls back to 'npm test' if no recognizable
+ * test script is found.
  */
 export function detectTestCommand(packageJsonStr: string): string {
   try {
     const pkg = JSON.parse(packageJsonStr);
     const testScript = pkg.scripts?.test;
+
+    // No test script or npm's default placeholder — try to detect framework
     if (!testScript || testScript === 'echo "Error: no test specified" && exit 1') {
+      const deps = { ...pkg.devDependencies, ...pkg.dependencies };
+      if (deps.vitest) return 'npx vitest run';
+      if (deps.jest) return 'npx jest';
+      if (deps.mocha) return 'npx mocha';
       return 'npm test';
     }
-    // Return 'npm test' which delegates to whatever the project's test script is
+
+    // Has a valid test script — use npm test which delegates to it
     return 'npm test';
   } catch {
     return 'npm test';
