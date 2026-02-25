@@ -11,13 +11,18 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for access token in cookie or localStorage isn't accessible in middleware,
-  // so we check for an auth cookie. The client-side Providers component handles
-  // localStorage-based auth. This is a defense-in-depth layer.
+  // Check for auth cookie (set by client-side login flow).
+  // localStorage is not accessible in middleware, so the cookie is the
+  // only server-side signal. The client-side Providers component
+  // handles the full token lifecycle via localStorage.
   const token = request.cookies.get('accessToken')?.value;
 
-  // For client-side auth (localStorage), the Providers component handles redirect.
-  // This middleware is a fallback for direct URL navigation.
+  if (!token) {
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('redirect', pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
   return NextResponse.next();
 }
 

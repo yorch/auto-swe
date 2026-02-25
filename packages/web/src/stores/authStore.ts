@@ -21,6 +21,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     api.setToken(data.accessToken);
     if (typeof window !== 'undefined') {
       localStorage.setItem('refreshToken', data.refreshToken);
+      // Set cookie so Next.js middleware can detect auth on server-side navigation
+      document.cookie = `accessToken=${data.accessToken}; path=/; max-age=3600; SameSite=Lax`;
     }
 
     // Decode JWT payload (base64)
@@ -30,6 +32,9 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: () => {
     api.clearToken();
+    if (typeof window !== 'undefined') {
+      document.cookie = 'accessToken=; path=/; max-age=0';
+    }
     set({ user: null, isAuthenticated: false });
   },
 
