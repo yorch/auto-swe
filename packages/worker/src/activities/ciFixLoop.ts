@@ -105,9 +105,9 @@ export async function executeCIFixImplementation(
       };
     }
 
-    // Commit and push the fix
+    // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
     workspace.exec('git add -A');
-    workspace.exec(`git commit -m "auto: fix CI for ${previousCodeResult.branch}" --allow-empty`);
+    workspace.exec(`git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`);
     workspace.exec(`git push origin '${previousCodeResult.branch}'`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
