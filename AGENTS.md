@@ -38,11 +38,9 @@ For deeper context on architecture and design rationale, refer to:
 | Database | PostgreSQL 17 + pgvector | pgvector/pgvector:pg17 |
 | LLM (MVP) | claude-opus-4-6 (Anthropic) | — |
 | Language | TypeScript | ^5.7.0 |
-| Web Dashboard | Next.js 16 + React 19 + Tailwind CSS 4 | ^16.1.0 / ^19.2.0 / ^4.2.0 |
-| UI Components | shadcn/ui + Radix UI (unified) | copy-paste / ^1.4.0 |
+| Web Dashboard | Next.js 15 + React 19 + Tailwind CSS 4 | ^15.0.0 / ^19.0.0 / ^4.0.0 |
 | Server State | TanStack Query (React Query) | ^5.90.0 |
 | Client State | Zustand | ^5.0.0 |
-| Charts | Recharts | ^3.7.0 |
 | Testing | Vitest | ^3.0.0 |
 
 ---
@@ -71,7 +69,7 @@ auto-swe/
 │   │       ├── activities/   # executeImplementation, ciFixLoop, commitToMemory, createOrUpdatePullRequest, runReviewNetwork, state, workspace, utils
 │   │       ├── agents/       # implementer.ts, reviewNetwork.ts, prompts.ts
 │   │       └── lib/          # embeddings.ts, lessonRetrieval.ts
-│   └── web/             # Web Dashboard (Next.js 16 + React 19 + Tailwind CSS 4)
+│   └── web/             # Web Dashboard (Next.js 15 + React 19 + Tailwind CSS 4)
 │       └── src/
 │           ├── app/     # Next.js App Router pages (workflows, epics, repos, lessons, teams, users, settings, login)
 │           ├── hooks/   # useWorkflows.ts (TanStack Query)
@@ -101,7 +99,7 @@ auto-swe/
 
 | Thing | Pattern | Example |
 |---|---|---|
-| Temporal workflow ID | `eng-<ticketId>-<repoName>` | `eng-JIRA-1234-payments-api` |
+| Temporal workflow ID | `eng-<org>-<repoName>-<ticketId>` | `eng-acme-payments-api-JIRA-1234` |
 | Git branch | `<BRANCH_PREFIX>/<ticketId>` | `auto/JIRA-1234` (default prefix: `auto`) |
 | Docker workspace container | `workspace-<random-hex>` | `workspace-a1b2c3d4` |
 | Prisma table mapping | `snake_case` via `@@map` | `active_workflows` |
