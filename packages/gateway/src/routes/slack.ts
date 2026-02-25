@@ -186,8 +186,12 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (actionId.startsWith('retry_ci_')) {
       const workflowId = payload.actions[0].value;
-      await fastify.temporal.signalWorkflow(workflowId, 'ciPipelineSignal', [{ passed: false }]);
-      return { data: { action: 'ci_retry_requested', workflowId } };
+      // Signal CI failure to trigger the CI fix loop. The workflow will
+      // re-provision a workspace, run the CI fix agent, and push a new commit.
+      // This is intentionally "passed: false" — the user is requesting the
+      // agent to fix CI, not to re-run the same CI pipeline.
+      await fastify.temporal.signalWorkflow(workflowId, 'ciPipelineSignal', [{ passed: false, logsUrl: undefined }]);
+      return { data: { action: 'ci_fix_requested', workflowId } };
     }
 
     return { data: { ignored: true, reason: 'Unknown action' } };
