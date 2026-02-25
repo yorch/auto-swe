@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { NativeConnection, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 
@@ -6,13 +8,17 @@ async function run() {
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
   });
 
+  // Resolve workflow path relative to this file (ESM-compatible)
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const workflowsPath = path.resolve(__dirname, './workflows/index.js');
+
   const worker = await Worker.create({
     connection,
     namespace: 'default',
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).
     // Only type-only imports are allowed in workflow files.
-    workflowsPath: require.resolve('./workflows/index'),
+    workflowsPath,
     activities,
   });
 
