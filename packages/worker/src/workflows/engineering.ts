@@ -23,7 +23,7 @@ const stateActivities = proxyActivities<
 });
 
 const agentActivities = proxyActivities<
-  Pick<typeof activitiesType, 'executeImplementation' | 'executeCIFixImplementation' | 'runReviewNetwork'>
+  Pick<typeof activitiesType, 'executeImplementation' | 'executeCIFixImplementation' | 'executeReviewFixImplementation' | 'runReviewNetwork'>
 >({
   startToCloseTimeout: '30m',
   heartbeatTimeout: '5m',
@@ -112,8 +112,8 @@ export async function EngineeringWorkflow(
           lessonsGenerated: [],
         };
       }
-      // Feed rejection back to implementer for fix
-      codeResult = await agentActivities.executeCIFixImplementation(
+      // Feed rejection back to implementer via a review-specific prompt
+      codeResult = await agentActivities.executeReviewFixImplementation(
         reviewResult.rejectionSummary!,
         codeResult,
       );

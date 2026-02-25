@@ -3,7 +3,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
-import { CI_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
+import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
 
 /**
@@ -120,6 +120,101 @@ export async function executeCIFixImplementation(
       filesChanged: parseDiffToFileChanges(diff),
       testResults: testResult,
       implementationNotes: `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+    };
+  } finally {
+    workspace.destroy();
+  }
+}
+
+/**
+ * Re-provisions a workspace on the existing branch and runs the implementer
+ * agent in review fix mode with the review findings injected.
+ *
+ * Separate from executeCIFixImplementation because review rejections require
+ * a different prompt and context shape than CI failures.
+ */
+export async function executeReviewFixImplementation(
+  rejectionSummary: string,
+  previousCodeResult: CodeResult,
+): Promise<CodeResult> {
+  const workflow = await prisma.activeWorkflow.findFirst({
+    where: { assignedBranch: previousCodeResult.branch },
+    include: { repository: true },
+  });
+
+  if (!workflow?.repository) {
+    throw new Error(`No workflow found for branch ${previousCodeResult.branch}`);
+  }
+
+  const repo = workflow.repository;
+  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
+  const githubToken = process.env.GITHUB_TOKEN!;
+
+  const workspace = createWorkspace(
+    repoUrl,
+    previousCodeResult.branch,
+    repo.defaultBranch,
+    githubToken,
+    repo.executorImage ?? 'node:24-alpine',
+  );
+
+  try {
+    heartbeat('review fix workspace provisioned');
+
+    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const testCommand = detectTestCommand(packageJson);
+
+    const { agent } = createImplementerAgent(workspace);
+
+    await agent.generate(
+      [
+        { role: 'system', content: REVIEW_FIX_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            mode: 'REVIEW_FIX',
+            reviewFindings: rejectionSummary,
+            previousDiff: previousCodeResult.diff.slice(-20_000),
+            previousTestResults: previousCodeResult.testResults,
+          }),
+        },
+      ],
+      { toolChoice: 'auto' },
+    );
+
+    heartbeat('review fix agent completed');
+
+    let testResult: TestRunResult;
+    try {
+      const startTime = Date.now();
+      const testOutput = workspace.exec(testCommand);
+      testResult = parseTestOutput(testOutput, Date.now() - startTime);
+    } catch (err: any) {
+      testResult = {
+        passed: false,
+        total: 0,
+        passing: 0,
+        failing: 1,
+        stdout: err.stdout?.slice(-10_000) ?? err.message,
+        duration_ms: 0,
+      };
+    }
+
+    workspace.exec('git add -A');
+    workspace.exec(`git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`);
+    workspace.exec(`git push origin '${previousCodeResult.branch}'`);
+
+    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
+    const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    return {
+      branch: previousCodeResult.branch,
+      headSha,
+      diff,
+      filesChanged: parseDiffToFileChanges(diff),
+      testResults: testResult,
+      implementationNotes: `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
     };
   } finally {
     workspace.destroy();

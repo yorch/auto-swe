@@ -3,5 +3,5 @@ export { executeImplementation } from './executeImplementation.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 // Phase 2
 export { runReviewNetwork } from './runReviewNetwork.js';
-export { fetchCILogs, executeCIFixImplementation } from './ciFixLoop.js';
+export { fetchCILogs, executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
