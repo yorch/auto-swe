@@ -13,6 +13,14 @@ const EXEC_OPTS: ExecSyncOptions = {
   maxBuffer: 10 * 1024 * 1024, // 10MB
 };
 
+// Validate Docker image names to prevent shell injection.
+// Allows standard image refs: registry/org/name:tag@sha256:digest
+const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
+
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 export function createWorkspace(
   repoUrl: string,
   branch: string,
@@ -20,6 +28,10 @@ export function createWorkspace(
   githubToken: string,
   image: string = 'node:24-alpine',
 ): Workspace {
+  if (!DOCKER_IMAGE_RE.test(image)) {
+    throw new Error(`Invalid Docker image name: ${image}`);
+  }
+
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
@@ -28,16 +40,16 @@ export function createWorkspace(
     `https://x-access-token:${githubToken}@`,
   );
 
-  // Start container with git installed
+  // Start container — use '--' to separate docker flags from the image argument
   execSync(
-    `docker run -d --name ${containerName} ${image} sleep infinity`,
+    `docker run -d --name ${containerName} -- ${shellQuote(image)} sleep infinity`,
     EXEC_OPTS,
   );
 
   // Initial exec function (root of container)
   const rootExec = (command: string): string => {
     return execSync(
-      `docker exec ${containerName} sh -c '${command.replace(/'/g, "'\\''")}'`,
+      `docker exec ${containerName} sh -c ${shellQuote(command)}`,
       EXEC_OPTS,
     ) as string;
   };
@@ -50,15 +62,15 @@ export function createWorkspace(
   rootExec("git config --global user.name 'auto-swe'");
   rootExec("git config --global user.email 'auto-swe@localhost'");
 
-  // Clone repo
-  rootExec(`git clone --depth=50 -b ${defaultBranch} '${authedUrl}' /workspace/target-repo`);
-  rootExec(`cd /workspace/target-repo && git checkout -b '${branch}'`);
+  // Clone repo — shell-quote branch names to prevent injection
+  rootExec(`git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`);
+  rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
 
   return {
     containerId: containerName,
     exec: (command: string) => {
       return execSync(
-        `docker exec -w /workspace/target-repo ${containerName} sh -c '${command.replace(/'/g, "'\\''")}'`,
+        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
         EXEC_OPTS,
       ) as string;
     },
