@@ -12,5 +12,8 @@ dist/
 # Prisma generated client — regenerated via `yarn db:generate`
 packages/shared/src/generated/
 
+# npm lockfile — this is a Yarn 4 project
+package-lock.json
+
 # Next.js
 .next/
