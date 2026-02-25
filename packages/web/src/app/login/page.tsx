@@ -65,7 +65,7 @@ export default function LoginPage() {
         </form>
         <div className="mt-4 text-center">
           <a
-            href="/api/v1/auth/slack/connect"
+            href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/connect`}
             className="text-sm text-[var(--primary)] hover:underline"
           >
             Sign in with Slack
