@@ -18,10 +18,11 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.1",
     "@prisma/client": "^7.4.0",
-    "bcrypt": "^5.1.0"
+    "bcrypt": "^6.0.0",
+    "pg": "^8.16.0"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.0",
+    "@types/bcrypt": "^6.0.0",
     "prisma": "^7.4.0",
     "typescript": "^5.7.0"
   },

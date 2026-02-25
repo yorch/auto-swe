@@ -38,6 +38,7 @@ async function runReviewerAgent(
   codeResult: CodeResult,
 ): Promise<ReviewVerdict> {
   const agent = new Agent({
+    id: `${reviewerType.toLowerCase()}-reviewer`,
     name: `${reviewerType.toLowerCase()}-reviewer`,
     model: anthropic('claude-opus-4-6'),
     instructions: prompt,

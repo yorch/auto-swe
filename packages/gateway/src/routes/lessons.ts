@@ -71,7 +71,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: parseInt(limit ?? '10'),
+      take: Math.min(Math.max(parseInt(limit ?? '10', 10) || 10, 1), 100),
     });
 
     return { data: lessons };

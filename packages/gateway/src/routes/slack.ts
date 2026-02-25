@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
+import { requireAuth } from '../plugins/auth.js';
 
 const SLACK_TIMESTAMP_MAX_AGE = 5 * 60; // 5 minutes (replay protection)
 
@@ -29,8 +30,10 @@ function verifySlackSignature(
 }
 
 export const slackRoutes: FastifyPluginAsync = async (fastify) => {
-  // GET /api/v1/auth/slack/connect — Initiate Slack OAuth
-  fastify.get('/connect', async (request, reply) => {
+  // GET /api/v1/auth/slack/connect — Initiate Slack OAuth (authenticated users only)
+  fastify.get('/connect', {
+    onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+  }, async (request, reply) => {
     const clientId = process.env.SLACK_CLIENT_ID;
     if (!clientId) {
       return reply.status(503).send({
@@ -39,8 +42,8 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const state = fastify.auth.signAccessToken({
-      sub: request.user?.sub ?? 'anonymous',
-      role: (request.user?.role ?? 'ENGINEER') as any,
+      sub: request.user!.sub,
+      role: request.user!.role,
     });
 
     const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;

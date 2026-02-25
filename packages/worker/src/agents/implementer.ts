@@ -13,11 +13,12 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     id: 'readFile',
     description: 'Read the contents of a file in the workspace',
     inputSchema: z.object({ path: z.string().describe('Relative path from repo root') }),
+    outputSchema: z.object({ content: z.string() }),
     execute: async ({ context }) => {
       try {
-        return workspace.exec(`cat '${context.path}'`);
+        return { content: workspace.exec(`cat '${context.path}'`) };
       } catch (err: any) {
-        return `Error reading file: ${err.message}`;
+        return { content: `Error reading file: ${err.message}` };
       }
     },
   });
@@ -30,12 +31,13 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
       path: z.string().describe('Relative path from repo root'),
       content: z.string().describe('Full file content'),
     }),
+    outputSchema: z.object({ result: z.string() }),
     execute: async ({ context }) => {
       workspace.exec(`mkdir -p "$(dirname '${context.path}')"`);
       // Write via base64 to avoid shell escaping issues
       const b64 = Buffer.from(context.content).toString('base64');
       workspace.exec(`echo '${b64}' | base64 -d > '${context.path}'`);
-      return `File written: ${context.path}`;
+      return { result: `File written: ${context.path}` };
     },
   });
 
@@ -44,30 +46,34 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     id: 'listDirectory',
     description: 'List files and directories at a given path',
     inputSchema: z.object({ path: z.string().default('.').describe('Relative path from repo root') }),
+    outputSchema: z.object({ listing: z.string() }),
     execute: async ({ context }) => {
       try {
-        return workspace.exec(`ls -la '${context.path}'`);
+        return { listing: workspace.exec(`ls -la '${context.path}'`) };
       } catch (err: any) {
-        return `Error listing directory: ${err.message}`;
+        return { listing: `Error listing directory: ${err.message}` };
       }
     },
   });
 
-  // Tool: Execute a bash command in the workspace
+  // Tool: Run a shell command in the workspace (e.g., run tests, install deps).
+  // Commands run inside an isolated Docker container — not on the host.
   const bash = createTool({
     id: 'bash',
     description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
     inputSchema: z.object({ command: z.string().describe('Shell command to execute') }),
+    outputSchema: z.object({ output: z.string() }),
     execute: async ({ context }) => {
       try {
-        return workspace.exec(context.command);
+        return { output: workspace.exec(context.command) };
       } catch (err: any) {
-        return `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}`;
+        return { output: `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}` };
       }
     },
   });
 
   const implementerAgent = new Agent({
+    id: 'implementer',
     name: 'implementer',
     model: anthropic('claude-opus-4-6'),
     instructions: '', // Set per-call via system message

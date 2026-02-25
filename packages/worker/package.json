@@ -10,7 +10,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
     "@auto-swe/shared": "*",
-    "@mastra/core": "^0.10.0",
+    "@mastra/core": "^1.6.0",
     "@octokit/rest": "^21.0.0",
     "@temporalio/activity": "^1.11.0",
     "@temporalio/worker": "^1.11.0",

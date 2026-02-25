@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import fastifyRawBody from 'fastify-raw-body';
 import { temporalPlugin } from './plugins/temporal.js';
 import { prismaPlugin } from './plugins/prisma.js';
-import { authPlugin } from './plugins/auth.js';
+import authPlugin from './plugins/auth.js';
 import { workRequestRoutes } from './routes/workRequests.js';
 import { workflowRoutes } from './routes/workflows.js';
 import { webhookRoutes } from './routes/webhooks.js';

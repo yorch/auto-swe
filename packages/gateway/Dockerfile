@@ -2,10 +2,10 @@
 FROM node:24-alpine AS builder
 WORKDIR /app
 
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .yarnrc.yml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
-RUN yarn install --frozen-lockfile
+RUN corepack enable && yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -18,10 +18,10 @@ RUN yarn workspace @auto-swe/shared prisma generate \
 FROM node:24-alpine AS prod-deps
 WORKDIR /app
 
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .yarnrc.yml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/gateway/package.json packages/gateway/
-RUN yarn install --frozen-lockfile --production
+RUN corepack enable && yarn workspaces focus @auto-swe/gateway --production
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine

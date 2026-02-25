@@ -3,13 +3,13 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Copy root package files
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .yarnrc.yml ./
 
 # Copy package sources
 COPY packages/web/package.json packages/web/
 COPY packages/shared/package.json packages/shared/
 
-RUN yarn install --frozen-lockfile
+RUN corepack enable && yarn install --immutable
 
 COPY packages/web packages/web
 

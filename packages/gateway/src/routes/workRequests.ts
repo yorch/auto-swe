@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { generateWorkflowId, generateBranchName } from '@auto-swe/shared/lib/workflowId';
+import { requireAuth } from '../plugins/auth.js';
 
 const CreateWorkRequestSchema = z.object({
   externalTicketId: z.string().min(1),
@@ -16,6 +18,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     schema: {
       body: CreateWorkRequestSchema,
     },
+    onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
   }, async (request, reply) => {
     const { externalTicketId, description, repoIds } = request.body;
 
@@ -35,12 +38,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     );
     const branch = generateBranchName(externalTicketId);
 
+    // Generate the work request ID upfront so it can be passed to Temporal
+    // before the DB row exists. This avoids the ordering problem where
+    // the workflow needs the ID but the DB write happens after workflow start.
+    const workRequestId = crypto.randomUUID();
+
     // Start Temporal workflow FIRST — this is the idempotency gate.
     // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
     // and we haven't written any orphan DB rows yet.
     try {
       await fastify.temporal.startWorkflow(temporalWorkflowId, {
-        workRequestId: '', // Placeholder — workflow reads from DB via repoId
+        workRequestId,
         repoId: repo.id,
         externalTicketId,
         description,
@@ -60,6 +68,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     // which is preferable to orphan DB rows that block future retries.
     const workRequest = await fastify.prisma.workRequest.create({
       data: {
+        id: workRequestId,
         externalTicketId,
         description,
         requestPayload: JSON.stringify(request.body),

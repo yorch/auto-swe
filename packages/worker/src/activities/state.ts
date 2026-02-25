@@ -1,11 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 
 export async function updateDomainState(
-  workRequestId: string,
+  temporalWorkflowId: string,
   status: string,
 ): Promise<void> {
-  await prisma.activeWorkflow.updateMany({
-    where: { workRequestId },
+  await prisma.activeWorkflow.update({
+    where: { temporalWorkflowId },
     data: { currentStatus: status },
   });
 }

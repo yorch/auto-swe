@@ -3,6 +3,7 @@ import {
   defineSignal,
   setHandler,
   condition,
+  workflowInfo,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
@@ -83,12 +84,12 @@ export async function EngineeringWorkflow(
   setHandler(ciPipelineSignal, (payload) => {
     ciResult = payload;
   });
-  setHandler(humanMergeSignal, () => {
-    humanMerged = true;
+  setHandler(humanMergeSignal, (merged) => {
+    humanMerged = merged;
   });
 
   // 1. Implementation Phase
-  await stateActivities.updateDomainState(request.workRequestId, 'IMPLEMENTING');
+  await stateActivities.updateDomainState(workflowInfo().workflowId, 'IMPLEMENTING');
 
   let codeResult = await agentActivities.executeImplementation(request);
 
@@ -96,14 +97,14 @@ export async function EngineeringWorkflow(
 
   while (!isReadyForMerge) {
     // 2. Review Network
-    await stateActivities.updateDomainState(request.workRequestId, 'IN_REVIEW');
+    await stateActivities.updateDomainState(workflowInfo().workflowId, 'IN_REVIEW');
 
     const reviewResult = await agentActivities.runReviewNetwork(codeResult);
 
     if (!reviewResult.approved) {
       totalReviewRetries++;
       if (totalReviewRetries >= MAX_REVIEW_RETRIES) {
-        await stateActivities.updateDomainState(request.workRequestId, 'FAILED');
+        await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
           status: 'FAILED',
           totalCIRetries,
@@ -120,7 +121,7 @@ export async function EngineeringWorkflow(
     }
 
     // 3. Open/Update PR
-    await stateActivities.updateDomainState(request.workRequestId, 'AWAITING_CI');
+    await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_CI');
 
     const prData = await githubActivities.createOrUpdatePullRequest(
       request,
@@ -131,7 +132,7 @@ export async function EngineeringWorkflow(
     const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
 
     if (!ciSignalReceived) {
-      await stateActivities.updateDomainState(request.workRequestId, 'TIMED_OUT');
+      await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
       return {
         status: 'TIMED_OUT',
         prNumber: prData.prNumber,
@@ -147,7 +148,7 @@ export async function EngineeringWorkflow(
     } else {
       totalCIRetries++;
       if (totalCIRetries >= MAX_CI_RETRIES) {
-        await stateActivities.updateDomainState(request.workRequestId, 'FAILED');
+        await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
           status: 'FAILED',
           prNumber: prData.prNumber,
@@ -166,12 +167,12 @@ export async function EngineeringWorkflow(
   }
 
   // 6. Wait for human merge
-  await stateActivities.updateDomainState(request.workRequestId, 'AWAITING_HUMAN_MERGE');
+  await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_HUMAN_MERGE');
 
   const merged = await condition(() => humanMerged, HUMAN_MERGE_TIMEOUT);
 
   if (!merged) {
-    await stateActivities.updateDomainState(request.workRequestId, 'TIMED_OUT');
+    await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
     return {
       status: 'TIMED_OUT',
       totalCIRetries,
@@ -193,7 +194,7 @@ export async function EngineeringWorkflow(
   }
 
   // 8. Complete
-  await stateActivities.updateDomainState(request.workRequestId, 'COMPLETED');
+  await stateActivities.updateDomainState(workflowInfo().workflowId, 'COMPLETED');
 
   return {
     status: 'SUCCESS',

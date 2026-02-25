@@ -12,7 +12,7 @@ async function run() {
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).
     // Only type-only imports are allowed in workflow files.
-    workflowsPath: require.resolve('./workflows/engineering'),
+    workflowsPath: require.resolve('./workflows/index'),
     activities,
   });
 

@@ -34,6 +34,7 @@ export async function commitToMemory(
 
   // Use Memory Agent to summarize the workflow
   const memoryAgent = new Agent({
+    id: 'memory-summarizer',
     name: 'memory-summarizer',
     model: anthropic('claude-opus-4-6'),
     instructions: MEMORY_SUMMARIZER_PROMPT,

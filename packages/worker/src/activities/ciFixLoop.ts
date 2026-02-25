@@ -4,6 +4,7 @@ import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow'
 import { createWorkspace } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
+import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
 
 /**
  * Fetches CI logs from the provided URL.
@@ -36,8 +37,6 @@ export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
 ): Promise<CodeResult> {
-  // Look up the repo from the branch name
-  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { assignedBranch: previousCodeResult.branch },
     include: { repository: true },
@@ -125,54 +124,4 @@ export async function executeCIFixImplementation(
   } finally {
     workspace.destroy();
   }
-}
-
-function detectTestCommand(packageJsonStr: string): string {
-  try {
-    const pkg = JSON.parse(packageJsonStr);
-    if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
-      return 'npm test';
-    }
-  } catch {}
-  return 'npm test';
-}
-
-function parseTestOutput(output: string, durationMs: number): TestRunResult {
-  const passMatch = output.match(/(\d+)\s+pass/i);
-  const failMatch = output.match(/(\d+)\s+fail/i);
-  const passing = passMatch ? parseInt(passMatch[1]) : 0;
-  const failing = failMatch ? parseInt(failMatch[1]) : 0;
-
-  return {
-    passed: failing === 0 && passing > 0,
-    total: passing + failing,
-    passing,
-    failing,
-    stdout: output.slice(-10_000),
-    duration_ms: durationMs,
-  };
-}
-
-function parseDiffToFileChanges(diff: string) {
-  const files: { path: string; operation: 'CREATE' | 'MODIFY' | 'DELETE'; language: string; linesAdded: number; linesRemoved: number }[] = [];
-  const fileRegex = /^diff --git a\/(.+) b\/(.+)$/gm;
-  let match;
-  while ((match = fileRegex.exec(diff)) !== null) {
-    const path = match[2];
-    const ext = path.split('.').pop() ?? '';
-    const section = diff.slice(match.index, diff.indexOf('diff --git', match.index + 1) === -1 ? undefined : diff.indexOf('diff --git', match.index + 1));
-    const added = (section.match(/^\+[^+]/gm) || []).length;
-    const removed = (section.match(/^-[^-]/gm) || []).length;
-    const isNew = section.includes('new file mode');
-    const isDeleted = section.includes('deleted file mode');
-
-    files.push({
-      path,
-      operation: isNew ? 'CREATE' : isDeleted ? 'DELETE' : 'MODIFY',
-      language: ext,
-      linesAdded: added,
-      linesRemoved: removed,
-    });
-  }
-  return files;
 }
