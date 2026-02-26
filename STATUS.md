@@ -62,12 +62,12 @@
 | Slack OAuth (connect + callback) | Done | `slack.ts` — OAuth flow, Slack ID linking to user |
 | Slack interactive webhooks (signature-verified) | Done | `slack.ts` `/interactive` — handles approve/retry actions |
 | Planner Agent (decomposes epics into per-repo child workflows) | Not started | Epic Orchestrator expects pre-decomposed `repos[]` array; no LLM decomposition |
-| Team-scoped RBAC middleware (`requiredTeamRole`) | Partial | `requireAuth` accepts `requiredTeamRole` option but only stubs it — sets `_requiredTeamRole` on request, no route actually resolves or enforces it |
-| Team filtering on workflow list endpoints | Not started | `workflows.ts` returns all workflows; no team-scoped filtering (repos and lessons do filter) |
-| Slack approval gates (role-checked: LEAD/ADMIN only) | Not started | Interactive handler resolves user but doesn't check role before allowing approve/retry actions |
+| Team-scoped RBAC middleware (`requiredTeamRole`) | Done | `requireAuth` resolves team membership via `teamIdParam` and enforces team role; used on team mutation routes |
+| Team filtering on workflow list endpoints | Done | `workflows.ts` filters by team membership for non-admins (same pattern as repos/lessons) |
+| Slack approval gates (role-checked: LEAD/ADMIN only) | Done | Interactive handler checks `hasRole(user.role, 'LEAD')` before allowing approve actions |
 | Repository.teamId non-null enforcement | Partial | `CreateRepoSchema` requires `teamId`, but Prisma schema may still allow null for older records |
 
-**Phase 3 status: Auth, teams, Slack OAuth, and epic orchestration done. Planner Agent, team-scoped RBAC enforcement, and Slack role gates not started.**
+**Phase 3 status: Core features done. Planner Agent not started.**
 
 ---
 
@@ -78,7 +78,7 @@
 | Memory Agent (`commitToMemory`) | Done | Summarizes workflow outcomes into `AgentLesson` via LLM |
 | Embedding pipeline (`text-embedding-3-large`, 1536d) | Done | `embeddings.ts` — OpenAI embeddings |
 | Lesson retrieval (pgvector cosine similarity search) | Done | `lessonRetrieval.ts` — HNSW index, similarity threshold |
-| Lesson retrieval injected into agent context | Not started | `retrieveSimilarLessons` exists but is never called from `executeImplementation` or the workflow |
+| Lesson retrieval injected into agent context | Done | `executeImplementation` calls `retrieveSimilarLessons` and appends lessons to system prompt |
 | Next.js 16 web dashboard | Done | App Router with Tailwind CSS 4 |
 | Dashboard pages (workflows, epics, repos, lessons, teams, users, settings, login) | Done | All pages exist in `packages/web/src/app/` |
 | TanStack Query for server state | Done | `useWorkflows.ts` hook |
@@ -88,7 +88,7 @@
 | Cost tracking / per-workflow token budgets | Not started | No token counting or budget enforcement |
 | Recharts dashboard charts | Not started | Recharts is in dependencies but no chart components exist |
 
-**Phase 4 status: Memory pipeline, web dashboard, and executor build done. Lesson injection into agents, KEDA, cost tracking, and charts not started.**
+**Phase 4 status: Memory pipeline (with agent injection), web dashboard, and executor build done. KEDA, cost tracking, and charts not started.**
 
 ---
 
@@ -112,9 +112,9 @@ These are deliberate architectural choices where the implementation differs from
 |---|---|---|---|---|
 | Phase 1 | 10 | 10 | 0 | 0 |
 | Phase 2 | 10 | 7 | 0 | 3 |
-| Phase 3 | 14 | 9 | 2 | 3 |
-| Phase 4 | 12 | 8 | 0 | 4 |
-| **Total** | **46** | **34** | **2** | **10** |
+| Phase 3 | 14 | 12 | 1 | 1 |
+| Phase 4 | 12 | 9 | 0 | 3 |
+| **Total** | **46** | **38** | **1** | **7** |
 
 ### Not started (full list)
 
@@ -122,9 +122,6 @@ These are deliberate architectural choices where the implementation differs from
 2. Context Validator agent + ContextSnapshot persistence
 3. OTel tracing (Langfuse/SigNoz)
 4. Planner Agent (LLM-based epic decomposition)
-5. Team-scoped RBAC enforcement (route-level `requiredTeamRole`)
-6. Team filtering on workflow list endpoints
-7. Slack approval role gates
-8. Lesson retrieval injected into agent context
-9. KEDA autoscaling
-10. Cost tracking / per-workflow token budgets
+5. KEDA autoscaling
+6. Cost tracking / per-workflow token budgets
+7. Recharts dashboard charts

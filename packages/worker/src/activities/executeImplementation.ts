@@ -5,6 +5,7 @@ import { createWorkspace } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
+import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
@@ -39,6 +40,20 @@ export async function executeImplementation(
     // Create Mastra agent with tools bound to workspace
     const { agent } = createImplementerAgent(workspace);
 
+    // Retrieve relevant lessons from past workflows for context enrichment
+    let lessonsContext = '';
+    try {
+      const lessons = await retrieveSimilarLessons(request.description, request.repoId);
+      if (lessons.length > 0) {
+        lessonsContext = '\n\n## Lessons from Previous Workflows\n' +
+          lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`).join('\n');
+      }
+    } catch {
+      // Lesson retrieval failure should not block implementation
+    }
+
+    heartbeat('lessons retrieved');
+
     let testResult: TestRunResult = {
       passed: false, total: 0, passing: 0, failing: 0, stdout: '', duration_ms: 0,
     };
@@ -49,7 +64,7 @@ export async function executeImplementation(
 
       await agent.generate(
         [
-          { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT },
+          { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext },
           {
             role: 'user',
             content: JSON.stringify({

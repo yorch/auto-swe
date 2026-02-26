@@ -102,12 +102,17 @@ export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 
 export interface RBACOptions {
   requiredRole?: string;       // Platform role check
-  requiredTeamRole?: string;   // Team-scoped role check (resolves via repo/team context)
+  requiredTeamRole?: string;   // Team-scoped role check (resolves via team membership)
+  teamIdParam?: string;        // Route param name containing the team ID (default: 'id')
 }
 
 /**
  * Creates a Fastify onRequest hook that enforces JWT authentication
  * and optional role-based access control.
+ *
+ * When `requiredTeamRole` is set with a `teamIdParam`, the middleware resolves
+ * the user's membership in that team and checks their team role. Platform ADMINs
+ * bypass team checks.
  */
 export function requireAuth(options: RBACOptions = {}) {
   return async function (request: FastifyRequest, reply: FastifyReply) {
@@ -135,14 +140,26 @@ export function requireAuth(options: RBACOptions = {}) {
       });
     }
 
-    // Team role check (if specified, resolved per-route via team context)
+    // Team role check: resolve membership and enforce
     if (options.requiredTeamRole) {
       // Platform ADMIN bypasses team checks
-      if (request.user!.role !== 'ADMIN') {
-        // Team context must be resolved by the route handler
-        // This sets the expectation; route handlers check request.teamRole
-        (request as any)._requiredTeamRole = options.requiredTeamRole;
+      if (request.user!.role === 'ADMIN') return;
+
+      const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
+      if (!teamId) return; // No team context in route params — cannot enforce
+
+      const prisma = (request.server as any).prisma;
+      const membership = await prisma.teamMembership.findUnique({
+        where: { userId_teamId: { userId: request.user!.sub, teamId } },
+      });
+
+      if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: `Requires ${options.requiredTeamRole} role in this team` },
+        });
       }
+
+      request.teamRole = membership.role;
     }
   };
 }

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, hasRole } from '../plugins/auth.js';
 
 const SLACK_TIMESTAMP_MAX_AGE = 5 * 60; // 5 minutes (replay protection)
 
@@ -178,8 +178,14 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Handle known actions
     if (actionId.startsWith('approve_')) {
+      // Only LEAD or ADMIN can approve
+      if (!hasRole(user.role, 'LEAD')) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'Only LEAD or ADMIN can approve workflows' },
+        });
+      }
+
       const workflowId = payload.actions[0].value;
-      // Signal workflow approval (future: plan approval, etc.)
       await fastify.temporal.signalWorkflow(workflowId, 'humanMergeSignal', [true]);
       return { data: { action: 'approved', workflowId } };
     }

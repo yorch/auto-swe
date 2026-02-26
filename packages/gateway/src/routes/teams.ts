@@ -96,10 +96,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: team };
   });
 
-  // PATCH /api/v1/teams/:id — Update team
+  // PATCH /api/v1/teams/:id — Update team (requires LEAD in this team)
   app.patch<{ Params: { id: string } }>('/:id', {
     schema: { body: UpdateTeamSchema },
-    onRequest: requireAuth({ requiredRole: 'LEAD' }),
+    onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const team = await fastify.prisma.team.findUnique({
       where: { id: request.params.id },
@@ -163,10 +163,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: members };
   });
 
-  // POST /api/v1/teams/:id/members — Add member
+  // POST /api/v1/teams/:id/members — Add member (requires LEAD in this team)
   app.post<{ Params: { id: string } }>('/:id/members', {
     schema: { body: AddMemberSchema },
-    onRequest: requireAuth({ requiredRole: 'LEAD' }),
+    onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const { userId, role } = request.body;
 
@@ -191,10 +191,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.status(201).send({ data: membership });
   });
 
-  // PATCH /api/v1/teams/:id/members/:userId — Update member role
+  // PATCH /api/v1/teams/:id/members/:userId — Update member role (requires LEAD in this team)
   app.patch<{ Params: { id: string; userId: string } }>('/:id/members/:userId', {
     schema: { body: UpdateMemberSchema },
-    onRequest: requireAuth({ requiredRole: 'LEAD' }),
+    onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const membership = await fastify.prisma.teamMembership.findUnique({
       where: { userId_teamId: { userId: request.params.userId, teamId: request.params.id } },
@@ -213,9 +213,9 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: updated };
   });
 
-  // DELETE /api/v1/teams/:id/members/:userId — Remove member
+  // DELETE /api/v1/teams/:id/members/:userId — Remove member (requires LEAD in this team)
   app.delete<{ Params: { id: string; userId: string } }>('/:id/members/:userId', {
-    onRequest: requireAuth({ requiredRole: 'LEAD' }),
+    onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const membership = await fastify.prisma.teamMembership.findUnique({
       where: { userId_teamId: { userId: request.params.userId, teamId: request.params.id } },

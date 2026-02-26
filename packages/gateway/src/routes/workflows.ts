@@ -5,8 +5,21 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/workflows
   fastify.get('/', {
     onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-  }, async () => {
+  }, async (request) => {
+    const user = request.user!;
+    let where: any = {};
+
+    // Non-admins see only workflows for repos belonging to their teams
+    if (user.role !== 'ADMIN') {
+      where = {
+        repository: {
+          team: { memberships: { some: { userId: user.sub } } },
+        },
+      };
+    }
+
     const workflows = await fastify.prisma.activeWorkflow.findMany({
+      where,
       include: { repository: true, pullRequests: true },
       orderBy: { updatedAt: 'desc' },
     });
@@ -17,8 +30,18 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { id: string } }>('/:id', {
     onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
   }, async (request, reply) => {
-    const workflow = await fastify.prisma.activeWorkflow.findUnique({
-      where: { id: request.params.id },
+    const user = request.user!;
+    const where: any = { id: request.params.id };
+
+    // Non-admins can only access workflows for repos in their teams
+    if (user.role !== 'ADMIN') {
+      where.repository = {
+        team: { memberships: { some: { userId: user.sub } } },
+      };
+    }
+
+    const workflow = await fastify.prisma.activeWorkflow.findFirst({
+      where,
       include: { repository: true, pullRequests: true, workRequest: true },
     });
     if (!workflow) {
