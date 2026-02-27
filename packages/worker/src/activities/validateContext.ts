@@ -1,10 +1,13 @@
 import { heartbeat } from '@temporalio/activity';
 import { Agent } from '@mastra/core';
 import { anthropic } from '@ai-sdk/anthropic';
+import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
+
+const tracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schema for structured output ──
 
@@ -22,29 +25,42 @@ export async function validateContext(
   let successCriteria: string[] = [];
 
   try {
-    const agent = new Agent({
-      id: 'context-validator',
-      name: 'context-validator',
-      model: anthropic('claude-sonnet-4-20250514'),
-      instructions: CONTEXT_VALIDATOR_PROMPT,
-    });
+    successCriteria = await tracer.startActiveSpan(
+      'llm.context_validation',
+      { attributes: { 'llm.model': 'claude-sonnet-4-20250514' } },
+      async (span) => {
+        try {
+          const agent = new Agent({
+            id: 'context-validator',
+            name: 'context-validator',
+            model: anthropic('claude-sonnet-4-20250514'),
+            instructions: CONTEXT_VALIDATOR_PROMPT,
+          });
 
-    const result = await agent.generate(
-      [
-        {
-          role: 'user',
-          content: JSON.stringify({
-            title: workRequest.externalTicketId,
-            description: workRequest.description,
-            requestPayload: workRequest.requestPayload,
-          }),
-        },
-      ],
-      { output: ContextValidationSchema },
+          const result = await agent.generate(
+            [
+              {
+                role: 'user',
+                content: JSON.stringify({
+                  title: workRequest.externalTicketId,
+                  description: workRequest.description,
+                  requestPayload: workRequest.requestPayload,
+                }),
+              },
+            ],
+            { output: ContextValidationSchema },
+          );
+
+          const parsed = result.object as z.infer<typeof ContextValidationSchema>;
+          return parsed.successCriteria;
+        } catch (e) {
+          span.recordException(e as Error);
+          throw e;
+        } finally {
+          span.end();
+        }
+      },
     );
-
-    const parsed = result.object as z.infer<typeof ContextValidationSchema>;
-    successCriteria = parsed.successCriteria;
   } catch {
     // Graceful degradation: empty criteria still allows workflow to proceed
   }

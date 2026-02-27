@@ -1,9 +1,26 @@
+import { initTelemetry } from './lib/telemetry.js';
+
+// Initialize OTel BEFORE any other imports that need instrumentation
+const otel = initTelemetry('auto-swe-worker');
+
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { NativeConnection, Worker } from '@temporalio/worker';
+import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 
 async function run() {
+  // Install Temporal runtime with OTel metrics if endpoint is available
+  const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (otelEndpoint) {
+    Runtime.install({
+      telemetryOptions: {
+        metrics: {
+          otel: { url: otelEndpoint, headers: {} },
+        },
+      },
+    });
+  }
+
   const connection = await NativeConnection.connect({
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
   });
@@ -26,7 +43,8 @@ async function run() {
   await worker.run();
 }
 
-run().catch((err) => {
+run().catch(async (err) => {
   console.error('Worker failed to start:', err);
+  await otel.shutdown();
   process.exit(1);
 });

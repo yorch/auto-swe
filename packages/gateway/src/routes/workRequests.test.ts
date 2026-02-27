@@ -20,6 +20,7 @@ describe('POST /api/v1/work-requests', () => {
     } as any);
     app.decorate('temporal', {
       startWorkflow: async () => {},
+      startEpicWorkflow: async () => {},
       signalWorkflow: async () => {},
     });
 

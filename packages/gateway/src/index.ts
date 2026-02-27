@@ -1,3 +1,8 @@
+import { initTelemetry } from './lib/telemetry.js';
+
+// Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
+const otel = initTelemetry('auto-swe-gateway');
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -14,6 +19,7 @@ import { userRoutes } from './routes/users.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { slackRoutes } from './routes/slack.js';
+import { epicRoutes } from './routes/epics.js';
 
 async function start() {
   const app = Fastify({ logger: true });
@@ -63,12 +69,14 @@ async function start() {
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
+  await app.register(epicRoutes, { prefix: '/api/v1/epics' });
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ port, host: '0.0.0.0' });
 }
 
-start().catch((err) => {
+start().catch(async (err) => {
   console.error('Gateway failed to start:', err);
+  await otel.shutdown();
   process.exit(1);
 });

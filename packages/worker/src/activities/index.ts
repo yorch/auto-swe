@@ -6,3 +6,5 @@ export { runReviewNetwork } from './runReviewNetwork.js';
 export { fetchCILogs, executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
 export { validateContext } from './validateContext.js';
+// Phase 3
+export { planEpic } from './planEpic.js';

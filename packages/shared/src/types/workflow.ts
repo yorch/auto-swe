@@ -99,3 +99,48 @@ export type WorkflowStatus =
   | 'COMPLETED'
   | 'FAILED'
   | 'TIMED_OUT';
+
+// ── Epic Orchestrator Types (Phase 3) ──
+
+export interface EpicRequest {
+  epicWorkflowId: string;
+  externalTicketId: string;
+  description: string;
+  requestPayload: string;
+  workRequestId: string;
+  repos: EpicRepoEntry[];
+  /** Candidate repo IDs for planner to consider (used when repos[] is empty) */
+  repoIds?: string[];
+}
+
+export interface EpicRepoEntry {
+  repoId: string;
+  dependsOn: string[]; // repoIds that must complete before this one starts
+}
+
+export interface EpicResult {
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT';
+  childResults: Record<string, WorkflowResult>;
+}
+
+// ── Epic Planning Types (Phase 3) ──
+
+export interface EpicPlanRequest {
+  description: string;
+  requestPayload: string;
+  repoIds: string[];
+  workRequestId: string;
+}
+
+export interface RepoInfo {
+  repoId: string;
+  name: string;
+  language: string;
+  description: string;
+}
+
+export interface PlannedRepo {
+  repoId: string;
+  description: string;
+  dependsOn: string[];
+}

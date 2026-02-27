@@ -61,6 +61,7 @@ services:
       - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
       - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       - PORT=8080
 
   worker:
@@ -78,8 +79,17 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DinD access
+
+  # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.8.1
+    ports:
+      - "3001:3000"   # Grafana UI (3000 taken by Next.js)
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
 
   # Phase 4: Web Dashboard
   web:

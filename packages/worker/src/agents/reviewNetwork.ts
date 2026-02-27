@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core';
 import { anthropic } from '@ai-sdk/anthropic';
+import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import type {
   CodeResult,
@@ -12,6 +13,8 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
 } from './prompts.js';
+
+const tracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schemas for structured output ──
 
@@ -37,34 +40,47 @@ async function runReviewerAgent(
   reviewerType: ReviewVerdict['reviewer'],
   codeResult: CodeResult,
 ): Promise<ReviewVerdict> {
-  const agent = new Agent({
-    id: `${reviewerType.toLowerCase()}-reviewer`,
-    name: `${reviewerType.toLowerCase()}-reviewer`,
-    model: anthropic('claude-opus-4-6'),
-    instructions: prompt,
-  });
+  return tracer.startActiveSpan(
+    `llm.review.${reviewerType}`,
+    { attributes: { 'llm.model': 'claude-opus-4-6', 'llm.reviewer_type': reviewerType } },
+    async (span) => {
+      try {
+        const agent = new Agent({
+          id: `${reviewerType.toLowerCase()}-reviewer`,
+          name: `${reviewerType.toLowerCase()}-reviewer`,
+          model: anthropic('claude-opus-4-6'),
+          instructions: prompt,
+        });
 
-  const result = await agent.generate(
-    [
-      {
-        role: 'user',
-        content: JSON.stringify({
-          diff: codeResult.diff,
-          filesChanged: codeResult.filesChanged,
-          testResults: codeResult.testResults,
-          implementationNotes: codeResult.implementationNotes,
-        }),
-      },
-    ],
-    { output: ReviewVerdictSchema },
+        const result = await agent.generate(
+          [
+            {
+              role: 'user',
+              content: JSON.stringify({
+                diff: codeResult.diff,
+                filesChanged: codeResult.filesChanged,
+                testResults: codeResult.testResults,
+                implementationNotes: codeResult.implementationNotes,
+              }),
+            },
+          ],
+          { output: ReviewVerdictSchema },
+        );
+
+        const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
+
+        return {
+          ...verdict,
+          reviewer: reviewerType,
+        };
+      } catch (e) {
+        span.recordException(e as Error);
+        throw e;
+      } finally {
+        span.end();
+      }
+    },
   );
-
-  const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
-
-  return {
-    ...verdict,
-    reviewer: reviewerType,
-  };
 }
 
 // ── Review Network Orchestrator ──
