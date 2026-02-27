@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api:*)",
+      "Bash(gh pr:*)",
+      "Bash(git add:*)",
+      "Bash(yarn:*)",
+      "mcp__context7",
+      "mcp__git",
+      "mcp__memory",
+      "mcp__sequential-thinking",
+      "mcp__serena",
+      "WebFetch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:mastra.ai)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebSearch"
+    ]
+  }
+}

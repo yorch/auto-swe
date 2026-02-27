@@ -17,3 +17,6 @@ package-lock.json
 
 # Next.js
 .next/
+
+# AI
+.claude/settings.local.json
