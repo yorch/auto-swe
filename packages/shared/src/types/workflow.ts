@@ -91,6 +91,7 @@ export interface WorkflowResult {
 }
 
 export type WorkflowStatus =
+  | 'VALIDATING_CONTEXT'
   | 'IMPLEMENTING'
   | 'IN_REVIEW'
   | 'AWAITING_CI'

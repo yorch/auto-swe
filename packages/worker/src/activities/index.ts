@@ -5,3 +5,4 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
 export { fetchCILogs, executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
+export { validateContext } from './validateContext.js';

@@ -1,4 +1,4 @@
-import { heartbeat } from '@temporalio/activity';
+import { heartbeat, ApplicationFailure } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace } from './workspace.js';
@@ -6,6 +6,7 @@ import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
+import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
@@ -101,6 +102,20 @@ export async function executeImplementation(
     // Collect results
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    // Security scan — gate before returning code result
+    heartbeat('running security scan');
+    const securityResult = await scanDiffForSecurityIssues(diff);
+    if (!securityResult.passed) {
+      const findingsSummary = securityResult.findings
+        .map((f) => `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`)
+        .join('\n');
+      throw ApplicationFailure.nonRetryable(
+        `Security scan failed with critical findings:\n${findingsSummary}`,
+        'SECURITY_GATE_FAILURE',
+        { findings: securityResult.findings },
+      );
+    }
 
     return {
       branch,

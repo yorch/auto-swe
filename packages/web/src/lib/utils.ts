@@ -26,6 +26,7 @@ export function formatRelativeTime(date: string | Date): string {
 }
 
 export const STATUS_COLORS: Record<string, string> = {
+  VALIDATING_CONTEXT: 'bg-indigo-100 text-indigo-800',
   IMPLEMENTING: 'bg-blue-100 text-blue-800',
   IN_REVIEW: 'bg-purple-100 text-purple-800',
   AWAITING_CI: 'bg-yellow-100 text-yellow-800',

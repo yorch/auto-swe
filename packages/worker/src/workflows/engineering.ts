@@ -47,6 +47,19 @@ const githubActivities = proxyActivities<
   },
 });
 
+const contextActivities = proxyActivities<
+  Pick<typeof activitiesType, 'validateContext'>
+>({
+  startToCloseTimeout: '5m',
+  heartbeatTimeout: '2m',
+  retry: {
+    maximumAttempts: 3,
+    initialInterval: '5s',
+    backoffCoefficient: 2,
+    maximumInterval: '1m',
+  },
+});
+
 const memoryActivities = proxyActivities<
   Pick<typeof activitiesType, 'commitToMemory'>
 >({
@@ -88,7 +101,18 @@ export async function EngineeringWorkflow(
     humanMerged = merged;
   });
 
-  // 1. Implementation Phase
+  // 1. Context Validation Phase
+  await stateActivities.updateDomainState(workflowInfo().workflowId, 'VALIDATING_CONTEXT');
+
+  let successCriteria: string[] = [];
+  try {
+    const contextResult = await contextActivities.validateContext(request);
+    successCriteria = contextResult.successCriteria;
+  } catch {
+    // Context validation failure should not block the workflow
+  }
+
+  // 2. Implementation Phase
   await stateActivities.updateDomainState(workflowInfo().workflowId, 'IMPLEMENTING');
 
   let codeResult = await agentActivities.executeImplementation(request);
@@ -96,10 +120,10 @@ export async function EngineeringWorkflow(
   let isReadyForMerge = false;
 
   while (!isReadyForMerge) {
-    // 2. Review Network
+    // 3. Review Network
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'IN_REVIEW');
 
-    const reviewResult = await agentActivities.runReviewNetwork(codeResult);
+    const reviewResult = await agentActivities.runReviewNetwork(codeResult, successCriteria);
 
     if (!reviewResult.approved) {
       totalReviewRetries++;
@@ -120,7 +144,7 @@ export async function EngineeringWorkflow(
       continue;
     }
 
-    // 3. Open/Update PR
+    // 4. Open/Update PR
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_CI');
 
     const prData = await githubActivities.createOrUpdatePullRequest(
@@ -128,7 +152,7 @@ export async function EngineeringWorkflow(
       codeResult,
     );
 
-    // 4. Wait for CI pipeline signal
+    // 5. Wait for CI pipeline signal
     const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
 
     if (!ciSignalReceived) {
@@ -159,14 +183,14 @@ export async function EngineeringWorkflow(
         };
       }
 
-      // 5. CI Fix Loop
+      // 6. CI Fix Loop
       const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
       codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
       ciResult = null; // Reset for next CI signal
     }
   }
 
-  // 6. Wait for human merge
+  // 7. Wait for human merge
   await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_HUMAN_MERGE');
 
   const merged = await condition(() => humanMerged, HUMAN_MERGE_TIMEOUT);
@@ -181,7 +205,7 @@ export async function EngineeringWorkflow(
     };
   }
 
-  // 7. Memory Commit
+  // 8. Memory Commit
   const lessonsGenerated: string[] = [];
   try {
     const lessonId = await memoryActivities.commitToMemory(
@@ -193,7 +217,7 @@ export async function EngineeringWorkflow(
     // Memory commit failure should not fail the workflow
   }
 
-  // 8. Complete
+  // 9. Complete
   await stateActivities.updateDomainState(workflowInfo().workflowId, 'COMPLETED');
 
   return {

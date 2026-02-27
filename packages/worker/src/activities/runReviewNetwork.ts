@@ -8,10 +8,11 @@ import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
  */
 export async function runReviewNetwork(
   codeResult: CodeResult,
+  successCriteria?: string[],
 ): Promise<AggregatedReviewResult> {
   heartbeat('starting review network');
 
-  const result = await runReview(codeResult);
+  const result = await runReview(codeResult, successCriteria);
 
   heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
 
