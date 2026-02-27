@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
 import { temporalPlugin } from './plugins/temporal.js';
@@ -20,6 +21,12 @@ async function start() {
   // Zod validation + serialization
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  // CORS — allow the web dashboard and any additional origins from env
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
+    credentials: true,
+  });
 
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });

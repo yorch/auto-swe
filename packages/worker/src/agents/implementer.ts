@@ -1,7 +1,23 @@
 import { Mastra, Agent, createTool } from '@mastra/core';
 import { anthropic } from '@ai-sdk/anthropic';
+import path from 'node:path';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
+
+/**
+ * Validates that a relative file path stays within the workspace root.
+ * Prevents path traversal attacks (e.g., '../../etc/passwd').
+ */
+function safePath(relPath: string): string {
+  const normalized = path.normalize(relPath);
+  if (path.isAbsolute(normalized) || normalized.startsWith('..')) {
+    throw new Error(`Path traversal rejected: ${relPath}`);
+  }
+  if (/['\\\x00]/.test(normalized)) {
+    throw new Error(`Invalid characters in path: ${relPath}`);
+  }
+  return normalized;
+}
 
 /**
  * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
@@ -16,7 +32,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     outputSchema: z.object({ content: z.string() }),
     execute: async ({ context }) => {
       try {
-        return { content: workspace.exec(`cat '${context.path}'`) };
+        const p = safePath(context.path);
+        return { content: workspace.exec(`cat '${p}'`) };
       } catch (err: any) {
         return { content: `Error reading file: ${err.message}` };
       }
@@ -33,11 +50,16 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     }),
     outputSchema: z.object({ result: z.string() }),
     execute: async ({ context }) => {
-      workspace.exec(`mkdir -p "$(dirname '${context.path}')"`);
-      // Write via base64 to avoid shell escaping issues
-      const b64 = Buffer.from(context.content).toString('base64');
-      workspace.exec(`echo '${b64}' | base64 -d > '${context.path}'`);
-      return { result: `File written: ${context.path}` };
+      try {
+        const p = safePath(context.path);
+        workspace.exec(`mkdir -p "$(dirname '${p}')"`);
+        // Write via base64 to avoid shell escaping issues
+        const b64 = Buffer.from(context.content).toString('base64');
+        workspace.exec(`echo '${b64}' | base64 -d > '${p}'`);
+        return { result: `File written: ${p}` };
+      } catch (err: any) {
+        return { result: `Error writing file: ${err.message}` };
+      }
     },
   });
 
@@ -49,7 +71,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     outputSchema: z.object({ listing: z.string() }),
     execute: async ({ context }) => {
       try {
-        return { listing: workspace.exec(`ls -la '${context.path}'`) };
+        const p = safePath(context.path);
+        return { listing: workspace.exec(`ls -la '${p}'`) };
       } catch (err: any) {
         return { listing: `Error listing directory: ${err.message}` };
       }

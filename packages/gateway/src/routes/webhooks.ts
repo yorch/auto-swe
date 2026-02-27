@@ -103,21 +103,33 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: { ignored: true, reason: 'No tracked PR for this commit' } };
     }
 
-    // Update CI status and signal workflows
-    const signaled: string[] = [];
-    for (const pr of pullRequests) {
-      await fastify.prisma.pullRequest.update({
-        where: { id: pr.id },
-        data: { ciStatus: conclusion === 'success' ? 'PASSED' : 'FAILED' },
-      });
+    // Batch-update CI status in a single transaction to avoid N+1 queries
+    const passed = conclusion === 'success';
+    await fastify.prisma.$transaction(
+      pullRequests.map((pr: (typeof pullRequests)[number]) =>
+        fastify.prisma.pullRequest.update({
+          where: { id: pr.id },
+          data: { ciStatus: passed ? 'PASSED' : 'FAILED' },
+        }),
+      ),
+    );
 
+    // Signal all affected Temporal workflows in parallel
+    const signaled: string[] = [];
+    const signalPromises: Promise<unknown>[] = [];
+    for (const pr of pullRequests) {
       if (pr.workflow) {
-        await fastify.temporal.signalWorkflow(
-          pr.workflow.temporalWorkflowId,
-          'ciPipelineSignal',
-          [{ passed: conclusion === 'success', logsUrl }],
+        const wfId = pr.workflow.temporalWorkflowId;
+        signaled.push(wfId);
+        signalPromises.push(
+          fastify.temporal.signalWorkflow(wfId, 'ciPipelineSignal', [{ passed, logsUrl }]),
         );
-        signaled.push(pr.workflow.temporalWorkflowId);
+      }
+    }
+    const results = await Promise.allSettled(signalPromises);
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        request.log.error({ err: r.reason }, 'Failed to signal workflow');
       }
     }
 

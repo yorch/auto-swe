@@ -7,7 +7,10 @@ let openaiClient: OpenAI | null = null;
 
 function getOpenAI(): OpenAI {
   if (!openaiClient) {
-    openaiClient = new OpenAI(); // Uses OPENAI_API_KEY from env
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY environment variable is required for embedding generation');
+    }
+    openaiClient = new OpenAI();
   }
   return openaiClient;
 }

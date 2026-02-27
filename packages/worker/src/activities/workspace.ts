@@ -54,17 +54,24 @@ export function createWorkspace(
     ) as string;
   };
 
-  // Install git if not present (alpine images may not have it)
-  rootExec('which git || apk add --no-cache git');
+  // Wrap provisioning in try/catch — destroy the container if any setup step fails
+  // to prevent accumulation of orphaned containers on repeated failures.
+  try {
+    // Install git if not present (alpine images may not have it)
+    rootExec('which git || apk add --no-cache git');
 
-  // Configure git identity — required for commits in ephemeral containers.
-  // Without this, `git commit` fails with "Author identity unknown".
-  rootExec("git config --global user.name 'auto-swe'");
-  rootExec("git config --global user.email 'auto-swe@localhost'");
+    // Configure git identity — required for commits in ephemeral containers.
+    // Without this, `git commit` fails with "Author identity unknown".
+    rootExec("git config --global user.name 'auto-swe'");
+    rootExec("git config --global user.email 'auto-swe@localhost'");
 
-  // Clone repo — shell-quote branch names to prevent injection
-  rootExec(`git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`);
-  rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
+    // Clone repo — shell-quote branch names to prevent injection
+    rootExec(`git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`);
+    rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
+  } catch (err) {
+    try { execSync(`docker rm -f ${containerName}`, EXEC_OPTS); } catch { /* already gone */ }
+    throw err;
+  }
 
   return {
     containerId: containerName,

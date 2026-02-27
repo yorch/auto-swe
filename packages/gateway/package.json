@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@auto-swe/shared": "*",
+    "@fastify/cors": "^11.2.0",
     "@prisma/adapter-pg": "^7.4.1",
     "@slack/web-api": "^7.14.1",
     "@temporalio/client": "^1.11.0",
