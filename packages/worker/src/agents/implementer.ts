@@ -3,6 +3,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import path from 'node:path';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
+import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 /**
  * Validates that a relative file path stays within the workspace root.
@@ -49,18 +50,17 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
       content: z.string().describe('Full file content'),
     }),
     outputSchema: z.object({ result: z.string() }),
-    execute: async ({ context }) => {
+    execute: wrapWriteToolWithSecurityCheck(async ({ context }) => {
       try {
         const p = safePath(context.path);
-        workspace.exec(`mkdir -p "$(dirname '${p}')"`);
-        // Write via base64 to avoid shell escaping issues
+        workspace.exec(`mkdir -p "$(dirname '${p}')"`);  // runs in Docker container
         const b64 = Buffer.from(context.content).toString('base64');
-        workspace.exec(`echo '${b64}' | base64 -d > '${p}'`);
+        workspace.exec(`echo '${b64}' | base64 -d > '${p}'`);  // runs in Docker container
         return { result: `File written: ${p}` };
       } catch (err: any) {
         return { result: `Error writing file: ${err.message}` };
       }
-    },
+    }),
   });
 
   // Tool: List directory contents

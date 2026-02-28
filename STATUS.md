@@ -1,6 +1,6 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-02-25.
+> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-02-27.
 
 ## Legend
 
@@ -40,11 +40,11 @@
 | CI/CD webhook handler (`POST /api/v1/webhooks/ci`) | Done | Handles `check_run` completed events, signals workflow |
 | `fetchCILogs` activity | Done | In `ciFixLoop.ts` |
 | `executeCIFixImplementation` activity (CI self-healing) | Done | In `ciFixLoop.ts` |
-| `SecurityReviewProcessor` middleware on Implementer writes | Not started | Plan described a middleware that intercepts agent file writes for security scanning |
-| Context Validator agent + `ContextSnapshot` persistence | Not started | Plan described a Gemini-based agent that validates context before implementation |
-| OTel tracing integration (Langfuse/SigNoz export) | Not started | No OpenTelemetry instrumentation anywhere |
+| `SecurityReviewProcessor` middleware on Implementer writes | Done | `preWriteSecurityCheck.ts` — regex-based pre-write scanner wrapping `writeFile` tool; blocks CRITICAL, warns HIGH/MEDIUM |
+| Context Validator agent + `ContextSnapshot` persistence | Done | `validateContext.ts` — validates implementation context before agent runs (commit `15ec99f`) |
+| OTel tracing integration (Langfuse/SigNoz export) | Done | Grafana LGTM stack via `otel.ts`; spans on all LLM calls (commit `d51d0f7`) |
 
-**Phase 2 status: Core features done. SecurityReviewProcessor, Context Validator, and OTel not started.**
+**Phase 2 status: Complete**
 
 ---
 
@@ -111,17 +111,14 @@ These are deliberate architectural choices where the implementation differs from
 | Phase | Planned Features | Done | Partial | Not Started |
 |---|---|---|---|---|
 | Phase 1 | 10 | 10 | 0 | 0 |
-| Phase 2 | 10 | 7 | 0 | 3 |
+| Phase 2 | 10 | 10 | 0 | 0 |
 | Phase 3 | 14 | 12 | 1 | 1 |
 | Phase 4 | 12 | 9 | 0 | 3 |
-| **Total** | **46** | **38** | **1** | **7** |
+| **Total** | **46** | **41** | **1** | **4** |
 
 ### Not started (full list)
 
-1. SecurityReviewProcessor middleware (intercept agent file writes)
-2. Context Validator agent + ContextSnapshot persistence
-3. OTel tracing (Langfuse/SigNoz)
-4. Planner Agent (LLM-based epic decomposition)
-5. KEDA autoscaling
-6. Cost tracking / per-workflow token budgets
-7. Recharts dashboard charts
+1. Planner Agent (LLM-based epic decomposition)
+2. KEDA autoscaling
+3. Cost tracking / per-workflow token budgets
+4. Recharts dashboard charts
