@@ -75,11 +75,13 @@ model Repository {
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
+  language         String?          @map("language")
+  description      String?          @map("description")
   githubUrl        String?          @map("github_url")
   githubApiUrl     String?          @map("github_api_url")
   mcpServerRef     String?          @map("mcp_server_ref")
-  teamId           String?          @map("team_id") @db.Uuid
-  team             Team?            @relation(fields: [teamId], references: [id])
+  teamId           String           @map("team_id") @db.Uuid
+  team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
 

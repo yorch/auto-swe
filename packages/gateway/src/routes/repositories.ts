@@ -8,6 +8,8 @@ const CreateRepoSchema = z.object({
   repoName: z.string().min(1),
   teamId: z.string().uuid(),
   defaultBranch: z.string().default('main'),
+  language: z.string().optional(),
+  description: z.string().optional(),
   githubUrl: z.string().url().optional(),
   githubApiUrl: z.string().url().optional(),
   mcpServerRef: z.string().optional(),
@@ -16,6 +18,8 @@ const CreateRepoSchema = z.object({
 
 const UpdateRepoSchema = z.object({
   defaultBranch: z.string().optional(),
+  language: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
   githubUrl: z.string().url().nullable().optional(),
   githubApiUrl: z.string().url().nullable().optional(),
   mcpServerRef: z.string().nullable().optional(),

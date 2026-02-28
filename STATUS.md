@@ -61,13 +61,13 @@
 | Lessons API (`/api/v1/lessons`) | Done | List (team-scoped), text search, delete |
 | Slack OAuth (connect + callback) | Done | `slack.ts` — OAuth flow, Slack ID linking to user |
 | Slack interactive webhooks (signature-verified) | Done | `slack.ts` `/interactive` — handles approve/retry actions |
-| Planner Agent (decomposes epics into per-repo child workflows) | Not started | Epic Orchestrator expects pre-decomposed `repos[]` array; no LLM decomposition |
+| Planner Agent (decomposes epics into per-repo child workflows) | Done | `plannerAgent.ts` — Claude Sonnet 4 structured output; `planEpic.ts` activity bridges workflow→agent; `language` column bug fixed (commit `d51d0f7` + schema fix) |
 | Team-scoped RBAC middleware (`requiredTeamRole`) | Done | `requireAuth` resolves team membership via `teamIdParam` and enforces team role; used on team mutation routes |
 | Team filtering on workflow list endpoints | Done | `workflows.ts` filters by team membership for non-admins (same pattern as repos/lessons) |
 | Slack approval gates (role-checked: LEAD/ADMIN only) | Done | Interactive handler checks `hasRole(user.role, 'LEAD')` before allowing approve actions |
-| Repository.teamId non-null enforcement | Partial | `CreateRepoSchema` requires `teamId`, but Prisma schema may still allow null for older records |
+| Repository.teamId non-null enforcement | Done | Prisma schema `teamId String` (non-null), FK `onDelete: Restrict`; migration enforces `NOT NULL` at database level |
 
-**Phase 3 status: Core features done. Planner Agent not started.**
+**Phase 3 status: Complete**
 
 ---
 
@@ -112,13 +112,12 @@ These are deliberate architectural choices where the implementation differs from
 |---|---|---|---|---|
 | Phase 1 | 10 | 10 | 0 | 0 |
 | Phase 2 | 10 | 10 | 0 | 0 |
-| Phase 3 | 14 | 12 | 1 | 1 |
+| Phase 3 | 14 | 14 | 0 | 0 |
 | Phase 4 | 12 | 9 | 0 | 3 |
-| **Total** | **46** | **41** | **1** | **4** |
+| **Total** | **46** | **43** | **0** | **3** |
 
 ### Not started (full list)
 
-1. Planner Agent (LLM-based epic decomposition)
-2. KEDA autoscaling
-3. Cost tracking / per-workflow token budgets
-4. Recharts dashboard charts
+1. KEDA autoscaling
+2. Cost tracking / per-workflow token budgets
+3. Recharts dashboard charts
