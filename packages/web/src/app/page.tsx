@@ -1,21 +1,35 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
+import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
+import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
 import { useWorkflows } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
+import {
+  groupWorkflowsByStatus,
+  groupWorkflowsByDate,
+  groupWorkflowsByRepo,
+} from '@/lib/chartUtils';
 
 export default function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows();
 
-  if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
-
-  const active = (workflows ?? []).filter((w: any) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
-  const completed = (workflows ?? []).filter((w: any) => w.currentStatus === 'COMPLETED');
-  const failed = (workflows ?? []).filter((w: any) => w.currentStatus === 'FAILED');
-  const needsAttention = (workflows ?? []).filter((w: any) =>
+  const all = workflows ?? [];
+  const active = all.filter((w: any) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
+  const completed = all.filter((w: any) => w.currentStatus === 'COMPLETED');
+  const failed = all.filter((w: any) => w.currentStatus === 'FAILED');
+  const needsAttention = all.filter((w: any) =>
     ['AWAITING_HUMAN_MERGE', 'FAILED'].includes(w.currentStatus),
   );
+
+  const statusData = useMemo(() => groupWorkflowsByStatus(all), [all]);
+  const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
+  const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
+
+  if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
@@ -40,6 +54,23 @@ export default function DashboardPage() {
         </Card>
       </div>
 
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader><CardTitle>Workflow Status</CardTitle></CardHeader>
+          <WorkflowStatusChart data={statusData} />
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Workflows Over Time</CardTitle></CardHeader>
+          <WorkflowsOverTimeChart data={timeData} />
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle>Workflows by Repository</CardTitle></CardHeader>
+        <WorkflowsByRepoChart data={repoData} />
+      </Card>
+
       {needsAttention.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Needs Attention</CardTitle></CardHeader>
@@ -60,7 +91,7 @@ export default function DashboardPage() {
       <Card>
         <CardHeader><CardTitle>Recent Activity</CardTitle></CardHeader>
         <div className="space-y-2">
-          {(workflows ?? []).slice(0, 10).map((w: any) => (
+          {all.slice(0, 10).map((w: any) => (
             <a key={w.id} href={`/workflows/${w.id}`} className="flex items-center justify-between p-2 rounded hover:bg-[var(--muted)]">
               <div className="flex items-center gap-3">
                 <StatusBadge status={w.currentStatus} />

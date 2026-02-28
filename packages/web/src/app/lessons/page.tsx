@@ -1,19 +1,40 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useLessons } from '@/hooks/useWorkflows';
-import { Card } from '@/components/ui/Card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
+import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { formatDate } from '@/lib/utils';
+import { groupLessonsByType, groupLessonsByDate } from '@/lib/chartUtils';
 
 export default function LessonsPage() {
   const { data: lessons, isLoading } = useLessons();
+
+  const all = lessons ?? [];
+  const typeData = useMemo(() => groupLessonsByType(all), [all]);
+  const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
   if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Agent Lessons</h2>
+
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader><CardTitle>Lessons by Failure Type</CardTitle></CardHeader>
+          <LessonsByTypeChart data={typeData} />
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Lessons Over Time</CardTitle></CardHeader>
+          <LessonsOverTimeChart data={timeData} />
+        </Card>
+      </div>
+
       <div className="space-y-4">
-        {(lessons ?? []).map((l: any) => (
+        {all.map((l: any) => (
           <Card key={l.id}>
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -32,7 +53,7 @@ export default function LessonsPage() {
             </div>
           </Card>
         ))}
-        {(lessons ?? []).length === 0 && (
+        {all.length === 0 && (
           <p className="text-center text-[var(--muted-foreground)] py-12">No lessons recorded yet</p>
         )}
       </div>
