@@ -24,7 +24,7 @@ export function WorkflowStatusChart({ data }: Props) {
           innerRadius={60}
           outerRadius={100}
           paddingAngle={2}
-          label={({ status, count }) => `${count}`}
+          label={({ value }) => `${value}`}
         >
           {data.map((entry) => (
             <Cell
@@ -34,10 +34,10 @@ export function WorkflowStatusChart({ data }: Props) {
           ))}
         </Pie>
         <Tooltip
-          formatter={(value: number, name: string) => [value, name.replace(/_/g, ' ')]}
+          formatter={(value, name) => [value, String(name).replace(/_/g, ' ')]}
         />
         <Legend
-          formatter={(value: string) => value.replace(/_/g, ' ')}
+          formatter={(value) => String(value).replace(/_/g, ' ')}
         />
       </PieChart>
     </ResponsiveContainer>

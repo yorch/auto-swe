@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api';
 
 interface AuthState {
-  user: { sub: string; role: string; email?: string } | null;
+  user: { sub: string; role: string; email?: string; slackId?: string } | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
