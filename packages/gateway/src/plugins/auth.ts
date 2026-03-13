@@ -146,7 +146,14 @@ export function requireAuth(options: RBACOptions = {}) {
       if (request.user!.role === 'ADMIN') return;
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
-      if (!teamId) return; // No team context in route params — cannot enforce
+      if (!teamId) {
+        // requiredTeamRole was set but the param is absent — this is a server-side
+        // misconfiguration (wrong teamIdParam value). Fail loudly rather than
+        // silently granting access.
+        return reply.status(500).send({
+          error: { code: 'SERVER_ERROR', message: 'Team ID param misconfigured on this route' },
+        });
+      }
 
       const prisma = (request.server as any).prisma;
       const membership = await prisma.teamMembership.findUnique({
