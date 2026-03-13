@@ -18,10 +18,10 @@ export default function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows();
 
   const all = workflows ?? [];
-  const active = all.filter((w: any) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
-  const completed = all.filter((w: any) => w.currentStatus === 'COMPLETED');
-  const failed = all.filter((w: any) => w.currentStatus === 'FAILED');
-  const needsAttention = all.filter((w: any) =>
+  const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
+  const completed = all.filter((w) => w.currentStatus === 'COMPLETED');
+  const failed = all.filter((w) => w.currentStatus === 'FAILED');
+  const needsAttention = all.filter((w) =>
     ['AWAITING_HUMAN_MERGE', 'FAILED'].includes(w.currentStatus),
   );
 
@@ -75,7 +75,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader><CardTitle>Needs Attention</CardTitle></CardHeader>
           <div className="space-y-3">
-            {needsAttention.map((w: any) => (
+            {needsAttention.map((w) => (
               <a key={w.id} href={`/workflows/${w.id}`} className="flex items-center justify-between p-3 rounded-md hover:bg-[var(--muted)]">
                 <div>
                   <span className="font-medium">{w.repository?.repoName ?? 'Unknown'}</span>
@@ -91,7 +91,7 @@ export default function DashboardPage() {
       <Card>
         <CardHeader><CardTitle>Recent Activity</CardTitle></CardHeader>
         <div className="space-y-2">
-          {all.slice(0, 10).map((w: any) => (
+          {all.slice(0, 10).map((w) => (
             <a key={w.id} href={`/workflows/${w.id}`} className="flex items-center justify-between p-2 rounded hover:bg-[var(--muted)]">
               <div className="flex items-center gap-3">
                 <StatusBadge status={w.currentStatus} />

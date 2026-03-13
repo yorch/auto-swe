@@ -51,7 +51,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
             <p className="text-sm text-[var(--muted-foreground)]">No PRs yet</p>
           ) : (
             <div className="space-y-2">
-              {workflow.pullRequests.map((pr: any) => (
+              {workflow.pullRequests.map((pr) => (
                 <div key={pr.id} className="flex items-center justify-between text-sm">
                   <span className="font-medium">PR #{pr.prNumber}</span>
                   <div className="flex items-center gap-2">

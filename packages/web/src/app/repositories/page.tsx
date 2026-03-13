@@ -12,7 +12,7 @@ export default function RepositoriesPage() {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Repositories</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {(repos ?? []).map((r: any) => (
+        {(repos ?? []).map((r) => (
           <Card key={r.id}>
             <h3 className="font-semibold">{r.organizationName}/{r.repoName}</h3>
             <div className="mt-2 text-sm text-[var(--muted-foreground)] space-y-1">

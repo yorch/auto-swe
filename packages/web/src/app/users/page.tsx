@@ -23,13 +23,13 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody>
-            {(users ?? []).map((u: any) => (
+            {(users ?? []).map((u) => (
               <tr key={u.id} className="border-b border-[var(--border)]">
                 <td className="px-4 py-3">{u.email}</td>
                 <td className="px-4 py-3">{u.role}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.slackId ?? '-'}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {(u.memberships ?? []).map((m: any) => m.team?.name).filter(Boolean).join(', ') || '-'}
+                  {(u.memberships ?? []).map((m) => m.team?.name).filter(Boolean).join(', ') || '-'}
                 </td>
                 <td className="px-4 py-3">
                   <span className={u.isActive ? 'text-[var(--success)]' : 'text-[var(--destructive)]'}>

@@ -31,7 +31,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               </tr>
             </thead>
             <tbody>
-              {(team.memberships ?? []).map((m: any) => (
+              {(team.memberships ?? []).map((m) => (
                 <tr key={m.id} className="border-b border-[var(--border)]">
                   <td className="py-2">{m.user?.email}</td>
                   <td className="py-2 text-[var(--muted-foreground)]">{m.user?.role}</td>
@@ -45,7 +45,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         <Card>
           <CardHeader><CardTitle>Repositories ({team.repositories?.length ?? 0})</CardTitle></CardHeader>
           <div className="space-y-2">
-            {(team.repositories ?? []).map((r: any) => (
+            {(team.repositories ?? []).map((r) => (
               <div key={r.id} className="flex items-center justify-between text-sm p-2 rounded hover:bg-[var(--muted)]">
                 <span className="font-medium">{r.organizationName}/{r.repoName}</span>
                 <span className={`text-xs ${r.isActive ? 'text-[var(--success)]' : 'text-[var(--muted-foreground)]'}`}>

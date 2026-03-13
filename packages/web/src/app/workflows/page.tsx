@@ -29,7 +29,7 @@ export default function WorkflowsPage() {
             </tr>
           </thead>
           <tbody>
-            {(workflows ?? []).map((w: any) => (
+            {(workflows ?? []).map((w) => (
               <tr key={w.id} className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors">
                 <td className="px-4 py-3">
                   <Link href={`/workflows/${w.id}`} className="text-[var(--primary)] hover:underline font-medium">

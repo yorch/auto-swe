@@ -34,7 +34,7 @@ export default function LessonsPage() {
       </div>
 
       <div className="space-y-4">
-        {all.map((l: any) => (
+        {all.map((l) => (
           <Card key={l.id}>
             <div className="flex items-start justify-between">
               <div className="flex-1">

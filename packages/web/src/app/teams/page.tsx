@@ -13,7 +13,7 @@ export default function TeamsPage() {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Teams</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {(teams ?? []).map((t: any) => (
+        {(teams ?? []).map((t) => (
           <Link key={t.id} href={`/teams/${t.id}`}>
             <Card className="hover:shadow-md transition-shadow cursor-pointer">
               <h3 className="font-semibold text-lg">{t.name}</h3>
