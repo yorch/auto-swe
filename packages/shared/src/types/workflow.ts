@@ -144,3 +144,8 @@ export interface PlannedRepo {
   description: string;
   dependsOn: string[];
 }
+
+// ── Budget Tiers (Cost Tracking) ──
+
+export const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
+export type BudgetTier = typeof BUDGET_TIERS[number];
