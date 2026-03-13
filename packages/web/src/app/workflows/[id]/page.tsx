@@ -4,7 +4,7 @@ import { use } from 'react';
 import { useWorkflow } from '@/hooks/useWorkflows';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatCost, formatTokens } from '@/lib/utils';
 import Link from 'next/link';
 
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -64,6 +64,28 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           )}
         </Card>
       </div>
+
+      <Card>
+        <CardHeader><CardTitle>Cost &amp; Token Usage</CardTitle></CardHeader>
+        <dl className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-[var(--muted-foreground)]">Budget Tier</dt>
+            <dd className="font-medium">{workflow.budgetTier}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-[var(--muted-foreground)]">Cost Accrued</dt>
+            <dd className="font-medium">{formatCost(workflow.costUsdAccrued)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-[var(--muted-foreground)]">Input Tokens</dt>
+            <dd>{formatTokens(workflow.tokensInputUsed)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-[var(--muted-foreground)]">Output Tokens</dt>
+            <dd>{formatTokens(workflow.tokensOutputUsed)}</dd>
+          </div>
+        </dl>
+      </Card>
 
       {workflow.workRequest && (
         <Card>

@@ -48,6 +48,10 @@ export interface WorkflowSummary {
   currentStatus: WorkflowStatus;
   assignedBranch: string;
   updatedAt: string;
+  budgetTier: string;
+  tokensInputUsed: number;
+  tokensOutputUsed: number;
+  costUsdAccrued: number;
   repository: WorkflowRepository | null;
   pullRequests: PullRequestSummary[];
 }

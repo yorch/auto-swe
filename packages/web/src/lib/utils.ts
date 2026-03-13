@@ -25,6 +25,17 @@ export function formatRelativeTime(date: string | Date): string {
   return `${Math.floor(diff / 86400_000)}d ago`;
 }
 
+export function formatCost(usd: number): string {
+  if (usd < 0.01) return '<$0.01';
+  return `$${usd.toFixed(2)}`;
+}
+
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return `${n}`;
+}
+
 export const STATUS_COLORS: Record<string, string> = {
   VALIDATING_CONTEXT: 'bg-indigo-100 text-indigo-800',
   IMPLEMENTING: 'bg-blue-100 text-blue-800',

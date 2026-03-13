@@ -3,7 +3,7 @@
 import { useWorkflows } from '@/hooks/useWorkflows';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Card } from '@/components/ui/Card';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatRelativeTime, formatCost } from '@/lib/utils';
 import Link from 'next/link';
 
 export default function WorkflowsPage() {
@@ -26,6 +26,7 @@ export default function WorkflowsPage() {
               <th className="text-left px-4 py-3 font-medium">Branch</th>
               <th className="text-left px-4 py-3 font-medium">Status</th>
               <th className="text-left px-4 py-3 font-medium">Updated</th>
+              <th className="text-right px-4 py-3 font-medium">Cost</th>
             </tr>
           </thead>
           <tbody>
@@ -39,6 +40,7 @@ export default function WorkflowsPage() {
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{w.assignedBranch}</td>
                 <td className="px-4 py-3"><StatusBadge status={w.currentStatus} /></td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{formatRelativeTime(w.updatedAt)}</td>
+                <td className="px-4 py-3 text-right text-xs text-[var(--muted-foreground)]">{formatCost(w.costUsdAccrued)}</td>
               </tr>
             ))}
           </tbody>
