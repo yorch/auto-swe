@@ -53,6 +53,22 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    // Non-admins must be a member of the team that owns the repo they're searching
+    if (request.user!.role !== 'ADMIN') {
+      const accessibleRepo = await fastify.prisma.repository.findFirst({
+        where: {
+          id: repoId,
+          team: { memberships: { some: { userId: request.user!.sub } } },
+        },
+        select: { id: true },
+      });
+      if (!accessibleRepo) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
+        });
+      }
+    }
+
     // Semantic search requires the worker's embedding + pgvector query
     // For the gateway API, we do a text-based fallback search
     const lessons = await fastify.prisma.agentLesson.findMany({
