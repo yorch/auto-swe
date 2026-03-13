@@ -22,11 +22,31 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   }, async (request, reply) => {
     const { externalTicketId, description, repoIds } = request.body;
 
-    // Verify repository exists
-    const repo = await fastify.prisma.repository.findUnique({ where: { id: repoIds[0] } });
+    // Verify repository exists and is accessible to the requesting user.
+    // Include team membership so non-admins can only trigger work on their
+    // own team's repos without a second round-trip query.
+    const repo = await fastify.prisma.repository.findUnique({
+      where: { id: repoIds[0] },
+      include: {
+        team: {
+          select: {
+            memberships: {
+              where: { userId: request.user!.sub },
+              select: { userId: true },
+            },
+          },
+        },
+      },
+    });
     if (!repo || !repo.isActive) {
       return reply.status(404).send({
         error: { code: 'REPO_NOT_FOUND', message: `Repository ${repoIds[0]} not found or inactive` },
+      });
+    }
+
+    if (request.user!.role !== 'ADMIN' && repo.team.memberships.length === 0) {
+      return reply.status(403).send({
+        error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
       });
     }
 
