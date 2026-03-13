@@ -1,3 +1,4 @@
+import { ApplicationFailure } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, CodeResult } from '@auto-swe/shared/types/workflow';
 
@@ -27,6 +28,13 @@ export async function createOrUpdatePullRequest(
   });
 
   if (existingPR) {
+    if (existingPR.prNumber == null) {
+      throw ApplicationFailure.nonRetryable(
+        `PR record ${existingPR.id} exists but has no prNumber — cannot build PR URL`,
+        'PR_MISSING_NUMBER',
+      );
+    }
+
     await prisma.pullRequest.update({
       where: { id: existingPR.id },
       data: { headSha: codeResult.headSha },
@@ -34,7 +42,7 @@ export async function createOrUpdatePullRequest(
 
     const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
     return {
-      prNumber: existingPR.prNumber!,
+      prNumber: existingPR.prNumber,
       prUrl: `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`,
     };
   }
