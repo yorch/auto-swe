@@ -49,6 +49,12 @@ export const SECURITY_RULES: SecurityRule[] = [
     severity: 'CRITICAL',
     // Matches assignments like: secret = "longvalue", password: 'longvalue', api_key = `longvalue`
     // Excludes process.env references and short values (< 8 chars)
+    // Known limitation: the negative lookahead (?!process\.env) only prevents
+    // matches where the value starts with "process.env". A template literal like
+    // `prefix-${process.env.X}` will still trigger a false positive because the
+    // literal starts with "prefix-". When this fires on a legitimate env-var
+    // template, the agent should restructure the assignment so the env reference
+    // is at the start of the value, or use a variable: const val = process.env.X.
     pattern:
       /(?:secret|password|passwd|api_key|apikey|access_token|auth_token|private_key)\s*[:=]\s*['"`](?!process\.env)[^'"`\n]{8,}['"`]/i,
     description: 'Hardcoded secret or credential detected',
