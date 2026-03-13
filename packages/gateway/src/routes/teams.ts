@@ -79,6 +79,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get<{ Params: { id: string } }>('/:id', {
     onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
   }, async (request, reply) => {
+    const user = request.user!;
+
     const team = await fastify.prisma.team.findUnique({
       where: { id: request.params.id },
       include: {
@@ -91,6 +93,16 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(404).send({
         error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' },
       });
+    }
+
+    // Non-admins may only view teams they belong to
+    if (user.role !== 'ADMIN') {
+      const isMember = team.memberships.some((m) => m.user.id === user.sub);
+      if (!isMember) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'You are not a member of this team' },
+        });
+      }
     }
 
     return { data: team };
