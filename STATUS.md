@@ -85,10 +85,10 @@
 | Zustand for client state | Done | `authStore.ts`, `teamStore.ts` |
 | Custom executor image build pipeline (GitHub Actions) | Done | `.github/workflows/build-executor.yml` — ECR push, Buildx, weekly rebuilds |
 | KEDA autoscaling for agent worker pods | Not started | System uses Docker-in-Docker, not K8s |
-| Cost tracking / per-workflow token budgets | Not started | No token counting or budget enforcement |
+| Cost tracking / per-workflow token budgets | Done | `costTracking.ts` — per-call metering via `result.usage`, OTel span attributes (`llm.cost_usd`, `workflow.budget_remaining_*`), STANDARD/LARGE/EPIC tiers, `BUDGET_EXCEEDED` ApplicationFailure; cost visible on workflow detail + list pages |
 | Recharts dashboard charts | Done | 5 Recharts charts (donut, area, bar) across dashboard and lessons pages |
 
-**Phase 4 status: Memory pipeline (with agent injection), web dashboard, executor build, and Recharts charts done. KEDA and cost tracking not started.**
+**Phase 4 status: Complete except KEDA (not applicable — Docker Compose deployment, not K8s).**
 
 ---
 
@@ -113,10 +113,9 @@ These are deliberate architectural choices where the implementation differs from
 | Phase 1 | 10 | 10 | 0 | 0 |
 | Phase 2 | 10 | 10 | 0 | 0 |
 | Phase 3 | 14 | 14 | 0 | 0 |
-| Phase 4 | 12 | 10 | 0 | 2 |
-| **Total** | **46** | **44** | **0** | **2** |
+| Phase 4 | 12 | 11 | 0 | 1 |
+| **Total** | **46** | **45** | **0** | **1** |
 
 ### Not started (full list)
 
-1. KEDA autoscaling
-2. Cost tracking / per-workflow token budgets
+1. KEDA autoscaling — N/A: project uses Docker Compose, not Kubernetes
