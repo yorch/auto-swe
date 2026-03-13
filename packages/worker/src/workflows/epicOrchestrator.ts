@@ -103,7 +103,10 @@ export async function EpicOrchestratorWorkflow(
         parentWorkflowId: request.epicWorkflowId,
       };
 
-      const childWorkflowId = `eng-${request.externalTicketId}-${repo.repoId}`;
+      // Scope the child ID to this epic execution so that retrying the epic
+      // (which gets a new epicWorkflowId) doesn't collide with a previous run,
+      // and so sibling repos within the same epic are always distinguishable.
+      const childWorkflowId = `${request.epicWorkflowId}-${repo.repoId}`;
 
       try {
         const handle = await startChild('EngineeringWorkflow', {
