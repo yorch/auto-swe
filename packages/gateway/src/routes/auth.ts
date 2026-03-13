@@ -118,24 +118,28 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    // Revoke old token
-    await fastify.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    });
-
-    // Issue new tokens in the same family
+    // Revoke old token and issue the new one atomically.
+    // Without a transaction, two concurrent requests with the same refresh token
+    // could both pass the revocation check and both create new tokens, breaking
+    // the family-rotation invariant.
     const newRefreshToken = fastify.auth.generateRefreshToken();
     const newTokenHash = fastify.auth.hashToken(newRefreshToken);
+    const newExpiry = new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-    await fastify.prisma.refreshToken.create({
-      data: {
-        userId: stored.userId,
-        tokenHash: newTokenHash,
-        family: stored.family,
-        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
-      },
-    });
+    await fastify.prisma.$transaction([
+      fastify.prisma.refreshToken.update({
+        where: { id: stored.id },
+        data: { revokedAt: new Date() },
+      }),
+      fastify.prisma.refreshToken.create({
+        data: {
+          userId: stored.userId,
+          tokenHash: newTokenHash,
+          family: stored.family,
+          expiresAt: newExpiry,
+        },
+      }),
+    ]);
 
     const accessToken = fastify.auth.signAccessToken({
       sub: stored.user.id,
