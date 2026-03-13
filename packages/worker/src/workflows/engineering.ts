@@ -120,6 +120,12 @@ export async function EngineeringWorkflow(
   let isReadyForMerge = false;
 
   while (!isReadyForMerge) {
+    // Reset ciResult at the top of each iteration. A CI signal from a previous
+    // push can arrive while the review agent is running; if the review then
+    // rejects and we loop back, we must not satisfy the next CI wait with that
+    // stale result.
+    ciResult = null;
+
     // 3. Review Network
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'IN_REVIEW');
 
@@ -186,7 +192,6 @@ export async function EngineeringWorkflow(
       // 6. CI Fix Loop
       const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
       codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
-      ciResult = null; // Reset for next CI signal
     }
   }
 
