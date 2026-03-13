@@ -1,4 +1,4 @@
-import { heartbeat, ApplicationFailure } from '@temporalio/activity';
+import { heartbeat, ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -7,6 +7,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
@@ -63,7 +64,7 @@ export async function executeImplementation(
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
 
-      await agent.generate(
+      const genResult = await agent.generate(
         [
           { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext },
           {
@@ -78,6 +79,14 @@ export async function executeImplementation(
         ],
         { toolChoice: 'auto' },
       );
+
+      if (genResult.usage) {
+        await recordLlmUsage(
+          activityInfo().workflowId,
+          genResult.usage,
+          `llm.implementer.iteration_${iteration}`,
+        );
+      }
 
       // Run tests
       try {

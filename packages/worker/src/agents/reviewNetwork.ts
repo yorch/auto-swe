@@ -1,6 +1,7 @@
 import { Agent } from '@mastra/core';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
+import { activityInfo } from '@temporalio/activity';
 import { z } from 'zod';
 import type {
   CodeResult,
@@ -13,6 +14,7 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
 } from './prompts.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -66,6 +68,14 @@ async function runReviewerAgent(
           ],
           { output: ReviewVerdictSchema },
         );
+
+        if (result.usage) {
+          await recordLlmUsage(
+            activityInfo().workflowId,
+            result.usage,
+            `llm.review.${reviewerType.toLowerCase()}`,
+          );
+        }
 
         const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
 

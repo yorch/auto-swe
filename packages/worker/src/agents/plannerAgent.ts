@@ -1,9 +1,11 @@
 import { Agent } from '@mastra/core';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
+import { activityInfo } from '@temporalio/activity';
 import { z } from 'zod';
 import type { RepoInfo, PlannedRepo } from '@auto-swe/shared/types/workflow';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -49,6 +51,10 @@ export async function decomposeEpic(
           ],
           { output: PlannerOutputSchema },
         );
+
+        if (result.usage) {
+          await recordLlmUsage(activityInfo().workflowId, result.usage, 'llm.epic_planner');
+        }
 
         const parsed = result.object as z.infer<typeof PlannerOutputSchema>;
 

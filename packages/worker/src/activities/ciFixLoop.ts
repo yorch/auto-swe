@@ -1,10 +1,11 @@
-import { heartbeat } from '@temporalio/activity';
+import { heartbeat, activityInfo } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace, shellQuote } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 
 /**
  * Fetches CI logs from the provided URL.
@@ -70,7 +71,7 @@ export async function executeCIFixImplementation(
     const { agent } = createImplementerAgent(workspace);
 
     // Run the agent in CI fix mode
-    await agent.generate(
+    const ciFix = await agent.generate(
       [
         { role: 'system', content: CI_FIX_SYSTEM_PROMPT },
         {
@@ -87,6 +88,10 @@ export async function executeCIFixImplementation(
     );
 
     heartbeat('CI fix agent completed');
+
+    if (ciFix.usage) {
+      await recordLlmUsage(activityInfo().workflowId, ciFix.usage, 'llm.ci_fix');
+    }
 
     // Run tests locally after fix
     let testResult: TestRunResult;
@@ -167,7 +172,7 @@ export async function executeReviewFixImplementation(
 
     const { agent } = createImplementerAgent(workspace);
 
-    await agent.generate(
+    const reviewFix = await agent.generate(
       [
         { role: 'system', content: REVIEW_FIX_SYSTEM_PROMPT },
         {
@@ -184,6 +189,10 @@ export async function executeReviewFixImplementation(
     );
 
     heartbeat('review fix agent completed');
+
+    if (reviewFix.usage) {
+      await recordLlmUsage(activityInfo().workflowId, reviewFix.usage, 'llm.review_fix');
+    }
 
     let testResult: TestRunResult;
     try {
