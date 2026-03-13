@@ -6,6 +6,7 @@ export interface RepoWorkRequest {
   externalTicketId: string;
   description: string;
   requestPayload: string;
+  budgetTier?: BudgetTier;
   // Phase 2+ fields
   contextSnapshotId?: string;
   planOverride?: string;

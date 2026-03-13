@@ -9,6 +9,7 @@ const CreateWorkRequestSchema = z.object({
   externalTicketId: z.string().min(1),
   description: z.string().min(1, 'description is required — tell the agent what to implement'),
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
+  budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
 });
 
 export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
@@ -20,7 +21,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
   }, async (request, reply) => {
-    const { externalTicketId, description, repoIds } = request.body;
+    const { externalTicketId, description, repoIds, budgetTier } = request.body;
 
     // Verify repository exists and is accessible to the requesting user.
     // Include team membership so non-admins can only trigger work on their
@@ -72,6 +73,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: repo.id,
         externalTicketId,
         description,
+        budgetTier,
         requestPayload: JSON.stringify(request.body),
       });
     } catch (err: any) {
@@ -102,6 +104,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: repo.id,
         currentStatus: 'IMPLEMENTING',
         assignedBranch: branch,
+        budgetTier,
       },
     });
 
