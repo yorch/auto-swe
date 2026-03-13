@@ -3,6 +3,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import path from 'node:path';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
+import { shellQuote } from '../activities/workspace.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 /**
@@ -34,7 +35,7 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     execute: async ({ context }) => {
       try {
         const p = safePath(context.path);
-        return { content: workspace.exec(`cat '${p}'`) };
+        return { content: workspace.exec(`cat ${shellQuote(p)}`) };
       } catch (err: any) {
         return { content: `Error reading file: ${err.message}` };
       }
@@ -53,9 +54,9 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     execute: wrapWriteToolWithSecurityCheck(async ({ context }) => {
       try {
         const p = safePath(context.path);
-        workspace.exec(`mkdir -p "$(dirname '${p}')"`);  // runs in Docker container
+        workspace.exec(`mkdir -p "$(dirname ${shellQuote(p)})"`);
         const b64 = Buffer.from(context.content).toString('base64');
-        workspace.exec(`echo '${b64}' | base64 -d > '${p}'`);  // runs in Docker container
+        workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(p)}`);
         return { result: `File written: ${p}` };
       } catch (err: any) {
         return { result: `Error writing file: ${err.message}` };
@@ -72,7 +73,7 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     execute: async ({ context }) => {
       try {
         const p = safePath(context.path);
-        return { listing: workspace.exec(`ls -la '${p}'`) };
+        return { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
       } catch (err: any) {
         return { listing: `Error listing directory: ${err.message}` };
       }

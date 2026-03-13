@@ -1,7 +1,7 @@
 import { heartbeat, ApplicationFailure } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { createWorkspace } from './workspace.js';
+import { createWorkspace, shellQuote } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
@@ -97,7 +97,7 @@ export async function executeImplementation(
     // Commit and push
     workspace.exec('git add -A');
     workspace.exec(`git commit -m "auto: implement ${request.externalTicketId}"`);
-    workspace.exec(`git push origin '${branch}'`);
+    workspace.exec(`git push origin ${shellQuote(branch)}`);
 
     // Collect results
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);

@@ -17,7 +17,7 @@ const EXEC_OPTS: ExecSyncOptions = {
 // Allows standard image refs: registry/org/name:tag@sha256:digest
 const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 

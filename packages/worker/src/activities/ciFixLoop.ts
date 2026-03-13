@@ -1,7 +1,7 @@
 import { heartbeat } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { createWorkspace } from './workspace.js';
+import { createWorkspace, shellQuote } from './workspace.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
@@ -108,7 +108,7 @@ export async function executeCIFixImplementation(
     // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
     workspace.exec('git add -A');
     workspace.exec(`git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`);
-    workspace.exec(`git push origin '${previousCodeResult.branch}'`);
+    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
@@ -203,7 +203,7 @@ export async function executeReviewFixImplementation(
 
     workspace.exec('git add -A');
     workspace.exec(`git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`);
-    workspace.exec(`git push origin '${previousCodeResult.branch}'`);
+    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
