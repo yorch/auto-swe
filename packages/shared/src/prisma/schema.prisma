@@ -130,6 +130,10 @@ model ActiveWorkflow {
   repository         Repository?    @relation(fields: [repoId], references: [id])
   currentStatus      String         @map("current_status")
   assignedBranch     String?        @map("assigned_branch")
+  budgetTier         String         @default("STANDARD") @map("budget_tier")
+  tokensInputUsed    Int            @default(0) @map("tokens_input_used")
+  tokensOutputUsed   Int            @default(0) @map("tokens_output_used")
+  costUsdAccrued     Float          @default(0) @map("cost_usd_accrued")
   updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   pullRequests       PullRequest[]
