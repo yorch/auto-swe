@@ -1,6 +1,7 @@
 import { PrismaClient } from '../generated/prisma/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
+import crypto from 'node:crypto';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({
@@ -9,13 +10,23 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
+  // Derive admin password from env or generate a random one on first seed.
+  // SEED_ADMIN_PASSWORD is intentionally not printed unless it was generated,
+  // so accidental log ingestion doesn't expose a configured secret.
+  let adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!adminPassword) {
+    adminPassword = crypto.randomBytes(16).toString('hex');
+    console.log(`Seed: generated admin password: ${adminPassword}`);
+    console.log('  Set SEED_ADMIN_PASSWORD in your .env to use a stable password.');
+  }
+
   // Seed admin user
   const admin = await prisma.user.upsert({
     where: { email: 'admin@auto-swe.local' },
     update: {},
     create: {
       email: 'admin@auto-swe.local',
-      passwordHash: await bcrypt.hash('admin', 12),
+      passwordHash: await bcrypt.hash(adminPassword, 12),
       role: 'ADMIN',
     },
   });
