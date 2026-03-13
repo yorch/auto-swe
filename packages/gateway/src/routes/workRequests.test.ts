@@ -10,10 +10,24 @@ describe('POST /api/v1/work-requests', () => {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
 
+    // Mock auth plugin — verifyAccessToken accepts any non-empty token in tests
+    app.decorate('auth', {
+      verifyAccessToken: (token: string) => {
+        if (!token) throw new Error('No token');
+        return { sub: 'user-1', role: 'ENGINEER', iat: 0, exp: 9999999999 };
+      },
+    } as any);
+
     // Mock prisma and temporal on the app instance (cast as any to bypass strict typing)
     app.decorate('prisma', {
       repository: {
-        findUnique: async () => ({ id: 'repo-1', isActive: true, repoName: 'test', organizationName: 'org' }),
+        findUnique: async () => ({
+          id: 'repo-1',
+          isActive: true,
+          repoName: 'test',
+          organizationName: 'org',
+          team: { memberships: [{ userId: 'user-1' }] },
+        }),
       },
       workRequest: { create: async (args: any) => ({ id: 'wr-1', ...args.data }) },
       activeWorkflow: { create: async (args: any) => ({ id: 'wf-1', ...args.data }) },
@@ -30,10 +44,24 @@ describe('POST /api/v1/work-requests', () => {
 
   afterAll(() => app.close());
 
+  it('returns 401 when Authorization header is missing', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/work-requests',
+      payload: {
+        externalTicketId: 'JIRA-1',
+        description: 'Add health endpoint',
+        repoIds: ['00000000-0000-0000-0000-000000000001'],
+      },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('rejects missing description', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/work-requests',
+      headers: { authorization: 'Bearer test-token' },
       payload: { externalTicketId: 'JIRA-1', repoIds: ['00000000-0000-0000-0000-000000000001'] },
     });
     expect(res.statusCode).toBe(400);
@@ -43,6 +71,7 @@ describe('POST /api/v1/work-requests', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/work-requests',
+      headers: { authorization: 'Bearer test-token' },
       payload: {
         externalTicketId: 'JIRA-1',
         description: 'Add health endpoint',
