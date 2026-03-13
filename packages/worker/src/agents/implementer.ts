@@ -82,12 +82,17 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
 
   // Tool: Run a shell command in the workspace (e.g., run tests, install deps).
   // Commands run inside an isolated Docker container — not on the host.
+  // Every agent-issued command is logged for audit purposes.
   const bash = createTool({
     id: 'bash',
     description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
     inputSchema: z.object({ command: z.string().describe('Shell command to execute') }),
     outputSchema: z.object({ output: z.string() }),
     execute: async ({ context }) => {
+      // Audit log — provides visibility into LLM-generated shell commands.
+      // The container is isolated from the host, but logging helps detect
+      // unexpected behaviour (e.g., exfiltration attempts via curl/wget).
+      console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(context.command)}`);
       try {
         return { output: workspace.exec(context.command) };
       } catch (err: any) {
