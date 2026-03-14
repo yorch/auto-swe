@@ -35,14 +35,14 @@ describe('recordLlmUsage', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('updates DB and returns when under budget', async () => {
-    (prisma.activeWorkflow.findFirst as any).mockResolvedValue({
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       id: 'wf-1',
       budgetTier: 'STANDARD',
       tokensInputUsed: 0,
       tokensOutputUsed: 0,
       costUsdAccrued: 0,
-    });
-    (prisma.activeWorkflow.update as any).mockResolvedValue({});
+    } as any);
+    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as any);
 
     await expect(
       recordLlmUsage('wf-temporal-1', { promptTokens: 100, completionTokens: 50, totalTokens: 150 })
@@ -56,14 +56,24 @@ describe('recordLlmUsage', () => {
     );
   });
 
+  it('returns without error when workflow record is not found', async () => {
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue(null);
+
+    await expect(
+      recordLlmUsage('wf-unknown', { promptTokens: 100, completionTokens: 50, totalTokens: 150 })
+    ).resolves.not.toThrow();
+
+    expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
+  });
+
   it('throws BUDGET_EXCEEDED when cumulative input tokens exceed tier limit', async () => {
-    (prisma.activeWorkflow.findFirst as any).mockResolvedValue({
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       id: 'wf-1',
       budgetTier: 'STANDARD',
       tokensInputUsed: 1_999_900,
       tokensOutputUsed: 0,
       costUsdAccrued: 29.99,
-    });
+    } as any);
 
     await expect(
       recordLlmUsage('wf-temporal-1', { promptTokens: 200, completionTokens: 10, totalTokens: 210 })

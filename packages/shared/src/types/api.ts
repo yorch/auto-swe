@@ -1,4 +1,4 @@
-import type { WorkflowStatus } from './workflow.js';
+import type { WorkflowStatus, BudgetTier } from './workflow.js';
 
 export interface ApiResponse<T> {
   data: T;
@@ -48,7 +48,7 @@ export interface WorkflowSummary {
   currentStatus: WorkflowStatus;
   assignedBranch: string;
   updatedAt: string;
-  budgetTier: string;
+  budgetTier: BudgetTier;
   tokensInputUsed: number;
   tokensOutputUsed: number;
   costUsdAccrued: number;

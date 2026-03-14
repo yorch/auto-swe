@@ -5,7 +5,8 @@ import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
-// Claude Opus 4.6 pricing (USD per token)
+// Claude Opus 4.6 pricing (USD per token).
+// If the model used by any agent changes, update these constants.
 const PRICE_INPUT_PER_TOKEN = 15 / 1_000_000;   // $15 per 1M input tokens
 const PRICE_OUTPUT_PER_TOKEN = 75 / 1_000_000;  // $75 per 1M output tokens
 
@@ -68,13 +69,20 @@ export async function recordLlmUsage(
         'workflow.cost_usd_cumulative': newCost,
       });
 
+      // Write usage to DB before checking the budget limit.
+      // This is intentional: we record actual consumption even when the limit
+      // is breached, so the UI shows the real overage rather than the last
+      // value before the limit was hit.
       await prisma.activeWorkflow.update({
         where: { id: workflow.id },
         data: { tokensInputUsed: newInput, tokensOutputUsed: newOutput, costUsdAccrued: newCost },
       });
 
       const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
-      const limits = BUDGET_LIMITS[tier] ?? BUDGET_LIMITS.STANDARD;
+      const limits = BUDGET_LIMITS[tier];
+      if (!limits) {
+        throw new Error(`Unknown budget tier "${tier}" — update BUDGET_LIMITS in costTracking.ts`);
+      }
 
       span.setAttributes({
         'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,
