@@ -1,9 +1,18 @@
 {
   "permissions": {
     "allow": [
+      "Bash(docker ps:*)",
       "Bash(gh api:*)",
       "Bash(gh pr:*)",
       "Bash(git add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git status:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(npx:*)",
+      "Bash(pnpm:*)",
+      "Bash(tail:*)",
       "Bash(yarn:*)",
       "mcp__context7",
       "mcp__git",
@@ -11,9 +20,6 @@
       "mcp__sequential-thinking",
       "mcp__serena",
       "WebFetch",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:mastra.ai)",
-      "WebFetch(domain:www.npmjs.com)",
       "WebSearch"
     ]
   }
