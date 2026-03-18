@@ -11,20 +11,26 @@
 
 ## Table of Contents
 
-1. [Global Layout](#1-global-layout)
-2. [Dashboard Home `/`](#2-dashboard-home)
-3. [Workflow List `/workflows`](#3-workflow-list)
-4. [Workflow Detail `/workflows/:id`](#4-workflow-detail)
-5. [Epic List `/epics`](#5-epic-list)
-6. [Epic Visualizer `/epics/:id`](#6-epic-visualizer)
-7. [Context Inspector `/workflows/:id/context`](#7-context-inspector)
-8. [RBAC / Users `/users`](#8-rbac--users)
-9. [Repositories `/repositories`](#9-repositories)
-10. [Lessons Browser `/lessons`](#10-lessons-browser)
-11. [Settings `/settings`](#11-settings)
-12. [Login `/login`](#12-login)
-13. [Teams List `/teams`](#13-teams-list)
-14. [Team Detail `/teams/:id`](#14-team-detail)
+- [Web Dashboard — ASCII Wireframes](#web-dashboard--ascii-wireframes)
+  - [Table of Contents](#table-of-contents)
+  - [1. Global Layout](#1-global-layout)
+  - [2. Dashboard Home](#2-dashboard-home)
+  - [3. Workflow List](#3-workflow-list)
+  - [4. Workflow Detail](#4-workflow-detail)
+  - [5. Epic List](#5-epic-list)
+  - [6. Epic Visualizer](#6-epic-visualizer)
+  - [7. Context Inspector](#7-context-inspector)
+  - [8. RBAC / Users](#8-rbac--users)
+  - [9. Repositories](#9-repositories)
+  - [10. Lessons Browser](#10-lessons-browser)
+  - [11. Settings](#11-settings)
+  - [12. Login](#12-login)
+  - [13. Teams List](#13-teams-list)
+  - [14. Team Detail](#14-team-detail)
+  - [Route Summary](#route-summary)
+  - [Web UI Technical Stack](#web-ui-technical-stack)
+    - [Package Dependencies (`packages/web/package.json`)](#package-dependencies-packageswebpackagejson)
+    - [Architecture Decisions](#architecture-decisions)
 
 ---
 
@@ -33,7 +39,7 @@
 Persistent chrome wrapping every authenticated page. Sidebar collapses on
 mobile to a hamburger menu.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  TOP BAR                                                             │
 │  ┌──────────┐    ┌───────────────┐     ┌────────┐ ┌───────────────┐  │
@@ -61,6 +67,7 @@ mobile to a hamburger menu.
 ```
 
 **RBAC notes:**
+
 - ¹ "Repos" and "Users" sidebar links visible only to `ADMIN`.
 - "Epics" link visible to `LEAD+`.
 - "Teams" link visible to all authenticated users.
@@ -75,7 +82,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+`
 **Data:** `GET /api/v1/workflows` (aggregated client-side)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  DASHBOARD                                                      │
 │                                                                 │
@@ -105,6 +112,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - Status cards link to `/workflows?status=<STATUS>`.
 - ² `[Retry CI]` button calls `POST /api/v1/workflows/:id/retry-ci` (LEAD+ only; hidden for ENGINEER).
 - `[View]` navigates to `/workflows/:id`.
@@ -117,7 +125,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+`
 **Data:** `GET /api/v1/workflows?status=&repo=&page=&limit=`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  WORKFLOWS                                         [+ New Request]   │
 │                                                                      │
@@ -142,6 +150,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[+ New Request]` opens a modal → `POST /api/v1/work-requests` (ENGINEER+).
 - Row click → `/workflows/:id`.
 - ² Bulk `[Retry CI]` visible to LEAD+ only.
@@ -156,7 +165,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+`
 **Data:** `GET /api/v1/workflows/:id` (includes `pullRequests[]`, `agentLessons[]`)
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  ← Back to Workflows                                                 │
 │                                                                      │
@@ -201,6 +210,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - ² Action buttons are role-gated:
   - `[Approve Plan]` → `POST /api/v1/workflows/:id/approve` (LEAD+).
   - `[Retry CI]` → `POST /api/v1/workflows/:id/retry-ci` (LEAD+).
@@ -216,7 +226,7 @@ mobile to a hamburger menu.
 **RBAC:** `LEAD+`
 **Data:** `GET /api/v1/workflows` (filtered by `parentWorkflowId IS NULL` and has children)
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  EPICS                                               [+ New Epic]    │
 │                                                                      │
@@ -236,6 +246,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[+ New Epic]` opens modal → `POST /api/v1/epics` (LEAD+). Fields: ticket ID, repo selection, dependency graph builder.
 - `[View]` → `/epics/:id`.
 - Progress bar computed from child workflow statuses.
@@ -248,7 +259,7 @@ mobile to a hamburger menu.
 **RBAC:** `LEAD+`
 **Data:** `GET /api/v1/workflows` (filtered by `parentWorkflowId = :id`) + dependency graph from Temporal query
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  ← Back to Epics                                                     │
 │                                                                      │
@@ -288,6 +299,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - Graph nodes are clickable → `/workflows/:childId`.
 - `[Detail]` rows link to `/workflows/:childId`.
 - Dependency edges show blocking relationships from `dependencyGraph[]`.
@@ -300,7 +312,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+`
 **Data:** `GET /api/v1/workflows/:id` → `workRequest.contextSnapshot`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  ← Back to Workflow JIRA-892                                         │
 │                                                                      │
@@ -351,6 +363,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[JSON]` toggle switches between formatted view and raw JSON.
 - `[Expand ▾]` reveals full content of truncated sections.
 - Entire page is read-only — no edit actions.
@@ -363,7 +376,7 @@ mobile to a hamburger menu.
 **RBAC:** `ADMIN` only
 **Data:** `GET /api/v1/users`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  USERS & ROLES                                       [+ Add User]    │
 │                                                                      │
@@ -395,6 +408,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[+ Add User]` → `POST /api/v1/users` via modal.
 - `[Edit]` → `PATCH /api/v1/users/:id` via same modal pre-filled.
 - Role dropdown inline-editable as shortcut → `PATCH /api/v1/users/:id`.
@@ -408,7 +422,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+` (read), `ADMIN` (create/edit)
 **Data:** `GET /api/v1/repositories`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  REPOSITORIES                                    [+ Onboard Repo] ¹  │
 │                                                                      │
@@ -445,6 +459,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - ¹ `[+ Onboard Repo]` and `[Edit]` visible to ADMIN only.
 - `[+ Onboard Repo]` → `POST /api/v1/repositories` via modal.
 - `[Edit]` → `PATCH /api/v1/repositories/:id` via modal pre-filled.
@@ -458,7 +473,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+` (read/search), `ADMIN` (delete)
 **Data:** `GET /api/v1/lessons/search?q=&repoId=&limit=` and `GET /api/v1/lessons`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  LESSONS                                                             │
 │                                                                      │
@@ -495,6 +510,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - Search input performs semantic similarity search via `GET /api/v1/lessons/search?q=<query>&repoId=<id>&limit=20`.
 - Without search query, shows all lessons via `GET /api/v1/lessons` (most recent first).
 - `Sim:` score shown only when a search query is active.
@@ -509,7 +525,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+` (own profile only)
 **Data:** JWT claims (client-side) + `GET /api/v1/auth/slack/connect`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  SETTINGS                                                            │
 │                                                                      │
@@ -545,6 +561,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[Connect Slack Account]` / `[Reconnect Slack]` → redirects to `GET /api/v1/auth/slack/connect` (OAuth flow).
 - `[Update Password]` → `PATCH /api/v1/users/:id` (self-update, same user only).
 - Email and Role are read-only (role can only be changed by ADMIN on `/users` page).
@@ -557,7 +574,7 @@ mobile to a hamburger menu.
 **RBAC:** None (unauthenticated)
 **Data:** `POST /api/v1/auth/login`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                                                                      │
 │                                                                      │
@@ -587,6 +604,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - `[Sign In]` → `POST /api/v1/auth/login { email, password }` → stores JWT + refresh token in `httpOnly` cookie or `localStorage`.
 - `[Sign in with Slack]` → redirects to `GET /api/v1/auth/slack/connect`.
 - On success, redirects to `/` (Dashboard Home).
@@ -601,7 +619,7 @@ mobile to a hamburger menu.
 **RBAC:** `ENGINEER+` (filtered to own teams; ADMIN sees all)
 **Data:** `GET /api/v1/teams`
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  TEAMS                                               [+ New Team] ¹  │
 │                                                                      │
@@ -630,6 +648,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - ¹ `[+ New Team]` visible to Platform ADMIN only → `POST /api/v1/teams`.
 - `[View]` → `/teams/:id`.
 - Card shows user's own role badge in that team.
@@ -643,7 +662,7 @@ mobile to a hamburger menu.
 **RBAC:** Team `ENGINEER+`
 **Data:** `GET /api/v1/teams/:id` (includes `memberships[]`, `repositories[]`)
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  ← Back to Teams                                                     │
 │                                                                      │
@@ -687,6 +706,7 @@ mobile to a hamburger menu.
 ```
 
 **Interactions:**
+
 - ¹ Member management (add, role change, remove) and team settings visible to Team ADMIN only.
 - `[+ Add Member]` opens a modal with user search → `POST /api/v1/teams/:id/members`.
 - Role dropdown inline-editable → `PATCH /api/v1/teams/:id/members/:userId`.
@@ -698,21 +718,21 @@ mobile to a hamburger menu.
 
 ## Route Summary
 
-| Route                      | Page               | Min Role   |
-|----------------------------|--------------------|------------|
-| `/login`                   | Login              | —          |
-| `/`                        | Dashboard Home     | ENGINEER   |
-| `/workflows`               | Workflow List      | ENGINEER   |
-| `/workflows/:id`           | Workflow Detail    | ENGINEER   |
-| `/workflows/:id/context`   | Context Inspector  | ENGINEER   |
-| `/epics`                   | Epic List          | LEAD       |
-| `/epics/:id`               | Epic Visualizer    | LEAD       |
-| `/teams`                   | Teams List         | ENGINEER   |
-| `/teams/:id`               | Team Detail        | ENGINEER (team member)  |
-| `/lessons`                 | Lessons Browser    | ENGINEER   |
-| `/repositories`            | Repositories       | ENGINEER   |
-| `/users`                   | RBAC / Users       | ADMIN      |
-| `/settings`                | Settings           | ENGINEER   |
+| Route                    | Page              | Min Role               |
+| ------------------------ | ----------------- | ---------------------- |
+| `/login`                 | Login             | —                      |
+| `/`                      | Dashboard Home    | ENGINEER               |
+| `/workflows`             | Workflow List     | ENGINEER               |
+| `/workflows/:id`         | Workflow Detail   | ENGINEER               |
+| `/workflows/:id/context` | Context Inspector | ENGINEER               |
+| `/epics`                 | Epic List         | LEAD                   |
+| `/epics/:id`             | Epic Visualizer   | LEAD                   |
+| `/teams`                 | Teams List        | ENGINEER               |
+| `/teams/:id`             | Team Detail       | ENGINEER (team member) |
+| `/lessons`               | Lessons Browser   | ENGINEER               |
+| `/repositories`          | Repositories      | ENGINEER               |
+| `/users`                 | RBAC / Users      | ADMIN                  |
+| `/settings`              | Settings          | ENGINEER               |
 
 ---
 
@@ -720,39 +740,43 @@ mobile to a hamburger menu.
 
 ### Package Dependencies (`packages/web/package.json`)
 
-| Category | Library | Version | Purpose |
-|---|---|---|---|
-| **Framework** | Next.js | `^16.1.0` | App Router, RSC, API route proxying, middleware for auth redirect |
-| **Runtime** | React | `^19.2.0` | UI rendering, Server Components, `use` hook for data streaming |
-| **Styling** | Tailwind CSS | `^4.2.0` | Utility-first CSS with CSS-first `@theme` configuration (v4) |
-| **UI Primitives** | Radix UI | `^1.4.0` | Accessible, unstyled headless components (unified `radix-ui` package) |
-| **Component Library** | shadcn/ui | (copy-paste) | Pre-styled Radix-based components — not an npm dependency; components are copied into `src/components/ui/` via `npx shadcn add` |
-| **Server State** | TanStack Query | `^5.90.0` | Server-state caching, background refetch, optimistic updates for all Gateway API calls |
-| **Client State** | Zustand | `^5.0.0` | Lightweight client-side state (team selector, sidebar collapse, theme preference) |
-| **URL State** | nuqs | `^2.8.0` | Type-safe URL search params (`?status=FAILED&teamId=xxx`) synced with React state |
-| **Charts** | Recharts | `^3.7.0` | Declarative SVG charts for dashboard status cards, workflow timelines, cost breakdowns |
-| **Forms** | React Hook Form + Zod | `^7.54.0` / `^3.24.0` | Form state management with Zod schema validation (shared with Gateway) |
-| **Icons** | Lucide React | `^0.475.0` | Tree-shakable SVG icon set (default for shadcn/ui) |
-| **Date Formatting** | date-fns | `^4.1.0` | Lightweight date utilities ("2m ago", "Jan 15, 2026") |
+| Category              | Library               | Version               | Purpose                                                                                                                         |
+| --------------------- | --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Framework**         | Next.js               | `^16.1.0`             | App Router, RSC, API route proxying, middleware for auth redirect                                                               |
+| **Runtime**           | React                 | `^19.2.0`             | UI rendering, Server Components, `use` hook for data streaming                                                                  |
+| **Styling**           | Tailwind CSS          | `^4.2.0`              | Utility-first CSS with CSS-first `@theme` configuration (v4)                                                                    |
+| **UI Primitives**     | Radix UI              | `^1.4.0`              | Accessible, unstyled headless components (unified `radix-ui` package)                                                           |
+| **Component Library** | shadcn/ui             | (copy-paste)          | Pre-styled Radix-based components — not an npm dependency; components are copied into `src/components/ui/` via `npx shadcn add` |
+| **Server State**      | TanStack Query        | `^5.90.0`             | Server-state caching, background refetch, optimistic updates for all Gateway API calls                                          |
+| **Client State**      | Zustand               | `^5.0.0`              | Lightweight client-side state (team selector, sidebar collapse, theme preference)                                               |
+| **URL State**         | nuqs                  | `^2.8.0`              | Type-safe URL search params (`?status=FAILED&teamId=xxx`) synced with React state                                               |
+| **Charts**            | Recharts              | `^3.7.0`              | Declarative SVG charts for dashboard status cards, workflow timelines, cost breakdowns                                          |
+| **Forms**             | React Hook Form + Zod | `^7.54.0` / `^3.24.0` | Form state management with Zod schema validation (shared with Gateway)                                                          |
+| **Icons**             | Lucide React          | `^0.475.0`            | Tree-shakable SVG icon set (default for shadcn/ui)                                                                              |
+| **Date Formatting**   | date-fns              | `^4.1.0`              | Lightweight date utilities ("2m ago", "Jan 15, 2026")                                                                           |
 
 ### Architecture Decisions
 
 **App Router (Server Components by default):**
+
 - List pages (`/workflows`, `/teams`, `/repositories`) use RSC with `fetch()` for initial data, hydrated client-side by TanStack Query for refetch/mutations.
 - Interactive components (`DataTable`, `TeamSelector`, modals) are `"use client"` components.
 
 **API Communication Pattern:**
+
 - All Gateway calls go through a shared `api` client module (`src/lib/api.ts`) that wraps `fetch` with the JWT `Authorization` header, base URL, and error handling.
 - TanStack Query hooks (`useWorkflows`, `useTeams`, `useRepositories`) encapsulate query keys, stale times, and refetch intervals.
 - Mutations use TanStack Query's `useMutation` with optimistic updates and automatic cache invalidation.
 
 **Auth Flow:**
+
 - Next.js middleware (`middleware.ts`) checks for a valid JWT cookie on every request. Redirects to `/login` if missing/expired.
 - JWT + refresh token stored in `httpOnly` cookies (not localStorage) for XSS protection.
 - Refresh token rotation handled transparently by the `api` client — 401 responses trigger a refresh before retrying.
 
 **Component Structure:**
-```
+
+```text
 packages/web/src/
 ├── app/                      # Next.js App Router
 │   ├── layout.tsx            # Root layout (sidebar, top bar, team selector)
@@ -792,27 +816,27 @@ packages/web/src/
 
 The following shadcn/ui components cover the wireframe requirements:
 
-| Component | Used In |
-|---|---|
-| `Button` | All action buttons (Submit, Retry CI, Terminate, Save, etc.) |
+| Component                | Used In                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `Button`                 | All action buttons (Submit, Retry CI, Terminate, Save, etc.)  |
 | `Dialog` / `AlertDialog` | Modals (New Request, Onboard Repo, Add Member, confirmations) |
-| `Table` | Workflow List, Members table, Users table |
-| `Select` | Role dropdowns, Status filter, Team filter, Repository filter |
-| `Card` | Dashboard status cards, Repo cards, Team cards |
-| `Badge` | Status badges (IMPLEMENTING, FAILED, etc.), role badges |
-| `Input` / `Textarea` | Form fields in modals and settings |
-| `DropdownMenu` | User menu, bulk actions |
-| `Tabs` | Workflow Detail sections |
-| `Tooltip` | Truncated text, icon-only buttons |
-| `Skeleton` | Loading states for all data-fetching pages |
-| `Sonner` (toast) | Success/error notifications after mutations |
-| `Command` | Combobox search (Add Member user search) |
-| `Sidebar` | App sidebar navigation (shadcn/ui sidebar component) |
+| `Table`                  | Workflow List, Members table, Users table                     |
+| `Select`                 | Role dropdowns, Status filter, Team filter, Repository filter |
+| `Card`                   | Dashboard status cards, Repo cards, Team cards                |
+| `Badge`                  | Status badges (IMPLEMENTING, FAILED, etc.), role badges       |
+| `Input` / `Textarea`     | Form fields in modals and settings                            |
+| `DropdownMenu`           | User menu, bulk actions                                       |
+| `Tabs`                   | Workflow Detail sections                                      |
+| `Tooltip`                | Truncated text, icon-only buttons                             |
+| `Skeleton`               | Loading states for all data-fetching pages                    |
+| `Sonner` (toast)         | Success/error notifications after mutations                   |
+| `Command`                | Combobox search (Add Member user search)                      |
+| `Sidebar`                | App sidebar navigation (shadcn/ui sidebar component)          |
 
 **Recharts Usage:**
 
-| Chart Type | Used In | Data Source |
-|---|---|---|
-| `BarChart` | Dashboard — workflows per day/week | `GET /api/v1/workflows` (aggregated client-side) |
-| `PieChart` | Dashboard — status distribution | `GET /api/v1/workflows` (grouped by status) |
-| Custom timeline | Workflow Detail — lifecycle timeline | `GET /api/v1/workflows/:id` (status timestamps) |
+| Chart Type      | Used In                              | Data Source                                      |
+| --------------- | ------------------------------------ | ------------------------------------------------ |
+| `BarChart`      | Dashboard — workflows per day/week   | `GET /api/v1/workflows` (aggregated client-side) |
+| `PieChart`      | Dashboard — status distribution      | `GET /api/v1/workflows` (grouped by status)      |
+| Custom timeline | Workflow Detail — lifecycle timeline | `GET /api/v1/workflows/:id` (status timestamps)  |

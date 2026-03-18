@@ -245,6 +245,7 @@ CREATE INDEX idx_agent_lessons_embedding
 ```
 
 **Index parameters:**
+
 - `m = 16`: Each node connects to 16 neighbors. Balances recall vs. index size.
 - `ef_construction = 200`: Build-time beam width. Higher = better recall, slower build. 200 is suitable for <100K lessons.
 - `vector_cosine_ops`: Cosine similarity operator class (normalized comparison).
@@ -296,6 +297,7 @@ export async function retrieveSimilarLessons(
 ```
 
 **Retrieval strategy:**
+
 - **Scope:** Lessons are filtered by `repo_id` first (relational filter), then ranked by cosine similarity. This ensures the Planner only sees lessons relevant to the repository it's working on.
 - **Threshold:** 0.7 cosine similarity minimum. Below this, lessons are too dissimilar to be useful and may inject noise.
 - **Limit:** Default 5 lessons. This keeps the injected context small (~2-3KB) while covering the most relevant historical failures.
@@ -303,12 +305,12 @@ export async function retrieveSimilarLessons(
 
 ### Embedding Lifecycle
 
-| Event | Action | Who Generates |
-|---|---|---|
-| Workflow completes (success or failure) | Memory Agent summarizes workflow → `generateEmbedding(summary)` → INSERT into `agent_lessons` | `commitToMemory` activity |
-| Human rejects PR with feedback | Feedback text → `generateEmbedding(feedback)` → INSERT into `agent_lessons` with `failureType: 'REVIEW_REJECTION'` | Gateway webhook handler |
-| Context Validator runs | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons` → inject into `ContextSnapshot.historicalLessons` | `executeImplementation` activity |
-| Admin deletes lesson | DELETE from `agent_lessons` WHERE id = :id (embedding removed with row) | Gateway API (`DELETE /api/v1/lessons/:id`) |
+| Event                                   | Action                                                                                                                   | Who Generates                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| Workflow completes (success or failure) | Memory Agent summarizes workflow → `generateEmbedding(summary)` → INSERT into `agent_lessons`                            | `commitToMemory` activity                  |
+| Human rejects PR with feedback          | Feedback text → `generateEmbedding(feedback)` → INSERT into `agent_lessons` with `failureType: 'REVIEW_REJECTION'`       | Gateway webhook handler                    |
+| Context Validator runs                  | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons` → inject into `ContextSnapshot.historicalLessons` | `executeImplementation` activity           |
+| Admin deletes lesson                    | DELETE from `agent_lessons` WHERE id = :id (embedding removed with row)                                                  | Gateway API (`DELETE /api/v1/lessons/:id`) |
 
 ## 3. Security, Guardrails, & Workspace Isolation
 
@@ -417,12 +419,12 @@ jobs:
 
 #### Image Freshness
 
-| Trigger | When | What Happens |
-|---|---|---|
-| Repository onboarding | `POST /api/v1/repositories` | Gateway fires `repository_dispatch` event → builds initial image |
-| Manual rebuild | Admin clicks "Rebuild Image" in Web Dashboard | Gateway fires `workflow_dispatch` → rebuilds from latest `.auto-swe/Dockerfile` |
-| Scheduled rebuild | Weekly cron (Sunday 02:00 UTC) | Rebuilds all active repository images to pick up OS/dependency patches |
-| Dockerfile change | PR merged to target repo that modifies `.auto-swe/Dockerfile` | GitHub webhook → Gateway detects path change → triggers rebuild |
+| Trigger               | When                                                          | What Happens                                                                    |
+| --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Repository onboarding | `POST /api/v1/repositories`                                   | Gateway fires `repository_dispatch` event → builds initial image                |
+| Manual rebuild        | Admin clicks "Rebuild Image" in Web Dashboard                 | Gateway fires `workflow_dispatch` → rebuilds from latest `.auto-swe/Dockerfile` |
+| Scheduled rebuild     | Weekly cron (Sunday 02:00 UTC)                                | Rebuilds all active repository images to pick up OS/dependency patches          |
+| Dockerfile change     | PR merged to target repo that modifies `.auto-swe/Dockerfile` | GitHub webhook → Gateway detects path change → triggers rebuild                 |
 
 #### K8s Image Pull Credentials
 

@@ -14,34 +14,34 @@
 
 For deeper context on architecture and design rationale, refer to:
 
-| Document | Covers |
-|---|---|
-| `docs/mvp-architecture.md` | Core architecture, component design, data flow |
-| `docs/mvp-implementation.md` | Build guide with project structure and build order |
-| `docs/gateway-and-auth.md` | JWT auth, RBAC, Team API, Slack OAuth, full API spec |
-| `docs/data-and-infra.md` | Embedding pipeline, executor images, security review |
-| `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit |
-| `docs/wireframes.md` | Web dashboard wireframes and page layouts |
+| Document                          | Covers                                               |
+| --------------------------------- | ---------------------------------------------------- |
+| `docs/mvp-architecture.md`        | Core architecture, component design, data flow       |
+| `docs/mvp-implementation.md`      | Build guide with project structure and build order   |
+| `docs/gateway-and-auth.md`        | JWT auth, RBAC, Team API, Slack OAuth, full API spec |
+| `docs/data-and-infra.md`          | Embedding pipeline, executor images, security review |
+| `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |
+| `docs/wireframes.md`              | Web dashboard wireframes and page layouts            |
 
 ---
 
 ## 3. Tech Stack
 
-| Component | Technology | Version |
-|---|---|---|
-| Runtime | Node.js | >=24.0.0 |
-| Package Manager | Yarn 4 (Berry) | 4.12.0 (via corepack) |
-| HTTP Framework | Fastify | ^5.7.0 |
-| Orchestration | Temporal.io | auto-setup:1.25.2 |
-| Agent Framework | Mastra | ^1.6.0 |
-| ORM | Prisma | ^7.4.0 |
-| Database | PostgreSQL 17 + pgvector | pgvector/pgvector:pg17 |
-| LLM (MVP) | claude-opus-4-6 (Anthropic) | — |
-| Language | TypeScript | ^5.7.0 |
-| Web Dashboard | Next.js 15 + React 19 + Tailwind CSS 4 | ^15.0.0 / ^19.0.0 / ^4.0.0 |
-| Server State | TanStack Query (React Query) | ^5.90.0 |
-| Client State | Zustand | ^5.0.0 |
-| Testing | Vitest | ^3.0.0 |
+| Component       | Technology                             | Version                    |
+| --------------- | -------------------------------------- | -------------------------- |
+| Runtime         | Node.js                                | >=24.0.0                   |
+| Package Manager | Yarn 4 (Berry)                         | 4.12.0 (via corepack)      |
+| HTTP Framework  | Fastify                                | ^5.7.0                     |
+| Orchestration   | Temporal.io                            | auto-setup:1.25.2          |
+| Agent Framework | Mastra                                 | ^1.6.0                     |
+| ORM             | Prisma                                 | ^7.4.0                     |
+| Database        | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17     |
+| LLM (MVP)       | claude-opus-4-6 (Anthropic)            | —                          |
+| Language        | TypeScript                             | ^5.7.0                     |
+| Web Dashboard   | Next.js 15 + React 19 + Tailwind CSS 4 | ^15.0.0 / ^19.0.0 / ^4.0.0 |
+| Server State    | TanStack Query (React Query)           | ^5.90.0                    |
+| Client State    | Zustand                                | ^5.0.0                     |
+| Testing         | Vitest                                 | ^3.0.0                     |
 
 ---
 
@@ -97,16 +97,16 @@ auto-swe/
 
 ### Naming Conventions
 
-| Thing | Pattern | Example |
-|---|---|---|
-| Temporal workflow ID | `eng-<org>-<repoName>-<ticketId>` | `eng-acme-payments-api-JIRA-1234` |
-| Git branch | `<BRANCH_PREFIX>/<ticketId>` | `auto/JIRA-1234` (default prefix: `auto`) |
-| Docker workspace container | `workspace-<random-hex>` | `workspace-a1b2c3d4` |
-| Prisma table mapping | `snake_case` via `@@map` | `active_workflows` |
-| Team slug | `lowercase-kebab-case` | `payments`, `platform-eng` |
-| Team membership composite key | `(user_id, team_id)` unique | — |
-| TypeScript interfaces | `PascalCase` | `RepoWorkRequest` |
-| Activity functions | `camelCase`, verb-first | `executeImplementation` |
+| Thing                         | Pattern                           | Example                                   |
+| ----------------------------- | --------------------------------- | ----------------------------------------- |
+| Temporal workflow ID          | `eng-<org>-<repoName>-<ticketId>` | `eng-acme-payments-api-JIRA-1234`         |
+| Git branch                    | `<BRANCH_PREFIX>/<ticketId>`      | `auto/JIRA-1234` (default prefix: `auto`) |
+| Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
+| Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
+| Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |
+| Team membership composite key | `(user_id, team_id)` unique       | —                                         |
+| TypeScript interfaces         | `PascalCase`                      | `RepoWorkRequest`                         |
+| Activity functions            | `camelCase`, verb-first           | `executeImplementation`                   |
 
 ### Testing
 
@@ -220,11 +220,11 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 
 ## 9. Reference: Key Design Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| HTTP framework | Fastify 5.x over Express | ~3x throughput, built-in schema validation, plugin architecture |
-| JWT auth | Access + refresh tokens with family-based reuse detection | Stateless auth with secure rotation; bcrypt for password hashing |
-| DinD over K8s | `docker run`/`exec` | No cluster needed; same isolation model, zero infra beyond Docker |
-| Single PAT | One GitHub token | JIT-scoped tokens require a GitHub App (future) |
-| pgvector for memory | Vector embeddings on AgentLesson | Semantic similarity search for agent context enrichment |
-| Yarn 4 `node-modules` linker | Not PnP | Maximum tool compatibility with Prisma, Temporal, Docker |
+| Decision                     | Choice                                                    | Rationale                                                         |
+| ---------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| HTTP framework               | Fastify 5.x over Express                                  | ~3x throughput, built-in schema validation, plugin architecture   |
+| JWT auth                     | Access + refresh tokens with family-based reuse detection | Stateless auth with secure rotation; bcrypt for password hashing  |
+| DinD over K8s                | `docker run`/`exec`                                       | No cluster needed; same isolation model, zero infra beyond Docker |
+| Single PAT                   | One GitHub token                                          | JIT-scoped tokens require a GitHub App (future)                   |
+| pgvector for memory          | Vector embeddings on AgentLesson                          | Semantic similarity search for agent context enrichment           |
+| Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |

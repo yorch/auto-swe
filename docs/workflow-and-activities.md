@@ -156,7 +156,7 @@ interface WorkflowResult {
 
 **Data flow summary:**
 
-```
+```text
 WorkRequest
   → Context Validator  →  ContextSnapshot
   → Planner Agent      →  ExecutionPlan
@@ -309,21 +309,21 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
 
 **Retry & timeout strategy summary:**
 
-| Activity Category | Timeout | Heartbeat | Max Attempts | Rationale |
-|---|---|---|---|---|
-| State updates (DB writes, Slack) | 30s | — | 5 | Idempotent, fast. Retry aggressively on transient DB/network errors. |
-| Agent loops (implementation, review) | 30m | 5m heartbeat | 2 | Long-running LLM calls. Heartbeat detects stuck agents. Internal TDD loop handles code-level retries. |
-| GitHub API (PR creation, log fetch) | 2m | — | 4 | Rate limits (429) are common. Exponential backoff with 3x coefficient accommodates GitHub's reset windows. |
-| Memory commit (summarize + embed) | 5m | — | 3 | Involves LLM call + embedding API + DB write. Moderate retry for transient failures. |
+| Activity Category                    | Timeout | Heartbeat    | Max Attempts | Rationale                                                                                                  |
+| ------------------------------------ | ------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------- |
+| State updates (DB writes, Slack)     | 30s     | —            | 5            | Idempotent, fast. Retry aggressively on transient DB/network errors.                                       |
+| Agent loops (implementation, review) | 30m     | 5m heartbeat | 2            | Long-running LLM calls. Heartbeat detects stuck agents. Internal TDD loop handles code-level retries.      |
+| GitHub API (PR creation, log fetch)  | 2m      | —            | 4            | Rate limits (429) are common. Exponential backoff with 3x coefficient accommodates GitHub's reset windows. |
+| Memory commit (summarize + embed)    | 5m      | —            | 3            | Involves LLM call + embedding API + DB write. Moderate retry for transient failures.                       |
 
 **Workflow-level safety bounds:**
 
-| Bound | Value | Behavior on Breach |
-|---|---|---|
-| Max CI retries | 3 | Workflow fails, escalates to human via Slack |
-| Max review retries | 3 | Workflow fails, escalates to human via Slack |
-| CI signal timeout | 4 hours | Workflow times out with TIMED_OUT status |
-| Human merge timeout | 7 days | Workflow expires with TIMED_OUT status |
+| Bound               | Value   | Behavior on Breach                           |
+| ------------------- | ------- | -------------------------------------------- |
+| Max CI retries      | 3       | Workflow fails, escalates to human via Slack |
+| Max review retries  | 3       | Workflow fails, escalates to human via Slack |
+| CI signal timeout   | 4 hours | Workflow times out with TIMED_OUT status     |
+| Human merge timeout | 7 days  | Workflow expires with TIMED_OUT status       |
 
 ## 4. Activity Implementations
 

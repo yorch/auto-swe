@@ -4,7 +4,7 @@
 
 ## 1. Project Structure
 
-```
+```text
 auto-swe/
 ├── docker-compose.yml
 ├── .env                          # Local secrets (git-ignored)
@@ -68,23 +68,23 @@ auto-swe/
 
 The implementation should proceed in this exact order. Each step produces a testable artifact.
 
-| Step | What | Depends On | Validation |
-|---|---|---|---|
-| 1 | Monorepo scaffold + toolchain (Yarn 4) | — | `yarn install` succeeds |
-| 2 | Prisma schema + Docker Compose (Postgres + Temporal) | Step 1 | `yarn prisma migrate dev` succeeds, `docker compose up` runs |
-| 3 | Shared types package + Prisma client singleton | Step 1 | TypeScript compiles |
-| 4 | Gateway: Fastify bootstrap + health endpoint | Steps 1-3 | `curl localhost:8080/health` returns 200 |
-| 5 | Gateway: `POST /api/v1/work-requests` | Steps 2-4 | Creates DB records, returns `workRequestId` |
-| 6 | Gateway: Temporal client plugin | Steps 2, 5 | Work request starts a Temporal workflow |
-| 7 | Worker: Bootstrap + register workflow | Steps 2, 3 | Worker connects to Temporal, workflow appears in Temporal Web UI |
-| 8 | Worker: `updateDomainState` activity | Steps 2, 7 | Workflow updates `active_workflows.current_status` |
-| 9 | Worker: Workspace provisioning (Docker container) | Step 7 | Container created, repo cloned, container destroyed |
-| 10 | Worker: Implementer agent (Mastra + claude-opus-4-6) | Steps 7, 9 | Agent generates code in workspace |
-| 11 | Worker: TDD loop | Steps 9, 10 | Agent runs tests, iterates on failures |
-| 12 | Worker: `createOrUpdatePullRequest` activity | Steps 2, 7 | PR created on GitHub |
-| 13 | Worker: `humanMergeSignal` handler | Step 7 | Workflow waits for signal, completes on receipt |
-| 14 | Gateway: `POST /api/v1/webhooks/git` | Steps 6, 13 | Merge webhook fires signal, workflow completes |
-| 15 | End-to-end test | All | Ticket in → PR out → merge → workflow COMPLETED |
+| Step | What                                                 | Depends On  | Validation                                                       |
+| ---- | ---------------------------------------------------- | ----------- | ---------------------------------------------------------------- |
+| 1    | Monorepo scaffold + toolchain (Yarn 4)               | —           | `yarn install` succeeds                                          |
+| 2    | Prisma schema + Docker Compose (Postgres + Temporal) | Step 1      | `yarn prisma migrate dev` succeeds, `docker compose up` runs     |
+| 3    | Shared types package + Prisma client singleton       | Step 1      | TypeScript compiles                                              |
+| 4    | Gateway: Fastify bootstrap + health endpoint         | Steps 1-3   | `curl localhost:8080/health` returns 200                         |
+| 5    | Gateway: `POST /api/v1/work-requests`                | Steps 2-4   | Creates DB records, returns `workRequestId`                      |
+| 6    | Gateway: Temporal client plugin                      | Steps 2, 5  | Work request starts a Temporal workflow                          |
+| 7    | Worker: Bootstrap + register workflow                | Steps 2, 3  | Worker connects to Temporal, workflow appears in Temporal Web UI |
+| 8    | Worker: `updateDomainState` activity                 | Steps 2, 7  | Workflow updates `active_workflows.current_status`               |
+| 9    | Worker: Workspace provisioning (Docker container)    | Step 7      | Container created, repo cloned, container destroyed              |
+| 10   | Worker: Implementer agent (Mastra + claude-opus-4-6) | Steps 7, 9  | Agent generates code in workspace                                |
+| 11   | Worker: TDD loop                                     | Steps 9, 10 | Agent runs tests, iterates on failures                           |
+| 12   | Worker: `createOrUpdatePullRequest` activity         | Steps 2, 7  | PR created on GitHub                                             |
+| 13   | Worker: `humanMergeSignal` handler                   | Step 7      | Workflow waits for signal, completes on receipt                  |
+| 14   | Gateway: `POST /api/v1/webhooks/git`                 | Steps 6, 13 | Merge webhook fires signal, workflow completes                   |
+| 15   | End-to-end test                                      | All         | Ticket in → PR out → merge → workflow COMPLETED                  |
 
 ## 3. Step-by-Step Implementation
 
@@ -97,6 +97,7 @@ corepack use yarn@4.12.0
 ```
 
 **package.json (root):**
+
 ```json
 {
   "name": "auto-swe",
@@ -121,12 +122,14 @@ corepack use yarn@4.12.0
 ```
 
 **.yarnrc.yml:**
+
 ```yaml
 nodeLinker: node-modules
 enableGlobalCache: false
 ```
 
 **tsconfig.base.json:**
+
 ```json
 {
   "compilerOptions": {
@@ -149,6 +152,7 @@ enableGlobalCache: false
 ```
 
 **.env.example:**
+
 ```bash
 # Database
 DATABASE_URL=postgresql://postgres:password@localhost:5432/engineering_system
@@ -174,6 +178,7 @@ GITHUB_API_URL=https://api.github.com          # API base URL for Octokit (omit 
 ```
 
 **.gitignore (additions for Yarn 4 non-zero-installs):**
+
 ```
 node_modules/
 .yarn/*
@@ -189,6 +194,7 @@ dist/
 ### Step 2: Prisma Schema + Docker Compose
 
 **packages/shared/package.json:**
+
 ```json
 {
   "name": "@auto-swe/shared",
@@ -223,6 +229,7 @@ dist/
 ```
 
 **packages/shared/tsconfig.json:**
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -236,6 +243,7 @@ dist/
 ```
 
 **packages/shared/src/prisma/schema.prisma:**
+
 ```prisma
 generator client {
   provider        = "prisma-client"
@@ -407,6 +415,7 @@ model AgentLesson {
 ```
 
 **packages/shared/src/db.ts:**
+
 ```typescript
 import { PrismaClient } from '@prisma/client';
 
@@ -420,6 +429,7 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 ```
 
 **packages/shared/src/index.ts:**
+
 ```typescript
 export { prisma } from './db';
 export type * from './types/workflow';
@@ -427,6 +437,7 @@ export type * from './types/api';
 ```
 
 **packages/shared/src/prisma/seed.ts:**
+
 ```typescript
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
@@ -501,6 +512,7 @@ main()
 ```
 
 **docker-compose.yml:**
+
 ```yaml
 services:
   postgres:
@@ -588,6 +600,7 @@ volumes:
 ### Step 3: Shared Types
 
 **packages/shared/src/types/workflow.ts:**
+
 ```typescript
 // ── MVP Workflow Types ──
 // Subset of the full system types — only what Phase 1 needs.
@@ -641,6 +654,7 @@ export type WorkflowStatus =
 ```
 
 **packages/shared/src/types/api.ts:**
+
 ```typescript
 export interface ApiResponse<T> {
   data: T;
@@ -673,6 +687,7 @@ export interface GitWebhookBody {
 ### Step 4: Gateway Bootstrap (Fastify 5.x)
 
 **packages/gateway/package.json:**
+
 ```json
 {
   "name": "@auto-swe/gateway",
@@ -700,6 +715,7 @@ export interface GitWebhookBody {
 ```
 
 **packages/gateway/tsconfig.json:**
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -712,6 +728,7 @@ export interface GitWebhookBody {
 ```
 
 **packages/gateway/src/index.ts:**
+
 ```typescript
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -769,6 +786,7 @@ start().catch((err) => {
 ### Step 5: Gateway Plugins
 
 **packages/gateway/src/plugins/prisma.ts:**
+
 ```typescript
 import fp from 'fastify-plugin';
 import { PrismaClient } from '@prisma/client';
@@ -796,6 +814,7 @@ export default fp(prismaPlugin, { fastify: '5.x', name: 'prisma' });
 ```
 
 **packages/gateway/src/plugins/temporal.ts:**
+
 ```typescript
 import fp from 'fastify-plugin';
 import { Client, Connection } from '@temporalio/client';
@@ -844,6 +863,7 @@ export default fp(temporalPlugin, { fastify: '5.x', name: 'temporal' });
 ### Step 6: Work Request Route
 
 **packages/gateway/src/routes/workRequests.ts:**
+
 ```typescript
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
@@ -929,6 +949,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 ### Step 7: Workflow Routes (Debug)
 
 **packages/gateway/src/routes/workflows.ts:**
+
 ```typescript
 import type { FastifyPluginAsync } from 'fastify';
 
@@ -961,6 +982,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
 ### Step 8: Webhook Route (Git Merge)
 
 **packages/gateway/src/routes/webhooks.ts:**
+
 ```typescript
 import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
@@ -1033,6 +1055,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 ### Step 9: Worker Bootstrap
 
 **packages/worker/package.json:**
+
 ```json
 {
   "name": "@auto-swe/worker",
@@ -1060,6 +1083,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 ```
 
 **packages/worker/tsconfig.json:**
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -1072,6 +1096,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 ```
 
 **packages/worker/src/index.ts:**
+
 ```typescript
 import { NativeConnection, Worker } from '@temporalio/worker';
 import * as activities from './activities';
@@ -1215,6 +1240,7 @@ export async function EngineeringWorkflow(
 ```
 
 **packages/worker/src/activities/state.ts:**
+
 ```typescript
 import { prisma } from '@auto-swe/shared/db';
 
@@ -1230,6 +1256,7 @@ export async function updateDomainState(
 ```
 
 **packages/worker/src/activities/workspace.ts:**
+
 ```typescript
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -1302,6 +1329,7 @@ export function createWorkspace(
 ```
 
 **packages/worker/src/activities/executeImplementation.ts:**
+
 ```typescript
 import { heartbeat } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
@@ -1460,6 +1488,7 @@ function parseDiffToFileChanges(diff: string) {
 ```
 
 **packages/worker/src/activities/createOrUpdatePullRequest.ts:**
+
 ```typescript
 import { Octokit } from '@octokit/rest';
 import { prisma } from '@auto-swe/shared/db';
@@ -1594,6 +1623,7 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
 > ⚠️ **VERIFY MASTRA API BEFORE IMPLEMENTING** — The code below is based on pre-release Mastra 1.0 documentation. The constructor shape (`new Mastra({ agents: { ... } })`), tool creation pattern (`createTool`), and model binding (`anthropic('claude-opus-4-6')`) must be verified against the actual released `@mastra/core` and `@mastra/anthropic` packages. Install them first, check their exported APIs, and adapt if needed. The intent and architecture are correct — only the exact API surface may differ.
 
 **packages/worker/src/agents/prompts.ts:**
+
 ```typescript
 export const IMPLEMENTER_SYSTEM_PROMPT = `You are a highly constrained Surgical Coder operating within an isolated repository environment.
 
@@ -1617,6 +1647,7 @@ If provided with a previousTestResult, focus on fixing the failures described th
 ```
 
 **packages/worker/src/agents/implementer.ts:**
+
 ```typescript
 import { Mastra } from '@mastra/core';
 import { anthropic } from '@mastra/anthropic';
@@ -1706,6 +1737,7 @@ export function createImplementerAgent(workspace: Workspace) {
 ### Step 12: Activity Barrel Export
 
 **packages/worker/src/activities/index.ts:**
+
 ```typescript
 export { updateDomainState } from './state';
 export { executeImplementation } from './executeImplementation';
@@ -1715,6 +1747,7 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest';
 ### Dockerfiles
 
 > **Yarn 4 monorepo Docker strategy:** These use a 3-stage build pattern:
+>
 > 1. **builder** — Full `yarn install --immutable` (validates lockfile) + TypeScript compile
 > 2. **prod-deps** — `yarn workspaces focus <pkg> --production` (strips devDependencies, ignores unrelated workspaces)
 > 3. **runtime** — Minimal image with only production `node_modules` + compiled output
@@ -1722,6 +1755,7 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest';
 > With `nodeLinker: node-modules`, Yarn 4 hoists most dependencies to the root `node_modules/`. Workspace cross-references (`@auto-swe/shared`) become symlinks. The root `package.json` is copied to runtime so Node can resolve these symlinks. Prisma's generated client lives in `node_modules/.prisma` and `node_modules/@prisma`, so those are copied explicitly.
 
 **packages/gateway/Dockerfile:**
+
 ```dockerfile
 # ── Stage 1: Build ──
 FROM node:24-alpine AS builder
@@ -1775,6 +1809,7 @@ CMD ["node", "packages/gateway/dist/index.js"]
 ```
 
 **packages/worker/Dockerfile:**
+
 ```dockerfile
 # ── Stage 1: Build ──
 FROM node:24-alpine AS builder
@@ -1833,23 +1868,24 @@ CMD ["node", "packages/worker/dist/index.js"]
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `TEMPORAL_ADDRESS` | Yes | `localhost:7233` | Temporal gRPC endpoint |
-| `ANTHROPIC_API_KEY` | Yes | — | API key for claude-opus-4-6 |
-| `GITHUB_TOKEN` | Yes | — | GitHub PAT with `repo` scope |
-| `GITHUB_WEBHOOK_SECRET` | Yes | — | HMAC secret for GitHub webhook verification |
-| `GITHUB_URL` | No | `https://github.com` | Base URL for git operations (set for GitHub Enterprise Server) |
-| `GITHUB_API_URL` | No | `https://api.github.com` | Octokit base URL (GHE: `https://github.acme.com/api/v3`) |
-| `BRANCH_PREFIX` | No | `auto` | Git branch prefix (branches created as `<prefix>/<ticketId>`) |
-| `PR_TITLE_TEMPLATE` | No | `[auto-swe] {{ticketId}}` | PR title template (supports `{{ticketId}}`, `{{description}}`) |
-| `PR_BODY_TEMPLATE` | No | *(see code)* | PR body markdown template (supports `{{ticketId}}`, `{{description}}`, `{{branch}}`, `{{testStatus}}`, `{{filesChanged}}`, `{{fileList}}`, `{{notes}}`) |
-| `PORT` | No | `8080` | Gateway listen port |
+| Variable                | Required | Default                   | Description                                                                                                                                             |
+| ----------------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | Yes      | —                         | PostgreSQL connection string                                                                                                                            |
+| `TEMPORAL_ADDRESS`      | Yes      | `localhost:7233`          | Temporal gRPC endpoint                                                                                                                                  |
+| `ANTHROPIC_API_KEY`     | Yes      | —                         | API key for claude-opus-4-6                                                                                                                             |
+| `GITHUB_TOKEN`          | Yes      | —                         | GitHub PAT with `repo` scope                                                                                                                            |
+| `GITHUB_WEBHOOK_SECRET` | Yes      | —                         | HMAC secret for GitHub webhook verification                                                                                                             |
+| `GITHUB_URL`            | No       | `https://github.com`      | Base URL for git operations (set for GitHub Enterprise Server)                                                                                          |
+| `GITHUB_API_URL`        | No       | `https://api.github.com`  | Octokit base URL (GHE: `https://github.acme.com/api/v3`)                                                                                                |
+| `BRANCH_PREFIX`         | No       | `auto`                    | Git branch prefix (branches created as `<prefix>/<ticketId>`)                                                                                           |
+| `PR_TITLE_TEMPLATE`     | No       | `[auto-swe] {{ticketId}}` | PR title template (supports `{{ticketId}}`, `{{description}}`)                                                                                          |
+| `PR_BODY_TEMPLATE`      | No       | *(see code)*              | PR body markdown template (supports `{{ticketId}}`, `{{description}}`, `{{branch}}`, `{{testStatus}}`, `{{filesChanged}}`, `{{fileList}}`, `{{notes}}`) |
+| `PORT`                  | No       | `8080`                    | Gateway listen port                                                                                                                                     |
 
 ### GitHub Webhook Setup
 
 Configure on the target repository:
+
 1. Go to **Settings → Webhooks → Add webhook**
 2. **Payload URL:** `https://<gateway-host>/api/v1/webhooks/git`
 3. **Content type:** `application/json`
@@ -1902,16 +1938,17 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 
 ### Unit Tests
 
-| Component | What to Test | Framework |
-|---|---|---|
-| Gateway routes | Request validation, error responses, DB record creation | Vitest + `light-my-request` (Fastify's built-in test helper) |
-| Temporal workflow | Signal handling, timeout behavior, state transitions | `@temporalio/testing` (TestWorkflowEnvironment) |
-| Activities | Mocked Prisma + mocked Docker exec | Vitest |
-| Workspace | Container lifecycle (create, exec, destroy) | Vitest (integration, requires Docker) |
+| Component         | What to Test                                            | Framework                                                    |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| Gateway routes    | Request validation, error responses, DB record creation | Vitest + `light-my-request` (Fastify's built-in test helper) |
+| Temporal workflow | Signal handling, timeout behavior, state transitions    | `@temporalio/testing` (TestWorkflowEnvironment)              |
+| Activities        | Mocked Prisma + mocked Docker exec                      | Vitest                                                       |
+| Workspace         | Container lifecycle (create, exec, destroy)             | Vitest (integration, requires Docker)                        |
 
 ### Test Configuration
 
 **vitest.config.ts (root):**
+
 ```typescript
 import { defineConfig } from 'vitest/config';
 
@@ -1930,6 +1967,7 @@ export default defineConfig({
 ```
 
 Add to **package.json (root)** scripts:
+
 ```json
 {
   "scripts": {
@@ -1945,6 +1983,7 @@ Add to **package.json (root)** scripts:
 ### Example Unit Test
 
 **packages/gateway/src/routes/workRequests.test.ts:**
+
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify from 'fastify';
@@ -2020,15 +2059,15 @@ A single E2E script that validates the full MVP path:
 
 ## 7. Known Limitations & Future Work
 
-| Limitation | Impact | Resolved In |
-|---|---|---|
-| No authentication | Anyone with network access can trigger workflows | Phase 3 |
-| Single PAT for all repos | Token has broad access | Phase 3 (JIT scoped tokens) |
-| No code review agents | Only human reviewer catches issues | Phase 2 |
-| No CI/CD self-healing | Agent can't fix pipeline failures | Phase 2 |
-| No semantic memory | Agent doesn't learn from past failures | Phase 4 |
-| No cost tracking | Token spend is unmonitored | Phase 4 |
-| Docker-in-Docker | Not suitable for production K8s | Phase 3 (K8s Jobs) |
-| No OTel tracing | Limited observability | Phase 2 |
-| Hardcoded test detection | Only detects `npm test` | Phase 2 (improved heuristics) |
-| No team-scoped RBAC enforcement | Team models exist (tables + seed) but team role checks are not enforced | Phase 3 |
+| Limitation                      | Impact                                                                  | Resolved In                   |
+| ------------------------------- | ----------------------------------------------------------------------- | ----------------------------- |
+| No authentication               | Anyone with network access can trigger workflows                        | Phase 3                       |
+| Single PAT for all repos        | Token has broad access                                                  | Phase 3 (JIT scoped tokens)   |
+| No code review agents           | Only human reviewer catches issues                                      | Phase 2                       |
+| No CI/CD self-healing           | Agent can't fix pipeline failures                                       | Phase 2                       |
+| No semantic memory              | Agent doesn't learn from past failures                                  | Phase 4                       |
+| No cost tracking                | Token spend is unmonitored                                              | Phase 4                       |
+| Docker-in-Docker                | Not suitable for production K8s                                         | Phase 3 (K8s Jobs)            |
+| No OTel tracing                 | Limited observability                                                   | Phase 2                       |
+| Hardcoded test detection        | Only detects `npm test`                                                 | Phase 2 (improved heuristics) |
+| No team-scoped RBAC enforcement | Team models exist (tables + seed) but team role checks are not enforced | Phase 3                       |

@@ -457,21 +457,21 @@ export async function verifySlackRequest(request: FastifyRequest, reply: Fastify
 
 The system uses a dual-layer permission model. **Platform role** (`User.role`) governs system-wide operations. **Team role** (`TeamMembership.role`) governs team-scoped operations. Platform ADMIN bypasses all team checks (implicit ADMIN in every team).
 
-| Action | Endpoint | Platform Check | Team Check |
-|---|---|---|---|
-| Submit work request | `POST /api/v1/work-requests` | — | ENGINEER+ in repo's team |
-| Trigger epic orchestration | `POST /api/v1/epics` | — | LEAD+ in repo's team |
-| Approve architectural plan | `POST /api/v1/workflows/:id/approve` | — | LEAD+ in repo's team |
-| View workflow status | `GET /api/v1/workflows/:id` | — | ENGINEER+ in repo's team |
-| List all workflows | `GET /api/v1/workflows` | — | Filtered to user's teams |
-| Terminate workflow | `DELETE /api/v1/workflows/:id` | — | ADMIN in repo's team |
-| Retry failed CI | `POST /api/v1/workflows/:id/retry-ci` | — | LEAD+ in repo's team |
-| Onboard repository | `POST /api/v1/repositories` | — | ADMIN in target team |
-| Manage users/roles | `POST /api/v1/users` | ADMIN | — |
-| Create team | `POST /api/v1/teams` | ADMIN | — |
-| Manage team members | `POST /api/v1/teams/:id/members` | — | ADMIN in team |
-| Delete memory embeddings | `DELETE /api/v1/lessons/:id` | ADMIN | — |
-| View agent lessons | `GET /api/v1/lessons` | — | Filtered to user's teams |
+| Action                     | Endpoint                              | Platform Check | Team Check               |
+| -------------------------- | ------------------------------------- | -------------- | ------------------------ |
+| Submit work request        | `POST /api/v1/work-requests`          | —              | ENGINEER+ in repo's team |
+| Trigger epic orchestration | `POST /api/v1/epics`                  | —              | LEAD+ in repo's team     |
+| Approve architectural plan | `POST /api/v1/workflows/:id/approve`  | —              | LEAD+ in repo's team     |
+| View workflow status       | `GET /api/v1/workflows/:id`           | —              | ENGINEER+ in repo's team |
+| List all workflows         | `GET /api/v1/workflows`               | —              | Filtered to user's teams |
+| Terminate workflow         | `DELETE /api/v1/workflows/:id`        | —              | ADMIN in repo's team     |
+| Retry failed CI            | `POST /api/v1/workflows/:id/retry-ci` | —              | LEAD+ in repo's team     |
+| Onboard repository         | `POST /api/v1/repositories`           | —              | ADMIN in target team     |
+| Manage users/roles         | `POST /api/v1/users`                  | ADMIN          | —                        |
+| Create team                | `POST /api/v1/teams`                  | ADMIN          | —                        |
+| Manage team members        | `POST /api/v1/teams/:id/members`      | —              | ADMIN in team            |
+| Delete memory embeddings   | `DELETE /api/v1/lessons/:id`          | ADMIN          | —                        |
+| View agent lessons         | `GET /api/v1/lessons`                 | —              | Filtered to user's teams |
 
 ## 3. Gateway API Specification
 
