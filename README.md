@@ -1,5 +1,7 @@
 # auto-swe
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 An autonomous agentic software engineering system. Submit a ticket ID — get a reviewed, tested pull request.
 
 ## How it works
