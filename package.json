@@ -13,6 +13,12 @@
     "db:generate": "yarn workspace @auto-swe/shared prisma generate",
     "db:seed": "yarn workspace @auto-swe/shared prisma db seed",
     "db:studio": "yarn workspace @auto-swe/shared prisma studio",
+    "docker:infra": "docker compose up -d",
+    "docker:infra:down": "docker compose down",
+    "docker:up": "docker compose --profile app up -d",
+    "docker:down": "docker compose --profile app down",
+    "docker:logs": "docker compose --profile app logs -f",
+    "docker:build": "docker compose --profile app build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -72,8 +72,8 @@ corepack enable && yarn install
 cp .env.example .env
 # Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
 
-# 3. Start infrastructure
-docker compose up postgres postgres-temporal temporal -d
+# 3. Start infrastructure (Postgres, Temporal, Grafana/OTel)
+yarn docker:infra
 
 # 4. Set up the database
 yarn db:migrate && yarn db:generate && yarn db:seed
