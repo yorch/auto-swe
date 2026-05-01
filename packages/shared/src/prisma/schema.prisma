@@ -9,12 +9,18 @@ datasource db {
   extensions = [vector]
 }
 
+enum Role {
+  ADMIN
+  LEAD
+  ENGINEER
+}
+
 model User {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email          String         @unique
   passwordHash   String         @map("password_hash")
   slackId        String?        @unique @map("slack_id")
-  role           String         @default("ENGINEER") // Platform role: ADMIN, LEAD, ENGINEER
+  role           Role           @default(ENGINEER)
   isActive       Boolean        @default(true) @map("is_active")
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -61,7 +67,7 @@ model TeamMembership {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   teamId    String   @map("team_id") @db.Uuid
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  role      String   @default("ENGINEER") // Team-scoped role: ADMIN, LEAD, ENGINEER
+  role      Role     @default(ENGINEER)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([userId, teamId])

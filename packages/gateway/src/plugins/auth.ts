@@ -3,12 +3,13 @@ import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import type { Role } from '@auto-swe/shared';
 
 // ── JWT Configuration ──
 
 export interface JwtPayload {
   sub: string;              // User UUID
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  role: Role;
   slackId?: string;
   iat: number;
   exp: number;

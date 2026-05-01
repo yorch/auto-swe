@@ -42,7 +42,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     // Issue tokens
     const accessToken = fastify.auth.signAccessToken({
       sub: user.id,
-      role: user.role as any,
+      role: user.role,
       slackId: user.slackId ?? undefined,
     });
 
@@ -143,7 +143,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     const accessToken = fastify.auth.signAccessToken({
       sub: stored.user.id,
-      role: stored.user.role as any,
+      role: stored.user.role,
       slackId: stored.user.slackId ?? undefined,
     });
 
