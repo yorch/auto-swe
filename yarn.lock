@@ -132,6 +132,7 @@ __metadata:
   dependencies:
     "@auto-swe/shared": "npm:*"
     "@fastify/cors": "npm:^11.2.0"
+    "@fastify/rate-limit": "npm:^10.3.0"
     "@opentelemetry/api": "npm:^1.9.0"
     "@opentelemetry/exporter-trace-otlp-grpc": "npm:^0.57.2"
     "@opentelemetry/instrumentation-fastify": "npm:^0.44.2"
@@ -552,6 +553,17 @@ __metadata:
     "@fastify/forwarded": "npm:^3.0.0"
     ipaddr.js: "npm:^2.1.0"
   checksum: 10c0/d9167e848086cb66a0ae8b008eb6a79e9ae0e17c3e8697a3a22b23152376e22843bea6642a2c07eba5460faa786ebda6157dfa6537ac7b733f758428cd51988b
+  languageName: node
+  linkType: hard
+
+"@fastify/rate-limit@npm:^10.3.0":
+  version: 10.3.0
+  resolution: "@fastify/rate-limit@npm:10.3.0"
+  dependencies:
+    "@lukeed/ms": "npm:^2.0.2"
+    fastify-plugin: "npm:^5.0.0"
+    toad-cache: "npm:^3.7.0"
+  checksum: 10c0/dc29c4e088362cc144a9782d86d50bc8bbd440d10017c394660ff26bd7468feb90ba412e101b3e312bfdbb7a515798ffd73801ff32a36d0fedf40032ff081dcb
   languageName: node
   linkType: hard
 
@@ -1145,6 +1157,13 @@ __metadata:
   version: 1.1.0
   resolution: "@lukeed/csprng@npm:1.1.0"
   checksum: 10c0/5d6dcf478af732972083ab2889c294b57f1028fa13c2c240d7a4aaa079c2c75df7ef0dcbdda5419147fc6704b4adf96b2de92f1a9a72ac21c6350c4014fffe6c
+  languageName: node
+  linkType: hard
+
+"@lukeed/ms@npm:^2.0.2":
+  version: 2.0.2
+  resolution: "@lukeed/ms@npm:2.0.2"
+  checksum: 10c0/843b922717313bcde4943f478145d8bc13115b9b91d83bbaed53739b5644122984412310aed574792f4e6b492f2cbda178175f601856d310f67e14834c3f17a0
   languageName: node
   linkType: hard
 

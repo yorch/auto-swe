@@ -22,6 +22,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/auth/login
   app.post('/login', {
     schema: { body: LoginSchema },
+    config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
     const { email, password } = request.body;
 
@@ -85,6 +86,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/auth/refresh
   app.post('/refresh', {
     schema: { body: RefreshSchema },
+    config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
     const { refreshToken } = request.body;
     const tokenHash = fastify.auth.hashToken(refreshToken);
