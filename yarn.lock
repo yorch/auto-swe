@@ -131,6 +131,7 @@ __metadata:
   resolution: "@auto-swe/gateway@workspace:packages/gateway"
   dependencies:
     "@auto-swe/shared": "npm:*"
+    "@fastify/cookie": "npm:^11.0.2"
     "@fastify/cors": "npm:^11.2.0"
     "@fastify/rate-limit": "npm:^10.3.0"
     "@opentelemetry/api": "npm:^1.9.0"
@@ -501,6 +502,16 @@ __metadata:
     ajv-formats: "npm:^3.0.1"
     fast-uri: "npm:^3.0.0"
   checksum: 10c0/b701602c5fad35d1327a6ebda530ca5ba2c7728223cd214b2b24af7cb2522c864b6cbbe77335ddd6a55d03f76899fb009386da783121b7ece136feb7ea937e13
+  languageName: node
+  linkType: hard
+
+"@fastify/cookie@npm:^11.0.2":
+  version: 11.0.2
+  resolution: "@fastify/cookie@npm:11.0.2"
+  dependencies:
+    cookie: "npm:^1.0.0"
+    fastify-plugin: "npm:^5.0.0"
+  checksum: 10c0/055aef3260e2a95115e976d820faeacf2513790e99c589c6bfeef06ead181b501a5bd18fb6fa8c507fd2a284cb2e0808e180ab2e64138269f717383e82a75384
   languageName: node
   linkType: hard
 
@@ -4116,7 +4127,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"cookie@npm:^1.0.1":
+"cookie@npm:^1.0.0, cookie@npm:^1.0.1":
   version: 1.1.1
   resolution: "cookie@npm:1.1.1"
   checksum: 10c0/79c4ddc0fcad9c4f045f826f42edf54bcc921a29586a4558b0898277fa89fb47be95bc384c2253f493af7b29500c830da28341274527328f18eba9f58afa112c

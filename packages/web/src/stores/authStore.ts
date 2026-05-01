@@ -14,13 +14,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   login: async (email, password) => {
-    const { data } = await api.post<{ data: { accessToken: string; refreshToken: string } }>(
+    const { data } = await api.post<{ data: { accessToken: string } }>(
       '/api/v1/auth/login',
       { email, password },
     );
     api.setToken(data.accessToken);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('refreshToken', data.refreshToken);
       // Set cookie so Next.js middleware can detect auth on server-side navigation.
       // NOTE: HttpOnly cannot be set from client-side JS — this cookie is readable
       // by scripts. The gateway verifies the JWT on every API call, so the real

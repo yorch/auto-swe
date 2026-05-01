@@ -9,12 +9,10 @@ const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
-const RefreshSchema = z.object({
-  refreshToken: z.string().min(1),
-});
-
 const MAX_ACTIVE_REFRESH_TOKENS = 5;
 const REFRESH_TOKEN_TTL_DAYS = 7;
+const REFRESH_TOKEN_MAX_AGE_SECONDS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60;
+const REFRESH_COOKIE_NAME = 'refreshToken';
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -74,21 +72,27 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    return {
-      data: {
-        accessToken,
-        refreshToken,
-        expiresIn: 3600,
-      },
-    };
+    reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/v1/auth/refresh',
+      maxAge: REFRESH_TOKEN_MAX_AGE_SECONDS,
+    });
+
+    return { data: { accessToken, expiresIn: 3600 } };
   });
 
   // POST /api/v1/auth/refresh
   app.post('/refresh', {
-    schema: { body: RefreshSchema },
     config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
-    const { refreshToken } = request.body;
+    const refreshToken = request.cookies[REFRESH_COOKIE_NAME];
+    if (!refreshToken) {
+      return reply.status(401).send({
+        error: { code: 'TOKEN_MISSING', message: 'No refresh token provided' },
+      });
+    }
     const tokenHash = fastify.auth.hashToken(refreshToken);
 
     const stored = await fastify.prisma.refreshToken.findUnique({
@@ -149,12 +153,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       slackId: stored.user.slackId ?? undefined,
     });
 
-    return {
-      data: {
-        accessToken,
-        refreshToken: newRefreshToken,
-        expiresIn: 3600,
-      },
-    };
+    reply.setCookie(REFRESH_COOKIE_NAME, newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/v1/auth/refresh',
+      maxAge: REFRESH_TOKEN_MAX_AGE_SECONDS,
+    });
+
+    return { data: { accessToken, expiresIn: 3600 } };
   });
 };

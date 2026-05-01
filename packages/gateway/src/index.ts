@@ -5,6 +5,7 @@ const otel = initTelemetry('auto-swe-gateway');
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
@@ -37,6 +38,8 @@ async function start() {
 
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });
+
+  await app.register(cookie);
 
   // Rate limiting — auth routes use stricter per-route limits (see auth.ts)
   await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });

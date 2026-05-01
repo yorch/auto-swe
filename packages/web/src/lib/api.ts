@@ -26,7 +26,6 @@ export class ApiClient {
     this.accessToken = null;
     if (typeof window !== 'undefined') {
       localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
     }
   }
 
@@ -71,23 +70,16 @@ export class ApiClient {
   }
 
   private async tryRefresh(): Promise<boolean> {
-    const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refreshToken') : null;
-    if (!refreshToken) return false;
-
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        credentials: 'include',
       });
 
       if (!response.ok) return false;
 
       const { data } = await response.json();
       this.setToken(data.accessToken);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('refreshToken', data.refreshToken);
-      }
       return true;
     } catch {
       return false;
