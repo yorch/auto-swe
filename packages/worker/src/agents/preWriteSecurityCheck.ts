@@ -178,7 +178,8 @@ export function checkContentSecurity(
 // ── Tool wrapper ──
 
 type WriteExecuteFn = (params: {
-  context: { path: string; content: string };
+  path: string;
+  content: string;
 }) => Promise<{ result: string }>;
 
 export function wrapWriteToolWithSecurityCheck(
@@ -189,15 +190,15 @@ export function wrapWriteToolWithSecurityCheck(
       'security.pre_write_check',
       {
         attributes: {
-          'security.file_path': params.context.path,
-          'security.content_length': params.context.content.length,
+          'security.file_path': params.path,
+          'security.content_length': params.content.length,
         },
       },
       async (span) => {
         try {
           const result = checkContentSecurity(
-            params.context.path,
-            params.context.content,
+            params.path,
+            params.content,
           );
 
           span.setAttributes({

@@ -90,7 +90,7 @@ export async function executeCIFixImplementation(
     heartbeat('CI fix agent completed');
 
     if (ciFix.usage) {
-      await recordLlmUsage(activityInfo().workflowId, ciFix.usage, 'llm.ci_fix');
+      await recordLlmUsage(activityInfo().workflowExecution.workflowId, ciFix.usage, 'llm.ci_fix');
     }
 
     // Run tests locally after fix
@@ -191,7 +191,7 @@ export async function executeReviewFixImplementation(
     heartbeat('review fix agent completed');
 
     if (reviewFix.usage) {
-      await recordLlmUsage(activityInfo().workflowId, reviewFix.usage, 'llm.review_fix');
+      await recordLlmUsage(activityInfo().workflowExecution.workflowId, reviewFix.usage, 'llm.review_fix');
     }
 
     let testResult: TestRunResult;

@@ -128,7 +128,7 @@ export interface LessonRepository {
 }
 
 /** Shape returned by GET /api/v1/lessons */
-export interface LessonSummary {
+export interface LessonListItem {
   id: string;
   lessonSummary: string;
   rationale: string;

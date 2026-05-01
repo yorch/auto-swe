@@ -16,6 +16,8 @@ const CreateRepoSchema = z.object({
   executorImage: z.string().optional(),
 });
 
+const RepoParamsSchema = z.object({ id: z.string().uuid() });
+
 const UpdateRepoSchema = z.object({
   defaultBranch: z.string().optional(),
   language: z.string().nullable().optional(),
@@ -92,8 +94,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // PATCH /api/v1/repositories/:id — Update repository config
-  app.patch<{ Params: { id: string } }>('/:id', {
-    schema: { body: UpdateRepoSchema },
+  app.patch('/:id', {
+    schema: { params: RepoParamsSchema, body: UpdateRepoSchema },
     onRequest: requireAuth({ requiredRole: 'LEAD' }),
   }, async (request, reply) => {
     const repo = await fastify.prisma.repository.findUnique({

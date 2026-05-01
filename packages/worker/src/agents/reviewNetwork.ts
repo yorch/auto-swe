@@ -1,4 +1,4 @@
-import { Agent } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
@@ -66,17 +66,20 @@ async function runReviewerAgent(
               }),
             },
           ],
-          { output: ReviewVerdictSchema },
+          { structuredOutput: { schema: ReviewVerdictSchema } },
         );
 
         if (result.usage) {
           await recordLlmUsage(
-            activityInfo().workflowId,
+            activityInfo().workflowExecution.workflowId,
             result.usage,
             `llm.review.${reviewerType.toLowerCase()}`,
           );
         }
 
+        if (!result.object) {
+          throw new Error(`${reviewerType} reviewer agent did not return structured output`);
+        }
         const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
 
         return {

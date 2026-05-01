@@ -1,4 +1,4 @@
-import { Agent } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
@@ -32,13 +32,13 @@ export async function scanDiffForSecurityIssues(
 ): Promise<SecurityScanResult> {
   return tracer.startActiveSpan(
     'llm.security_scan',
-    { attributes: { 'llm.model': 'claude-sonnet-4-20250514' } },
+    { attributes: { 'llm.model': 'claude-sonnet-4-6' } },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'security-review-gate',
           name: 'security-review-gate',
-          model: anthropic('claude-sonnet-4-20250514'),
+          model: anthropic('claude-sonnet-4-6'),
           instructions: SECURITY_REVIEW_PROMPT,
         });
 
@@ -49,9 +49,12 @@ export async function scanDiffForSecurityIssues(
               content: diff,
             },
           ],
-          { output: SecurityScanResultSchema },
+          { structuredOutput: { schema: SecurityScanResultSchema } },
         );
 
+        if (!result.object) {
+          throw new Error('Security review agent did not return structured output');
+        }
         const scanResult = result.object as SecurityScanResult;
 
         // Enforce invariant: passed must be false if any CRITICAL finding exists

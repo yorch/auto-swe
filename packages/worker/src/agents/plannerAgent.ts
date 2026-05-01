@@ -1,4 +1,4 @@
-import { Agent } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
@@ -29,13 +29,13 @@ export async function decomposeEpic(
 ): Promise<PlannedRepo[]> {
   return tracer.startActiveSpan(
     'llm.epic_planning',
-    { attributes: { 'llm.model': 'claude-sonnet-4-20250514', 'epic.repo_count': availableRepos.length } },
+    { attributes: { 'llm.model': 'claude-sonnet-4-6', 'epic.repo_count': availableRepos.length } },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'epic-planner',
           name: 'epic-planner',
-          model: anthropic('claude-sonnet-4-20250514'),
+          model: anthropic('claude-sonnet-4-6'),
           instructions: PLANNER_AGENT_PROMPT,
         });
 
@@ -49,13 +49,16 @@ export async function decomposeEpic(
               }),
             },
           ],
-          { output: PlannerOutputSchema },
+          { structuredOutput: { schema: PlannerOutputSchema } },
         );
 
         if (result.usage) {
-          await recordLlmUsage(activityInfo().workflowId, result.usage, 'llm.epic_planner');
+          await recordLlmUsage(activityInfo().workflowExecution.workflowId, result.usage, 'llm.epic_planner');
         }
 
+        if (!result.object) {
+          throw new Error('Planner agent did not return structured output');
+        }
         const parsed = result.object as z.infer<typeof PlannerOutputSchema>;
 
         // Validate that all repoIds reference actual available repos

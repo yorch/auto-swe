@@ -45,13 +45,13 @@ describe('recordLlmUsage', () => {
     vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as any);
 
     await expect(
-      recordLlmUsage('wf-temporal-1', { promptTokens: 100, completionTokens: 50, totalTokens: 150 })
+      recordLlmUsage('wf-temporal-1', { inputTokens: 100, outputTokens: 50 })
     ).resolves.not.toThrow();
 
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'wf-1' },
-        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }),
+        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }),  // DB columns unchanged
       })
     );
   });
@@ -60,7 +60,7 @@ describe('recordLlmUsage', () => {
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue(null);
 
     await expect(
-      recordLlmUsage('wf-unknown', { promptTokens: 100, completionTokens: 50, totalTokens: 150 })
+      recordLlmUsage('wf-unknown', { inputTokens: 100, outputTokens: 50 })
     ).resolves.not.toThrow();
 
     expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
@@ -76,7 +76,7 @@ describe('recordLlmUsage', () => {
     } as any);
 
     await expect(
-      recordLlmUsage('wf-temporal-1', { promptTokens: 200, completionTokens: 10, totalTokens: 210 })
+      recordLlmUsage('wf-temporal-1', { inputTokens: 200, outputTokens: 10 })
     ).rejects.toThrow(ApplicationFailure);
   });
 });

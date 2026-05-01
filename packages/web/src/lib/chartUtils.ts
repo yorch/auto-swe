@@ -3,7 +3,7 @@
  * These operate on the arrays already returned by useWorkflows() / useLessons().
  */
 
-import type { WorkflowSummary, LessonSummary } from '@auto-swe/shared/types/api';
+import type { WorkflowSummary, LessonListItem } from '@auto-swe/shared/types/api';
 
 const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'TIMED_OUT'];
 
@@ -69,7 +69,7 @@ export function groupWorkflowsByRepo(
 // ── Lesson transformations ────────────────────────────────────────────
 
 export function groupLessonsByType(
-  lessons: LessonSummary[],
+  lessons: LessonListItem[],
 ): { type: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const l of lessons) {
@@ -82,7 +82,7 @@ export function groupLessonsByType(
 }
 
 export function groupLessonsByDate(
-  lessons: LessonSummary[],
+  lessons: LessonListItem[],
   days = 30,
 ): { date: string; count: number }[] {
   const buckets = last30Days().slice(-days);

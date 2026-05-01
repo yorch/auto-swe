@@ -21,9 +21,8 @@ export function calculateCostUsd(inputTokens: number, outputTokens: number): num
 }
 
 interface TokenUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
+  inputTokens: number | undefined;
+  outputTokens: number | undefined;
 }
 
 /**
@@ -54,14 +53,16 @@ export async function recordLlmUsage(
         return;
       }
 
-      const callCost = calculateCostUsd(usage.promptTokens, usage.completionTokens);
-      const newInput = workflow.tokensInputUsed + usage.promptTokens;
-      const newOutput = workflow.tokensOutputUsed + usage.completionTokens;
+      const inputTokens = usage.inputTokens ?? 0;
+      const outputTokens = usage.outputTokens ?? 0;
+      const callCost = calculateCostUsd(inputTokens, outputTokens);
+      const newInput = workflow.tokensInputUsed + inputTokens;
+      const newOutput = workflow.tokensOutputUsed + outputTokens;
       const newCost = workflow.costUsdAccrued + callCost;
 
       span.setAttributes({
-        'llm.input_tokens': usage.promptTokens,
-        'llm.output_tokens': usage.completionTokens,
+        'llm.input_tokens': inputTokens,
+        'llm.output_tokens': outputTokens,
         'llm.cost_usd': callCost,
         'workflow.budget_tier': workflow.budgetTier,
         'workflow.tokens_input_cumulative': newInput,

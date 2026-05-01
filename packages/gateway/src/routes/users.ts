@@ -12,6 +12,8 @@ const CreateUserSchema = z.object({
   slackId: z.string().optional(),
 });
 
+const UserParamsSchema = z.object({ id: z.string().uuid() });
+
 const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).optional(),
@@ -75,8 +77,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // PATCH /api/v1/users/:id — Update user (ADMIN only)
-  app.patch<{ Params: { id: string } }>('/:id', {
-    schema: { body: UpdateUserSchema },
+  app.patch('/:id', {
+    schema: { params: UserParamsSchema, body: UpdateUserSchema },
     onRequest: requireAuth({ requiredRole: 'ADMIN' }),
   }, async (request, reply) => {
     const user = await fastify.prisma.user.findUnique({

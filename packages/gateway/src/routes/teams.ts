@@ -14,6 +14,9 @@ const UpdateTeamSchema = z.object({
   description: z.string().max(500).optional(),
 });
 
+const TeamParamsSchema = z.object({ id: z.string().uuid() });
+const TeamMemberParamsSchema = z.object({ id: z.string().uuid(), userId: z.string().uuid() });
+
 const AddMemberSchema = z.object({
   userId: z.string().uuid(),
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
@@ -109,8 +112,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // PATCH /api/v1/teams/:id — Update team (requires LEAD in this team)
-  app.patch<{ Params: { id: string } }>('/:id', {
-    schema: { body: UpdateTeamSchema },
+  app.patch('/:id', {
+    schema: { params: TeamParamsSchema, body: UpdateTeamSchema },
     onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const team = await fastify.prisma.team.findUnique({
@@ -176,8 +179,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /api/v1/teams/:id/members — Add member (requires LEAD in this team)
-  app.post<{ Params: { id: string } }>('/:id/members', {
-    schema: { body: AddMemberSchema },
+  app.post('/:id/members', {
+    schema: { params: TeamParamsSchema, body: AddMemberSchema },
     onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const { userId, role } = request.body;
@@ -204,8 +207,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // PATCH /api/v1/teams/:id/members/:userId — Update member role (requires LEAD in this team)
-  app.patch<{ Params: { id: string; userId: string } }>('/:id/members/:userId', {
-    schema: { body: UpdateMemberSchema },
+  app.patch('/:id/members/:userId', {
+    schema: { params: TeamMemberParamsSchema, body: UpdateMemberSchema },
     onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
   }, async (request, reply) => {
     const membership = await fastify.prisma.teamMembership.findUnique({

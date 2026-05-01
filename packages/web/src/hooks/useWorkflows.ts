@@ -9,7 +9,7 @@ import type {
   TeamDetail,
   RepositorySummary,
   UserSummary,
-  LessonSummary,
+  LessonListItem,
 } from '@auto-swe/shared/types/api';
 
 export function useWorkflows() {
@@ -61,7 +61,7 @@ export function useUsers() {
 export function useLessons() {
   return useQuery({
     queryKey: ['lessons'],
-    queryFn: () => api.get<{ data: LessonSummary[] }>('/api/v1/lessons').then((r) => r.data),
+    queryFn: () => api.get<{ data: LessonListItem[] }>('/api/v1/lessons').then((r) => r.data),
   });
 }
 

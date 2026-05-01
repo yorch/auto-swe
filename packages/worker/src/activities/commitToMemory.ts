@@ -1,4 +1,4 @@
-import { Agent } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
@@ -58,9 +58,12 @@ export async function commitToMemory(
         }),
       },
     ],
-    { output: LessonOutputSchema },
+    { structuredOutput: { schema: LessonOutputSchema } },
   );
 
+  if (!result.object) {
+    throw new Error('Memory summarizer agent did not return structured output');
+  }
   const lesson = result.object as z.infer<typeof LessonOutputSchema>;
 
   // Generate embedding for the lesson summary

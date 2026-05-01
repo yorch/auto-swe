@@ -359,10 +359,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('blocks write on CRITICAL violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      context: {
-        path: 'src/config.ts',
-        content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
-      },
+      path: 'src/config.ts',
+      content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
     });
     expect(mockExecute).not.toHaveBeenCalled();
     expect(result.result).toContain('SECURITY CHECK FAILED');
@@ -372,10 +370,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('allows write with warnings for HIGH/MEDIUM violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      context: {
-        path: 'src/hash.ts',
-        content: "createHash('md5');",
-      },
+      path: 'src/hash.ts',
+      content: "createHash('md5');",
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toContain('SECURITY WARNINGS');
@@ -385,10 +381,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('passes through cleanly for safe content', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      context: {
-        path: 'src/utils.ts',
-        content: 'export const add = (a: number, b: number) => a + b;',
-      },
+      path: 'src/utils.ts',
+      content: 'export const add = (a: number, b: number) => a + b;',
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toBe('File written: test.ts');
@@ -397,10 +391,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('passes through for test files even with violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      context: {
-        path: 'src/__tests__/config.test.ts',
-        content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
-      },
+      path: 'src/__tests__/config.test.ts',
+      content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toBe('File written: test.ts');

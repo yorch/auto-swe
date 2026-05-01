@@ -1,5 +1,5 @@
 import { heartbeat } from '@temporalio/activity';
-import { Agent } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
 import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
@@ -27,13 +27,13 @@ export async function validateContext(
   try {
     successCriteria = await tracer.startActiveSpan(
       'llm.context_validation',
-      { attributes: { 'llm.model': 'claude-sonnet-4-20250514' } },
+      { attributes: { 'llm.model': 'claude-sonnet-4-6' } },
       async (span) => {
         try {
           const agent = new Agent({
             id: 'context-validator',
             name: 'context-validator',
-            model: anthropic('claude-sonnet-4-20250514'),
+            model: anthropic('claude-sonnet-4-6'),
             instructions: CONTEXT_VALIDATOR_PROMPT,
           });
 
@@ -48,9 +48,10 @@ export async function validateContext(
                 }),
               },
             ],
-            { output: ContextValidationSchema },
+            { structuredOutput: { schema: ContextValidationSchema } },
           );
 
+          if (!result.object) return [];
           const parsed = result.object as z.infer<typeof ContextValidationSchema>;
           return parsed.successCriteria;
         } catch (e) {
