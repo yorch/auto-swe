@@ -126,7 +126,7 @@ export function requireAuth(options: RBACOptions = {}) {
 
     const token = authHeader.slice(7);
     try {
-      const payload = (request.server as any).auth.verifyAccessToken(token);
+      const payload = request.server.auth.verifyAccessToken(token);
       request.user = payload;
     } catch (err: any) {
       return reply.status(401).send({
@@ -156,7 +156,7 @@ export function requireAuth(options: RBACOptions = {}) {
         });
       }
 
-      const prisma = (request.server as any).prisma;
+      const prisma = request.server.prisma;
       const membership = await prisma.teamMembership.findUnique({
         where: { userId_teamId: { userId: request.user!.sub, teamId } },
       });
