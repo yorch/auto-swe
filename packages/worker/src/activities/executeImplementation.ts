@@ -83,6 +83,7 @@ export async function executeImplementation(
       if (genResult.usage) {
         await recordLlmUsage(
           activityInfo().workflowExecution.workflowId,
+          'implementer',
           genResult.usage,
           `llm.implementer.iteration_${iteration}`,
         );

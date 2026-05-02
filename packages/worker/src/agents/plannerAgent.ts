@@ -1,11 +1,11 @@
 import { Agent } from '@mastra/core/agent';
-import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
 import { z } from 'zod';
 import type { RepoInfo, PlannedRepo } from '@auto-swe/shared/types/workflow';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { getModel, getModelSpec } from '../lib/models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -29,13 +29,13 @@ export async function decomposeEpic(
 ): Promise<PlannedRepo[]> {
   return tracer.startActiveSpan(
     'llm.epic_planning',
-    { attributes: { 'llm.model': 'claude-sonnet-4-6', 'epic.repo_count': availableRepos.length } },
+    { attributes: { 'llm.model': getModelSpec('planner'), 'epic.repo_count': availableRepos.length } },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'epic-planner',
           name: 'epic-planner',
-          model: anthropic('claude-sonnet-4-6'),
+          model: getModel('planner'),
           instructions: PLANNER_AGENT_PROMPT,
         });
 
@@ -53,7 +53,7 @@ export async function decomposeEpic(
         );
 
         if (result.usage) {
-          await recordLlmUsage(activityInfo().workflowExecution.workflowId, result.usage, 'llm.epic_planner');
+          await recordLlmUsage(activityInfo().workflowExecution.workflowId, 'planner', result.usage, 'llm.epic_planner');
         }
 
         if (!result.object) {

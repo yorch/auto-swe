@@ -1,8 +1,8 @@
 import { Agent } from '@mastra/core/agent';
-import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
+import { getModel, getModelSpec } from '../lib/models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -32,13 +32,13 @@ export async function scanDiffForSecurityIssues(
 ): Promise<SecurityScanResult> {
   return tracer.startActiveSpan(
     'llm.security_scan',
-    { attributes: { 'llm.model': 'claude-sonnet-4-6' } },
+    { attributes: { 'llm.model': getModelSpec('securityReview') } },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'security-review-gate',
           name: 'security-review-gate',
-          model: anthropic('claude-sonnet-4-6'),
+          model: getModel('securityReview'),
           instructions: SECURITY_REVIEW_PROMPT,
         });
 
