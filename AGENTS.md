@@ -36,7 +36,7 @@ For deeper context on architecture and design rationale, refer to:
 | Agent Framework | Mastra                                 | ^1.6.0                     |
 | ORM             | Prisma                                 | ^7.4.0                     |
 | Database        | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17     |
-| LLM (MVP)       | claude-opus-4-6 (Anthropic)            | —                          |
+| LLM             | Anthropic / OpenAI / Google / any OpenAI-compat | via Vercel AI SDK |
 | Language        | TypeScript                             | ^5.7.0                     |
 | Web Dashboard   | Next.js 15 + React 19 + Tailwind CSS 4 | ^15.0.0 / ^19.0.0 / ^4.0.0 |
 | Server State    | TanStack Query (React Query)           | ^5.90.0                    |
@@ -144,13 +144,42 @@ yarn test                 # Run all tests (vitest)
 
 ### Mastra 1.6 API
 
-The project uses `@mastra/core@^1.6.0` with `@ai-sdk/anthropic` for model binding:
+The project uses `@mastra/core@^1.6.0` with the Vercel AI SDK for model binding:
 
 - `Agent` constructor requires both `id` and `name` fields
 - `createTool()` requires `outputSchema` on all tools (structured output)
 - Tool execute functions return structured objects matching `outputSchema`
-- Model binding: `anthropic('claude-opus-4-6')` from `@ai-sdk/anthropic`
+- Model binding: **always use `getModel(role)` from `packages/worker/src/lib/models.ts`** — never call `anthropic('...')` / `openai('...')` directly in agent code. Provider selection is config-driven.
 - Structured generation: `agent.generate(messages, { output: zodSchema })`
+
+### Multi-Model Support
+
+Each agent role resolves its model at call time through `getModel(role)`:
+
+| Role              | Env var                     | Default                                |
+| ----------------- | --------------------------- | -------------------------------------- |
+| `implementer`     | `IMPLEMENTER_MODEL`         | `anthropic/claude-opus-4-6`            |
+| `reviewer`        | `REVIEWER_MODEL`            | `anthropic/claude-opus-4-6`            |
+| `planner`         | `PLANNER_MODEL`             | `anthropic/claude-sonnet-4-20250514`   |
+| `securityReview`  | `SECURITY_REVIEW_MODEL`     | `anthropic/claude-sonnet-4-20250514`   |
+| `validateContext` | `CONTEXT_VALIDATOR_MODEL`   | `anthropic/claude-sonnet-4-20250514`   |
+| `commitToMemory`  | `MEMORY_SUMMARIZER_MODEL`   | `anthropic/claude-opus-4-6`            |
+
+Spec format is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires `<PROVIDER>_API_BASE` (uppercase, hyphens → underscores) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, etc.
+
+### Cost Tracking
+
+`packages/worker/src/lib/costTracking.ts` prices each call from `MODEL_PRICES` (USD per MTok). Unknown models fall back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded so the workflow runs aren't lost. Add new entries to `MODEL_PRICES` as roles are routed to new models, or set per-model env overrides:
+
+```
+MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _
+```
+
+`recordLlmUsage()` takes an `AgentRole` so the price is looked up via the same `getModelSpec()` the agent uses to bind its model.
+
+### Embeddings
+
+`packages/worker/src/lib/embeddings.ts` follows the same `<provider>/<model>` config pattern via the `EMBEDDING_MODEL` env var (default `openai/text-embedding-3-large`). Built-in: `openai`. Any other provider name is treated as an OpenAI-compatible endpoint and requires `<PROVIDER>_API_BASE`. Output **must** be 1536-dimensional — the `agent_lessons.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
 
 ### Temporal Workflow Constraints
 

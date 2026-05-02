@@ -1,11 +1,11 @@
 import { heartbeat } from '@temporalio/activity';
 import { Agent } from '@mastra/core/agent';
-import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
+import { getModel, getModelSpec } from '../lib/models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -27,13 +27,13 @@ export async function validateContext(
   try {
     successCriteria = await tracer.startActiveSpan(
       'llm.context_validation',
-      { attributes: { 'llm.model': 'claude-sonnet-4-6' } },
+      { attributes: { 'llm.model': getModelSpec('validateContext') } },
       async (span) => {
         try {
           const agent = new Agent({
             id: 'context-validator',
             name: 'context-validator',
-            model: anthropic('claude-sonnet-4-6'),
+            model: getModel('validateContext'),
             instructions: CONTEXT_VALIDATOR_PROMPT,
           });
 

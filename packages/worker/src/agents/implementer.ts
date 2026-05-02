@@ -1,8 +1,8 @@
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import { anthropic } from '@ai-sdk/anthropic';
 import path from 'node:path';
+import { getModel } from '../lib/models.js';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
@@ -74,7 +74,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
     outputSchema: z.object({ listing: z.string() }),
     execute: async ({ path }) => {
       try {
-        const p = safePath(path);
+        // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
+        const p = safePath(path ?? '.');
         return { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
       } catch (err: any) {
         return { listing: `Error listing directory: ${err.message}` };
@@ -106,7 +107,7 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
   const implementerAgent = new Agent({
     id: 'implementer',
     name: 'implementer',
-    model: anthropic('claude-opus-4-6'),
+    model: getModel('implementer'),
     instructions: '', // Set per-call via system message
     tools: { readFile, writeFile, listDirectory, bash },
   });

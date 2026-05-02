@@ -1,9 +1,9 @@
 import { Agent } from '@mastra/core/agent';
-import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
+import { getModel } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
   rationale: z.string(),
@@ -36,7 +36,7 @@ export async function commitToMemory(
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
     name: 'memory-summarizer',
-    model: anthropic('claude-opus-4-6'),
+    model: getModel('commitToMemory'),
     instructions: MEMORY_SUMMARIZER_PROMPT,
   });
 

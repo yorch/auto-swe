@@ -1,5 +1,4 @@
 import { Agent } from '@mastra/core/agent';
-import { anthropic } from '@ai-sdk/anthropic';
 import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
 import { z } from 'zod';
@@ -15,6 +14,7 @@ import {
   PERFORMANCE_REVIEWER_PROMPT,
 } from './prompts.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { getModel, getModelSpec } from '../lib/models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -44,13 +44,13 @@ async function runReviewerAgent(
 ): Promise<ReviewVerdict> {
   return tracer.startActiveSpan(
     `llm.review.${reviewerType}`,
-    { attributes: { 'llm.model': 'claude-opus-4-6', 'llm.reviewer_type': reviewerType } },
+    { attributes: { 'llm.model': getModelSpec('reviewer'), 'llm.reviewer_type': reviewerType } },
     async (span) => {
       try {
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
           name: `${reviewerType.toLowerCase()}-reviewer`,
-          model: anthropic('claude-opus-4-6'),
+          model: getModel('reviewer'),
           instructions: prompt,
         });
 
@@ -72,6 +72,7 @@ async function runReviewerAgent(
         if (result.usage) {
           await recordLlmUsage(
             activityInfo().workflowExecution.workflowId,
+            'reviewer',
             result.usage,
             `llm.review.${reviewerType.toLowerCase()}`,
           );
