@@ -143,7 +143,7 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
       }
       // Feed rejection back to implementer via a review-specific prompt
       codeResult = await agentActivities.executeReviewFixImplementation(
-        reviewResult.rejectionSummary!,
+        reviewResult.rejectionSummary ?? '',
         codeResult
       );
       continue;
@@ -169,7 +169,14 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
       };
     }
 
-    if (ciResult!.passed) {
+    // setHandler() reassigns ciResult from a closure (line ~97) that TS cannot
+    // see, so control-flow analysis narrows ciResult to its initializer `null`.
+    // Cast back to the declared union to restore the truthy branch.
+    const ci = ciResult as { passed: boolean; logsUrl?: string } | null;
+    if (!ci) {
+      throw new Error('CI signal received but ciResult is null — invariant violated');
+    }
+    if (ci.passed) {
       isReadyForMerge = true;
     } else {
       totalCIRetries++;
@@ -186,7 +193,7 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
       }
 
       // 6. CI Fix Loop
-      const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
+      const failedLogs = await githubActivities.fetchCILogs(ci.logsUrl);
       codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
     }
   }

@@ -112,7 +112,7 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
         if (childResults[repo.repoId].status === 'SUCCESS') {
           completedRepos.add(repo.repoId);
         }
-      } catch (err: any) {
+      } catch (_err: unknown) {
         childResults[repo.repoId] = {
           lessonsGenerated: [],
           status: 'FAILED',

@@ -5,6 +5,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
@@ -35,8 +36,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
       try {
         const p = safePath(path);
         return { content: workspace.exec(`cat ${shellQuote(p)}`) };
-      } catch (err: any) {
-        return { content: `Error reading file: ${err.message}` };
+      } catch (err: unknown) {
+        return { content: `Error reading file: ${getErrorMessage(err)}` };
       }
     },
     id: 'readFile',
@@ -54,8 +55,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         const b64 = Buffer.from(content).toString('base64');
         workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(p)}`);
         return { result: `File written: ${p}` };
-      } catch (err: any) {
-        return { result: `Error writing file: ${err.message}` };
+      } catch (err: unknown) {
+        return { result: `Error writing file: ${getErrorMessage(err)}` };
       }
     }),
     id: 'writeFile',
@@ -74,8 +75,8 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
         const p = safePath(path ?? '.');
         return { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
-      } catch (err: any) {
-        return { listing: `Error listing directory: ${err.message}` };
+      } catch (err: unknown) {
+        return { listing: `Error listing directory: ${getErrorMessage(err)}` };
       }
     },
     id: 'listDirectory',
@@ -97,9 +98,10 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
       console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(command)}`);
       try {
         return { output: workspace.exec(command) };
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const e = err as { status?: number; stdout?: string; stderr?: string };
         return {
-          output: `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}`,
+          output: `Command failed (exit code ${e.status}):\n${e.stdout ?? ''}\n${e.stderr ?? getErrorMessage(err)}`,
         };
       }
     },

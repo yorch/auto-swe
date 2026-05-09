@@ -6,6 +6,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -21,7 +22,7 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
   const branch = `${branchPrefix}/${request.externalTicketId}`;
-  const githubToken = process.env.GITHUB_TOKEN!;
+  const githubToken = requireEnv('GITHUB_TOKEN');
 
   const workspace = createWorkspace(
     repoUrl,
@@ -100,13 +101,13 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
         const testOutput = workspace.exec(testCommand);
         testResult = parseTestOutput(testOutput, Date.now() - startTime);
         if (testResult.passed) break;
-      } catch (err: any) {
+      } catch (err: unknown) {
         testResult = {
           duration_ms: 0,
           failing: 1,
           passed: false,
           passing: 0,
-          stdout: err.stdout?.slice(-10_000) ?? err.message,
+          stdout: getExecErrorStdout(err),
           total: 0,
         };
       }

@@ -5,6 +5,7 @@ import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -51,7 +52,7 @@ export async function executeCIFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = process.env.GITHUB_TOKEN!;
+  const githubToken = requireEnv('GITHUB_TOKEN');
 
   // Provision workspace and checkout the existing branch
   const workspace = createWorkspace(
@@ -100,13 +101,13 @@ export async function executeCIFixImplementation(
       const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
-    } catch (err: any) {
+    } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
         failing: 1,
         passed: false,
         passing: 0,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
+        stdout: getExecErrorStdout(err),
         total: 0,
       };
     }
@@ -157,7 +158,7 @@ export async function executeReviewFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = process.env.GITHUB_TOKEN!;
+  const githubToken = requireEnv('GITHUB_TOKEN');
 
   const workspace = createWorkspace(
     repoUrl,
@@ -202,13 +203,13 @@ export async function executeReviewFixImplementation(
       const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
-    } catch (err: any) {
+    } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
         failing: 1,
         passed: false,
         passing: 0,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
+        stdout: getExecErrorStdout(err),
         total: 0,
       };
     }

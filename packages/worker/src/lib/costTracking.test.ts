@@ -102,8 +102,8 @@ describe('recordLlmUsage', () => {
       id: 'wf-1',
       tokensInputUsed: 0,
       tokensOutputUsed: 0,
-    } as any);
-    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as any);
+    } as never);
+    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as never);
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
@@ -134,7 +134,7 @@ describe('recordLlmUsage', () => {
       id: 'wf-1',
       tokensInputUsed: 1_999_900,
       tokensOutputUsed: 0,
-    } as any);
+    } as never);
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200, outputTokens: 10 })
@@ -149,7 +149,7 @@ describe('recordLlmUsage', () => {
       id: 'wf-1',
       tokensInputUsed: 0,
       tokensOutputUsed: 0,
-    } as any);
+    } as never);
 
     await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1000, outputTokens: 500 });
 
