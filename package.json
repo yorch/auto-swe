@@ -1,37 +1,37 @@
 {
+  "name": "auto-swe",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "yarn workspaces foreach -A run build",
+    "dev:gateway": "yarn workspace @auto-swe/gateway dev",
+    "dev:worker": "yarn workspace @auto-swe/worker dev",
+    "dev:web": "yarn workspace @auto-swe/web dev",
+    "db:migrate": "yarn workspace @auto-swe/shared prisma migrate dev",
+    "db:generate": "yarn workspace @auto-swe/shared prisma generate",
+    "db:seed": "yarn workspace @auto-swe/shared prisma db seed",
+    "db:studio": "yarn workspace @auto-swe/shared prisma studio",
+    "docker:infra": "docker compose up -d",
+    "docker:infra:down": "docker compose down",
+    "docker:up": "docker compose --profile app up -d",
+    "docker:down": "docker compose --profile app down",
+    "docker:logs": "docker compose --profile app logs -f",
+    "docker:build": "docker compose --profile app build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "format": "biome format . --write"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.4.14",
     "tsx": "4.21.0",
     "vitest": "4.1.5"
   },
-  "engines": {
-    "node": ">=24.0.0"
-  },
-  "name": "auto-swe",
-  "packageManager": "yarn@4.14.1",
-  "private": true,
-  "scripts": {
-    "build": "yarn workspaces foreach -A run build",
-    "db:generate": "yarn workspace @auto-swe/shared prisma generate",
-    "db:migrate": "yarn workspace @auto-swe/shared prisma migrate dev",
-    "db:seed": "yarn workspace @auto-swe/shared prisma db seed",
-    "db:studio": "yarn workspace @auto-swe/shared prisma studio",
-    "dev:gateway": "yarn workspace @auto-swe/gateway dev",
-    "dev:web": "yarn workspace @auto-swe/web dev",
-    "dev:worker": "yarn workspace @auto-swe/worker dev",
-    "docker:build": "docker compose --profile app build",
-    "docker:down": "docker compose --profile app down",
-    "docker:infra": "docker compose up -d",
-    "docker:infra:down": "docker compose down",
-    "docker:logs": "docker compose --profile app logs -f",
-    "docker:up": "docker compose --profile app up -d",
-    "format": "biome format . --write",
-    "lint": "biome check .",
-    "lint:fix": "biome check . --write",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "workspaces": [
-    "packages/*"
-  ]
+  "packageManager": "yarn@4.14.1"
 }

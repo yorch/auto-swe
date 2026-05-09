@@ -110,6 +110,17 @@
   },
   "overrides": [
     {
+      "assist": {
+        "actions": {
+          "source": {
+            "useSortedKeys": "off",
+            "useSortedProperties": "off"
+          }
+        }
+      },
+      "includes": ["**/package.json"]
+    },
+    {
       "includes": ["packages/worker/src/workflows/**"],
       "linter": {
         "rules": {

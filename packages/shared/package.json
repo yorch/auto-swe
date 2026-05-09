@@ -1,4 +1,21 @@
 {
+  "name": "@auto-swe/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./db": "./dist/db.js",
+    "./types/workflow": "./dist/types/workflow.js",
+    "./types/api": "./dist/types/api.js",
+    "./lib/workflowId": "./dist/lib/workflowId.js",
+    "./lib/telemetry": "./dist/lib/telemetry.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prisma": "prisma"
+  },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/resources": "2.7.1",
@@ -14,25 +31,8 @@
     "prisma": "7.8.0",
     "typescript": "6.0.3"
   },
-  "exports": {
-    ".": "./dist/index.js",
-    "./db": "./dist/db.js",
-    "./lib/telemetry": "./dist/lib/telemetry.js",
-    "./lib/workflowId": "./dist/lib/workflowId.js",
-    "./types/api": "./dist/types/api.js",
-    "./types/workflow": "./dist/types/workflow.js"
-  },
-  "main": "dist/index.js",
-  "name": "@auto-swe/shared",
   "prisma": {
     "schema": "src/prisma/schema.prisma",
     "seed": "tsx src/prisma/seed.ts"
-  },
-  "private": true,
-  "scripts": {
-    "build": "tsc",
-    "prisma": "prisma"
-  },
-  "types": "dist/index.d.ts",
-  "version": "0.1.0"
+  }
 }
