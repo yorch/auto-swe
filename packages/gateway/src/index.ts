@@ -6,7 +6,7 @@ const otel = initTelemetry('auto-swe-gateway');
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import Fastify from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import authPlugin from './plugins/auth.js';
@@ -50,7 +50,7 @@ async function start() {
   await app.register(authPlugin);
 
   // Global error handler
-  app.setErrorHandler(async (error: any, request, reply) => {
+  app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error(error);
     const statusCode = error.statusCode ?? 500;
     return reply.status(statusCode).send({

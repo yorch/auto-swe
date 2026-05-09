@@ -16,11 +16,16 @@ describe('POST /api/v1/work-requests', () => {
         if (!token) throw new Error('No token');
         return { exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' };
       },
-    } as any);
+    } as unknown as never);
 
-    // Mock prisma and temporal on the app instance (cast as any to bypass strict typing)
+    // Mock prisma and temporal on the app instance (cast through unknown to bypass strict typing)
     app.decorate('prisma', {
-      activeWorkflow: { create: async (args: any) => ({ id: 'wf-1', ...args.data }) },
+      activeWorkflow: {
+        create: async (args: { data: Record<string, unknown> }) => ({
+          id: 'wf-1',
+          ...args.data,
+        }),
+      },
       repository: {
         findUnique: async () => ({
           id: 'repo-1',
@@ -30,8 +35,10 @@ describe('POST /api/v1/work-requests', () => {
           team: { memberships: [{ userId: 'user-1' }] },
         }),
       },
-      workRequest: { create: async (args: any) => ({ id: 'wr-1', ...args.data }) },
-    } as any);
+      workRequest: {
+        create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
+      },
+    } as unknown as never);
     app.decorate('temporal', {
       signalWorkflow: async () => {},
       startEpicWorkflow: async () => {},

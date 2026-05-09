@@ -3,7 +3,7 @@ import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/wor
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
@@ -25,6 +25,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { externalTicketId, description, repoIds, budgetTier } = request.body;
+      const user = requireUser(request);
 
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership so non-admins can only trigger work on their
@@ -35,7 +36,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             select: {
               memberships: {
                 select: { userId: true },
-                where: { userId: request.user!.sub },
+                where: { userId: user.sub },
               },
             },
           },
@@ -51,7 +52,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (request.user!.role !== 'ADMIN' && repo.team.memberships.length === 0) {
+      if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
         });
@@ -82,8 +83,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           requestPayload: JSON.stringify(request.body),
           workRequestId,
         });
-      } catch (err: any) {
-        if (err.name === 'WorkflowExecutionAlreadyStartedError') {
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
           return reply.status(409).send({
             error: {
               code: 'WORKFLOW_ALREADY_EXISTS',

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { getErrorName, requireAuth } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
   description: z
@@ -57,8 +57,8 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
           requestPayload: JSON.stringify(request.body),
           workRequestId,
         });
-      } catch (err: any) {
-        if (err.name === 'WorkflowExecutionAlreadyStartedError') {
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
           return reply.status(409).send({
             error: {
               code: 'EPIC_ALREADY_EXISTS',

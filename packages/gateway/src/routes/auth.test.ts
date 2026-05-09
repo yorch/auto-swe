@@ -61,8 +61,8 @@ async function buildApp() {
     signAccessToken: vi.fn().mockReturnValue('access-token-xyz'),
   };
 
-  app.decorate('prisma', mockPrisma as any);
-  app.decorate('auth', mockAuth as any);
+  app.decorate('prisma', mockPrisma as unknown as never);
+  app.decorate('auth', mockAuth as unknown as never);
 
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.ready();

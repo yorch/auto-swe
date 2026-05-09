@@ -41,6 +41,27 @@ function hasRole(userRole: string, requiredRole: string): boolean {
   return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
 }
 
+/**
+ * Asserts that requireAuth middleware ran and narrows request.user to JwtPayload.
+ * Use inside route handlers that include requireAuth() in their onRequest hook.
+ */
+export function requireUser(request: FastifyRequest): JwtPayload {
+  if (!request.user) {
+    throw new Error('requireUser called without requireAuth middleware');
+  }
+  return request.user;
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function getErrorName(err: unknown): string | undefined {
+  return err instanceof Error ? err.name : undefined;
+}
+
+export { getErrorMessage, getErrorName };
+
 const ACCESS_TOKEN_TTL = '1h';
 const REFRESH_TOKEN_BYTES = 48;
 
@@ -124,17 +145,18 @@ export function requireAuth(options: RBACOptions = {}) {
     }
 
     const token = authHeader.slice(7);
+    let payload: JwtPayload;
     try {
-      const payload = request.server.auth.verifyAccessToken(token);
+      payload = request.server.auth.verifyAccessToken(token);
       request.user = payload;
-    } catch (err: any) {
+    } catch (err: unknown) {
       return reply.status(401).send({
-        error: { code: 'TOKEN_INVALID', message: err.message ?? 'Invalid token' },
+        error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
       });
     }
 
     // Platform role check
-    if (options.requiredRole && !hasRole(request.user!.role, options.requiredRole)) {
+    if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {
       return reply.status(403).send({
         error: { code: 'FORBIDDEN', message: `Requires ${options.requiredRole} role` },
       });
@@ -143,7 +165,7 @@ export function requireAuth(options: RBACOptions = {}) {
     // Team role check: resolve membership and enforce
     if (options.requiredTeamRole) {
       // Platform ADMIN bypasses team checks
-      if (request.user!.role === 'ADMIN') return;
+      if (payload.role === 'ADMIN') return;
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
       if (!teamId) {
@@ -157,7 +179,7 @@ export function requireAuth(options: RBACOptions = {}) {
 
       const prisma = request.server.prisma;
       const membership = await prisma.teamMembership.findUnique({
-        where: { userId_teamId: { teamId, userId: request.user!.sub } },
+        where: { userId_teamId: { teamId, userId: payload.sub } },
       });
 
       if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {

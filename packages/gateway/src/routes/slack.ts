@@ -1,6 +1,22 @@
 import crypto from 'node:crypto';
-import type { FastifyPluginAsync } from 'fastify';
-import { hasRole, requireAuth } from '../plugins/auth.js';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+
+interface SlackOAuthResponse {
+  ok: boolean;
+  error?: string;
+  authed_user: { access_token: string };
+}
+
+interface SlackIdentityResponse {
+  ok: boolean;
+  user: { id: string };
+}
+
+interface SlackInteractivePayload {
+  actions?: Array<{ action_id: string; value: string }>;
+  user?: { id: string };
+}
 
 const SLACK_TIMESTAMP_MAX_AGE = 5 * 60; // 5 minutes (replay protection)
 
@@ -45,9 +61,10 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const user = requireUser(request);
       const state = fastify.auth.signAccessToken({
-        role: request.user!.role,
-        sub: request.user!.sub,
+        role: user.role,
+        sub: user.sub,
       });
 
       const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
@@ -70,7 +87,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Verify state JWT
-    let statePayload: any;
+    let statePayload: JwtPayload;
     try {
       statePayload = fastify.auth.verifyAccessToken(state);
     } catch {
@@ -79,8 +96,13 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const clientId = process.env.SLACK_CLIENT_ID!;
-    const clientSecret = process.env.SLACK_CLIENT_SECRET!;
+    const clientId = process.env.SLACK_CLIENT_ID;
+    const clientSecret = process.env.SLACK_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return reply.status(503).send({
+        error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
+      });
+    }
     const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
 
     // Exchange code for token
@@ -95,7 +117,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       method: 'POST',
     });
 
-    const tokenData = (await tokenResponse.json()) as any;
+    const tokenData = (await tokenResponse.json()) as SlackOAuthResponse;
     if (!tokenData.ok) {
       return reply.status(400).send({
         error: { code: 'SLACK_AUTH_FAILED', message: tokenData.error ?? 'Slack OAuth failed' },
@@ -107,7 +129,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       headers: { Authorization: `Bearer ${tokenData.authed_user.access_token}` },
     });
 
-    const identity = (await identityResponse.json()) as any;
+    const identity = (await identityResponse.json()) as SlackIdentityResponse;
     if (!identity.ok) {
       return reply.status(400).send({
         error: { code: 'SLACK_IDENTITY_FAILED', message: 'Failed to get Slack identity' },
@@ -161,14 +183,22 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (!verifySlackSignature((request as any).rawBody!, timestamp, signature, signingSecret)) {
+      const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+      if (!rawBody) {
+        return reply.status(400).send({
+          error: { code: 'SLACK_AUTH_FAILED', message: 'Missing raw body' },
+        });
+      }
+
+      if (!verifySlackSignature(rawBody.toString(), timestamp, signature, signingSecret)) {
         return reply.status(401).send({
           error: { code: 'SLACK_AUTH_FAILED', message: 'Invalid Slack signature' },
         });
       }
 
       // Parse the interactive payload
-      const payload = JSON.parse((request.body as any).payload ?? '{}');
+      const body = request.body as { payload?: string };
+      const payload: SlackInteractivePayload = JSON.parse(body.payload ?? '{}');
       const actionId = payload.actions?.[0]?.action_id;
       const slackUserId = payload.user?.id;
 
@@ -196,13 +226,23 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
 
-        const workflowId = payload.actions[0].value;
+        const workflowId = payload.actions?.[0]?.value;
+        if (!workflowId) {
+          return reply.status(400).send({
+            error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
+          });
+        }
         await fastify.temporal.signalWorkflow(workflowId, 'humanMergeSignal', [true]);
         return { data: { action: 'approved', workflowId } };
       }
 
       if (actionId.startsWith('retry_ci_')) {
-        const workflowId = payload.actions[0].value;
+        const workflowId = payload.actions?.[0]?.value;
+        if (!workflowId) {
+          return reply.status(400).send({
+            error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
+          });
+        }
         // Signal CI failure to trigger the CI fix loop. The workflow will
         // re-provision a workspace, run the CI fix agent, and push a new commit.
         // This is intentionally "passed: false" — the user is requesting the

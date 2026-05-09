@@ -1,7 +1,22 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { verifyGitHubSignature } from '../lib/github.js';
 
-function verifyWebhookOrReject(request: any, reply: any): boolean {
+interface PullRequestWebhookPayload {
+  action: string;
+  pull_request: { number: number; merged: boolean };
+  repository: { full_name: string };
+}
+
+interface CheckRunWebhookPayload {
+  action: string;
+  check_run?: { head_sha: string; conclusion: string; html_url: string };
+  repository: { full_name: string };
+}
+
+function verifyWebhookOrReject(
+  request: FastifyRequest & { rawBody?: string | Buffer },
+  reply: FastifyReply
+): boolean {
   const signature = request.headers['x-hub-signature-256'] as string;
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
@@ -12,7 +27,12 @@ function verifyWebhookOrReject(request: any, reply: any): boolean {
     return false;
   }
 
-  if (!verifyGitHubSignature(request.rawBody!, signature, secret)) {
+  if (!request.rawBody) {
+    reply.status(400).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing raw body' } });
+    return false;
+  }
+
+  if (!verifyGitHubSignature(request.rawBody, signature, secret)) {
     reply
       .status(401)
       .send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
@@ -32,7 +52,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!verifyWebhookOrReject(request, reply)) return;
 
-      const payload = request.body as any;
+      const payload = request.body as PullRequestWebhookPayload;
 
       // Only handle merged pull_request events
       if (payload.action !== 'closed' || !payload.pull_request?.merged) {
@@ -83,7 +103,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!verifyWebhookOrReject(request, reply)) return;
 
-      const payload = request.body as any;
+      const payload = request.body as CheckRunWebhookPayload;
 
       // Handle check_run completed events
       const checkRun = payload.check_run;

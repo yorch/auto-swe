@@ -1,7 +1,8 @@
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
   defaultBranch: z.string().default('main'),
@@ -40,16 +41,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request) => {
-      const user = request.user!;
-      let where: any = { isActive: true };
-
-      // Non-admins see only repos belonging to their teams
-      if (user.role !== 'ADMIN') {
-        where = {
-          ...where,
+      const user = requireUser(request);
+      const where: Prisma.RepositoryWhereInput = {
+        isActive: true,
+        ...(user.role !== 'ADMIN' && {
           team: { memberships: { some: { userId: user.sub } } },
-        };
-      }
+        }),
+      };
 
       const repos = await fastify.prisma.repository.findMany({
         include: {

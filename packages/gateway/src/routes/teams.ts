@@ -1,7 +1,8 @@
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateTeamSchema = z.object({
   description: z.string().max(500).default(''),
@@ -67,16 +68,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request) => {
-      const user = request.user!;
-      let where: any = { isActive: true };
-
-      // Non-admins see only their teams
-      if (user.role !== 'ADMIN') {
-        where = {
-          ...where,
+      const user = requireUser(request);
+      const where: Prisma.TeamWhereInput = {
+        isActive: true,
+        ...(user.role !== 'ADMIN' && {
           memberships: { some: { userId: user.sub } },
-        };
-      }
+        }),
+      };
 
       const teams = await fastify.prisma.team.findMany({
         include: {
@@ -97,7 +95,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request, reply) => {
-      const user = request.user!;
+      const user = requireUser(request);
 
       const team = await fastify.prisma.team.findUnique({
         include: {

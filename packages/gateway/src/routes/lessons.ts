@@ -1,7 +1,8 @@
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -13,17 +14,15 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request) => {
-      const user = request.user!;
-      let where: any = {};
-
-      // Non-admins only see lessons from their team's repos
-      if (user.role !== 'ADMIN') {
-        where = {
-          repository: {
-            team: { memberships: { some: { userId: user.sub } } },
-          },
-        };
-      }
+      const user = requireUser(request);
+      const where: Prisma.AgentLessonWhereInput =
+        user.role === 'ADMIN'
+          ? {}
+          : {
+              repository: {
+                team: { memberships: { some: { userId: user.sub } } },
+              },
+            };
 
       const lessons = await fastify.prisma.agentLesson.findMany({
         orderBy: { createdAt: 'desc' },
@@ -61,12 +60,13 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Non-admins must be a member of the team that owns the repo they're searching
-      if (request.user!.role !== 'ADMIN') {
+      const user = requireUser(request);
+      if (user.role !== 'ADMIN') {
         const accessibleRepo = await fastify.prisma.repository.findFirst({
           select: { id: true },
           where: {
             id: repoId,
-            team: { memberships: { some: { userId: request.user!.sub } } },
+            team: { memberships: { some: { userId: user.sub } } },
           },
         });
         if (!accessibleRepo) {
