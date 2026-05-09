@@ -5,6 +5,10 @@ interface ApiError {
   message: string;
 }
 
+interface ApiErrorBody {
+  error?: ApiError;
+}
+
 export class ApiClient {
   private accessToken: string | null = null;
 
@@ -50,7 +54,7 @@ export class ApiClient {
         const retryResponse = await fetch(`${API_BASE}${path}`, { ...options, headers });
         if (!retryResponse.ok) {
           const err = await retryResponse.json().catch(() => ({}));
-          throw new Error((err as any).error?.message ?? `HTTP ${retryResponse.status}`);
+          throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${retryResponse.status}`);
         }
         return retryResponse.json();
       }
@@ -63,7 +67,7 @@ export class ApiClient {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error((err as any).error?.message ?? `HTTP ${response.status}`);
+      throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${response.status}`);
     }
 
     return response.json();

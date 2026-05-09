@@ -56,7 +56,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       throw new Error('Received an invalid access token from the server');
     }
-    set({ isAuthenticated: true, user: payload as any });
+    set({ isAuthenticated: true, user: payload as AuthState['user'] });
   },
 
   logout: () => {

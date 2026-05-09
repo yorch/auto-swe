@@ -26,7 +26,7 @@ export function TopBar() {
           value={selectedTeamId ?? ''}
         >
           <option value="">All Teams</option>
-          {(teams ?? []).map((t: any) => (
+          {(teams ?? []).map((t: { id: string; name: string }) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
