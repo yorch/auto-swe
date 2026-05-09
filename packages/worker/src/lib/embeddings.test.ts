@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const embedMock = vi.fn();
-const openaiEmbeddingFactory = vi.fn();
-const openaiCompatTextEmbeddingFactory = vi.fn();
+// Vitest 4 hoists `vi.mock()` factories above ALL imports/top-level code.
+// Any variable the factory closes over MUST also be hoisted via `vi.hoisted()`.
+const { embedMock, openaiEmbeddingFactory, openaiCompatTextEmbeddingFactory } = vi.hoisted(() => ({
+  embedMock: vi.fn(),
+  openaiEmbeddingFactory: vi.fn(),
+  openaiCompatTextEmbeddingFactory: vi.fn(),
+}));
 
 vi.mock('ai', () => ({
   embed: embedMock,
@@ -41,8 +45,12 @@ describe('generateEmbedding', () => {
     const v = await generateEmbedding('hello world');
 
     expect(v).toHaveLength(1536);
-    expect(openaiEmbeddingFactory).toHaveBeenCalledWith('text-embedding-3-large', { dimensions: 1536 });
-    expect(embedMock).toHaveBeenCalledWith({ model: { tag: 'openai-embed' }, value: 'hello world' });
+    expect(openaiEmbeddingFactory).toHaveBeenCalledWith('text-embedding-3-large');
+    expect(embedMock).toHaveBeenCalledWith({
+      model: { tag: 'openai-embed' },
+      value: 'hello world',
+      providerOptions: { openai: { dimensions: 1536 } },
+    });
   });
 
   it('errors with a clear message when OPENAI_API_KEY is missing for an OpenAI spec', async () => {
@@ -58,6 +66,11 @@ describe('generateEmbedding', () => {
     await generateEmbedding('hi');
 
     expect(openaiCompatTextEmbeddingFactory).toHaveBeenCalledWith('nomic-embed-text');
+    // OpenAI-specific providerOptions (dimensions) must NOT be forwarded to non-OpenAI providers.
+    expect(embedMock).toHaveBeenCalledWith({
+      model: { tag: 'compat-embed' },
+      value: 'hi',
+    });
   });
 
   it('rejects unknown providers when no API base is configured', async () => {

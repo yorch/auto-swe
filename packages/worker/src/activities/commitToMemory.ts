@@ -9,7 +9,7 @@ const LessonOutputSchema = z.object({
   rationale: z.string(),
   lessonSummary: z.string(),
   failureType: z.enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT']).nullable(),
-  metadata: z.record(z.unknown()).nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
 });
 
 /**
