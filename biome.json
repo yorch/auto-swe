@@ -69,9 +69,6 @@
         "noUselessRename": "error",
         "noUselessSwitchCase": "error"
       },
-      "correctness": {
-        "useExhaustiveDependencies": "warn"
-      },
       "recommended": true,
       "style": {
         "useConst": "error",
