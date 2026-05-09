@@ -23,10 +23,7 @@ function buildEmbeddingModel(spec: string): EmbeddingModel {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
     }
-    // text-embedding-3-large supports a `dimensions` option to truncate from 3072 → 1536.
-    return createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId, {
-      dimensions: REQUIRED_DIMENSIONS,
-    });
+    return createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId);
   }
 
   return createOpenAICompatibleClient(provider).textEmbeddingModel(modelId);
@@ -56,7 +53,13 @@ export function _resetEmbeddingClientForTests(): void {
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const model = getEmbeddingModel();
-  const { embedding } = await embed({ model, value: text });
+  // text-embedding-3-large supports a `dimensions` option to truncate from 3072 → 1536.
+  // Per AI SDK v6, provider-specific options pass via providerOptions on the call.
+  const { embedding } = await embed({
+    model,
+    value: text,
+    providerOptions: { openai: { dimensions: REQUIRED_DIMENSIONS } },
+  });
   if (embedding.length !== REQUIRED_DIMENSIONS) {
     throw new Error(
       `Embedding model returned ${embedding.length} dimensions but the agent_lessons.embedding column is vector(${REQUIRED_DIMENSIONS}). ` +

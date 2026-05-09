@@ -51,7 +51,7 @@ describe('POST /api/v1/work-requests', () => {
       payload: {
         externalTicketId: 'JIRA-1',
         description: 'Add health endpoint',
-        repoIds: ['00000000-0000-0000-0000-000000000001'],
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
       },
     });
     expect(res.statusCode).toBe(401);
@@ -62,7 +62,7 @@ describe('POST /api/v1/work-requests', () => {
       method: 'POST',
       url: '/api/v1/work-requests',
       headers: { authorization: 'Bearer test-token' },
-      payload: { externalTicketId: 'JIRA-1', repoIds: ['00000000-0000-0000-0000-000000000001'] },
+      payload: { externalTicketId: 'JIRA-1', repoIds: ['00000000-0000-4000-8000-000000000001'] },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -75,7 +75,7 @@ describe('POST /api/v1/work-requests', () => {
       payload: {
         externalTicketId: 'JIRA-1',
         description: 'Add health endpoint',
-        repoIds: ['00000000-0000-0000-0000-000000000001'],
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
       },
     });
     expect(res.statusCode).toBe(201);

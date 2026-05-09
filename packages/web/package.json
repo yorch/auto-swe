@@ -16,7 +16,7 @@
     "react-is": "19.2.6",
     "recharts": "3.8.1",
     "tailwind-merge": "3.5.0",
-    "zod": "3.25.76",
+    "zod": "4.4.3",
     "zustand": "5.0.13"
   },
   "devDependencies": {
@@ -25,6 +25,6 @@
     "@types/react-dom": "19.2.3",
     "@types/react-is": "19.2.0",
     "tailwindcss": "4.3.0",
-    "typescript": "5.9.3"
+    "typescript": "6.0.3"
   }
 }

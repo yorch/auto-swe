@@ -2,7 +2,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 
@@ -19,7 +19,7 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
     return { shutdown: async () => {} };
   }
 
-  const resource = new Resource({
+  const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: serviceName,
     [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? '0.1.0',
   });
