@@ -19,6 +19,7 @@
       "!**/tmp",
       "!**/packages/shared/src/generated",
       "!**/packages/shared/src/prisma/migrations",
+      "!**/next-env.d.ts",
       "!**/yarn.lock",
       "!**/*.tsbuildinfo"
     ]
