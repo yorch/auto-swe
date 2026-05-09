@@ -53,7 +53,7 @@ export async function decomposeEpic(
         );
 
         if (result.usage) {
-          await recordLlmUsage(activityInfo().workflowExecution.workflowId, 'planner', result.usage, 'llm.epic_planner');
+          await recordLlmUsage(activityInfo().workflowExecution!.workflowId, 'planner', result.usage, 'llm.epic_planner');
         }
 
         if (!result.object) {

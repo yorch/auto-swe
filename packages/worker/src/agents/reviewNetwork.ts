@@ -71,7 +71,7 @@ async function runReviewerAgent(
 
         if (result.usage) {
           await recordLlmUsage(
-            activityInfo().workflowExecution.workflowId,
+            activityInfo().workflowExecution!.workflowId,
             'reviewer',
             result.usage,
             `llm.review.${reviewerType.toLowerCase()}`,
