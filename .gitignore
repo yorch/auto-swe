@@ -20,3 +20,4 @@ package-lock.json
 
 # AI
 .claude/settings.local.json
+tmp/

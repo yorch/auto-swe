@@ -14,27 +14,33 @@ const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-large';
 
 type EmbeddingModel = ReturnType<ReturnType<typeof createOpenAI>['embedding']>;
 
-let cachedModel: { spec: string; model: EmbeddingModel } | null = null;
+interface CachedEmbeddingModel {
+  spec: string;
+  provider: string;
+  model: EmbeddingModel;
+}
 
-function buildEmbeddingModel(spec: string): EmbeddingModel {
+let cachedModel: CachedEmbeddingModel | null = null;
+
+function buildEmbeddingModel(spec: string): CachedEmbeddingModel {
   const { provider, modelId } = parseProviderModelSpec(spec);
 
   if (provider === 'openai') {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
     }
-    return createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId);
+    return { spec, provider, model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId) };
   }
 
-  return createOpenAICompatibleClient(provider).textEmbeddingModel(modelId);
+  return { spec, provider, model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId) };
 }
 
-function getEmbeddingModel(): EmbeddingModel {
+function getEmbeddingModel(): CachedEmbeddingModel {
   const spec = process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
   if (!cachedModel || cachedModel.spec !== spec) {
-    cachedModel = { spec, model: buildEmbeddingModel(spec) };
+    cachedModel = buildEmbeddingModel(spec);
   }
-  return cachedModel.model;
+  return cachedModel;
 }
 
 /**
@@ -52,13 +58,16 @@ export function _resetEmbeddingClientForTests(): void {
  * since pgvector storage is fixed-width.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const model = getEmbeddingModel();
-  // text-embedding-3-large supports a `dimensions` option to truncate from 3072 → 1536.
-  // Per AI SDK v6, provider-specific options pass via providerOptions on the call.
+  const { provider, model } = getEmbeddingModel();
+  // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
+  // from its native 3072 down to the 1536 required by the pgvector column.
+  // Other providers don't accept this key, so it's only sent for OpenAI.
   const { embedding } = await embed({
     model,
     value: text,
-    providerOptions: { openai: { dimensions: REQUIRED_DIMENSIONS } },
+    ...(provider === 'openai'
+      ? { providerOptions: { openai: { dimensions: REQUIRED_DIMENSIONS } } }
+      : {}),
   });
   if (embedding.length !== REQUIRED_DIMENSIONS) {
     throw new Error(

@@ -9,13 +9,18 @@
     "./db": "./dist/db.js",
     "./types/workflow": "./dist/types/workflow.js",
     "./types/api": "./dist/types/api.js",
-    "./lib/workflowId": "./dist/lib/workflowId.js"
+    "./lib/workflowId": "./dist/lib/workflowId.js",
+    "./lib/telemetry": "./dist/lib/telemetry.js"
   },
   "scripts": {
     "build": "tsc",
     "prisma": "prisma"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/resources": "2.7.1",
+    "@opentelemetry/sdk-node": "0.217.0",
+    "@opentelemetry/semantic-conventions": "1.40.0",
     "@prisma/adapter-pg": "7.8.0",
     "@prisma/client": "7.8.0",
     "bcrypt": "6.0.0",

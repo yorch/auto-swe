@@ -45,7 +45,6 @@ describe('generateEmbedding', () => {
     const v = await generateEmbedding('hello world');
 
     expect(v).toHaveLength(1536);
-    // AI SDK v6: embedding(modelId) takes one arg; provider options pass via embed({ providerOptions }).
     expect(openaiEmbeddingFactory).toHaveBeenCalledWith('text-embedding-3-large');
     expect(embedMock).toHaveBeenCalledWith({
       model: { tag: 'openai-embed' },
@@ -67,6 +66,11 @@ describe('generateEmbedding', () => {
     await generateEmbedding('hi');
 
     expect(openaiCompatTextEmbeddingFactory).toHaveBeenCalledWith('nomic-embed-text');
+    // OpenAI-specific providerOptions (dimensions) must NOT be forwarded to non-OpenAI providers.
+    expect(embedMock).toHaveBeenCalledWith({
+      model: { tag: 'compat-embed' },
+      value: 'hi',
+    });
   });
 
   it('rejects unknown providers when no API base is configured', async () => {
