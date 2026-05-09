@@ -1,4 +1,5 @@
-import { heartbeat, activityInfo } from '@temporalio/activity';
+import { heartbeat } from '@temporalio/activity';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -90,7 +91,7 @@ export async function executeCIFixImplementation(
     heartbeat('CI fix agent completed');
 
     if (ciFix.usage) {
-      await recordLlmUsage(activityInfo().workflowExecution!.workflowId, 'implementer', ciFix.usage, 'llm.ci_fix');
+      await recordLlmUsage(currentWorkflowId(), 'implementer', ciFix.usage, 'llm.ci_fix');
     }
 
     // Run tests locally after fix
@@ -191,7 +192,7 @@ export async function executeReviewFixImplementation(
     heartbeat('review fix agent completed');
 
     if (reviewFix.usage) {
-      await recordLlmUsage(activityInfo().workflowExecution!.workflowId, 'implementer', reviewFix.usage, 'llm.review_fix');
+      await recordLlmUsage(currentWorkflowId(), 'implementer', reviewFix.usage, 'llm.review_fix');
     }
 
     let testResult: TestRunResult;

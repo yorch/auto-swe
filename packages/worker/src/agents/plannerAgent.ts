@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { activityInfo } from '@temporalio/activity';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { z } from 'zod';
 import type { RepoInfo, PlannedRepo } from '@auto-swe/shared/types/workflow';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
@@ -53,7 +53,7 @@ export async function decomposeEpic(
         );
 
         if (result.usage) {
-          await recordLlmUsage(activityInfo().workflowExecution!.workflowId, 'planner', result.usage, 'llm.epic_planner');
+          await recordLlmUsage(currentWorkflowId(), 'planner', result.usage, 'llm.epic_planner');
         }
 
         if (!result.object) {

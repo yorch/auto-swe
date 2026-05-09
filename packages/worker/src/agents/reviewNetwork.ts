@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { activityInfo } from '@temporalio/activity';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { z } from 'zod';
 import type {
   CodeResult,
@@ -71,7 +71,7 @@ async function runReviewerAgent(
 
         if (result.usage) {
           await recordLlmUsage(
-            activityInfo().workflowExecution!.workflowId,
+            currentWorkflowId(),
             'reviewer',
             result.usage,
             `llm.review.${reviewerType.toLowerCase()}`,

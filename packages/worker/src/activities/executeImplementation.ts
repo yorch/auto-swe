@@ -1,4 +1,5 @@
-import { heartbeat, ApplicationFailure, activityInfo } from '@temporalio/activity';
+import { heartbeat, ApplicationFailure } from '@temporalio/activity';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -82,7 +83,7 @@ export async function executeImplementation(
 
       if (genResult.usage) {
         await recordLlmUsage(
-          activityInfo().workflowExecution!.workflowId,
+          currentWorkflowId(),
           'implementer',
           genResult.usage,
           `llm.implementer.iteration_${iteration}`,
