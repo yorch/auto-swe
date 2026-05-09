@@ -71,11 +71,13 @@
       },
       "recommended": true,
       "style": {
+        "noNonNullAssertion": "error",
         "useConst": "error",
         "useTemplate": "warn"
       },
       "suspicious": {
-        "noCatchAssign": "error"
+        "noCatchAssign": "error",
+        "noExplicitAny": "error"
       }
     }
   },
