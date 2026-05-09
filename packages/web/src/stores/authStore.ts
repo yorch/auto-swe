@@ -14,10 +14,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   login: async (email, password) => {
-    const { data } = await api.post<{ data: { accessToken: string } }>(
-      '/api/v1/auth/login',
-      { email, password },
-    );
+    const { data } = await api.post<{ data: { accessToken: string } }>('/api/v1/auth/login', {
+      email,
+      password,
+    });
     api.setToken(data.accessToken);
     if (typeof window !== 'undefined') {
       // Set cookie so Next.js middleware can detect auth on server-side navigation.

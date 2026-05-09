@@ -3,7 +3,7 @@
  * These operate on the arrays already returned by useWorkflows() / useLessons().
  */
 
-import type { WorkflowSummary, LessonListItem } from '@auto-swe/shared/types/api';
+import type { LessonListItem, WorkflowSummary } from '@auto-swe/shared/types/api';
 
 const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'TIMED_OUT'];
 
@@ -25,7 +25,7 @@ function last30Days(): string[] {
 // ── Workflow transformations ──────────────────────────────────────────
 
 export function groupWorkflowsByStatus(
-  workflows: WorkflowSummary[],
+  workflows: WorkflowSummary[]
 ): { status: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const w of workflows) {
@@ -37,7 +37,7 @@ export function groupWorkflowsByStatus(
 
 export function groupWorkflowsByDate(
   workflows: WorkflowSummary[],
-  days = 30,
+  days = 30
 ): { date: string; completed: number; failed: number; active: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
@@ -54,7 +54,7 @@ export function groupWorkflowsByDate(
 }
 
 export function groupWorkflowsByRepo(
-  workflows: WorkflowSummary[],
+  workflows: WorkflowSummary[]
 ): { repo: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const w of workflows) {
@@ -68,9 +68,7 @@ export function groupWorkflowsByRepo(
 
 // ── Lesson transformations ────────────────────────────────────────────
 
-export function groupLessonsByType(
-  lessons: LessonListItem[],
-): { type: string; count: number }[] {
+export function groupLessonsByType(lessons: LessonListItem[]): { type: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const l of lessons) {
     const t = l.failureType?.replace(/_/g, ' ') ?? 'Unknown';
@@ -83,7 +81,7 @@ export function groupLessonsByType(
 
 export function groupLessonsByDate(
   lessons: LessonListItem[],
-  days = 30,
+  days = 30
 ): { date: string; count: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, number> = {};

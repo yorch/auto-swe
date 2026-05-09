@@ -1,6 +1,6 @@
 'use client';
 
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { STATUS_CHART_COLORS } from './colors';
 
 interface Props {
@@ -9,7 +9,9 @@ interface Props {
 
 export function WorkflowStatusChart({ data }: Props) {
   if (data.length === 0) {
-    return <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No workflow data</p>;
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No workflow data</p>
+    );
   }
 
   return (
@@ -27,18 +29,11 @@ export function WorkflowStatusChart({ data }: Props) {
           label={({ value }) => `${value}`}
         >
           {data.map((entry) => (
-            <Cell
-              key={entry.status}
-              fill={STATUS_CHART_COLORS[entry.status] ?? '#9ca3af'}
-            />
+            <Cell key={entry.status} fill={STATUS_CHART_COLORS[entry.status] ?? '#9ca3af'} />
           ))}
         </Pie>
-        <Tooltip
-          formatter={(value, name) => [value, String(name).replace(/_/g, ' ')]}
-        />
-        <Legend
-          formatter={(value) => String(value).replace(/_/g, ' ')}
-        />
+        <Tooltip formatter={(value, name) => [value, String(name).replace(/_/g, ' ')]} />
+        <Legend formatter={(value) => String(value).replace(/_/g, ' ')} />
       </PieChart>
     </ResponsiveContainer>
   );

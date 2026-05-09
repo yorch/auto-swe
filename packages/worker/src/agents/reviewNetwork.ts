@@ -1,20 +1,20 @@
+import type {
+  AggregatedReviewResult,
+  CodeResult,
+  ReviewFinding,
+  ReviewVerdict,
+} from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { z } from 'zod';
-import type {
-  CodeResult,
-  ReviewVerdict,
-  ReviewFinding,
-  AggregatedReviewResult,
-} from '@auto-swe/shared/types/workflow';
-import {
-  SECURITY_AUDITOR_PROMPT,
-  DOMAIN_LOGIC_REVIEWER_PROMPT,
-  PERFORMANCE_REVIEWER_PROMPT,
-} from './prompts.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import {
+  DOMAIN_LOGIC_REVIEWER_PROMPT,
+  PERFORMANCE_REVIEWER_PROMPT,
+  SECURITY_AUDITOR_PROMPT,
+} from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -40,7 +40,7 @@ const ReviewVerdictSchema = z.object({
 async function runReviewerAgent(
   prompt: string,
   reviewerType: ReviewVerdict['reviewer'],
-  codeResult: CodeResult,
+  codeResult: CodeResult
 ): Promise<ReviewVerdict> {
   return tracer.startActiveSpan(
     `llm.review.${reviewerType}`,
@@ -66,7 +66,7 @@ async function runReviewerAgent(
               }),
             },
           ],
-          { structuredOutput: { schema: ReviewVerdictSchema } },
+          { structuredOutput: { schema: ReviewVerdictSchema } }
         );
 
         if (result.usage) {
@@ -74,7 +74,7 @@ async function runReviewerAgent(
             currentWorkflowId(),
             'reviewer',
             result.usage,
-            `llm.review.${reviewerType.toLowerCase()}`,
+            `llm.review.${reviewerType.toLowerCase()}`
           );
         }
 
@@ -93,7 +93,7 @@ async function runReviewerAgent(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }
 
@@ -101,7 +101,7 @@ async function runReviewerAgent(
 
 export async function runReviewNetwork(
   codeResult: CodeResult,
-  successCriteria?: string[],
+  successCriteria?: string[]
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -126,12 +126,14 @@ export async function runReviewNetwork(
       reviewer: reviewerTypes[index],
       approved: false,
       severity: 'CRITICAL' as const,
-      findings: [{
-        file: '',
-        category: 'REVIEWER_CRASH',
-        description: `Reviewer agent failed: ${(result as PromiseRejectedResult).reason?.message ?? 'Unknown error'}`,
-        suggestedFix: 'Manual review required',
-      }],
+      findings: [
+        {
+          file: '',
+          category: 'REVIEWER_CRASH',
+          description: `Reviewer agent failed: ${(result as PromiseRejectedResult).reason?.message ?? 'Unknown error'}`,
+          suggestedFix: 'Manual review required',
+        },
+      ],
     };
   });
 

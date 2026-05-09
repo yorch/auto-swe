@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuthStore } from '@/stores/authStore';
+import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,9 +32,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <h1 className="text-2xl font-bold text-center mb-6">auto-swe</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="p-3 rounded bg-red-50 text-red-700 text-sm">{error}</div>
-          )}
+          {error && <div className="p-3 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1">Email</label>
             <input

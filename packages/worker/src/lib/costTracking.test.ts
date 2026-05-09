@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApplicationFailure } from '@temporalio/activity';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock prisma before importing the module under test
 vi.mock('@auto-swe/shared/db', () => ({
@@ -13,11 +13,11 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import {
-  calculateCostUsd,
   BUDGET_LIMITS,
-  recordLlmUsage,
+  calculateCostUsd,
   getModelPrice,
   MODEL_PRICES,
+  recordLlmUsage,
 } from './costTracking.js';
 
 const originalEnv = { ...process.env };
@@ -112,7 +112,7 @@ describe('recordLlmUsage', () => {
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'wf-1' },
-        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }),  // DB columns unchanged
+        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }), // DB columns unchanged
       })
     );
   });

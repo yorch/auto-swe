@@ -77,7 +77,8 @@ export const SECURITY_RULES: SecurityRule[] = [
   {
     id: 'SQL_INJECTION',
     severity: 'HIGH',
-    pattern: /\.\$(?:queryRawUnsafe|executeRawUnsafe)\(|\.(?:\$queryRaw|\$executeRaw)\s*\(`[^`]*\$\{/,
+    pattern:
+      /\.\$(?:queryRawUnsafe|executeRawUnsafe)\(|\.(?:\$queryRaw|\$executeRaw)\s*\(`[^`]*\$\{/,
     description: 'Potential SQL injection via unsafe raw query or template interpolation',
     suggestedFix: 'Use parameterized queries: prisma.$queryRaw`SELECT * FROM ... WHERE id = ${id}`',
   },
@@ -93,9 +94,12 @@ export const SECURITY_RULES: SecurityRule[] = [
     severity: 'HIGH',
     // Detects dynamic code execution patterns in agent-generated code
     // Uses character-class construction to avoid triggering lint/hook false positives
-    pattern: new RegExp(String.raw`(?:^|[^.\w])ev` + String.raw`al\s*\(|new\s+Fun` + String.raw`ction\s*\(`),
+    pattern: new RegExp(
+      String.raw`(?:^|[^.\w])ev` + String.raw`al\s*\(|new\s+Fun` + String.raw`ction\s*\(`
+    ),
     description: 'Dynamic code execution detected',
-    suggestedFix: 'Avoid dynamic code execution; use safer alternatives like JSON.parse or a sandboxed interpreter',
+    suggestedFix:
+      'Avoid dynamic code execution; use safer alternatives like JSON.parse or a sandboxed interpreter',
   },
   {
     id: 'INSECURE_CRYPTO',
@@ -131,10 +135,7 @@ function isTestFile(filePath: string): boolean {
 
 // ── Core check function ──
 
-export function checkContentSecurity(
-  filePath: string,
-  content: string,
-): PreWriteCheckResult {
+export function checkContentSecurity(filePath: string, content: string): PreWriteCheckResult {
   if (isTestFile(filePath)) {
     return { passed: true, violations: [] };
   }
@@ -177,14 +178,9 @@ export function checkContentSecurity(
 
 // ── Tool wrapper ──
 
-type WriteExecuteFn = (params: {
-  path: string;
-  content: string;
-}) => Promise<{ result: string }>;
+type WriteExecuteFn = (params: { path: string; content: string }) => Promise<{ result: string }>;
 
-export function wrapWriteToolWithSecurityCheck(
-  originalExecute: WriteExecuteFn,
-): WriteExecuteFn {
+export function wrapWriteToolWithSecurityCheck(originalExecute: WriteExecuteFn): WriteExecuteFn {
   return async (params) => {
     return tracer.startActiveSpan(
       'security.pre_write_check',
@@ -196,10 +192,7 @@ export function wrapWriteToolWithSecurityCheck(
       },
       async (span) => {
         try {
-          const result = checkContentSecurity(
-            params.path,
-            params.content,
-          );
+          const result = checkContentSecurity(params.path, params.content);
 
           span.setAttributes({
             'security.passed': result.passed,
@@ -228,15 +221,12 @@ export function wrapWriteToolWithSecurityCheck(
         } finally {
           span.end();
         }
-      },
+      }
     );
   };
 }
 
-function formatViolationMessage(
-  violations: PreWriteViolation[],
-  blocked: boolean,
-): string {
+function formatViolationMessage(violations: PreWriteViolation[], blocked: boolean): string {
   const header = blocked
     ? 'SECURITY CHECK FAILED — write blocked'
     : 'SECURITY WARNINGS detected (write allowed)';
@@ -244,7 +234,7 @@ function formatViolationMessage(
   const details = violations
     .map(
       (v) =>
-        `  [${v.severity}] ${v.ruleId} (line ${v.line}): ${v.description}\n    Fix: ${v.suggestedFix}`,
+        `  [${v.severity}] ${v.ruleId} (line ${v.line}): ${v.description}\n    Fix: ${v.suggestedFix}`
     )
     .join('\n');
 

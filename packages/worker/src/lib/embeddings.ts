@@ -1,6 +1,6 @@
-import { embed } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import { parseProviderModelSpec, createOpenAICompatibleClient } from './providerUtils.js';
+import { embed } from 'ai';
+import { createOpenAICompatibleClient, parseProviderModelSpec } from './providerUtils.js';
 
 /**
  * pgvector column for AgentLesson is `vector(1536)` (see prisma schema). All
@@ -29,10 +29,18 @@ function buildEmbeddingModel(spec: string): CachedEmbeddingModel {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
     }
-    return { spec, provider, model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId) };
+    return {
+      spec,
+      provider,
+      model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId),
+    };
   }
 
-  return { spec, provider, model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId) };
+  return {
+    spec,
+    provider,
+    model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId),
+  };
 }
 
 function getEmbeddingModel(): CachedEmbeddingModel {
@@ -72,7 +80,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   if (embedding.length !== REQUIRED_DIMENSIONS) {
     throw new Error(
       `Embedding model returned ${embedding.length} dimensions but the agent_lessons.embedding column is vector(${REQUIRED_DIMENSIONS}). ` +
-      `Either pick a model that produces ${REQUIRED_DIMENSIONS}-dim vectors, or run a schema migration to update the column width.`,
+        `Either pick a model that produces ${REQUIRED_DIMENSIONS}-dim vectors, or run a schema migration to update the column width.`
     );
   }
   return embedding;

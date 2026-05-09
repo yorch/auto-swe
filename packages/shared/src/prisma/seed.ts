@@ -1,7 +1,7 @@
-import { PrismaClient } from '../generated/prisma/client.js';
+import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
-import crypto from 'node:crypto';
+import { PrismaClient } from '../generated/prisma/client.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({
@@ -77,7 +77,9 @@ async function main() {
   console.log('  To submit a work request, use this repo ID:');
   console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);
   console.log(`      -H 'Content-Type: application/json' \\`);
-  console.log(`      -d '{"externalTicketId":"JIRA-1","description":"Add health endpoint","repoIds":["${repo.id}"]}'`);
+  console.log(
+    `      -d '{"externalTicketId":"JIRA-1","description":"Add health endpoint","repoIds":["${repo.id}"]}'`
+  );
 }
 
 main()

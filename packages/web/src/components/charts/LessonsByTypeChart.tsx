@@ -1,14 +1,6 @@
 'use client';
 
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CHART_PALETTE } from './colors';
 
 interface Props {
@@ -17,7 +9,9 @@ interface Props {
 
 export function LessonsByTypeChart({ data }: Props) {
   if (data.length === 0) {
-    return <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No lesson data</p>;
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No lesson data</p>
+    );
   }
 
   return (

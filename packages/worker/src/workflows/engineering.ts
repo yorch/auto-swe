@@ -1,18 +1,16 @@
+import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
 import {
-  proxyActivities,
-  defineSignal,
-  setHandler,
   condition,
+  defineSignal,
+  proxyActivities,
+  setHandler,
   workflowInfo,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
-import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
 
 // ── Activity Proxies ──
 
-const stateActivities = proxyActivities<
-  Pick<typeof activitiesType, 'updateDomainState'>
->({
+const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   startToCloseTimeout: '30s',
   retry: {
     maximumAttempts: 5,
@@ -23,7 +21,13 @@ const stateActivities = proxyActivities<
 });
 
 const agentActivities = proxyActivities<
-  Pick<typeof activitiesType, 'executeImplementation' | 'executeCIFixImplementation' | 'executeReviewFixImplementation' | 'runReviewNetwork'>
+  Pick<
+    typeof activitiesType,
+    | 'executeImplementation'
+    | 'executeCIFixImplementation'
+    | 'executeReviewFixImplementation'
+    | 'runReviewNetwork'
+  >
 >({
   startToCloseTimeout: '30m',
   heartbeatTimeout: '5m',
@@ -47,9 +51,7 @@ const githubActivities = proxyActivities<
   },
 });
 
-const contextActivities = proxyActivities<
-  Pick<typeof activitiesType, 'validateContext'>
->({
+const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
   startToCloseTimeout: '5m',
   heartbeatTimeout: '2m',
   retry: {
@@ -60,9 +62,7 @@ const contextActivities = proxyActivities<
   },
 });
 
-const memoryActivities = proxyActivities<
-  Pick<typeof activitiesType, 'commitToMemory'>
->({
+const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
   startToCloseTimeout: '5m',
   retry: {
     maximumAttempts: 3,
@@ -75,7 +75,8 @@ const memoryActivities = proxyActivities<
 // ── Signals ──
 
 export const humanMergeSignal = defineSignal<[boolean]>('humanMergeSignal');
-export const ciPipelineSignal = defineSignal<[{ passed: boolean; logsUrl?: string }]>('ciPipelineSignal');
+export const ciPipelineSignal =
+  defineSignal<[{ passed: boolean; logsUrl?: string }]>('ciPipelineSignal');
 
 // ── Constants ──
 
@@ -86,9 +87,7 @@ const HUMAN_MERGE_TIMEOUT = '7d';
 
 // ── Workflow ──
 
-export async function EngineeringWorkflow(
-  request: RepoWorkRequest,
-): Promise<WorkflowResult> {
+export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<WorkflowResult> {
   let ciResult: { passed: boolean; logsUrl?: string } | null = null;
   let humanMerged = false;
   let totalCIRetries = 0;
@@ -145,7 +144,7 @@ export async function EngineeringWorkflow(
       // Feed rejection back to implementer via a review-specific prompt
       codeResult = await agentActivities.executeReviewFixImplementation(
         reviewResult.rejectionSummary!,
-        codeResult,
+        codeResult
       );
       continue;
     }
@@ -153,10 +152,7 @@ export async function EngineeringWorkflow(
     // 4. Open/Update PR
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_CI');
 
-    const prData = await githubActivities.createOrUpdatePullRequest(
-      request,
-      codeResult,
-    );
+    const prData = await githubActivities.createOrUpdatePullRequest(request, codeResult);
 
     // 5. Wait for CI pipeline signal
     const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
@@ -215,7 +211,7 @@ export async function EngineeringWorkflow(
   try {
     const lessonId = await memoryActivities.commitToMemory(
       workflowInfo().workflowId,
-      request.repoId,
+      request.repoId
     );
     if (lessonId) lessonsGenerated.push(lessonId);
   } catch {

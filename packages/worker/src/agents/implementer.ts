@@ -1,11 +1,11 @@
+import path from 'node:path';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import path from 'node:path';
-import { getModel } from '../lib/models.js';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
+import { getModel } from '../lib/models.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 /**
@@ -70,7 +70,9 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
   const listDirectory = createTool({
     id: 'listDirectory',
     description: 'List files and directories at a given path',
-    inputSchema: z.object({ path: z.string().default('.').describe('Relative path from repo root') }),
+    inputSchema: z.object({
+      path: z.string().default('.').describe('Relative path from repo root'),
+    }),
     outputSchema: z.object({ listing: z.string() }),
     execute: async ({ path }) => {
       try {
@@ -99,7 +101,9 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
       try {
         return { output: workspace.exec(command) };
       } catch (err: any) {
-        return { output: `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}` };
+        return {
+          output: `Command failed (exit code ${err.status}):\n${err.stdout ?? ''}\n${err.stderr ?? err.message}`,
+        };
       }
     },
   });

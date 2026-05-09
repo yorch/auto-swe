@@ -1,13 +1,13 @@
 'use client';
 
 import {
-  AreaChart,
   Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
 } from 'recharts';
 import { CHART_PALETTE } from './colors';
 
@@ -22,7 +22,9 @@ function formatDateLabel(label: unknown) {
 
 export function LessonsOverTimeChart({ data }: Props) {
   if (data.every((d) => d.count === 0)) {
-    return <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No lesson data</p>;
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No lesson data</p>
+    );
   }
 
   return (

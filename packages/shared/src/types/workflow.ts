@@ -37,7 +37,7 @@ export interface TestRunResult {
   total: number;
   passing: number;
   failing: number;
-  stdout: string;    // Truncated to 10KB
+  stdout: string; // Truncated to 10KB
   duration_ms: number;
 }
 
@@ -149,4 +149,4 @@ export interface PlannedRepo {
 // ── Budget Tiers (Cost Tracking) ──
 
 export const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
-export type BudgetTier = typeof BUDGET_TIERS[number];
+export type BudgetTier = (typeof BUDGET_TIERS)[number];

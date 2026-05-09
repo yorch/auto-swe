@@ -1,5 +1,5 @@
-import { NodeSDK } from '@opentelemetry/sdk-node';
 import { resourceFromAttributes } from '@opentelemetry/resources';
+import { NodeSDK } from '@opentelemetry/sdk-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
 type NodeSDKConfig = NonNullable<ConstructorParameters<typeof NodeSDK>[0]>;

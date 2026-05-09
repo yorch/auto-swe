@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Providers } from '@/components/Providers';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { Providers } from '@/components/Providers';
 
 export const metadata: Metadata = {
   title: 'auto-swe | Engineering Automation',

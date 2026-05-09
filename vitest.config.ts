@@ -1,5 +1,5 @@
-import { defineConfig } from 'vitest/config';
 import path from 'path';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
@@ -8,24 +8,15 @@ export default defineConfig({
       // can resolve them without building the shared package first.
       '@auto-swe/shared/lib/workflowId': path.resolve(
         __dirname,
-        'packages/shared/src/lib/workflowId.ts',
+        'packages/shared/src/lib/workflowId.ts'
       ),
-      '@auto-swe/shared/db': path.resolve(
-        __dirname,
-        'packages/shared/src/db.ts',
-      ),
+      '@auto-swe/shared/db': path.resolve(__dirname, 'packages/shared/src/db.ts'),
       '@auto-swe/shared/types/workflow': path.resolve(
         __dirname,
-        'packages/shared/src/types/workflow.ts',
+        'packages/shared/src/types/workflow.ts'
       ),
-      '@auto-swe/shared/types/api': path.resolve(
-        __dirname,
-        'packages/shared/src/types/api.ts',
-      ),
-      '@auto-swe/shared': path.resolve(
-        __dirname,
-        'packages/shared/src/index.ts',
-      ),
+      '@auto-swe/shared/types/api': path.resolve(__dirname, 'packages/shared/src/types/api.ts'),
+      '@auto-swe/shared': path.resolve(__dirname, 'packages/shared/src/index.ts'),
     },
   },
   test: {

@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
@@ -24,7 +24,7 @@ export function Sidebar() {
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
 
   const visibleItems = NAV_ITEMS.filter((item) =>
-    item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel),
+    item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel)
   );
 
   return (
@@ -42,7 +42,7 @@ export function Sidebar() {
               'block px-3 py-2 rounded-md text-sm transition-colors',
               pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
                 ? 'bg-[var(--primary)] text-white'
-                : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+                : 'text-[var(--foreground)] hover:bg-[var(--muted)]'
             )}
           >
             {item.label}

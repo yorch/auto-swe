@@ -1,13 +1,13 @@
 /** Hex colors for Recharts, aligned with the Tailwind STATUS_COLORS palette. */
 export const STATUS_CHART_COLORS: Record<string, string> = {
   VALIDATING_CONTEXT: '#818cf8', // indigo-400
-  IMPLEMENTING: '#60a5fa',       // blue-400
-  IN_REVIEW: '#a78bfa',          // purple-400
-  AWAITING_CI: '#facc15',        // yellow-400
+  IMPLEMENTING: '#60a5fa', // blue-400
+  IN_REVIEW: '#a78bfa', // purple-400
+  AWAITING_CI: '#facc15', // yellow-400
   AWAITING_HUMAN_MERGE: '#fb923c', // orange-400
-  COMPLETED: '#4ade80',          // green-400
-  FAILED: '#f87171',             // red-400
-  TIMED_OUT: '#9ca3af',          // gray-400
+  COMPLETED: '#4ade80', // green-400
+  FAILED: '#f87171', // red-400
+  TIMED_OUT: '#9ca3af', // gray-400
 };
 
 /** Generic palette for charts that aren't status-based. */
@@ -27,6 +27,6 @@ export const CHART_PALETTE = [
 /** Colors used for the stacked area / workflow-over-time chart. */
 export const TREND_COLORS = {
   completed: '#4ade80', // green-400
-  failed: '#f87171',    // red-400
-  active: '#60a5fa',    // blue-400
+  failed: '#f87171', // red-400
+  active: '#60a5fa', // blue-400
 } as const;

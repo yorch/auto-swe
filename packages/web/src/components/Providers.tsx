@@ -1,7 +1,7 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -14,7 +14,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             retry: 1,
           },
         },
-      }),
+      })
   );
 
   const checkAuth = useAuthStore((s) => s.checkAuth);
@@ -23,9 +23,5 @@ export function Providers({ children }: { children: React.ReactNode }) {
     checkAuth();
   }, [checkAuth]);
 
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }

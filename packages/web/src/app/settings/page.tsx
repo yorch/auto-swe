@@ -1,7 +1,7 @@
 'use client';
 
-import { useAuthStore } from '@/stores/authStore';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
@@ -11,7 +11,9 @@ export default function SettingsPage() {
       <h2 className="text-2xl font-bold">Settings</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle>Profile</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Profile</CardTitle>
+          </CardHeader>
           <dl className="space-y-3 text-sm">
             <div>
               <dt className="text-[var(--muted-foreground)]">Role</dt>
@@ -24,7 +26,9 @@ export default function SettingsPage() {
           </dl>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Integrations</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Integrations</CardTitle>
+          </CardHeader>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div>

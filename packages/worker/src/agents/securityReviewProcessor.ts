@@ -1,8 +1,8 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
-import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -27,9 +27,7 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 
 // ── Security Review Agent ──
 
-export async function scanDiffForSecurityIssues(
-  diff: string,
-): Promise<SecurityScanResult> {
+export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
   return tracer.startActiveSpan(
     'llm.security_scan',
     { attributes: { 'llm.model': getModelSpec('securityReview') } },
@@ -49,7 +47,7 @@ export async function scanDiffForSecurityIssues(
               content: diff,
             },
           ],
-          { structuredOutput: { schema: SecurityScanResultSchema } },
+          { structuredOutput: { schema: SecurityScanResultSchema } }
         );
 
         if (!result.object) {
@@ -69,6 +67,6 @@ export async function scanDiffForSecurityIssues(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }

@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
+import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { authRoutes } from './auth.js';
 
 // ── Mock helpers ──
@@ -75,7 +75,9 @@ async function buildApp() {
 describe('POST /api/v1/auth/login', () => {
   let ctx: Awaited<ReturnType<typeof buildApp>>;
 
-  beforeAll(async () => { ctx = await buildApp(); });
+  beforeAll(async () => {
+    ctx = await buildApp();
+  });
   afterAll(() => ctx.app.close());
 
   it('returns 400 for missing email', async () => {
@@ -154,7 +156,9 @@ describe('POST /api/v1/auth/login', () => {
 describe('POST /api/v1/auth/refresh', () => {
   let ctx: Awaited<ReturnType<typeof buildApp>>;
 
-  beforeAll(async () => { ctx = await buildApp(); });
+  beforeAll(async () => {
+    ctx = await buildApp();
+  });
   afterAll(() => ctx.app.close());
 
   it('returns 401 TOKEN_MISSING when no cookie', async () => {
@@ -179,7 +183,7 @@ describe('POST /api/v1/auth/refresh', () => {
 
   it('returns 401 TOKEN_REUSE_DETECTED and revokes family when token already revoked', async () => {
     ctx.mockPrisma.refreshToken.findUnique.mockResolvedValue(
-      makeRefreshToken({ revokedAt: new Date() }),
+      makeRefreshToken({ revokedAt: new Date() })
     );
     const res = await ctx.app.inject({
       method: 'POST',
@@ -189,13 +193,13 @@ describe('POST /api/v1/auth/refresh', () => {
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).error.code).toBe('TOKEN_REUSE_DETECTED');
     expect(ctx.mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { family: 'family-1' } }),
+      expect.objectContaining({ where: { family: 'family-1' } })
     );
   });
 
   it('returns 401 TOKEN_EXPIRED for expired token', async () => {
     ctx.mockPrisma.refreshToken.findUnique.mockResolvedValue(
-      makeRefreshToken({ expiresAt: new Date(Date.now() - 1000) }),
+      makeRefreshToken({ expiresAt: new Date(Date.now() - 1000) })
     );
     const res = await ctx.app.inject({
       method: 'POST',

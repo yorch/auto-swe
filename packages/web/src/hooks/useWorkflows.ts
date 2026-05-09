@@ -1,16 +1,16 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
 import type {
-  WorkflowSummary,
-  WorkflowDetail,
-  TeamSummary,
-  TeamDetail,
-  RepositorySummary,
-  UserSummary,
   LessonListItem,
+  RepositorySummary,
+  TeamDetail,
+  TeamSummary,
+  UserSummary,
+  WorkflowDetail,
+  WorkflowSummary,
 } from '@auto-swe/shared/types/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 
 export function useWorkflows() {
   return useQuery({
@@ -47,7 +47,8 @@ export function useTeam(id: string) {
 export function useRepositories() {
   return useQuery({
     queryKey: ['repositories'],
-    queryFn: () => api.get<{ data: RepositorySummary[] }>('/api/v1/repositories').then((r) => r.data),
+    queryFn: () =>
+      api.get<{ data: RepositorySummary[] }>('/api/v1/repositories').then((r) => r.data),
   });
 }
 

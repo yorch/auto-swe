@@ -1,12 +1,12 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useLessons } from '@/hooks/useWorkflows';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
 import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { useLessons } from '@/hooks/useWorkflows';
+import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
-import { groupLessonsByType, groupLessonsByDate } from '@/lib/chartUtils';
 
 export default function LessonsPage() {
   const { data: lessons, isLoading } = useLessons();
@@ -15,7 +15,8 @@ export default function LessonsPage() {
   const typeData = useMemo(() => groupLessonsByType(all), [all]);
   const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
-  if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  if (isLoading)
+    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
@@ -24,11 +25,15 @@ export default function LessonsPage() {
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
-          <CardHeader><CardTitle>Lessons by Failure Type</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Lessons by Failure Type</CardTitle>
+          </CardHeader>
           <LessonsByTypeChart data={typeData} />
         </Card>
         <Card>
-          <CardHeader><CardTitle>Lessons Over Time</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Lessons Over Time</CardTitle>
+          </CardHeader>
           <LessonsOverTimeChart data={timeData} />
         </Card>
       </div>
@@ -48,13 +53,17 @@ export default function LessonsPage() {
               )}
             </div>
             <div className="flex gap-4 mt-3 text-xs text-[var(--muted-foreground)]">
-              <span>{l.repository?.organizationName}/{l.repository?.repoName}</span>
+              <span>
+                {l.repository?.organizationName}/{l.repository?.repoName}
+              </span>
               <span>{formatDate(l.createdAt)}</span>
             </div>
           </Card>
         ))}
         {all.length === 0 && (
-          <p className="text-center text-[var(--muted-foreground)] py-12">No lessons recorded yet</p>
+          <p className="text-center text-[var(--muted-foreground)] py-12">
+            No lessons recorded yet
+          </p>
         )}
       </div>
     </div>

@@ -1,14 +1,14 @@
-import fp from 'fastify-plugin';
-import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import type { Role } from '@auto-swe/shared';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import fp from 'fastify-plugin';
+import jwt from 'jsonwebtoken';
 
 // ── JWT Configuration ──
 
 export interface JwtPayload {
-  sub: string;              // User UUID
+  sub: string; // User UUID
   role: Role;
   slackId?: string;
   iat: number;
@@ -102,9 +102,9 @@ export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 // ── RBAC Hook Factory ──
 
 export interface RBACOptions {
-  requiredRole?: string;       // Platform role check
-  requiredTeamRole?: string;   // Team-scoped role check (resolves via team membership)
-  teamIdParam?: string;        // Route param name containing the team ID (default: 'id')
+  requiredRole?: string; // Platform role check
+  requiredTeamRole?: string; // Team-scoped role check (resolves via team membership)
+  teamIdParam?: string; // Route param name containing the team ID (default: 'id')
 }
 
 /**
@@ -116,7 +116,7 @@ export interface RBACOptions {
  * bypass team checks.
  */
 export function requireAuth(options: RBACOptions = {}) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return reply.status(401).send({
@@ -163,7 +163,10 @@ export function requireAuth(options: RBACOptions = {}) {
 
       if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {
         return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: `Requires ${options.requiredTeamRole} role in this team` },
+          error: {
+            code: 'FORBIDDEN',
+            message: `Requires ${options.requiredTeamRole} role in this team`,
+          },
         });
       }
 

@@ -13,7 +13,7 @@ export function currentWorkflowId(): string {
   const execution = activityInfo().workflowExecution;
   if (!execution) {
     throw new Error(
-      'currentWorkflowId() called outside of a workflow-scheduled activity (Info.workflowExecution is undefined)',
+      'currentWorkflowId() called outside of a workflow-scheduled activity (Info.workflowExecution is undefined)'
     );
   }
   return execution.workflowId;

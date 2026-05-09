@@ -1,6 +1,6 @@
-import { heartbeat } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
 import type { EpicPlanRequest, EpicRepoEntry, RepoInfo } from '@auto-swe/shared/types/workflow';
+import { heartbeat } from '@temporalio/activity';
 import { decomposeEpic } from '../agents/plannerAgent.js';
 
 /**
@@ -16,12 +16,14 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
     select: { id: true, repoName: true, language: true, description: true },
   });
 
-  const repoInfos: RepoInfo[] = repos.map((r: { id: string; repoName: string; language: string | null; description: string | null }) => ({
-    repoId: r.id,
-    name: r.repoName,
-    language: r.language ?? 'unknown',
-    description: r.description ?? '',
-  }));
+  const repoInfos: RepoInfo[] = repos.map(
+    (r: { id: string; repoName: string; language: string | null; description: string | null }) => ({
+      repoId: r.id,
+      name: r.repoName,
+      language: r.language ?? 'unknown',
+      description: r.description ?? '',
+    })
+  );
 
   heartbeat('decomposing epic via planner agent');
 

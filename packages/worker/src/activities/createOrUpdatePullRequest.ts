@@ -1,10 +1,10 @@
-import { ApplicationFailure } from '@temporalio/activity';
 import { prisma } from '@auto-swe/shared/db';
-import type { RepoWorkRequest, CodeResult } from '@auto-swe/shared/types/workflow';
+import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 
 export async function createOrUpdatePullRequest(
   request: RepoWorkRequest,
-  codeResult: CodeResult,
+  codeResult: CodeResult
 ): Promise<{ prNumber: number; prUrl: string }> {
   const { Octokit } = await import('@octokit/rest');
 
@@ -31,7 +31,7 @@ export async function createOrUpdatePullRequest(
     if (existingPR.prNumber == null) {
       throw ApplicationFailure.nonRetryable(
         `PR record ${existingPR.id} exists but has no prNumber — cannot build PR URL`,
-        'PR_MISSING_NUMBER',
+        'PR_MISSING_NUMBER'
       );
     }
 

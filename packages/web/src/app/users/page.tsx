@@ -1,12 +1,13 @@
 'use client';
 
-import { useUsers } from '@/hooks/useWorkflows';
 import { Card } from '@/components/ui/Card';
+import { useUsers } from '@/hooks/useWorkflows';
 
 export default function UsersPage() {
   const { data: users, isLoading } = useUsers();
 
-  if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  if (isLoading)
+    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
@@ -29,10 +30,15 @@ export default function UsersPage() {
                 <td className="px-4 py-3">{u.role}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.slackId ?? '-'}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {(u.memberships ?? []).map((m) => m.team?.name).filter(Boolean).join(', ') || '-'}
+                  {(u.memberships ?? [])
+                    .map((m) => m.team?.name)
+                    .filter(Boolean)
+                    .join(', ') || '-'}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={u.isActive ? 'text-[var(--success)]' : 'text-[var(--destructive)]'}>
+                  <span
+                    className={u.isActive ? 'text-[var(--success)]' : 'text-[var(--destructive)]'}
+                  >
                     {u.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </td>

@@ -1,11 +1,11 @@
+import type { PlannedRepo, RepoInfo } from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { z } from 'zod';
-import type { RepoInfo, PlannedRepo } from '@auto-swe/shared/types/workflow';
-import { PLANNER_AGENT_PROMPT } from './prompts.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -25,11 +25,16 @@ const PlannerOutputSchema = z.object({
 
 export async function decomposeEpic(
   epicDescription: string,
-  availableRepos: RepoInfo[],
+  availableRepos: RepoInfo[]
 ): Promise<PlannedRepo[]> {
   return tracer.startActiveSpan(
     'llm.epic_planning',
-    { attributes: { 'llm.model': getModelSpec('planner'), 'epic.repo_count': availableRepos.length } },
+    {
+      attributes: {
+        'llm.model': getModelSpec('planner'),
+        'epic.repo_count': availableRepos.length,
+      },
+    },
     async (span) => {
       try {
         const agent = new Agent({
@@ -49,7 +54,7 @@ export async function decomposeEpic(
               }),
             },
           ],
-          { structuredOutput: { schema: PlannerOutputSchema } },
+          { structuredOutput: { schema: PlannerOutputSchema } }
         );
 
         if (result.usage) {
@@ -77,6 +82,6 @@ export async function decomposeEpic(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }

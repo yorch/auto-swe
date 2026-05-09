@@ -34,7 +34,7 @@ export class ApiClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers as Record<string, string> ?? {}),
+      ...((options.headers as Record<string, string>) ?? {}),
     };
 
     const response = await fetch(`${API_BASE}${path}`, {

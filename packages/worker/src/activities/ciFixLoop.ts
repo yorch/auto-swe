@@ -1,12 +1,12 @@
-import { heartbeat } from '@temporalio/activity';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { createWorkspace, shellQuote } from './workspace.js';
+import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import { createWorkspace, shellQuote } from './workspace.js';
 
 /**
  * Fetches CI logs from the provided URL.
@@ -37,7 +37,7 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
  */
 export async function executeCIFixImplementation(
   failureContext: string,
-  previousCodeResult: CodeResult,
+  previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { assignedBranch: previousCodeResult.branch },
@@ -59,7 +59,7 @@ export async function executeCIFixImplementation(
     previousCodeResult.branch,
     repo.defaultBranch,
     githubToken,
-    repo.executorImage ?? 'node:24-alpine',
+    repo.executorImage ?? 'node:24-alpine'
   );
 
   try {
@@ -85,7 +85,7 @@ export async function executeCIFixImplementation(
           }),
         },
       ],
-      { toolChoice: 'auto' },
+      { toolChoice: 'auto' }
     );
 
     heartbeat('CI fix agent completed');
@@ -113,7 +113,9 @@ export async function executeCIFixImplementation(
 
     // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
     workspace.exec('git add -A');
-    workspace.exec(`git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`);
+    workspace.exec(
+      `git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`
+    );
     workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
@@ -141,7 +143,7 @@ export async function executeCIFixImplementation(
  */
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
-  previousCodeResult: CodeResult,
+  previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { assignedBranch: previousCodeResult.branch },
@@ -162,7 +164,7 @@ export async function executeReviewFixImplementation(
     previousCodeResult.branch,
     repo.defaultBranch,
     githubToken,
-    repo.executorImage ?? 'node:24-alpine',
+    repo.executorImage ?? 'node:24-alpine'
   );
 
   try {
@@ -186,7 +188,7 @@ export async function executeReviewFixImplementation(
           }),
         },
       ],
-      { toolChoice: 'auto' },
+      { toolChoice: 'auto' }
     );
 
     heartbeat('review fix agent completed');
@@ -212,7 +214,9 @@ export async function executeReviewFixImplementation(
     }
 
     workspace.exec('git add -A');
-    workspace.exec(`git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`);
+    workspace.exec(
+      `git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`
+    );
     workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);

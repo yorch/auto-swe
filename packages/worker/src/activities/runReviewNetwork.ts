@@ -1,5 +1,5 @@
+import type { AggregatedReviewResult, CodeResult } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
-import type { CodeResult, AggregatedReviewResult } from '@auto-swe/shared/types/workflow';
 import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
 
 /**
@@ -8,7 +8,7 @@ import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
  */
 export async function runReviewNetwork(
   codeResult: CodeResult,
-  successCriteria?: string[],
+  successCriteria?: string[]
 ): Promise<AggregatedReviewResult> {
   heartbeat('starting review network');
 

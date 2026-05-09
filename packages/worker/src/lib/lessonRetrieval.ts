@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
-import { generateEmbedding } from './embeddings.js';
 import type { LessonSummary } from '@auto-swe/shared/types/workflow';
+import { generateEmbedding } from './embeddings.js';
 
 interface RetrievedLesson {
   id: string;
@@ -20,7 +20,7 @@ export async function retrieveSimilarLessons(
   queryText: string,
   repoId: string,
   limit: number = 5,
-  similarityThreshold: number = 0.7,
+  similarityThreshold: number = 0.7
 ): Promise<LessonSummary[]> {
   const queryEmbedding = await generateEmbedding(queryText);
 
@@ -42,7 +42,7 @@ export async function retrieveSimilarLessons(
     JSON.stringify(queryEmbedding),
     repoId,
     similarityThreshold,
-    limit,
+    limit
   );
 
   return lessons.map((l) => ({

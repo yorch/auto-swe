@@ -1,21 +1,24 @@
 'use client';
 
-import { useWorkflows } from '@/hooks/useWorkflows';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Card } from '@/components/ui/Card';
-import { formatRelativeTime, formatCost } from '@/lib/utils';
 import Link from 'next/link';
+import { Card } from '@/components/ui/Card';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useWorkflows } from '@/hooks/useWorkflows';
+import { formatCost, formatRelativeTime } from '@/lib/utils';
 
 export default function WorkflowsPage() {
   const { data: workflows, isLoading } = useWorkflows();
 
-  if (isLoading) return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  if (isLoading)
+    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Workflows</h2>
-        <span className="text-sm text-[var(--muted-foreground)]">{(workflows ?? []).length} total</span>
+        <span className="text-sm text-[var(--muted-foreground)]">
+          {(workflows ?? []).length} total
+        </span>
       </div>
 
       <Card className="p-0 overflow-hidden">
@@ -31,16 +34,28 @@ export default function WorkflowsPage() {
           </thead>
           <tbody>
             {(workflows ?? []).map((w) => (
-              <tr key={w.id} className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors">
+              <tr
+                key={w.id}
+                className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors"
+              >
                 <td className="px-4 py-3">
-                  <Link href={`/workflows/${w.id}`} className="text-[var(--primary)] hover:underline font-medium">
+                  <Link
+                    href={`/workflows/${w.id}`}
+                    className="text-[var(--primary)] hover:underline font-medium"
+                  >
                     {w.repository?.organizationName}/{w.repository?.repoName}
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{w.assignedBranch}</td>
-                <td className="px-4 py-3"><StatusBadge status={w.currentStatus} /></td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">{formatRelativeTime(w.updatedAt)}</td>
-                <td className="px-4 py-3 text-right text-xs text-[var(--muted-foreground)]">{formatCost(w.costUsdAccrued)}</td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={w.currentStatus} />
+                </td>
+                <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                  {formatRelativeTime(w.updatedAt)}
+                </td>
+                <td className="px-4 py-3 text-right text-xs text-[var(--muted-foreground)]">
+                  {formatCost(w.costUsdAccrued)}
+                </td>
               </tr>
             ))}
           </tbody>

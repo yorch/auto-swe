@@ -1,4 +1,4 @@
-import type { TestRunResult, FileChange } from '@auto-swe/shared/types/workflow';
+import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
 /**
  * Detect the test command from a package.json string.

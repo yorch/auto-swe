@@ -1,27 +1,25 @@
-import {
-  proxyActivities,
-  defineSignal,
-  setHandler,
-  startChild,
-  ParentClosePolicy,
-} from '@temporalio/workflow';
-import type * as activitiesType from '../activities/index.js';
 import type {
+  EpicRepoEntry,
+  EpicRequest,
+  EpicResult,
   RepoWorkRequest,
   WorkflowResult,
-  EpicRequest,
-  EpicRepoEntry,
-  EpicResult,
 } from '@auto-swe/shared/types/workflow';
+import {
+  defineSignal,
+  ParentClosePolicy,
+  proxyActivities,
+  setHandler,
+  startChild,
+} from '@temporalio/workflow';
+import type * as activitiesType from '../activities/index.js';
 
 // Re-export types for external consumers
-export type { EpicRequest, EpicRepoEntry, EpicResult };
+export type { EpicRepoEntry, EpicRequest, EpicResult };
 
 // ── Activity Proxies ──
 
-const stateActivities = proxyActivities<
-  Pick<typeof activitiesType, 'updateDomainState'>
->({
+const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   startToCloseTimeout: '30s',
   retry: {
     maximumAttempts: 5,
@@ -31,9 +29,7 @@ const stateActivities = proxyActivities<
   },
 });
 
-const plannerActivities = proxyActivities<
-  Pick<typeof activitiesType, 'planEpic'>
->({
+const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'>>({
   startToCloseTimeout: '5m',
   retry: {
     maximumAttempts: 3,
@@ -53,9 +49,7 @@ const EPIC_TIMEOUT = '30d';
 
 // ── Workflow ──
 
-export async function EpicOrchestratorWorkflow(
-  request: EpicRequest,
-): Promise<EpicResult> {
+export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<EpicResult> {
   let cancelled = false;
   setHandler(epicCancelSignal, () => {
     cancelled = true;
@@ -82,9 +76,7 @@ export async function EpicOrchestratorWorkflow(
   while (completedRepos.size < request.repos.length && !cancelled) {
     // Find repos whose dependencies are all satisfied
     const ready = request.repos.filter(
-      (r) =>
-        !completedRepos.has(r.repoId) &&
-        r.dependsOn.every((dep) => completedRepos.has(dep)),
+      (r) => !completedRepos.has(r.repoId) && r.dependsOn.every((dep) => completedRepos.has(dep))
     );
 
     if (ready.length === 0) {
@@ -116,7 +108,7 @@ export async function EpicOrchestratorWorkflow(
           parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
         });
 
-        childResults[repo.repoId] = await handle.result() as WorkflowResult;
+        childResults[repo.repoId] = (await handle.result()) as WorkflowResult;
         if (childResults[repo.repoId].status === 'SUCCESS') {
           completedRepos.add(repo.repoId);
         }
@@ -134,9 +126,7 @@ export async function EpicOrchestratorWorkflow(
   }
 
   // Determine overall status
-  const allSuccess = request.repos.every(
-    (r) => childResults[r.repoId]?.status === 'SUCCESS',
-  );
+  const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
 
   if (cancelled) {
     return { status: 'FAILED', childResults };

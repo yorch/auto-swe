@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { workRequestRoutes } from './workRequests.js';
 
 describe('POST /api/v1/work-requests', () => {

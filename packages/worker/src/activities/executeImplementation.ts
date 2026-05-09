@@ -1,20 +1,18 @@
-import { heartbeat, ApplicationFailure } from '@temporalio/activity';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { prisma } from '@auto-swe/shared/db';
-import type { RepoWorkRequest, CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { createWorkspace, shellQuote } from './workspace.js';
+import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
-import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
+import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
-export async function executeImplementation(
-  request: RepoWorkRequest,
-): Promise<CodeResult> {
+export async function executeImplementation(request: RepoWorkRequest): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
   });
@@ -30,7 +28,7 @@ export async function executeImplementation(
     branch,
     repo.defaultBranch,
     githubToken,
-    repo.executorImage ?? 'node:24-alpine',
+    repo.executorImage ?? 'node:24-alpine'
   );
 
   try {
@@ -48,7 +46,8 @@ export async function executeImplementation(
     try {
       const lessons = await retrieveSimilarLessons(request.description, request.repoId);
       if (lessons.length > 0) {
-        lessonsContext = '\n\n## Lessons from Previous Workflows\n' +
+        lessonsContext =
+          '\n\n## Lessons from Previous Workflows\n' +
           lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`).join('\n');
       }
     } catch {
@@ -58,7 +57,12 @@ export async function executeImplementation(
     heartbeat('lessons retrieved');
 
     let testResult: TestRunResult = {
-      passed: false, total: 0, passing: 0, failing: 0, stdout: '', duration_ms: 0,
+      passed: false,
+      total: 0,
+      passing: 0,
+      failing: 0,
+      stdout: '',
+      duration_ms: 0,
     };
 
     // TDD loop
@@ -78,7 +82,7 @@ export async function executeImplementation(
             }),
           },
         ],
-        { toolChoice: 'auto' },
+        { toolChoice: 'auto' }
       );
 
       if (genResult.usage) {
@@ -86,7 +90,7 @@ export async function executeImplementation(
           currentWorkflowId(),
           'implementer',
           genResult.usage,
-          `llm.implementer.iteration_${iteration}`,
+          `llm.implementer.iteration_${iteration}`
         );
       }
 
@@ -98,7 +102,10 @@ export async function executeImplementation(
         if (testResult.passed) break;
       } catch (err: any) {
         testResult = {
-          passed: false, total: 0, passing: 0, failing: 1,
+          passed: false,
+          total: 0,
+          passing: 0,
+          failing: 1,
           stdout: err.stdout?.slice(-10_000) ?? err.message,
           duration_ms: 0,
         };
@@ -119,12 +126,15 @@ export async function executeImplementation(
     const securityResult = await scanDiffForSecurityIssues(diff);
     if (!securityResult.passed) {
       const findingsSummary = securityResult.findings
-        .map((f) => `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`)
+        .map(
+          (f) =>
+            `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`
+        )
         .join('\n');
       throw ApplicationFailure.nonRetryable(
         `Security scan failed with critical findings:\n${findingsSummary}`,
         'SECURITY_GATE_FAILURE',
-        { findings: securityResult.findings },
+        { findings: securityResult.findings }
       );
     }
 

@@ -1,14 +1,16 @@
+import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
-import { prisma } from '@auto-swe/shared/db';
-import { generateEmbedding } from '../lib/embeddings.js';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
+import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
   rationale: z.string(),
   lessonSummary: z.string(),
-  failureType: z.enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT']).nullable(),
+  failureType: z
+    .enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT'])
+    .nullable(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
 });
 
@@ -16,10 +18,7 @@ const LessonOutputSchema = z.object({
  * Summarizes a completed workflow into a reusable lesson and persists it
  * with a vector embedding for future semantic search.
  */
-export async function commitToMemory(
-  temporalWorkflowId: string,
-  repoId: string,
-): Promise<string> {
+export async function commitToMemory(temporalWorkflowId: string, repoId: string): Promise<string> {
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { temporalWorkflowId },
     include: {
@@ -58,7 +57,7 @@ export async function commitToMemory(
         }),
       },
     ],
-    { structuredOutput: { schema: LessonOutputSchema } },
+    { structuredOutput: { schema: LessonOutputSchema } }
   );
 
   if (!result.object) {
@@ -80,7 +79,7 @@ export async function commitToMemory(
     lesson.lessonSummary,
     JSON.stringify(embedding),
     lesson.failureType,
-    JSON.stringify(lesson.metadata ?? {}),
+    JSON.stringify(lesson.metadata ?? {})
   );
 
   return lessonRows[0]?.id ?? '';

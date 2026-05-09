@@ -3,8 +3,8 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE any other imports that need instrumentation
 const otel = initTelemetry('auto-swe-worker');
 
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 

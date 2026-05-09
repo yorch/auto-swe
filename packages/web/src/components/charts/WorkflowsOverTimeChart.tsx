@@ -1,14 +1,14 @@
 'use client';
 
 import {
-  AreaChart,
   Area,
+  AreaChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
 } from 'recharts';
 import { TREND_COLORS } from './colors';
 
@@ -23,7 +23,9 @@ function formatDateLabel(label: unknown) {
 
 export function WorkflowsOverTimeChart({ data }: Props) {
   if (data.every((d) => d.completed === 0 && d.failed === 0 && d.active === 0)) {
-    return <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No workflow data</p>;
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No workflow data</p>
+    );
   }
 
   return (

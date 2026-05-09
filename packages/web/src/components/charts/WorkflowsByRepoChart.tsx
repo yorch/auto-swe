@@ -1,14 +1,6 @@
 'use client';
 
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CHART_PALETTE } from './colors';
 
 interface Props {
@@ -17,7 +9,9 @@ interface Props {
 
 export function WorkflowsByRepoChart({ data }: Props) {
   if (data.length === 0) {
-    return <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No repository data</p>;
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No repository data</p>
+    );
   }
 
   return (
@@ -25,12 +19,7 @@ export function WorkflowsByRepoChart({ data }: Props) {
       <BarChart data={data} layout="vertical" margin={{ left: 20 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
-        <YAxis
-          type="category"
-          dataKey="repo"
-          width={140}
-          tick={{ fontSize: 12 }}
-        />
+        <YAxis type="category" dataKey="repo" width={140} tick={{ fontSize: 12 }} />
         <Tooltip />
         <Bar dataKey="count" fill={CHART_PALETTE[0]} radius={[0, 4, 4, 0]} />
       </BarChart>

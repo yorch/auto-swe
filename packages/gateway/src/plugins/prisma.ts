@@ -1,7 +1,7 @@
-import fp from 'fastify-plugin';
 import { PrismaClient } from '@auto-swe/shared';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { FastifyPluginAsync } from 'fastify';
+import fp from 'fastify-plugin';
 
 declare module 'fastify' {
   interface FastifyInstance {

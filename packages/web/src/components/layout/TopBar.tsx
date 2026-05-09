@@ -1,9 +1,9 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useTeams } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
-import { useTeams } from '@/hooks/useWorkflows';
-import { useRouter } from 'next/navigation';
 
 export function TopBar() {
   const router = useRouter();
@@ -27,7 +27,9 @@ export function TopBar() {
         >
           <option value="">All Teams</option>
           {(teams ?? []).map((t: any) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
           ))}
         </select>
       </div>

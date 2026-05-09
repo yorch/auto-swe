@@ -1,8 +1,8 @@
 import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
-import { openai, createOpenAI } from '@ai-sdk/openai';
-import { google, createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
+import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { parseProviderModelSpec, createOpenAICompatibleClient } from './providerUtils.js';
+import { createOpenAICompatibleClient, parseProviderModelSpec } from './providerUtils.js';
 
 // All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
 // derive the type from the existing anthropic provider so we don't take a hard
@@ -18,21 +18,21 @@ export type AgentRole =
   | 'commitToMemory';
 
 const DEFAULT_MODELS: Record<AgentRole, string> = {
-  implementer:     'anthropic/claude-opus-4-6',
-  reviewer:        'anthropic/claude-opus-4-6',
-  planner:         'anthropic/claude-sonnet-4-20250514',
-  securityReview:  'anthropic/claude-sonnet-4-20250514',
+  implementer: 'anthropic/claude-opus-4-6',
+  reviewer: 'anthropic/claude-opus-4-6',
+  planner: 'anthropic/claude-sonnet-4-20250514',
+  securityReview: 'anthropic/claude-sonnet-4-20250514',
   validateContext: 'anthropic/claude-sonnet-4-20250514',
-  commitToMemory:  'anthropic/claude-opus-4-6',
+  commitToMemory: 'anthropic/claude-opus-4-6',
 };
 
 const ROLE_ENV_VAR: Record<AgentRole, string> = {
-  implementer:     'IMPLEMENTER_MODEL',
-  reviewer:        'REVIEWER_MODEL',
-  planner:         'PLANNER_MODEL',
-  securityReview:  'SECURITY_REVIEW_MODEL',
+  implementer: 'IMPLEMENTER_MODEL',
+  reviewer: 'REVIEWER_MODEL',
+  planner: 'PLANNER_MODEL',
+  securityReview: 'SECURITY_REVIEW_MODEL',
   validateContext: 'CONTEXT_VALIDATOR_MODEL',
-  commitToMemory:  'MEMORY_SUMMARIZER_MODEL',
+  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
 };
 
 /**
@@ -76,4 +76,4 @@ export function getModel(role: AgentRole): LanguageModel {
 // Re-export createX functions so callers needing custom client options (e.g. baseURL
 // overrides for Bedrock/Azure) can construct providers directly without re-importing
 // the underlying SDK packages.
-export { createAnthropic, createOpenAI, createGoogleGenerativeAI, createOpenAICompatible };
+export { createAnthropic, createGoogleGenerativeAI, createOpenAI, createOpenAICompatible };

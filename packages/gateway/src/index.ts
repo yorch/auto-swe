@@ -3,25 +3,25 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import Fastify from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
-import { temporalPlugin } from './plugins/temporal.js';
-import { prismaPlugin } from './plugins/prisma.js';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import authPlugin from './plugins/auth.js';
-import { workRequestRoutes } from './routes/workRequests.js';
-import { workflowRoutes } from './routes/workflows.js';
-import { webhookRoutes } from './routes/webhooks.js';
+import { prismaPlugin } from './plugins/prisma.js';
+import { temporalPlugin } from './plugins/temporal.js';
 import { authRoutes } from './routes/auth.js';
+import { epicRoutes } from './routes/epics.js';
+import { lessonRoutes } from './routes/lessons.js';
+import { repositoryRoutes } from './routes/repositories.js';
+import { slackRoutes } from './routes/slack.js';
 import { teamRoutes } from './routes/teams.js';
 import { userRoutes } from './routes/users.js';
-import { repositoryRoutes } from './routes/repositories.js';
-import { lessonRoutes } from './routes/lessons.js';
-import { slackRoutes } from './routes/slack.js';
-import { epicRoutes } from './routes/epics.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { workflowRoutes } from './routes/workflows.js';
+import { workRequestRoutes } from './routes/workRequests.js';
 
 async function start() {
   const app = Fastify({ logger: true });

@@ -19,7 +19,7 @@ export function parseProviderModelSpec(spec: string): ProviderModelSpec {
   const slash = spec.indexOf('/');
   if (slash === -1) {
     throw new Error(
-      `Invalid model spec '${spec}'. Expected '<provider>/<model>' (e.g. 'anthropic/claude-opus-4-6').`,
+      `Invalid model spec '${spec}'. Expected '<provider>/<model>' (e.g. 'anthropic/claude-opus-4-6').`
     );
   }
   const provider = spec.slice(0, slash).trim().toLowerCase();
@@ -48,13 +48,13 @@ export function providerEnvPrefix(provider: string): string {
  * Inflection Pi, etc.
  */
 export function createOpenAICompatibleClient(
-  provider: string,
+  provider: string
 ): ReturnType<typeof createOpenAICompatible> {
   const prefix = providerEnvPrefix(provider);
   const baseURL = process.env[`${prefix}_API_BASE`];
   if (!baseURL) {
     throw new Error(
-      `Unknown provider '${provider}'. Set ${prefix}_API_BASE to use it as an OpenAI-compatible endpoint.`,
+      `Unknown provider '${provider}'. Set ${prefix}_API_BASE to use it as an OpenAI-compatible endpoint.`
     );
   }
   const apiKey = process.env[`${prefix}_API_KEY`];

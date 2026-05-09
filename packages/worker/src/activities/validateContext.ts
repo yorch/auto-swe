@@ -1,9 +1,9 @@
-import { heartbeat } from '@temporalio/activity';
-import { Agent } from '@mastra/core/agent';
-import { trace } from '@opentelemetry/api';
-import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { Agent } from '@mastra/core/agent';
+import { trace } from '@opentelemetry/api';
+import { heartbeat } from '@temporalio/activity';
+import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 
@@ -18,7 +18,7 @@ const ContextValidationSchema = z.object({
 // ── Context Validator Activity ──
 
 export async function validateContext(
-  workRequest: RepoWorkRequest,
+  workRequest: RepoWorkRequest
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
@@ -48,7 +48,7 @@ export async function validateContext(
                 }),
               },
             ],
-            { structuredOutput: { schema: ContextValidationSchema } },
+            { structuredOutput: { schema: ContextValidationSchema } }
           );
 
           if (!result.object) return [];
@@ -60,7 +60,7 @@ export async function validateContext(
         } finally {
           span.end();
         }
-      },
+      }
     );
   } catch {
     // Graceful degradation: empty criteria still allows workflow to proceed
