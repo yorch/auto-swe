@@ -36,6 +36,7 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <span className="text-sm text-[var(--muted-foreground)]">{user?.role}</span>
         <button
+          type="button"
           onClick={handleLogout}
           className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
         >

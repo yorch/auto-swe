@@ -53,8 +53,7 @@ export function parseTestOutput(output: string, durationMs: number): TestRunResu
 export function parseDiffToFileChanges(diff: string): FileChange[] {
   const files: FileChange[] = [];
   const fileRegex = /^diff --git a\/(.+) b\/(.+)$/gm;
-  let match;
-  while ((match = fileRegex.exec(diff)) !== null) {
+  for (const match of diff.matchAll(fileRegex)) {
     const path = match[2];
     const ext = path.split('.').pop() ?? '';
     const nextDiffIndex = diff.indexOf('diff --git', match.index + 1);

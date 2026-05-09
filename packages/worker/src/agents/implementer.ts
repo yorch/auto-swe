@@ -17,7 +17,7 @@ function safePath(relPath: string): string {
   if (path.isAbsolute(normalized) || normalized.startsWith('..')) {
     throw new Error(`Path traversal rejected: ${relPath}`);
   }
-  if (/['\\\x00]/.test(normalized)) {
+  if (normalized.includes('\0') || /['\\]/.test(normalized)) {
     throw new Error(`Invalid characters in path: ${relPath}`);
   }
   return normalized;
