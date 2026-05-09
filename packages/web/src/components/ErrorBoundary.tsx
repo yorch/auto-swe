@@ -14,11 +14,11 @@ interface ErrorBoundaryState {
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { error: null, hasError: false };
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
+    return { error, hasError: true };
   }
 
   render() {
@@ -31,9 +31,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               {this.state.error?.message ?? 'An unexpected error occurred.'}
             </p>
             <button
-              type="button"
-              onClick={() => this.setState({ hasError: false, error: null })}
               className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+              onClick={() => this.setState({ error: null, hasError: false })}
+              type="button"
             >
               Try again
             </button>

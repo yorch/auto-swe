@@ -33,10 +33,10 @@ export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Pro
   });
 
   const sdk = new NodeSDK({
+    instrumentations: opts.instrumentations ?? [],
+    metricReader: opts.metricReader,
     resource,
     traceExporter: opts.traceExporter,
-    metricReader: opts.metricReader,
-    instrumentations: opts.instrumentations ?? [],
   });
 
   sdk.start();

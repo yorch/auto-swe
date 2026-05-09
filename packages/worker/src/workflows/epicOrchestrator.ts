@@ -20,23 +20,23 @@ export type { EpicRepoEntry, EpicRequest, EpicResult };
 // ── Activity Proxies ──
 
 const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
-  startToCloseTimeout: '30s',
   retry: {
-    maximumAttempts: 5,
-    initialInterval: '1s',
     backoffCoefficient: 2,
+    initialInterval: '1s',
+    maximumAttempts: 5,
     maximumInterval: '30s',
   },
+  startToCloseTimeout: '30s',
 });
 
 const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'>>({
-  startToCloseTimeout: '5m',
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
 // ── Signals ──
@@ -59,8 +59,8 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
   if (request.repos.length === 0 && request.repoIds && request.repoIds.length > 0) {
     const plannedRepos = await plannerActivities.planEpic({
       description: request.description,
-      requestPayload: request.requestPayload,
       repoIds: request.repoIds,
+      requestPayload: request.requestPayload,
       workRequestId: request.workRequestId,
     });
     request = { ...request, repos: plannedRepos };
@@ -87,12 +87,12 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
     // Start ready repos in parallel as child workflows
     const childPromises = ready.map(async (repo) => {
       const childRequest: RepoWorkRequest = {
-        workRequestId: request.workRequestId,
-        repoId: repo.repoId,
-        externalTicketId: request.externalTicketId,
         description: request.description,
-        requestPayload: request.requestPayload,
+        externalTicketId: request.externalTicketId,
         parentWorkflowId: request.epicWorkflowId,
+        repoId: repo.repoId,
+        requestPayload: request.requestPayload,
+        workRequestId: request.workRequestId,
       };
 
       // Scope the child ID to this epic execution so that retrying the epic
@@ -102,10 +102,10 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
 
       try {
         const handle = await startChild('EngineeringWorkflow', {
-          workflowId: childWorkflowId,
-          taskQueue: 'engineering-workflow',
           args: [childRequest],
           parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+          taskQueue: 'engineering-workflow',
+          workflowId: childWorkflowId,
         });
 
         childResults[repo.repoId] = (await handle.result()) as WorkflowResult;
@@ -114,10 +114,10 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
         }
       } catch (err: any) {
         childResults[repo.repoId] = {
+          lessonsGenerated: [],
           status: 'FAILED',
           totalCIRetries: 0,
           totalReviewRetries: 0,
-          lessonsGenerated: [],
         };
       }
     });
@@ -129,11 +129,11 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
   const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
 
   if (cancelled) {
-    return { status: 'FAILED', childResults };
+    return { childResults, status: 'FAILED' };
   }
 
   return {
-    status: allSuccess ? 'SUCCESS' : 'FAILED',
     childResults,
+    status: allSuccess ? 'SUCCESS' : 'FAILED',
   };
 }

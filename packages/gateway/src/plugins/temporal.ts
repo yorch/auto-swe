@@ -20,22 +20,6 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   const client = new Client({ connection });
 
   fastify.decorate('temporal', {
-    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
-      await client.workflow.start('EngineeringWorkflow', {
-        taskQueue: 'engineering-workflow',
-        workflowId,
-        args: [request],
-      });
-    },
-
-    async startEpicWorkflow(workflowId: string, request: EpicRequest): Promise<void> {
-      await client.workflow.start('EpicOrchestratorWorkflow', {
-        taskQueue: 'engineering-workflow',
-        workflowId,
-        args: [request],
-      });
-    },
-
     async signalWorkflow(
       workflowId: string,
       signalName: string,
@@ -43,6 +27,21 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startEpicWorkflow(workflowId: string, request: EpicRequest): Promise<void> {
+      await client.workflow.start('EpicOrchestratorWorkflow', {
+        args: [request],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
+    },
+    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
+      await client.workflow.start('EngineeringWorkflow', {
+        args: [request],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
     },
   });
 

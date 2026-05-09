@@ -39,8 +39,8 @@ export default function SettingsPage() {
               </div>
               {!user?.slackId && (
                 <a
-                  href="/api/v1/auth/slack/connect"
                   className="text-sm text-[var(--primary)] hover:underline"
+                  href="/api/v1/auth/slack/connect"
                 >
                   Connect
                 </a>

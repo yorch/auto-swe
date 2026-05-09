@@ -6,12 +6,12 @@ import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
-  rationale: z.string(),
-  lessonSummary: z.string(),
   failureType: z
     .enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT'])
     .nullable(),
+  lessonSummary: z.string(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
+  rationale: z.string(),
 });
 
 /**
@@ -20,11 +20,11 @@ const LessonOutputSchema = z.object({
  */
 export async function commitToMemory(temporalWorkflowId: string, repoId: string): Promise<string> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { temporalWorkflowId },
     include: {
       pullRequests: true,
       workRequest: true,
     },
+    where: { temporalWorkflowId },
   });
 
   if (!workflow) {
@@ -34,27 +34,27 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
   // Use Memory Agent to summarize the workflow
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
-    name: 'memory-summarizer',
-    model: getModel('commitToMemory'),
     instructions: MEMORY_SUMMARIZER_PROMPT,
+    model: getModel('commitToMemory'),
+    name: 'memory-summarizer',
   });
 
   const result = await memoryAgent.generate(
     [
       {
-        role: 'user',
         content: JSON.stringify({
-          workflowId: workflow.id,
-          temporalWorkflowId: workflow.temporalWorkflowId,
-          status: workflow.currentStatus,
-          externalTicketId: workflow.workRequest?.externalTicketId,
           description: workflow.workRequest?.description,
+          externalTicketId: workflow.workRequest?.externalTicketId,
           pullRequests: workflow.pullRequests.map((pr) => ({
+            ciStatus: pr.ciStatus,
             prNumber: pr.prNumber,
             status: pr.status,
-            ciStatus: pr.ciStatus,
           })),
+          status: workflow.currentStatus,
+          temporalWorkflowId: workflow.temporalWorkflowId,
+          workflowId: workflow.id,
         }),
+        role: 'user',
       },
     ],
     { structuredOutput: { schema: LessonOutputSchema } }

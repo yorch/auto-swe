@@ -11,12 +11,12 @@ const ROLES: AgentRole[] = [
 ];
 
 const ROLE_ENV: Record<AgentRole, string> = {
+  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
   implementer: 'IMPLEMENTER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
   planner: 'PLANNER_MODEL',
+  reviewer: 'REVIEWER_MODEL',
   securityReview: 'SECURITY_REVIEW_MODEL',
   validateContext: 'CONTEXT_VALIDATOR_MODEL',
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
 };
 
 describe('getModelSpec', () => {

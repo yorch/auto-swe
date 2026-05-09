@@ -18,21 +18,21 @@ export type AgentRole =
   | 'commitToMemory';
 
 const DEFAULT_MODELS: Record<AgentRole, string> = {
+  commitToMemory: 'anthropic/claude-opus-4-6',
   implementer: 'anthropic/claude-opus-4-6',
-  reviewer: 'anthropic/claude-opus-4-6',
   planner: 'anthropic/claude-sonnet-4-20250514',
+  reviewer: 'anthropic/claude-opus-4-6',
   securityReview: 'anthropic/claude-sonnet-4-20250514',
   validateContext: 'anthropic/claude-sonnet-4-20250514',
-  commitToMemory: 'anthropic/claude-opus-4-6',
 };
 
 const ROLE_ENV_VAR: Record<AgentRole, string> = {
+  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
   implementer: 'IMPLEMENTER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
   planner: 'PLANNER_MODEL',
+  reviewer: 'REVIEWER_MODEL',
   securityReview: 'SECURITY_REVIEW_MODEL',
   validateContext: 'CONTEXT_VALIDATOR_MODEL',
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
 };
 
 /**

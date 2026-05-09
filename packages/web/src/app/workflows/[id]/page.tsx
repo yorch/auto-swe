@@ -21,7 +21,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/workflows" className="text-[var(--primary)] hover:underline text-sm">
+        <Link className="text-[var(--primary)] hover:underline text-sm" href="/workflows">
           &larr; Back
         </Link>
         <h2 className="text-2xl font-bold">{workflow.repository?.repoName ?? 'Workflow'}</h2>
@@ -64,7 +64,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           ) : (
             <div className="space-y-2">
               {workflow.pullRequests.map((pr) => (
-                <div key={pr.id} className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-sm" key={pr.id}>
                   <span className="font-medium">PR #{pr.prNumber}</span>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={pr.ciStatus ?? 'PENDING'} />

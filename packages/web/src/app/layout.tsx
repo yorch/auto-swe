@@ -6,8 +6,8 @@ import { TopBar } from '@/components/layout/TopBar';
 import { Providers } from '@/components/Providers';
 
 export const metadata: Metadata = {
-  title: 'auto-swe | Engineering Automation',
   description: 'AI-powered software engineering automation dashboard',
+  title: 'auto-swe | Engineering Automation',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

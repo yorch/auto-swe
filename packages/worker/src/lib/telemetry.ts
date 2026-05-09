@@ -7,14 +7,14 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   return initSharedTelemetry({
-    serviceName,
-    traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
+    instrumentations: [new HttpInstrumentation()],
     metricReader: endpoint
       ? new PeriodicExportingMetricReader({
           exporter: new OTLPMetricExporter({ url: endpoint }),
           exportIntervalMillis: 30_000,
         })
       : undefined,
-    instrumentations: [new HttpInstrumentation()],
+    serviceName,
+    traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
   });
 }

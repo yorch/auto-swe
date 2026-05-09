@@ -22,54 +22,54 @@ async function main() {
 
   // Seed admin user
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@auto-swe.local' },
-    update: {},
     create: {
       email: 'admin@auto-swe.local',
       passwordHash: await bcrypt.hash(adminPassword, 12),
       role: 'ADMIN',
     },
+    update: {},
+    where: { email: 'admin@auto-swe.local' },
   });
   console.log(`Seed: admin user created (${admin.id})`);
 
   // Seed default team
   const team = await prisma.team.upsert({
-    where: { slug: 'default' },
-    update: {},
     create: {
+      description: 'Default team for local development',
       name: 'Default Team',
       slug: 'default',
-      description: 'Default team for local development',
     },
+    update: {},
+    where: { slug: 'default' },
   });
   console.log(`Seed: default team created (${team.id})`);
 
   // Add admin to default team as ADMIN
   await prisma.teamMembership.upsert({
-    where: { userId_teamId: { userId: admin.id, teamId: team.id } },
-    update: {},
     create: {
-      userId: admin.id,
-      teamId: team.id,
       role: 'ADMIN',
+      teamId: team.id,
+      userId: admin.id,
     },
+    update: {},
+    where: { userId_teamId: { teamId: team.id, userId: admin.id } },
   });
   console.log(`Seed: admin added to default team`);
 
   // Seed a sample repository for local development.
   const repo = await prisma.repository.upsert({
+    create: {
+      defaultBranch: 'main',
+      organizationName: 'your-org',
+      repoName: 'your-repo',
+      teamId: team.id,
+    },
+    update: {},
     where: {
       organizationName_repoName: {
         organizationName: 'your-org',
         repoName: 'your-repo',
       },
-    },
-    update: {},
-    create: {
-      organizationName: 'your-org',
-      repoName: 'your-repo',
-      defaultBranch: 'main',
-      teamId: team.id,
     },
   });
   console.log(`Seed: sample repository created (${repo.id})`);

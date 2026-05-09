@@ -86,9 +86,9 @@ export default function DashboardPage() {
           <div className="space-y-3">
             {needsAttention.map((w) => (
               <a
-                key={w.id}
-                href={`/workflows/${w.id}`}
                 className="flex items-center justify-between p-3 rounded-md hover:bg-[var(--muted)]"
+                href={`/workflows/${w.id}`}
+                key={w.id}
               >
                 <div>
                   <span className="font-medium">{w.repository?.repoName ?? 'Unknown'}</span>
@@ -110,9 +110,9 @@ export default function DashboardPage() {
         <div className="space-y-2">
           {all.slice(0, 10).map((w) => (
             <a
-              key={w.id}
-              href={`/workflows/${w.id}`}
               className="flex items-center justify-between p-2 rounded hover:bg-[var(--muted)]"
+              href={`/workflows/${w.id}`}
+              key={w.id}
             >
               <div className="flex items-center gap-3">
                 <StatusBadge status={w.currentStatus} />

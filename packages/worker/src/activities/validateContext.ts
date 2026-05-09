@@ -32,20 +32,20 @@ export async function validateContext(
         try {
           const agent = new Agent({
             id: 'context-validator',
-            name: 'context-validator',
-            model: getModel('validateContext'),
             instructions: CONTEXT_VALIDATOR_PROMPT,
+            model: getModel('validateContext'),
+            name: 'context-validator',
           });
 
           const result = await agent.generate(
             [
               {
-                role: 'user',
                 content: JSON.stringify({
-                  title: workRequest.externalTicketId,
                   description: workRequest.description,
                   requestPayload: workRequest.requestPayload,
+                  title: workRequest.externalTicketId,
                 }),
+                role: 'user',
               },
             ],
             { structuredOutput: { schema: ContextValidationSchema } }
@@ -70,14 +70,14 @@ export async function validateContext(
 
   // Upsert to handle Temporal retries idempotently
   const snapshot = await prisma.contextSnapshot.upsert({
-    where: { workRequestId: workRequest.workRequestId },
     create: {
-      workRequestId: workRequest.workRequestId,
       successCriteria,
+      workRequestId: workRequest.workRequestId,
     },
     update: {
       successCriteria,
     },
+    where: { workRequestId: workRequest.workRequestId },
   });
 
   return {

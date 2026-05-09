@@ -4,30 +4,30 @@ import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
+  defaultBranch: z.string().default('main'),
+  description: z.string().optional(),
+  executorImage: z.string().optional(),
+  githubApiUrl: z.string().url().optional(),
+  githubUrl: z.string().url().optional(),
+  language: z.string().optional(),
+  mcpServerRef: z.string().optional(),
   organizationName: z.string().min(1),
   repoName: z.string().min(1),
   teamId: z.string().uuid(),
-  defaultBranch: z.string().default('main'),
-  language: z.string().optional(),
-  description: z.string().optional(),
-  githubUrl: z.string().url().optional(),
-  githubApiUrl: z.string().url().optional(),
-  mcpServerRef: z.string().optional(),
-  executorImage: z.string().optional(),
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 
 const UpdateRepoSchema = z.object({
   defaultBranch: z.string().optional(),
-  language: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
-  githubUrl: z.string().url().nullable().optional(),
-  githubApiUrl: z.string().url().nullable().optional(),
-  mcpServerRef: z.string().nullable().optional(),
   executorImage: z.string().nullable().optional(),
-  teamId: z.string().uuid().optional(),
+  githubApiUrl: z.string().url().nullable().optional(),
+  githubUrl: z.string().url().nullable().optional(),
   isActive: z.boolean().optional(),
+  language: z.string().nullable().optional(),
+  mcpServerRef: z.string().nullable().optional(),
+  teamId: z.string().uuid().optional(),
 });
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
@@ -52,12 +52,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const repos = await fastify.prisma.repository.findMany({
-        where,
         include: {
-          team: { select: { id: true, name: true, slug: true } },
           _count: { select: { activeWorkflows: true } },
+          team: { select: { id: true, name: true, slug: true } },
         },
         orderBy: { repoName: 'asc' },
+        where,
       });
 
       return { data: repos };
@@ -68,8 +68,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      schema: { body: CreateRepoSchema },
       onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
       const { organizationName, repoName, teamId, ...rest } = request.body;
@@ -105,8 +105,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      schema: { params: RepoParamsSchema, body: UpdateRepoSchema },
       onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
       const repo = await fastify.prisma.repository.findUnique({
@@ -119,9 +119,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const updated = await fastify.prisma.repository.update({
-        where: { id: request.params.id },
         data: request.body,
         include: { team: { select: { id: true, name: true, slug: true } } },
+        where: { id: request.params.id },
       });
 
       return { data: updated };

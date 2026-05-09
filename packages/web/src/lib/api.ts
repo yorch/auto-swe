@@ -72,8 +72,8 @@ export class ApiClient {
   private async tryRefresh(): Promise<boolean> {
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
-        method: 'POST',
         credentials: 'include',
+        method: 'POST',
       });
 
       if (!response.ok) return false;
@@ -93,11 +93,11 @@ export class ApiClient {
   }
 
   post<T>(path: string, body: unknown) {
-    return this.fetch<T>(path, { method: 'POST', body: JSON.stringify(body) });
+    return this.fetch<T>(path, { body: JSON.stringify(body), method: 'POST' });
   }
 
   patch<T>(path: string, body: unknown) {
-    return this.fetch<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+    return this.fetch<T>(path, { body: JSON.stringify(body), method: 'PATCH' });
   }
 
   delete<T>(path: string) {

@@ -35,13 +35,13 @@ export default function WorkflowsPage() {
           <tbody>
             {(workflows ?? []).map((w) => (
               <tr
-                key={w.id}
                 className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors"
+                key={w.id}
               >
                 <td className="px-4 py-3">
                   <Link
-                    href={`/workflows/${w.id}`}
                     className="text-[var(--primary)] hover:underline font-medium"
+                    href={`/workflows/${w.id}`}
                   >
                     {w.repository?.organizationName}/{w.repository?.repoName}
                   </Link>

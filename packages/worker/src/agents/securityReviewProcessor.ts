@@ -9,11 +9,11 @@ const tracer = trace.getTracer('auto-swe-worker');
 // ── Zod schemas for structured output ──
 
 const SecurityFindingSchema = z.object({
+  category: z.string(),
+  description: z.string(),
   file: z.string(),
   line: z.number().optional(),
   severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']),
-  category: z.string(),
-  description: z.string(),
   suggestedFix: z.string(),
 });
 
@@ -35,16 +35,16 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       try {
         const agent = new Agent({
           id: 'security-review-gate',
-          name: 'security-review-gate',
-          model: getModel('securityReview'),
           instructions: SECURITY_REVIEW_PROMPT,
+          model: getModel('securityReview'),
+          name: 'security-review-gate',
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: diff,
+              role: 'user',
             },
           ],
           { structuredOutput: { schema: SecurityScanResultSchema } }

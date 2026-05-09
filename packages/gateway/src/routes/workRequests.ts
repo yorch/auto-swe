@@ -6,10 +6,10 @@ import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
 
 const CreateWorkRequestSchema = z.object({
-  externalTicketId: z.string().min(1),
-  description: z.string().min(1, 'description is required — tell the agent what to implement'),
-  repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
+  description: z.string().min(1, 'description is required — tell the agent what to implement'),
+  externalTicketId: z.string().min(1),
+  repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
 export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
@@ -18,10 +18,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         body: CreateWorkRequestSchema,
       },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request, reply) => {
       const { externalTicketId, description, repoIds, budgetTier } = request.body;
@@ -30,17 +30,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Include team membership so non-admins can only trigger work on their
       // own team's repos without a second round-trip query.
       const repo = await fastify.prisma.repository.findUnique({
-        where: { id: repoIds[0] },
         include: {
           team: {
             select: {
               memberships: {
-                where: { userId: request.user!.sub },
                 select: { userId: true },
+                where: { userId: request.user!.sub },
               },
             },
           },
         },
+        where: { id: repoIds[0] },
       });
       if (!repo || !repo.isActive) {
         return reply.status(404).send({
@@ -75,12 +75,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // and we haven't written any orphan DB rows yet.
       try {
         await fastify.temporal.startWorkflow(temporalWorkflowId, {
-          workRequestId,
-          repoId: repo.id,
-          externalTicketId,
-          description,
           budgetTier,
+          description,
+          externalTicketId,
+          repoId: repo.id,
           requestPayload: JSON.stringify(request.body),
+          workRequestId,
         });
       } catch (err: any) {
         if (err.name === 'WorkflowExecutionAlreadyStartedError') {
@@ -99,28 +99,28 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // which is preferable to orphan DB rows that block future retries.
       const workRequest = await fastify.prisma.workRequest.create({
         data: {
-          id: workRequestId,
-          externalTicketId,
           description,
+          externalTicketId,
+          id: workRequestId,
           requestPayload: JSON.stringify(request.body),
         },
       });
 
       const activeWorkflow = await fastify.prisma.activeWorkflow.create({
         data: {
-          temporalWorkflowId,
-          workRequestId: workRequest.id,
-          repoId: repo.id,
-          currentStatus: 'IMPLEMENTING',
           assignedBranch: branch,
           budgetTier,
+          currentStatus: 'IMPLEMENTING',
+          repoId: repo.id,
+          temporalWorkflowId,
+          workRequestId: workRequest.id,
         },
       });
 
       return reply.status(201).send({
         data: {
-          workRequestId: workRequest.id,
           workflowIds: [activeWorkflow.id],
+          workRequestId: workRequest.id,
         },
       });
     }

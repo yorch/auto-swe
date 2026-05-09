@@ -30,10 +30,7 @@ function safePath(relPath: string): string {
 export function createImplementerAgent(workspace: Workspace): { agent: Agent; mastra: Mastra } {
   // Tool: Read a file from the workspace
   const readFile = createTool({
-    id: 'readFile',
     description: 'Read the contents of a file in the workspace',
-    inputSchema: z.object({ path: z.string().describe('Relative path from repo root') }),
-    outputSchema: z.object({ content: z.string() }),
     execute: async ({ path }) => {
       try {
         const p = safePath(path);
@@ -42,17 +39,14 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         return { content: `Error reading file: ${err.message}` };
       }
     },
+    id: 'readFile',
+    inputSchema: z.object({ path: z.string().describe('Relative path from repo root') }),
+    outputSchema: z.object({ content: z.string() }),
   });
 
   // Tool: Write/overwrite a file in the workspace
   const writeFile = createTool({
-    id: 'writeFile',
     description: 'Create or overwrite a file in the workspace',
-    inputSchema: z.object({
-      path: z.string().describe('Relative path from repo root'),
-      content: z.string().describe('Full file content'),
-    }),
-    outputSchema: z.object({ result: z.string() }),
     execute: wrapWriteToolWithSecurityCheck(async ({ path, content }) => {
       try {
         const p = safePath(path);
@@ -64,16 +58,17 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         return { result: `Error writing file: ${err.message}` };
       }
     }),
+    id: 'writeFile',
+    inputSchema: z.object({
+      content: z.string().describe('Full file content'),
+      path: z.string().describe('Relative path from repo root'),
+    }),
+    outputSchema: z.object({ result: z.string() }),
   });
 
   // Tool: List directory contents
   const listDirectory = createTool({
-    id: 'listDirectory',
     description: 'List files and directories at a given path',
-    inputSchema: z.object({
-      path: z.string().default('.').describe('Relative path from repo root'),
-    }),
-    outputSchema: z.object({ listing: z.string() }),
     execute: async ({ path }) => {
       try {
         // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
@@ -83,16 +78,18 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         return { listing: `Error listing directory: ${err.message}` };
       }
     },
+    id: 'listDirectory',
+    inputSchema: z.object({
+      path: z.string().default('.').describe('Relative path from repo root'),
+    }),
+    outputSchema: z.object({ listing: z.string() }),
   });
 
   // Tool: Run a shell command in the workspace (e.g., run tests, install deps).
   // Commands run inside an isolated Docker container — not on the host.
   // Every agent-issued command is logged for audit purposes.
   const bash = createTool({
-    id: 'bash',
     description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
-    inputSchema: z.object({ command: z.string().describe('Shell command to execute') }),
-    outputSchema: z.object({ output: z.string() }),
     execute: async ({ command }) => {
       // Audit log — provides visibility into LLM-generated shell commands.
       // The container is isolated from the host, but logging helps detect
@@ -106,14 +103,17 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
         };
       }
     },
+    id: 'bash',
+    inputSchema: z.object({ command: z.string().describe('Shell command to execute') }),
+    outputSchema: z.object({ output: z.string() }),
   });
 
   const implementerAgent = new Agent({
     id: 'implementer',
-    name: 'implementer',
-    model: getModel('implementer'),
     instructions: '', // Set per-call via system message
-    tools: { readFile, writeFile, listDirectory, bash },
+    model: getModel('implementer'),
+    name: 'implementer',
+    tools: { bash, listDirectory, readFile, writeFile },
   });
 
   const mastra = new Mastra({

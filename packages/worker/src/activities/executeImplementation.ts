@@ -57,12 +57,12 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
     heartbeat('lessons retrieved');
 
     let testResult: TestRunResult = {
-      passed: false,
-      total: 0,
-      passing: 0,
-      failing: 0,
-      stdout: '',
       duration_ms: 0,
+      failing: 0,
+      passed: false,
+      passing: 0,
+      stdout: '',
+      total: 0,
     };
 
     // TDD loop
@@ -71,15 +71,15 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
 
       const genResult = await agent.generate(
         [
-          { role: 'system', content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext },
+          { content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext, role: 'system' },
           {
-            role: 'user',
             content: JSON.stringify({
               description: request.description,
               externalTicketId: request.externalTicketId,
               iteration,
               previousTestResult: iteration > 0 ? testResult : undefined,
             }),
+            role: 'user',
           },
         ],
         { toolChoice: 'auto' }
@@ -102,12 +102,12 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
         if (testResult.passed) break;
       } catch (err: any) {
         testResult = {
-          passed: false,
-          total: 0,
-          passing: 0,
-          failing: 1,
-          stdout: err.stdout?.slice(-10_000) ?? err.message,
           duration_ms: 0,
+          failing: 1,
+          passed: false,
+          passing: 0,
+          stdout: err.stdout?.slice(-10_000) ?? err.message,
+          total: 0,
         };
       }
     }
@@ -140,11 +140,11 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
 
     return {
       branch,
-      headSha,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: testResult,
+      headSha,
       implementationNotes: `Completed in ${testResult.passed ? '≤5' : '5 (max)'} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      testResults: testResult,
     };
   } finally {
     workspace.destroy();

@@ -32,12 +32,12 @@ async function start() {
 
   // CORS — allow the web dashboard and any additional origins from env
   await app.register(cors, {
-    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
     credentials: true,
+    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
   });
 
   // Raw body for HMAC webhook verification (opt-in per route)
-  await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });
+  await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
   await app.register(cookie);
 
@@ -79,7 +79,7 @@ async function start() {
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
 
   const port = Number(process.env.PORT ?? 8080);
-  await app.listen({ port, host: '0.0.0.0' });
+  await app.listen({ host: '0.0.0.0', port });
 }
 
 start().catch(async (err) => {

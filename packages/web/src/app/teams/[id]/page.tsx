@@ -17,7 +17,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/teams" className="text-[var(--primary)] hover:underline text-sm">
+        <Link className="text-[var(--primary)] hover:underline text-sm" href="/teams">
           &larr; Back
         </Link>
         <h2 className="text-2xl font-bold">{team.name}</h2>
@@ -38,7 +38,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </thead>
             <tbody>
               {(team.memberships ?? []).map((m) => (
-                <tr key={m.id} className="border-b border-[var(--border)]">
+                <tr className="border-b border-[var(--border)]" key={m.id}>
                   <td className="py-2">{m.user?.email}</td>
                   <td className="py-2 text-[var(--muted-foreground)]">{m.user?.role}</td>
                   <td className="py-2">{m.role}</td>
@@ -55,8 +55,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           <div className="space-y-2">
             {(team.repositories ?? []).map((r) => (
               <div
-                key={r.id}
                 className="flex items-center justify-between text-sm p-2 rounded hover:bg-[var(--muted)]"
+                key={r.id}
               >
                 <span className="font-medium">
                   {r.organizationName}/{r.repoName}

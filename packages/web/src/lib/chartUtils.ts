@@ -32,7 +32,7 @@ export function groupWorkflowsByStatus(
     const s = w.currentStatus ?? 'UNKNOWN';
     counts[s] = (counts[s] ?? 0) + 1;
   }
-  return Object.entries(counts).map(([status, count]) => ({ status, count }));
+  return Object.entries(counts).map(([status, count]) => ({ count, status }));
 }
 
 export function groupWorkflowsByDate(
@@ -41,7 +41,7 @@ export function groupWorkflowsByDate(
 ): { date: string; completed: number; failed: number; active: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
-  for (const d of buckets) map[d] = { completed: 0, failed: 0, active: 0 };
+  for (const d of buckets) map[d] = { active: 0, completed: 0, failed: 0 };
 
   for (const w of workflows) {
     const key = toDateKey(w.updatedAt);
@@ -62,7 +62,7 @@ export function groupWorkflowsByRepo(
     counts[repo] = (counts[repo] ?? 0) + 1;
   }
   return Object.entries(counts)
-    .map(([repo, count]) => ({ repo, count }))
+    .map(([repo, count]) => ({ count, repo }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -75,7 +75,7 @@ export function groupLessonsByType(lessons: LessonListItem[]): { type: string; c
     counts[t] = (counts[t] ?? 0) + 1;
   }
   return Object.entries(counts)
-    .map(([type, count]) => ({ type, count }))
+    .map(([type, count]) => ({ count, type }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -91,5 +91,5 @@ export function groupLessonsByDate(
     const key = toDateKey(l.createdAt);
     if (map[key] !== undefined) map[key]++;
   }
-  return buckets.map((date) => ({ date, count: map[date] }));
+  return buckets.map((date) => ({ count: map[date], date }));
 }

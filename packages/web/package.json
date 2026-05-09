@@ -1,12 +1,4 @@
 {
-  "name": "@auto-swe/web",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev --port 3000",
-    "build": "next build",
-    "start": "next start --port 3000"
-  },
   "dependencies": {
     "@tanstack/react-query": "5.100.9",
     "clsx": "2.1.1",
@@ -26,5 +18,13 @@
     "@types/react-is": "19.2.0",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3"
-  }
+  },
+  "name": "@auto-swe/web",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3000",
+    "start": "next start --port 3000"
+  },
+  "version": "0.1.0"
 }

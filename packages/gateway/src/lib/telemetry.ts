@@ -6,8 +6,8 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   return initSharedTelemetry({
+    instrumentations: [new HttpInstrumentation(), new FastifyInstrumentation()],
     serviceName,
     traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
-    instrumentations: [new HttpInstrumentation(), new FastifyInstrumentation()],
   });
 }

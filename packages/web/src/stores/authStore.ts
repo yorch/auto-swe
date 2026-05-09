@@ -10,7 +10,25 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+  checkAuth: () => {
+    const token = api.getToken();
+    if (!token) {
+      set({ isAuthenticated: false, user: null });
+      return;
+    }
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp * 1000 < Date.now()) {
+        api.clearToken();
+        set({ isAuthenticated: false, user: null });
+        return;
+      }
+      set({ isAuthenticated: true, user: payload });
+    } catch {
+      api.clearToken();
+      set({ isAuthenticated: false, user: null });
+    }
+  },
   isAuthenticated: false,
 
   login: async (email, password) => {
@@ -38,7 +56,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       throw new Error('Received an invalid access token from the server');
     }
-    set({ user: payload as any, isAuthenticated: true });
+    set({ isAuthenticated: true, user: payload as any });
   },
 
   logout: () => {
@@ -46,26 +64,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window !== 'undefined') {
       document.cookie = 'accessToken=; path=/; max-age=0';
     }
-    set({ user: null, isAuthenticated: false });
+    set({ isAuthenticated: false, user: null });
   },
-
-  checkAuth: () => {
-    const token = api.getToken();
-    if (!token) {
-      set({ user: null, isAuthenticated: false });
-      return;
-    }
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.exp * 1000 < Date.now()) {
-        api.clearToken();
-        set({ user: null, isAuthenticated: false });
-        return;
-      }
-      set({ user: payload, isAuthenticated: true });
-    } catch {
-      api.clearToken();
-      set({ user: null, isAuthenticated: false });
-    }
-  },
+  user: null,
 }));

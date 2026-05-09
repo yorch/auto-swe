@@ -33,35 +33,35 @@ export interface ModelPrice {
  *  - Gemini 2.5 Pro >200K-token surcharge (input doubles)
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = {
-  // Anthropic — Opus 4.5+ family ($5 / $25)
-  'anthropic/claude-opus-4-7': { input: 5, output: 25 },
-  'anthropic/claude-opus-4-6': { input: 5, output: 25 },
-  'anthropic/claude-opus-4-5': { input: 5, output: 25 },
-  // Anthropic — Opus 4 / 4.1 (legacy pricing $15 / $75)
-  'anthropic/claude-opus-4-1-20250805': { input: 15, output: 75 },
-  'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
-  // Anthropic — Sonnet 4.x family ($3 / $15)
-  'anthropic/claude-sonnet-4-6': { input: 3, output: 15 },
-  'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
-  'anthropic/claude-sonnet-4-20250514': { input: 3, output: 15 },
+  'anthropic/claude-haiku-3-5-20241022': { input: 0.8, output: 4 },
   // Anthropic — Haiku
   'anthropic/claude-haiku-4-5-20251001': { input: 1, output: 5 },
-  'anthropic/claude-haiku-3-5-20241022': { input: 0.8, output: 4 },
+  // Anthropic — Opus 4 / 4.1 (legacy pricing $15 / $75)
+  'anthropic/claude-opus-4-1-20250805': { input: 15, output: 75 },
+  'anthropic/claude-opus-4-5': { input: 5, output: 25 },
+  'anthropic/claude-opus-4-6': { input: 5, output: 25 },
+  // Anthropic — Opus 4.5+ family ($5 / $25)
+  'anthropic/claude-opus-4-7': { input: 5, output: 25 },
+  'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
+  'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
+  // Anthropic — Sonnet 4.x family ($3 / $15)
+  'anthropic/claude-sonnet-4-6': { input: 3, output: 15 },
+  'anthropic/claude-sonnet-4-20250514': { input: 3, output: 15 },
+  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
+  'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
+  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
+  'google/gemini-2.5-pro': { input: 1.25, output: 10 },
+  'google/gemini-3-flash-preview': { input: 0.5, output: 3 },
+  'google/gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.5 },
+
+  // Google — Gemini 3.x (current flagship line, all `-preview` as of May 2026)
+  // Note: Gemini 3 Pro Preview was deprecated 2026-03-09 — use 3.1 Pro instead.
+  'google/gemini-3.1-pro-preview': { input: 2, output: 12 },
 
   // OpenAI — base GPT-5 line (verified May 2026)
   'openai/gpt-5': { input: 1.25, output: 10 },
   'openai/gpt-5-5': { input: 5, output: 30 },
   'openai/gpt-5-5-pro': { input: 30, output: 180 },
-
-  // Google — Gemini 3.x (current flagship line, all `-preview` as of May 2026)
-  // Note: Gemini 3 Pro Preview was deprecated 2026-03-09 — use 3.1 Pro instead.
-  'google/gemini-3.1-pro-preview': { input: 2, output: 12 },
-  'google/gemini-3-flash-preview': { input: 0.5, output: 3 },
-  'google/gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.5 },
-  // Google — Gemini 2.5 (base prices; Pro input/output ~doubles above 200K context)
-  'google/gemini-2.5-pro': { input: 1.25, output: 10 },
-  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
-  'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
 };
 
 const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
@@ -91,17 +91,17 @@ export function getModelPrice(spec: string): { price: ModelPrice; known: boolean
   const envValue = process.env[envKey];
   if (envValue) {
     const override = parsePriceOverride(envValue);
-    if (override) return { price: override, known: true };
+    if (override) return { known: true, price: override };
   }
   const price = MODEL_PRICES[spec];
-  if (price) return { price, known: true };
-  return { price: ZERO_PRICE, known: false };
+  if (price) return { known: true, price };
+  return { known: false, price: ZERO_PRICE };
 }
 
 export const BUDGET_LIMITS: Record<BudgetTier, { inputTokens: number; outputTokens: number }> = {
-  STANDARD: { inputTokens: 2_000_000, outputTokens: 500_000 },
-  LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
   EPIC: { inputTokens: 20_000_000, outputTokens: 5_000_000 },
+  LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
+  STANDARD: { inputTokens: 2_000_000, outputTokens: 500_000 },
 };
 
 /**
@@ -147,14 +147,14 @@ export async function recordLlmUsage(
   await tracer.startActiveSpan(spanName, async (span) => {
     try {
       const workflow = await prisma.activeWorkflow.findFirst({
-        where: { temporalWorkflowId },
         select: {
-          id: true,
           budgetTier: true,
+          costUsdAccrued: true,
+          id: true,
           tokensInputUsed: true,
           tokensOutputUsed: true,
-          costUsdAccrued: true,
         },
+        where: { temporalWorkflowId },
       });
 
       if (!workflow) {
@@ -171,16 +171,16 @@ export async function recordLlmUsage(
       const newCost = workflow.costUsdAccrued + callCost;
 
       span.setAttributes({
-        'llm.role': role,
-        'llm.model': modelSpec,
         'llm.cost_pricing_known': known,
-        'llm.input_tokens': inputTokens,
-        'llm.output_tokens': outputTokens,
         'llm.cost_usd': callCost,
+        'llm.input_tokens': inputTokens,
+        'llm.model': modelSpec,
+        'llm.output_tokens': outputTokens,
+        'llm.role': role,
         'workflow.budget_tier': workflow.budgetTier,
+        'workflow.cost_usd_cumulative': newCost,
         'workflow.tokens_input_cumulative': newInput,
         'workflow.tokens_output_cumulative': newOutput,
-        'workflow.cost_usd_cumulative': newCost,
       });
 
       // Write usage to DB before checking the budget limit.
@@ -188,8 +188,8 @@ export async function recordLlmUsage(
       // is breached, so the UI shows the real overage rather than the last
       // value before the limit was hit.
       await prisma.activeWorkflow.update({
+        data: { costUsdAccrued: newCost, tokensInputUsed: newInput, tokensOutputUsed: newOutput },
         where: { id: workflow.id },
-        data: { tokensInputUsed: newInput, tokensOutputUsed: newOutput, costUsdAccrued: newCost },
       });
 
       const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
@@ -207,7 +207,7 @@ export async function recordLlmUsage(
         throw ApplicationFailure.nonRetryable(
           `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
           'BUDGET_EXCEEDED',
-          { tier, newInput, newOutput, newCost }
+          { newCost, newInput, newOutput, tier }
         );
       }
     } catch (e) {

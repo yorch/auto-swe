@@ -21,9 +21,9 @@ export function TopBar() {
     <header className="h-14 border-b border-[var(--border)] bg-white flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
         <select
-          value={selectedTeamId ?? ''}
-          onChange={(e) => setSelectedTeamId(e.target.value || null)}
           className="text-sm border border-[var(--border)] rounded-md px-2 py-1"
+          onChange={(e) => setSelectedTeamId(e.target.value || null)}
+          value={selectedTeamId ?? ''}
         >
           <option value="">All Teams</option>
           {(teams ?? []).map((t: any) => (
@@ -36,9 +36,9 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <span className="text-sm text-[var(--muted-foreground)]">{user?.role}</span>
         <button
-          type="button"
-          onClick={handleLogout}
           className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          onClick={handleLogout}
+          type="button"
         >
           Logout
         </button>

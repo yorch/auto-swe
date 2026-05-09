@@ -38,12 +38,12 @@ export function parseTestOutput(output: string, durationMs: number): TestRunResu
   const failing = failMatch ? parseInt(failMatch[1], 10) : 0;
 
   return {
-    passed: failing === 0 && passing > 0,
-    total: passing + failing,
-    passing,
-    failing,
-    stdout: output.slice(-10_000),
     duration_ms: durationMs,
+    failing,
+    passed: failing === 0 && passing > 0,
+    passing,
+    stdout: output.slice(-10_000),
+    total: passing + failing,
   };
 }
 
@@ -64,11 +64,11 @@ export function parseDiffToFileChanges(diff: string): FileChange[] {
     const isDeleted = section.includes('deleted file mode');
 
     files.push({
-      path,
-      operation: isNew ? 'CREATE' : isDeleted ? 'DELETE' : 'MODIFY',
       language: ext,
       linesAdded: added,
       linesRemoved: removed,
+      operation: isNew ? 'CREATE' : isDeleted ? 'DELETE' : 'MODIFY',
+      path,
     });
   }
   return files;

@@ -4,26 +4,26 @@ import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
 
 const CreateTeamSchema = z.object({
+  description: z.string().max(500).default(''),
   name: z.string().min(1).max(100),
   slug: z
     .string()
     .min(1)
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'slug must be lowercase-kebab-case'),
-  description: z.string().max(500).default(''),
 });
 
 const UpdateTeamSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
+  name: z.string().min(1).max(100).optional(),
 });
 
 const TeamParamsSchema = z.object({ id: z.string().uuid() });
 const TeamMemberParamsSchema = z.object({ id: z.string().uuid(), userId: z.string().uuid() });
 
 const AddMemberSchema = z.object({
-  userId: z.string().uuid(),
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+  userId: z.string().uuid(),
 });
 
 const UpdateMemberSchema = z.object({
@@ -37,8 +37,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      schema: { body: CreateTeamSchema },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: CreateTeamSchema },
     },
     async (request, reply) => {
       const { name, slug, description } = request.body;
@@ -53,7 +53,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const team = await fastify.prisma.team.create({
-        data: { name, slug, description },
+        data: { description, name, slug },
       });
 
       return reply.status(201).send({ data: team });
@@ -79,11 +79,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const teams = await fastify.prisma.team.findMany({
-        where,
         include: {
           _count: { select: { memberships: true, repositories: true } },
         },
         orderBy: { name: 'asc' },
+        where,
       });
 
       return { data: teams };
@@ -100,13 +100,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const user = request.user!;
 
       const team = await fastify.prisma.team.findUnique({
-        where: { id: request.params.id },
         include: {
-          memberships: { include: { user: { select: { id: true, email: true, role: true } } } },
+          memberships: { include: { user: { select: { email: true, id: true, role: true } } } },
           repositories: {
-            select: { id: true, organizationName: true, repoName: true, isActive: true },
+            select: { id: true, isActive: true, organizationName: true, repoName: true },
           },
         },
+        where: { id: request.params.id },
       });
 
       if (!team) {
@@ -133,8 +133,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      schema: { params: TeamParamsSchema, body: UpdateTeamSchema },
       onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: { body: UpdateTeamSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
       const team = await fastify.prisma.team.findUnique({
@@ -147,8 +147,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const updated = await fastify.prisma.team.update({
-        where: { id: request.params.id },
         data: request.body,
+        where: { id: request.params.id },
       });
 
       return { data: updated };
@@ -172,8 +172,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       await fastify.prisma.team.update({
-        where: { id: request.params.id },
         data: { isActive: false },
+        where: { id: request.params.id },
       });
 
       return { data: { deleted: true } };
@@ -199,11 +199,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const members = await fastify.prisma.teamMembership.findMany({
-        where: { teamId: request.params.id },
         include: {
-          user: { select: { id: true, email: true, role: true, slackId: true, isActive: true } },
+          user: { select: { email: true, id: true, isActive: true, role: true, slackId: true } },
         },
         orderBy: { createdAt: 'asc' },
+        where: { teamId: request.params.id },
       });
 
       return { data: members };
@@ -214,14 +214,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/members',
     {
-      schema: { params: TeamParamsSchema, body: AddMemberSchema },
       onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: { body: AddMemberSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
       const { userId, role } = request.body;
 
       const existing = await fastify.prisma.teamMembership.findUnique({
-        where: { userId_teamId: { userId, teamId: request.params.id } },
+        where: { userId_teamId: { teamId: request.params.id, userId } },
       });
       if (existing) {
         return reply.status(409).send({
@@ -231,11 +231,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       const membership = await fastify.prisma.teamMembership.create({
         data: {
-          userId,
-          teamId: request.params.id,
           role,
+          teamId: request.params.id,
+          userId,
         },
-        include: { user: { select: { id: true, email: true, role: true } } },
+        include: { user: { select: { email: true, id: true, role: true } } },
       });
 
       return reply.status(201).send({ data: membership });
@@ -246,12 +246,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/members/:userId',
     {
-      schema: { params: TeamMemberParamsSchema, body: UpdateMemberSchema },
       onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: { body: UpdateMemberSchema, params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
       const membership = await fastify.prisma.teamMembership.findUnique({
-        where: { userId_teamId: { userId: request.params.userId, teamId: request.params.id } },
+        where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
       if (!membership) {
         return reply.status(404).send({
@@ -260,8 +260,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const updated = await fastify.prisma.teamMembership.update({
-        where: { id: membership.id },
         data: { role: request.body.role },
+        where: { id: membership.id },
       });
 
       return { data: updated };
@@ -276,7 +276,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const membership = await fastify.prisma.teamMembership.findUnique({
-        where: { userId_teamId: { userId: request.params.userId, teamId: request.params.id } },
+        where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
       if (!membership) {
         return reply.status(404).send({

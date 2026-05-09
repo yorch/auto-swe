@@ -33,8 +33,8 @@ declare module 'fastify' {
 // Role hierarchy: ADMIN > LEAD > ENGINEER
 const ROLE_HIERARCHY: Record<string, number> = {
   ADMIN: 3,
-  LEAD: 2,
   ENGINEER: 1,
+  LEAD: 2,
 };
 
 function hasRole(userRole: string, requiredRole: string): boolean {
@@ -73,6 +73,13 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   const algorithm = getAlgorithm();
 
   fastify.decorate('auth', {
+    generateRefreshToken(): string {
+      return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
+    },
+
+    hashToken(token: string): string {
+      return crypto.createHash('sha256').update(token).digest('hex');
+    },
     signAccessToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
       return jwt.sign(payload, privateKey, {
         algorithm,
@@ -84,14 +91,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       return jwt.verify(token, publicKey, {
         algorithms: [algorithm],
       }) as JwtPayload;
-    },
-
-    generateRefreshToken(): string {
-      return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
-    },
-
-    hashToken(token: string): string {
-      return crypto.createHash('sha256').update(token).digest('hex');
     },
   });
 };
@@ -158,7 +157,7 @@ export function requireAuth(options: RBACOptions = {}) {
 
       const prisma = request.server.prisma;
       const membership = await prisma.teamMembership.findUnique({
-        where: { userId_teamId: { userId: request.user!.sub, teamId } },
+        where: { userId_teamId: { teamId, userId: request.user!.sub } },
       });
 
       if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {

@@ -46,9 +46,9 @@ export async function retrieveSimilarLessons(
   );
 
   return lessons.map((l) => ({
-    lessonId: l.id,
-    summary: l.lessonSummary,
     failureType: l.failureType,
+    lessonId: l.id,
     similarity: l.similarity,
+    summary: l.lessonSummary,
   }));
 }

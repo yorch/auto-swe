@@ -9,8 +9,8 @@ export interface Workspace {
 
 const EXEC_OPTS: ExecSyncOptions = {
   encoding: 'utf-8' as BufferEncoding,
-  timeout: 120_000, // 2 minutes per command
   maxBuffer: 10 * 1024 * 1024, // 10MB
+  timeout: 120_000, // 2 minutes per command
 };
 
 // Validate Docker image names to prevent shell injection.
@@ -78,18 +78,18 @@ export function createWorkspace(
 
   return {
     containerId: containerName,
-    exec: (command: string) => {
-      return execSync(
-        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
-        EXEC_OPTS
-      ) as string;
-    },
     destroy: () => {
       try {
         execSync(`docker rm -f ${containerName}`, EXEC_OPTS);
       } catch {
         // Container may already be gone
       }
+    },
+    exec: (command: string) => {
+      return execSync(
+        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
+        EXEC_OPTS
+      ) as string;
     },
   };
 }

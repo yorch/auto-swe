@@ -17,8 +17,8 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
 
   const response = await fetch(logsUrl, {
     headers: {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
       Accept: 'application/vnd.github.v3+json',
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
     },
   });
 
@@ -40,8 +40,8 @@ export async function executeCIFixImplementation(
   previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { assignedBranch: previousCodeResult.branch },
     include: { repository: true },
+    where: { assignedBranch: previousCodeResult.branch },
   });
 
   if (!workflow?.repository) {
@@ -74,15 +74,15 @@ export async function executeCIFixImplementation(
     // Run the agent in CI fix mode
     const ciFix = await agent.generate(
       [
-        { role: 'system', content: CI_FIX_SYSTEM_PROMPT },
+        { content: CI_FIX_SYSTEM_PROMPT, role: 'system' },
         {
-          role: 'user',
           content: JSON.stringify({
-            mode: 'CI_FIX',
             ciLogs: failureContext,
+            mode: 'CI_FIX',
             previousDiff: previousCodeResult.diff.slice(-20_000),
             previousTestResults: previousCodeResult.testResults,
           }),
+          role: 'user',
         },
       ],
       { toolChoice: 'auto' }
@@ -102,12 +102,12 @@ export async function executeCIFixImplementation(
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
     } catch (err: any) {
       testResult = {
-        passed: false,
-        total: 0,
-        passing: 0,
-        failing: 1,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
         duration_ms: 0,
+        failing: 1,
+        passed: false,
+        passing: 0,
+        stdout: err.stdout?.slice(-10_000) ?? err.message,
+        total: 0,
       };
     }
 
@@ -123,11 +123,11 @@ export async function executeCIFixImplementation(
 
     return {
       branch: previousCodeResult.branch,
-      headSha,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: testResult,
+      headSha,
       implementationNotes: `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      testResults: testResult,
     };
   } finally {
     workspace.destroy();
@@ -146,8 +146,8 @@ export async function executeReviewFixImplementation(
   previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { assignedBranch: previousCodeResult.branch },
     include: { repository: true },
+    where: { assignedBranch: previousCodeResult.branch },
   });
 
   if (!workflow?.repository) {
@@ -177,15 +177,15 @@ export async function executeReviewFixImplementation(
 
     const reviewFix = await agent.generate(
       [
-        { role: 'system', content: REVIEW_FIX_SYSTEM_PROMPT },
+        { content: REVIEW_FIX_SYSTEM_PROMPT, role: 'system' },
         {
-          role: 'user',
           content: JSON.stringify({
             mode: 'REVIEW_FIX',
-            reviewFindings: rejectionSummary,
             previousDiff: previousCodeResult.diff.slice(-20_000),
             previousTestResults: previousCodeResult.testResults,
+            reviewFindings: rejectionSummary,
           }),
+          role: 'user',
         },
       ],
       { toolChoice: 'auto' }
@@ -204,12 +204,12 @@ export async function executeReviewFixImplementation(
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
     } catch (err: any) {
       testResult = {
-        passed: false,
-        total: 0,
-        passing: 0,
-        failing: 1,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
         duration_ms: 0,
+        failing: 1,
+        passed: false,
+        passing: 0,
+        stdout: err.stdout?.slice(-10_000) ?? err.message,
+        total: 0,
       };
     }
 
@@ -224,11 +224,11 @@ export async function executeReviewFixImplementation(
 
     return {
       branch: previousCodeResult.branch,
-      headSha,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: testResult,
+      headSha,
       implementationNotes: `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      testResults: testResult,
     };
   } finally {
     workspace.destroy();

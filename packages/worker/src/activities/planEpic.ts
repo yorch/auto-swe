@@ -12,16 +12,16 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
 
   // Fetch repo metadata for the planner agent
   const repos = await prisma.repository.findMany({
+    select: { description: true, id: true, language: true, repoName: true },
     where: { id: { in: epicRequest.repoIds } },
-    select: { id: true, repoName: true, language: true, description: true },
   });
 
   const repoInfos: RepoInfo[] = repos.map(
     (r: { id: string; repoName: string; language: string | null; description: string | null }) => ({
-      repoId: r.id,
-      name: r.repoName,
-      language: r.language ?? 'unknown',
       description: r.description ?? '',
+      language: r.language ?? 'unknown',
+      name: r.repoName,
+      repoId: r.id,
     })
   );
 
@@ -30,7 +30,7 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   const plannedRepos = await decomposeEpic(epicRequest.description, repoInfos);
 
   return plannedRepos.map((pr) => ({
-    repoId: pr.repoId,
     dependsOn: pr.dependsOn,
+    repoId: pr.repoId,
   }));
 }

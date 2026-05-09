@@ -27,7 +27,7 @@ export function parseProviderModelSpec(spec: string): ProviderModelSpec {
   if (!provider || !modelId) {
     throw new Error(`Invalid model spec '${spec}'. Both provider and model must be non-empty.`);
   }
-  return { provider, modelId };
+  return { modelId, provider };
 }
 
 /**
@@ -58,5 +58,5 @@ export function createOpenAICompatibleClient(
     );
   }
   const apiKey = process.env[`${prefix}_API_KEY`];
-  return createOpenAICompatible({ name: provider, baseURL, apiKey });
+  return createOpenAICompatible({ apiKey, baseURL, name: provider });
 }

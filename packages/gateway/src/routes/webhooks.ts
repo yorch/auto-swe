@@ -45,12 +45,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Find the tracked PR
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
+        include: { workflow: true },
         where: {
           prNumber,
           repository: { organizationName: org, repoName },
           status: 'OPEN',
         },
-        include: { workflow: true },
       });
 
       if (!pullRequest?.workflow) {
@@ -59,8 +59,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Update PR status
       await fastify.prisma.pullRequest.update({
-        where: { id: pullRequest.id },
         data: { status: 'MERGED' },
+        where: { id: pullRequest.id },
       });
 
       // Signal the Temporal workflow
@@ -99,12 +99,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
+        include: { workflow: true },
         where: {
           headSha,
           repository: { organizationName: org, repoName },
           status: 'OPEN',
         },
-        include: { workflow: true },
       });
 
       if (pullRequests.length === 0) {
@@ -116,8 +116,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       await fastify.prisma.$transaction(
         pullRequests.map((pr: (typeof pullRequests)[number]) =>
           fastify.prisma.pullRequest.update({
-            where: { id: pr.id },
             data: { ciStatus: passed ? 'PASSED' : 'FAILED' },
+            where: { id: pr.id },
           })
         )
       );
@@ -130,7 +130,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           const wfId = pr.workflow.temporalWorkflowId;
           signaled.push(wfId);
           signalPromises.push(
-            fastify.temporal.signalWorkflow(wfId, 'ciPipelineSignal', [{ passed, logsUrl }])
+            fastify.temporal.signalWorkflow(wfId, 'ciPipelineSignal', [{ logsUrl, passed }])
           );
         }
       }
@@ -141,7 +141,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      return { data: { signaled, conclusion } };
+      return { data: { conclusion, signaled } };
     }
   );
 };

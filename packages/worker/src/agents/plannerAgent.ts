@@ -12,9 +12,9 @@ const tracer = trace.getTracer('auto-swe-worker');
 // ── Zod schema for structured output ──
 
 const PlannedRepoSchema = z.object({
-  repoId: z.string(),
-  description: z.string(),
   dependsOn: z.array(z.string()),
+  description: z.string(),
+  repoId: z.string(),
 });
 
 const PlannerOutputSchema = z.object({
@@ -31,27 +31,27 @@ export async function decomposeEpic(
     'llm.epic_planning',
     {
       attributes: {
-        'llm.model': getModelSpec('planner'),
         'epic.repo_count': availableRepos.length,
+        'llm.model': getModelSpec('planner'),
       },
     },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'epic-planner',
-          name: 'epic-planner',
-          model: getModel('planner'),
           instructions: PLANNER_AGENT_PROMPT,
+          model: getModel('planner'),
+          name: 'epic-planner',
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: JSON.stringify({
-                epicDescription,
                 availableRepos,
+                epicDescription,
               }),
+              role: 'user',
             },
           ],
           { structuredOutput: { schema: PlannerOutputSchema } }

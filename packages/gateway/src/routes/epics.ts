@@ -5,10 +5,10 @@ import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
-  externalTicketId: z.string().min(1),
   description: z
     .string()
     .min(1, 'description is required — tell the agent what to build across repos'),
+  externalTicketId: z.string().min(1),
   repoIds: z.array(z.string().uuid()).min(1),
 });
 
@@ -18,18 +18,18 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
       schema: {
         body: CreateEpicSchema,
       },
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
     },
     async (request, reply) => {
       const { externalTicketId, description, repoIds } = request.body;
 
       // Validate all repos exist and are active
       const repos = await fastify.prisma.repository.findMany({
-        where: { id: { in: repoIds }, isActive: true },
         select: { id: true },
+        where: { id: { in: repoIds }, isActive: true },
       });
 
       const foundIds = new Set(repos.map((r: { id: string }) => r.id));
@@ -49,13 +49,13 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // Start Temporal epic workflow FIRST (idempotency gate)
       try {
         await fastify.temporal.startEpicWorkflow(epicWorkflowId, {
+          description,
           epicWorkflowId,
           externalTicketId,
-          description,
+          repoIds,
+          repos: [], // Empty — Planner Agent will decompose
           requestPayload: JSON.stringify(request.body),
           workRequestId,
-          repos: [], // Empty — Planner Agent will decompose
-          repoIds,
         });
       } catch (err: any) {
         if (err.name === 'WorkflowExecutionAlreadyStartedError') {
@@ -72,18 +72,18 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // Persist work request to DB
       await fastify.prisma.workRequest.create({
         data: {
-          id: workRequestId,
-          externalTicketId,
           description,
-          requestPayload: JSON.stringify(request.body),
+          externalTicketId,
+          id: workRequestId,
           isCrossRepo: true,
+          requestPayload: JSON.stringify(request.body),
         },
       });
 
       return reply.status(201).send({
         data: {
-          workRequestId,
           epicWorkflowId,
+          workRequestId,
         },
       });
     }

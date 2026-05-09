@@ -30,16 +30,16 @@ function buildEmbeddingModel(spec: string): CachedEmbeddingModel {
       throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
     }
     return {
-      spec,
-      provider,
       model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId),
+      provider,
+      spec,
     };
   }
 
   return {
-    spec,
-    provider,
     model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId),
+    provider,
+    spec,
   };
 }
 

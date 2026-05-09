@@ -11,13 +11,13 @@ import type * as activitiesType from '../activities/index.js';
 // ── Activity Proxies ──
 
 const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
-  startToCloseTimeout: '30s',
   retry: {
-    maximumAttempts: 5,
-    initialInterval: '1s',
     backoffCoefficient: 2,
+    initialInterval: '1s',
+    maximumAttempts: 5,
     maximumInterval: '30s',
   },
+  startToCloseTimeout: '30s',
 });
 
 const agentActivities = proxyActivities<
@@ -29,47 +29,47 @@ const agentActivities = proxyActivities<
     | 'runReviewNetwork'
   >
 >({
-  startToCloseTimeout: '30m',
   heartbeatTimeout: '5m',
   retry: {
-    maximumAttempts: 2,
-    initialInterval: '30s',
     backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 2,
     maximumInterval: '2m',
   },
+  startToCloseTimeout: '30m',
 });
 
 const githubActivities = proxyActivities<
   Pick<typeof activitiesType, 'createOrUpdatePullRequest' | 'fetchCILogs'>
 >({
-  startToCloseTimeout: '2m',
   retry: {
-    maximumAttempts: 4,
-    initialInterval: '5s',
     backoffCoefficient: 3,
+    initialInterval: '5s',
+    maximumAttempts: 4,
     maximumInterval: '2m',
   },
+  startToCloseTimeout: '2m',
 });
 
 const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
-  startToCloseTimeout: '5m',
   heartbeatTimeout: '2m',
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
 const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
-  startToCloseTimeout: '5m',
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
 // ── Signals ──
@@ -135,10 +135,10 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
       if (totalReviewRetries >= MAX_REVIEW_RETRIES) {
         await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
+          lessonsGenerated: [],
           status: 'FAILED',
           totalCIRetries,
           totalReviewRetries,
-          lessonsGenerated: [],
         };
       }
       // Feed rejection back to implementer via a review-specific prompt
@@ -160,12 +160,12 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
     if (!ciSignalReceived) {
       await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
       return {
-        status: 'TIMED_OUT',
+        lessonsGenerated: [],
         prNumber: prData.prNumber,
         prUrl: prData.prUrl,
+        status: 'TIMED_OUT',
         totalCIRetries,
         totalReviewRetries,
-        lessonsGenerated: [],
       };
     }
 
@@ -176,12 +176,12 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
       if (totalCIRetries >= MAX_CI_RETRIES) {
         await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
-          status: 'FAILED',
+          lessonsGenerated: [],
           prNumber: prData.prNumber,
           prUrl: prData.prUrl,
+          status: 'FAILED',
           totalCIRetries,
           totalReviewRetries,
-          lessonsGenerated: [],
         };
       }
 
@@ -199,10 +199,10 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
   if (!merged) {
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
     return {
+      lessonsGenerated: [],
       status: 'TIMED_OUT',
       totalCIRetries,
       totalReviewRetries,
-      lessonsGenerated: [],
     };
   }
 
@@ -222,9 +222,9 @@ export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<Wor
   await stateActivities.updateDomainState(workflowInfo().workflowId, 'COMPLETED');
 
   return {
+    lessonsGenerated,
     status: 'SUCCESS',
     totalCIRetries,
     totalReviewRetries,
-    lessonsGenerated,
   };
 }

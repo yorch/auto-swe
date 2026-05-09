@@ -21,18 +21,18 @@ const tracer = trace.getTracer('auto-swe-worker');
 // ── Zod schemas for structured output ──
 
 const ReviewFindingSchema = z.object({
-  file: z.string(),
-  line: z.number().optional(),
   category: z.string(),
   description: z.string(),
+  file: z.string(),
+  line: z.number().optional(),
   suggestedFix: z.string(),
 });
 
 const ReviewVerdictSchema = z.object({
-  reviewer: z.enum(['SECURITY', 'DOMAIN_LOGIC', 'PERFORMANCE']),
   approved: z.boolean(),
-  severity: z.enum(['PASS', 'INFO', 'WARNING', 'CRITICAL']),
   findings: z.array(ReviewFindingSchema),
+  reviewer: z.enum(['SECURITY', 'DOMAIN_LOGIC', 'PERFORMANCE']),
+  severity: z.enum(['PASS', 'INFO', 'WARNING', 'CRITICAL']),
 });
 
 // ── Individual Reviewer Agents ──
@@ -49,21 +49,21 @@ async function runReviewerAgent(
       try {
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
-          name: `${reviewerType.toLowerCase()}-reviewer`,
-          model: getModel('reviewer'),
           instructions: prompt,
+          model: getModel('reviewer'),
+          name: `${reviewerType.toLowerCase()}-reviewer`,
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: JSON.stringify({
                 diff: codeResult.diff,
                 filesChanged: codeResult.filesChanged,
-                testResults: codeResult.testResults,
                 implementationNotes: codeResult.implementationNotes,
+                testResults: codeResult.testResults,
               }),
+              role: 'user',
             },
           ],
           { structuredOutput: { schema: ReviewVerdictSchema } }
@@ -123,17 +123,17 @@ export async function runReviewNetwork(
     }
     // If a reviewer crashes, treat as a critical finding requiring manual review
     return {
-      reviewer: reviewerTypes[index],
       approved: false,
-      severity: 'CRITICAL' as const,
       findings: [
         {
-          file: '',
           category: 'REVIEWER_CRASH',
           description: `Reviewer agent failed: ${(result as PromiseRejectedResult).reason?.message ?? 'Unknown error'}`,
+          file: '',
           suggestedFix: 'Manual review required',
         },
       ],
+      reviewer: reviewerTypes[index],
+      severity: 'CRITICAL' as const,
     };
   });
 
@@ -149,8 +149,8 @@ export async function runReviewNetwork(
 
   return {
     approved,
-    verdicts,
     codeResult,
     rejectionSummary,
+    verdicts,
   };
 }

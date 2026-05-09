@@ -46,8 +46,8 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const state = fastify.auth.signAccessToken({
-        sub: request.user!.sub,
         role: request.user!.role,
+        sub: request.user!.sub,
       });
 
       const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
@@ -85,14 +85,14 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Exchange code for token
     const tokenResponse = await fetch('https://slack.com/api/oauth.v2.access', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
         code,
         redirect_uri: redirectUri,
       }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: 'POST',
     });
 
     const tokenData = (await tokenResponse.json()) as any;
@@ -118,7 +118,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Prevent double-linking
     const existingLink = await fastify.prisma.user.findFirst({
-      where: { slackId, id: { not: statePayload.sub } },
+      where: { id: { not: statePayload.sub }, slackId },
     });
     if (existingLink) {
       return reply.status(409).send({
@@ -131,8 +131,8 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Update user with Slack ID
     await fastify.prisma.user.update({
-      where: { id: statePayload.sub },
       data: { slackId },
+      where: { id: statePayload.sub },
     });
 
     return { data: { connected: true, slackId } };
@@ -208,7 +208,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         // This is intentionally "passed: false" — the user is requesting the
         // agent to fix CI, not to re-run the same CI pipeline.
         await fastify.temporal.signalWorkflow(workflowId, 'ciPipelineSignal', [
-          { passed: false, logsUrl: undefined },
+          { logsUrl: undefined, passed: false },
         ]);
         return { data: { action: 'ci_fix_requested', workflowId } };
       }

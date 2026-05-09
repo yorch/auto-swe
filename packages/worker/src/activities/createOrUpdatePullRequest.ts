@@ -22,8 +22,8 @@ export async function createOrUpdatePullRequest(
   const existingPR = await prisma.pullRequest.findFirst({
     where: {
       repoId: repo.id,
-      workflow: { workRequestId: request.workRequestId },
       status: 'OPEN',
+      workflow: { workRequestId: request.workRequestId },
     },
   });
 
@@ -36,8 +36,8 @@ export async function createOrUpdatePullRequest(
     }
 
     await prisma.pullRequest.update({
-      where: { id: existingPR.id },
       data: { headSha: codeResult.headSha },
+      where: { id: existingPR.id },
     });
 
     const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
@@ -49,12 +49,12 @@ export async function createOrUpdatePullRequest(
 
   // Create new PR
   const { data: pr } = await octokit.pulls.create({
+    base: repo.defaultBranch,
+    body: formatPRBody(request, codeResult),
+    head: codeResult.branch,
     owner: repo.organizationName,
     repo: repo.repoName,
     title: formatPRTitle(request),
-    body: formatPRBody(request, codeResult),
-    head: codeResult.branch,
-    base: repo.defaultBranch,
   });
 
   const workflow = await prisma.activeWorkflow.findFirst({
@@ -63,11 +63,11 @@ export async function createOrUpdatePullRequest(
 
   await prisma.pullRequest.create({
     data: {
-      prNumber: pr.number,
-      headSha: codeResult.headSha,
-      status: 'OPEN',
       ciStatus: 'PENDING',
+      headSha: codeResult.headSha,
+      prNumber: pr.number,
       repoId: repo.id,
+      status: 'OPEN',
       workflowId: workflow?.id,
     },
   });

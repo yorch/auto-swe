@@ -22,9 +22,9 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const workflows = await fastify.prisma.activeWorkflow.findMany({
-        where,
-        include: { repository: true, pullRequests: true },
+        include: { pullRequests: true, repository: true },
         orderBy: { updatedAt: 'desc' },
+        where,
       });
       return { data: workflows };
     }
@@ -48,8 +48,8 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const workflow = await fastify.prisma.activeWorkflow.findFirst({
+        include: { pullRequests: true, repository: true, workRequest: true },
         where,
-        include: { repository: true, pullRequests: true, workRequest: true },
       });
       if (!workflow) {
         return reply.status(404).send({

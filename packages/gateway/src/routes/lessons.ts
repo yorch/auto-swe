@@ -26,19 +26,19 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const lessons = await fastify.prisma.agentLesson.findMany({
-        where,
-        select: {
-          id: true,
-          rationale: true,
-          lessonSummary: true,
-          failureType: true,
-          metadata: true,
-          createdAt: true,
-          repository: { select: { id: true, organizationName: true, repoName: true } },
-          workflow: { select: { id: true, temporalWorkflowId: true, currentStatus: true } },
-        },
         orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          failureType: true,
+          id: true,
+          lessonSummary: true,
+          metadata: true,
+          rationale: true,
+          repository: { select: { id: true, organizationName: true, repoName: true } },
+          workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+        },
         take: 100,
+        where,
       });
 
       return { data: lessons };
@@ -63,11 +63,11 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // Non-admins must be a member of the team that owns the repo they're searching
       if (request.user!.role !== 'ADMIN') {
         const accessibleRepo = await fastify.prisma.repository.findFirst({
+          select: { id: true },
           where: {
             id: repoId,
             team: { memberships: { some: { userId: request.user!.sub } } },
           },
-          select: { id: true },
         });
         if (!accessibleRepo) {
           return reply.status(403).send({
@@ -79,22 +79,22 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // Semantic search requires the worker's embedding + pgvector query
       // For the gateway API, we do a text-based fallback search
       const lessons = await fastify.prisma.agentLesson.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          failureType: true,
+          id: true,
+          lessonSummary: true,
+          rationale: true,
+        },
+        take: Math.min(Math.max(parseInt(limit ?? '10', 10) || 10, 1), 100),
         where: {
-          repoId,
           OR: [
             { lessonSummary: { contains: q, mode: 'insensitive' } },
             { rationale: { contains: q, mode: 'insensitive' } },
           ],
+          repoId,
         },
-        select: {
-          id: true,
-          rationale: true,
-          lessonSummary: true,
-          failureType: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: 'desc' },
-        take: Math.min(Math.max(parseInt(limit ?? '10', 10) || 10, 1), 100),
       });
 
       return { data: lessons };

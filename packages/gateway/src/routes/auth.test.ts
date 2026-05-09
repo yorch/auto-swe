@@ -8,26 +8,26 @@ import { authRoutes } from './auth.js';
 
 function makeUser(overrides = {}) {
   return {
-    id: 'user-1',
     email: 'test@example.com',
-    passwordHash: '$2b$10$placeholder', // bcrypt hash — overridden per test
-    slackId: null,
-    role: 'ENGINEER',
+    id: 'user-1',
     isActive: true,
+    passwordHash: '$2b$10$placeholder', // bcrypt hash — overridden per test
+    role: 'ENGINEER',
+    slackId: null,
     ...overrides,
   };
 }
 
 function makeRefreshToken(overrides = {}) {
   return {
-    id: 'rt-1',
-    userId: 'user-1',
-    tokenHash: 'hashed-token',
-    family: 'family-1',
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    revokedAt: null,
     createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    family: 'family-1',
+    id: 'rt-1',
+    revokedAt: null,
+    tokenHash: 'hashed-token',
     user: makeUser(),
+    userId: 'user-1',
     ...overrides,
   };
 }
@@ -42,23 +42,23 @@ async function buildApp() {
   await app.register(cookie);
 
   const mockPrisma = {
-    user: {
-      findUnique: vi.fn(),
-    },
+    $transaction: vi.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
     refreshToken: {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
-      updateMany: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({}),
     },
-    $transaction: vi.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    user: {
+      findUnique: vi.fn(),
+    },
   };
 
   const mockAuth = {
-    signAccessToken: vi.fn().mockReturnValue('access-token-xyz'),
     generateRefreshToken: vi.fn().mockReturnValue('new-refresh-token'),
     hashToken: vi.fn().mockImplementation((t: string) => `hash:${t}`),
+    signAccessToken: vi.fn().mockReturnValue('access-token-xyz'),
   };
 
   app.decorate('prisma', mockPrisma as any);
@@ -67,7 +67,7 @@ async function buildApp() {
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.ready();
 
-  return { app, mockPrisma, mockAuth };
+  return { app, mockAuth, mockPrisma };
 }
 
 // ── Login tests ──
@@ -83,8 +83,8 @@ describe('POST /api/v1/auth/login', () => {
   it('returns 400 for missing email', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/auth/login',
       payload: { password: 'secret' },
+      url: '/api/v1/auth/login',
     });
     expect(res.statusCode).toBe(400);
   });
@@ -93,8 +93,8 @@ describe('POST /api/v1/auth/login', () => {
     ctx.mockPrisma.user.findUnique.mockResolvedValue(null);
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/auth/login',
       payload: { email: 'nobody@example.com', password: 'wrong' },
+      url: '/api/v1/auth/login',
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).error.code).toBe('AUTH_FAILED');
@@ -104,8 +104,8 @@ describe('POST /api/v1/auth/login', () => {
     ctx.mockPrisma.user.findUnique.mockResolvedValue(makeUser({ isActive: false }));
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/auth/login',
       payload: { email: 'test@example.com', password: 'any' },
+      url: '/api/v1/auth/login',
     });
     expect(res.statusCode).toBe(401);
   });
@@ -119,8 +119,8 @@ describe('POST /api/v1/auth/login', () => {
 
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/auth/login',
       payload: { email: 'test@example.com', password: 'password123' },
+      url: '/api/v1/auth/login',
     });
 
     expect(res.statusCode).toBe(200);
@@ -142,8 +142,8 @@ describe('POST /api/v1/auth/login', () => {
 
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/auth/login',
       payload: { email: 'test@example.com', password: 'pass' },
+      url: '/api/v1/auth/login',
     });
 
     const body = JSON.parse(res.payload);
@@ -173,9 +173,9 @@ describe('POST /api/v1/auth/refresh', () => {
   it('returns 401 TOKEN_INVALID for unknown token', async () => {
     ctx.mockPrisma.refreshToken.findUnique.mockResolvedValue(null);
     const res = await ctx.app.inject({
+      cookies: { refreshToken: 'unknown-token' },
       method: 'POST',
       url: '/api/v1/auth/refresh',
-      cookies: { refreshToken: 'unknown-token' },
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).error.code).toBe('TOKEN_INVALID');
@@ -186,9 +186,9 @@ describe('POST /api/v1/auth/refresh', () => {
       makeRefreshToken({ revokedAt: new Date() })
     );
     const res = await ctx.app.inject({
+      cookies: { refreshToken: 'revoked-token' },
       method: 'POST',
       url: '/api/v1/auth/refresh',
-      cookies: { refreshToken: 'revoked-token' },
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).error.code).toBe('TOKEN_REUSE_DETECTED');
@@ -202,9 +202,9 @@ describe('POST /api/v1/auth/refresh', () => {
       makeRefreshToken({ expiresAt: new Date(Date.now() - 1000) })
     );
     const res = await ctx.app.inject({
+      cookies: { refreshToken: 'expired-token' },
       method: 'POST',
       url: '/api/v1/auth/refresh',
-      cookies: { refreshToken: 'expired-token' },
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).error.code).toBe('TOKEN_EXPIRED');
@@ -214,9 +214,9 @@ describe('POST /api/v1/auth/refresh', () => {
     ctx.mockPrisma.refreshToken.findUnique.mockResolvedValue(makeRefreshToken());
 
     const res = await ctx.app.inject({
+      cookies: { refreshToken: 'valid-token' },
       method: 'POST',
       url: '/api/v1/auth/refresh',
-      cookies: { refreshToken: 'valid-token' },
     });
 
     expect(res.statusCode).toBe(200);

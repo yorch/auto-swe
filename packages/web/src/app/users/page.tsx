@@ -25,7 +25,7 @@ export default function UsersPage() {
           </thead>
           <tbody>
             {(users ?? []).map((u) => (
-              <tr key={u.id} className="border-b border-[var(--border)]">
+              <tr className="border-b border-[var(--border)]" key={u.id}>
                 <td className="px-4 py-3">{u.email}</td>
                 <td className="px-4 py-3">{u.role}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.slackId ?? '-'}</td>

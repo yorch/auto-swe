@@ -1,10 +1,22 @@
 {
-  "root": true,
   "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on",
+        "useSortedAttributes": "on",
+        "useSortedKeys": "on",
+        "useSortedProperties": "on"
+      }
+    }
+  },
+  "css": {
+    "formatter": {
+      "quoteStyle": "single"
+    },
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "files": {
     "ignoreUnknown": false,
@@ -32,37 +44,48 @@
     "lineEnding": "lf",
     "lineWidth": 100
   },
-  "assist": {
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
+  "javascript": {
+    "formatter": {
+      "arrowParentheses": "always",
+      "bracketSameLine": false,
+      "bracketSpacing": true,
+      "jsxQuoteStyle": "double",
+      "quoteProperties": "asNeeded",
+      "quoteStyle": "single",
+      "semicolons": "always",
+      "trailingCommas": "es5"
     }
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
       "complexity": {
+        "noAdjacentSpacesInRegex": "error",
         "noExtraBooleanCast": "error",
         "noUselessCatch": "error",
         "noUselessConstructor": "error",
         "noUselessFragments": "error",
         "noUselessLabel": "error",
         "noUselessRename": "error",
-        "noUselessSwitchCase": "error",
-        "noAdjacentSpacesInRegex": "error"
+        "noUselessSwitchCase": "error"
       },
       "correctness": {
         "noConstAssign": "error",
         "noConstantCondition": "error",
         "noEmptyPattern": "error",
         "noGlobalObjectCalls": "error",
+        "noInvalidBuiltinInstantiation": "error",
         "noInvalidUseBeforeDeclaration": "error",
         "noUnreachable": "error",
         "noUnusedVariables": "warn",
-        "useExhaustiveDependencies": "warn",
-        "noInvalidBuiltinInstantiation": "error"
+        "useExhaustiveDependencies": "warn"
+      },
+      "recommended": true,
+      "style": {
+        "noNegationElse": "off",
+        "useConst": "error",
+        "useImportType": "warn",
+        "useTemplate": "warn"
       },
       "suspicious": {
         "noAsyncPromiseExecutor": "error",
@@ -82,33 +105,7 @@
         "noShadowRestrictedNames": "error",
         "noUnsafeNegation": "error",
         "noWith": "error"
-      },
-      "style": {
-        "noNegationElse": "off",
-        "useConst": "error",
-        "useImportType": "warn",
-        "useTemplate": "warn"
       }
-    }
-  },
-  "javascript": {
-    "formatter": {
-      "jsxQuoteStyle": "double",
-      "quoteProperties": "asNeeded",
-      "trailingCommas": "es5",
-      "semicolons": "always",
-      "arrowParentheses": "always",
-      "bracketSpacing": true,
-      "bracketSameLine": false,
-      "quoteStyle": "single"
-    }
-  },
-  "css": {
-    "formatter": {
-      "quoteStyle": "single"
-    },
-    "parser": {
-      "tailwindDirectives": true
     }
   },
   "overrides": [
@@ -122,5 +119,11 @@
         }
       }
     }
-  ]
+  ],
+  "root": true,
+  "vcs": {
+    "clientKind": "git",
+    "enabled": true,
+    "useIgnoreFile": true
+  }
 }

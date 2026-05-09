@@ -17,7 +17,7 @@ interface Props {
 
 function formatDateLabel(label: unknown) {
   const d = new Date(String(label) + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 
 export function LessonsOverTimeChart({ data }: Props) {
@@ -28,23 +28,23 @@ export function LessonsOverTimeChart({ data }: Props) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
+    <ResponsiveContainer height={280} width="100%">
       <AreaChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
         <XAxis
           dataKey="date"
-          tickFormatter={formatDateLabel}
-          tick={{ fontSize: 12 }}
           interval="preserveStartEnd"
+          tick={{ fontSize: 12 }}
+          tickFormatter={formatDateLabel}
         />
         <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
         <Tooltip labelFormatter={formatDateLabel} />
         <Area
-          type="monotone"
           dataKey="count"
-          stroke={CHART_PALETTE[2]}
           fill={CHART_PALETTE[2]}
           fillOpacity={0.4}
+          stroke={CHART_PALETTE[2]}
+          type="monotone"
         />
       </AreaChart>
     </ResponsiveContainer>

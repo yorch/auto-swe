@@ -16,9 +16,9 @@ const UserParamsSchema = z.object({ id: z.string().uuid() });
 
 const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
+  isActive: z.boolean().optional(),
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).optional(),
   slackId: z.string().nullable().optional(),
-  isActive: z.boolean().optional(),
 });
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
@@ -32,18 +32,18 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async () => {
       const users = await fastify.prisma.user.findMany({
+        orderBy: { email: 'asc' },
         select: {
-          id: true,
+          createdAt: true,
           email: true,
+          id: true,
+          isActive: true,
+          memberships: {
+            select: { role: true, team: { select: { id: true, name: true, slug: true } } },
+          },
           role: true,
           slackId: true,
-          isActive: true,
-          createdAt: true,
-          memberships: {
-            select: { team: { select: { id: true, name: true, slug: true } }, role: true },
-          },
         },
-        orderBy: { email: 'asc' },
       });
       return { data: users };
     }
@@ -53,8 +53,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      schema: { body: CreateUserSchema },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: CreateUserSchema },
     },
     async (request, reply) => {
       const { email, password, role, slackId } = request.body;
@@ -72,12 +72,12 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       const user = await fastify.prisma.user.create({
         data: { email, passwordHash, role, slackId },
         select: {
-          id: true,
+          createdAt: true,
           email: true,
+          id: true,
+          isActive: true,
           role: true,
           slackId: true,
-          isActive: true,
-          createdAt: true,
         },
       });
 
@@ -95,8 +95,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      schema: { params: UserParamsSchema, body: UpdateUserSchema },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: UpdateUserSchema, params: UserParamsSchema },
     },
     async (request, reply) => {
       const user = await fastify.prisma.user.findUnique({
@@ -109,9 +109,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const updated = await fastify.prisma.user.update({
-        where: { id: request.params.id },
         data: request.body,
-        select: { id: true, email: true, role: true, slackId: true, isActive: true },
+        select: { email: true, id: true, isActive: true, role: true, slackId: true },
+        where: { id: request.params.id },
       });
 
       return { data: updated };
