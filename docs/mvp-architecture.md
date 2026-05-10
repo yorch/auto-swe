@@ -15,7 +15,7 @@ A single Temporal workflow that accepts a work request via CLI, runs an AI agent
 | Database       | PostgreSQL 17 + pgvector with Prisma v7.x schema (subset: User, Repository, WorkRequest, ActiveWorkflow, PullRequest) |
 | Orchestration  | Temporal server + single TypeScript worker process                                                                    |
 | Workflow       | `EngineeringWorkflow` (child workflow only — no parent Epic Orchestrator)                                             |
-| Agent          | Implementer Agent (Mastra 1.0 + `claude-opus-4-6`) with bash and GitHub MCP tools                                     |
+| Agent          | Implementer Agent (Mastra 1.32 + `claude-opus-4-6`) with bash and GitHub MCP tools                                     |
 | TDD Loop       | Agent writes tests, runs them in Docker-in-Docker, iterates until green (max 5 iterations)                            |
 | PR Creation    | `createOrUpdatePullRequest` activity via GitHub API (Octokit)                                                         |
 | Merge Signal   | Human merge webhook (`POST /api/v1/webhooks/git`) fires `humanMergeSignal`                                            |
@@ -152,7 +152,7 @@ No review-rejection loops, no CI-fix loops.
 
 ### 5.3 Implementer Agent
 
-The only LLM agent in the MVP. Powered by Mastra 1.0 with `claude-opus-4-6`.
+The only LLM agent in the MVP. Powered by Mastra 1.32 with `claude-opus-4-6`.
 
 **Tools available to the agent (MCP):**
 
