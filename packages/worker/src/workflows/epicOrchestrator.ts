@@ -19,7 +19,7 @@ export type { EpicRepoEntry, EpicRequest, EpicResult };
 
 // ── Activity Proxies ──
 
-const _stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
+const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   retry: {
     backoffCoefficient: 2,
     initialInterval: '1s',
@@ -43,11 +43,39 @@ const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'
 
 export const epicCancelSignal = defineSignal('epicCancelSignal');
 
-// ── Constants ──
-
-const _EPIC_TIMEOUT = '30d';
-
 // ── Workflow ──
+
+/**
+ * Compute the transitive closure of dependents for a given repoId.
+ * If A depends on B, and B depends on C, then dependentsOf(C) === {B, A}.
+ * Used to mark all downstream repos as SKIPPED when an upstream repo fails.
+ */
+export function computeTransitiveDependents(
+  failedRepoId: string,
+  repos: EpicRepoEntry[]
+): Set<string> {
+  const dependentsByDep = new Map<string, string[]>();
+  for (const r of repos) {
+    for (const dep of r.dependsOn) {
+      const list = dependentsByDep.get(dep) ?? [];
+      list.push(r.repoId);
+      dependentsByDep.set(dep, list);
+    }
+  }
+  const skipped = new Set<string>();
+  const stack = [failedRepoId];
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (id === undefined) continue;
+    for (const dependent of dependentsByDep.get(id) ?? []) {
+      if (!skipped.has(dependent)) {
+        skipped.add(dependent);
+        stack.push(dependent);
+      }
+    }
+  }
+  return skipped;
+}
 
 export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<EpicResult> {
   let cancelled = false;
@@ -57,6 +85,7 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
 
   // If no repos are pre-decomposed, use the Planner Agent to decompose the epic
   if (request.repos.length === 0 && request.repoIds && request.repoIds.length > 0) {
+    await stateActivities.updateDomainState(request.epicWorkflowId, 'PLANNING');
     const plannedRepos = await plannerActivities.planEpic({
       description: request.description,
       repoIds: request.repoIds,
@@ -66,21 +95,41 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
     request = { ...request, repos: plannedRepos };
   }
 
+  await stateActivities.updateDomainState(request.epicWorkflowId, 'FANNING_OUT');
+
   const childResults: Record<string, WorkflowResult> = {};
   const completedRepos = new Set<string>();
-
-  // Build dependency graph: for each repo, track which repos it depends on
-  const _repoMap = new Map(request.repos.map((r) => [r.repoId, r]));
+  // Repos that should not be started because an upstream dependency failed.
+  // Tracked separately from completedRepos because their status is SKIPPED, not SUCCESS.
+  const skippedRepos = new Set<string>();
 
   // Process repos respecting dependency order
-  while (completedRepos.size < request.repos.length && !cancelled) {
-    // Find repos whose dependencies are all satisfied
+  while (completedRepos.size + skippedRepos.size < request.repos.length && !cancelled) {
+    // Find repos whose dependencies are all satisfied (succeeded). A SKIPPED
+    // dependency does NOT satisfy — it triggers further skipping.
     const ready = request.repos.filter(
-      (r) => !completedRepos.has(r.repoId) && r.dependsOn.every((dep) => completedRepos.has(dep))
+      (r) =>
+        !completedRepos.has(r.repoId) &&
+        !skippedRepos.has(r.repoId) &&
+        r.dependsOn.every((dep) => completedRepos.has(dep))
     );
 
     if (ready.length === 0) {
-      // All remaining repos have unsatisfied dependencies (likely a failed dep)
+      // No repos are runnable. Anything left has an unsatisfied dep (chain of failures).
+      // Mark them all as SKIPPED so the EpicResult is honest about what didn't run.
+      for (const r of request.repos) {
+        if (!completedRepos.has(r.repoId) && !skippedRepos.has(r.repoId)) {
+          const blockingDeps = r.dependsOn.filter((dep) => !completedRepos.has(dep));
+          childResults[r.repoId] = {
+            lessonsGenerated: [],
+            skippedReason: `upstream dependency unsatisfied: ${blockingDeps.join(', ')}`,
+            status: 'SKIPPED',
+            totalCIRetries: 0,
+            totalReviewRetries: 0,
+          };
+          skippedRepos.add(r.repoId);
+        }
+      }
       break;
     }
 
@@ -123,17 +172,44 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
     });
 
     await Promise.allSettled(childPromises);
+
+    // Propagate failure: any repo that just failed (or returned non-SUCCESS) blocks
+    // its transitive dependents — mark them SKIPPED so the next loop iteration
+    // doesn't sit waiting for an impossible "ready" set.
+    for (const repo of ready) {
+      const result = childResults[repo.repoId];
+      if (result && result.status !== 'SUCCESS') {
+        for (const dependentId of computeTransitiveDependents(repo.repoId, request.repos)) {
+          if (!completedRepos.has(dependentId) && !skippedRepos.has(dependentId)) {
+            childResults[dependentId] = {
+              lessonsGenerated: [],
+              skippedReason: `upstream ${repo.repoId} ${result.status.toLowerCase()}`,
+              status: 'SKIPPED',
+              totalCIRetries: 0,
+              totalReviewRetries: 0,
+            };
+            skippedRepos.add(dependentId);
+          }
+        }
+      }
+    }
   }
 
-  // Determine overall status
-  const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
-
+  // Determine overall status and emit terminal state
   if (cancelled) {
-    return { childResults, status: 'FAILED' };
+    await stateActivities.updateDomainState(request.epicWorkflowId, 'CANCELLED');
+    return { childResults, status: 'CANCELLED' };
   }
+
+  const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
+  const finalStatus = allSuccess ? 'SUCCESS' : 'FAILED';
+  await stateActivities.updateDomainState(
+    request.epicWorkflowId,
+    allSuccess ? 'COMPLETED' : 'FAILED'
+  );
 
   return {
     childResults,
-    status: allSuccess ? 'SUCCESS' : 'FAILED',
+    status: finalStatus,
   };
 }
