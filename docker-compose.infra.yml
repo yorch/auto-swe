@@ -41,6 +41,7 @@ services:
       - DB_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PWD=${POSTGRES_PASSWORD:-password}
+      - SQL_PASSWORD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_SEEDS=postgres-temporal
     volumes:
       - ./infra/scripts:/scripts
