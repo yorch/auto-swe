@@ -83,12 +83,14 @@ export type FailureType =
 // ── Workflow Result ──
 
 export interface WorkflowResult {
-  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT';
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
   prNumber?: number;
   prUrl?: string;
   totalCIRetries?: number;
   totalReviewRetries?: number;
   lessonsGenerated?: string[];
+  /** Populated when status === 'SKIPPED'. Identifies the upstream repo that failed. */
+  skippedReason?: string;
 }
 
 export type WorkflowStatus =
@@ -97,9 +99,12 @@ export type WorkflowStatus =
   | 'IN_REVIEW'
   | 'AWAITING_CI'
   | 'AWAITING_HUMAN_MERGE'
+  | 'PLANNING'
+  | 'FANNING_OUT'
   | 'COMPLETED'
   | 'FAILED'
-  | 'TIMED_OUT';
+  | 'TIMED_OUT'
+  | 'CANCELLED';
 
 // ── Epic Orchestrator Types (Phase 3) ──
 
@@ -120,7 +125,7 @@ export interface EpicRepoEntry {
 }
 
 export interface EpicResult {
-  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT';
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED';
   childResults: Record<string, WorkflowResult>;
 }
 
