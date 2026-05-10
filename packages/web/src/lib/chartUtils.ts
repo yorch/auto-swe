@@ -5,8 +5,6 @@
 
 import type { LessonListItem, WorkflowSummary } from '@auto-swe/shared/types/api';
 
-const _TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'TIMED_OUT'];
-
 function toDateKey(dateStr: string): string {
   return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
 }
