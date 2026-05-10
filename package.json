@@ -5,7 +5,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "yarn workspaces foreach -A run build",
+    "build": "yarn workspaces foreach -At run build",
+    "typecheck": "yarn workspace @auto-swe/shared run build && yarn workspaces foreach -A run typecheck",
     "dev:gateway": "yarn workspace @auto-swe/gateway dev",
     "dev:worker": "yarn workspace @auto-swe/worker dev",
     "dev:web": "yarn workspace @auto-swe/web dev",
