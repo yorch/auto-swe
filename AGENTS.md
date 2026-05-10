@@ -76,7 +76,8 @@ auto-swe/
 │           ├── hooks/   # useWorkflows.ts (TanStack Query)
 │           ├── lib/     # api.ts (fetch client), utils.ts
 │           └── stores/  # authStore.ts, teamStore.ts (Zustand)
-├── docker-compose.yml   # Postgres, Temporal, Gateway, Worker, Web
+├── docker-compose.infra.yml # Infra: Postgres (pgvector), Temporal, Postgres-temporal
+├── docker-compose.yml   # App: Gateway, Worker, Web, otel-lgtm (overlays infra)
 ├── tsconfig.base.json   # Shared TypeScript config
 ├── vitest.config.ts     # Test configuration
 ├── .env.example         # Environment variable template

@@ -1,49 +1,5 @@
 services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_DB: engineering_system
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  temporal:
-    image: temporalio/auto-setup:1.25.2
-    depends_on:
-      postgres-temporal:
-        condition: service_healthy
-    environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=password
-      - POSTGRES_SEEDS=postgres-temporal
-    ports:
-      - "7233:7233"
-      - "8233:8233"
-
-  # Temporal gets its own Postgres to avoid schema conflicts with pgvector
-  postgres-temporal:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_PASSWORD: password
-    volumes:
-      - pgdata-temporal:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   gateway:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/gateway/Dockerfile
@@ -66,7 +22,6 @@ services:
       - PORT=8080
 
   worker:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/worker/Dockerfile
@@ -87,7 +42,6 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    profiles: [app]
     image: grafana/otel-lgtm:0.8.1
     ports:
       - "3001:3000"   # Grafana UI (3000 taken by Next.js)
@@ -96,7 +50,6 @@ services:
 
   # Phase 4: Web Dashboard
   web:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/web/Dockerfile
@@ -106,7 +59,3 @@ services:
       - gateway
     environment:
       - NEXT_PUBLIC_API_URL=http://gateway:8080
-
-volumes:
-  pgdata:
-  pgdata-temporal:
