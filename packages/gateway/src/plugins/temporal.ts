@@ -33,6 +33,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       await client.workflow.start('EpicOrchestratorWorkflow', {
         args: [request],
         taskQueue: 'engineering-workflow',
+        // Hard upper bound. A child workflow that hangs indefinitely (e.g. waiting
+        // on a never-arriving human merge) cannot keep the epic alive forever.
+        // Temporal terminates the workflow on timeout; child workflows are released
+        // via PARENT_CLOSE_POLICY_REQUEST_CANCEL set in the orchestrator.
+        workflowExecutionTimeout: '30d',
         workflowId,
       });
     },
