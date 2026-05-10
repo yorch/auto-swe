@@ -160,16 +160,26 @@ The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
 
 Each agent role resolves its model at call time through `getModel(role)`:
 
-| Role              | Env var                     | Default                                |
-| ----------------- | --------------------------- | -------------------------------------- |
-| `implementer`     | `IMPLEMENTER_MODEL`         | `anthropic/claude-opus-4-6`            |
-| `reviewer`        | `REVIEWER_MODEL`            | `anthropic/claude-opus-4-6`            |
-| `planner`         | `PLANNER_MODEL`             | `anthropic/claude-sonnet-4-20250514`   |
-| `securityReview`  | `SECURITY_REVIEW_MODEL`     | `anthropic/claude-sonnet-4-20250514`   |
-| `validateContext` | `CONTEXT_VALIDATOR_MODEL`   | `anthropic/claude-sonnet-4-20250514`   |
-| `commitToMemory`  | `MEMORY_SUMMARIZER_MODEL`   | `anthropic/claude-opus-4-6`            |
+| Role              | Env var                   | Default                       |
+| ----------------- | ------------------------- | ----------------------------- |
+| `implementer`     | `IMPLEMENTER_MODEL`       | `anthropic/claude-opus-4-7`   |
+| `reviewer`        | `REVIEWER_MODEL`          | `anthropic/claude-opus-4-7`   |
+| `planner`         | `PLANNER_MODEL`           | `anthropic/claude-sonnet-4-6` |
+| `securityReview`  | `SECURITY_REVIEW_MODEL`   | `anthropic/claude-sonnet-4-6` |
+| `validateContext` | `CONTEXT_VALIDATOR_MODEL` | `anthropic/claude-sonnet-4-6` |
+| `commitToMemory`  | `MEMORY_SUMMARIZER_MODEL` | `anthropic/claude-opus-4-7`   |
 
 Spec format is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires `<PROVIDER>_API_BASE` (uppercase, hyphens → underscores) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, etc.
+
+**Latest model IDs at the time of writing** (override defaults via the env vars above; pricing for these is already in `MODEL_PRICES`):
+
+| Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
+| --------- | ---------------------------- | --------------------------- | --------------------------------------- |
+| Anthropic | `claude-opus-4-7`            | `claude-sonnet-4-6`         | `claude-haiku-4-5-20251001`             |
+| OpenAI    | `gpt-5-5-pro`                | `gpt-5-5`                   | `gpt-5`                                 |
+| Google    | `gemini-2.5-pro`             | `gemini-2.5-flash`          | `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash-lite` |
+
+Deprecation warning: `claude-sonnet-4-20250514` (the previous default for planner / securityReview / validateContext) **retires 2026-06-15** — anyone with a custom env override pinned to that ID must migrate to `claude-sonnet-4-6` before that date.
 
 ### Cost Tracking
 

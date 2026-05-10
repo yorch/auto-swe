@@ -47,7 +47,7 @@ For multi-repo epics, an `EpicOrchestratorWorkflow` decomposes the request into 
 | ------------------- | ---------------------------------------------------------- |
 | HTTP API            | Fastify 5.8 + Zod 4 validation                             |
 | Orchestration       | Temporal 1.31 (server + admin-tools + ui) + @temporalio/* SDK 1.17 |
-| Agents              | Mastra 1.32 + Vercel AI SDK 6 (claude-opus-4-6)            |
+| Agents              | Mastra 1.32 + Vercel AI SDK 6 (default `claude-opus-4-7`)  |
 | Database            | PostgreSQL 17 + pgvector (Prisma 7.8)                      |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
 | Workspace isolation | Docker-in-Docker                                           |
