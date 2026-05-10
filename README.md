@@ -46,7 +46,7 @@ For multi-repo epics, an `EpicOrchestratorWorkflow` decomposes the request into 
 | Layer               | Technology                                              |
 | ------------------- | ------------------------------------------------------- |
 | HTTP API            | Fastify 5.x + Zod validation                            |
-| Orchestration       | Temporal.io (auto-setup 1.25.2)                         |
+| Orchestration       | Temporal.io 1.31.0 (server + admin-tools + ui)          |
 | Agents              | Mastra 1.6 + `@ai-sdk/anthropic` (claude-opus-4-6)      |
 | Database            | PostgreSQL 17 + pgvector (Prisma 7)                     |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                 |
@@ -72,8 +72,8 @@ corepack enable && yarn install
 cp .env.example .env
 # Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
 
-# 3. Start infrastructure (Postgres, Temporal, Grafana/OTel)
-yarn docker:infra
+# 3. Start infrastructure (Postgres, Temporal)
+yarn docker:infra:up
 
 # 4. Set up the database
 yarn db:migrate && yarn db:generate && yarn db:seed

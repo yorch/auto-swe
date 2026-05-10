@@ -32,7 +32,7 @@ For deeper context on architecture and design rationale, refer to:
 | Runtime         | Node.js                                | >=24.0.0                   |
 | Package Manager | Yarn 4 (Berry)                         | 4.12.0 (via corepack)      |
 | HTTP Framework  | Fastify                                | ^5.7.0                     |
-| Orchestration   | Temporal.io                            | auto-setup:1.25.2          |
+| Orchestration   | Temporal.io                            | server:1.31.0 + admin-tools + ui |
 | Agent Framework | Mastra                                 | ^1.6.0                     |
 | ORM             | Prisma                                 | ^7.4.0                     |
 | Database        | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17     |
@@ -76,7 +76,11 @@ auto-swe/
 │           ├── hooks/   # useWorkflows.ts (TanStack Query)
 │           ├── lib/     # api.ts (fetch client), utils.ts
 │           └── stores/  # authStore.ts, teamStore.ts (Zustand)
-├── docker-compose.yml   # Postgres, Temporal, Gateway, Worker, Web
+├── docker-compose.infra.yml # Infra: Postgres (pgvector), Temporal (server + admin-tools + ui), Postgres-temporal
+├── docker-compose.yml   # App: Gateway, Worker, Web, otel-lgtm (overlays infra)
+├── infra/
+│   ├── scripts/        # Helper scripts mounted into temporal-setup containers
+│   └── dynamicconfig/  # Temporal dynamic config (development-sql.yaml)
 ├── tsconfig.base.json   # Shared TypeScript config
 ├── vitest.config.ts     # Test configuration
 ├── .env.example         # Environment variable template
@@ -231,7 +235,7 @@ corepack enable && yarn install
 
 # 2. Start infrastructure
 cp .env.example .env    # Fill in ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
-docker compose up postgres postgres-temporal temporal -d
+yarn docker:infra:up
 
 # 3. Database setup
 yarn db:migrate && yarn db:generate && yarn db:seed

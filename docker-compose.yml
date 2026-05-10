@@ -1,61 +1,22 @@
+# Application stack — NOT runnable standalone.
+# Services here reference infra (postgres, temporal) defined in docker-compose.infra.yml.
+# Always overlay both files: `docker compose -f docker-compose.infra.yml -f docker-compose.yml ...`
+# Use the `yarn docker:up` / `docker:down` / `docker:logs` / `docker:build` scripts for the
+# full stack, or `yarn docker:infra:up` for infra only.
 services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_DB: engineering_system
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  temporal:
-    image: temporalio/auto-setup:1.25.2
-    depends_on:
-      postgres-temporal:
-        condition: service_healthy
-    environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=password
-      - POSTGRES_SEEDS=postgres-temporal
-    ports:
-      - "7233:7233"
-      - "8233:8233"
-
-  # Temporal gets its own Postgres to avoid schema conflicts with pgvector
-  postgres-temporal:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_PASSWORD: password
-    volumes:
-      - pgdata-temporal:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   gateway:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/gateway/Dockerfile
     ports:
-      - "8080:8080"
+      - "${GATEWAY_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
@@ -66,7 +27,6 @@ services:
       - PORT=8080
 
   worker:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/worker/Dockerfile
@@ -74,9 +34,9 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
@@ -87,7 +47,6 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    profiles: [app]
     image: grafana/otel-lgtm:0.8.1
     ports:
       - "3001:3000"   # Grafana UI (3000 taken by Next.js)
@@ -96,17 +55,12 @@ services:
 
   # Phase 4: Web Dashboard
   web:
-    profiles: [app]
     build:
       context: .
       dockerfile: packages/web/Dockerfile
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
     depends_on:
       - gateway
     environment:
       - NEXT_PUBLIC_API_URL=http://gateway:8080
-
-volumes:
-  pgdata:
-  pgdata-temporal:
