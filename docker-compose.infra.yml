@@ -28,6 +28,12 @@ services:
     ports:
       - "${TEMPORAL_GRPC_PORT:-7233}:7233"
       - "${TEMPORAL_UI_PORT:-8233}:8233"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 60
 
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:

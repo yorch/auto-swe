@@ -14,7 +14,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
       - TEMPORAL_ADDRESS=temporal:7233
@@ -34,7 +34,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
       - TEMPORAL_ADDRESS=temporal:7233
