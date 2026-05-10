@@ -80,6 +80,7 @@ export const SECURITY_RULES: SecurityRule[] = [
     pattern:
       /\.\$(?:queryRawUnsafe|executeRawUnsafe)\(|\.(?:\$queryRaw|\$executeRaw)\s*\(`[^`]*\$\{/,
     severity: 'HIGH',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: example string shown to the agent in the suggested fix; the ${id} is literal documentation.
     suggestedFix: 'Use parameterized queries: prisma.$queryRaw`SELECT * FROM ... WHERE id = ${id}`',
   },
   {
@@ -146,7 +147,7 @@ export function checkContentSecurity(filePath: string, content: string): PreWrit
   for (const rule of SECURITY_RULES) {
     // Skip if rule is extension-restricted and file doesn't match
     if (rule.fileExtensions) {
-      const ext = '.' + filePath.split('.').pop();
+      const ext = `.${filePath.split('.').pop()}`;
       if (!rule.fileExtensions.includes(ext)) continue;
     }
 

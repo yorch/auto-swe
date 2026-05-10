@@ -74,7 +74,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Verify team exists
       const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
-      if (!team || !team.isActive) {
+      if (!team?.isActive) {
         return reply.status(404).send({
           error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' },
         });

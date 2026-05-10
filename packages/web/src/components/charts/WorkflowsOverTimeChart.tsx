@@ -17,7 +17,7 @@ interface Props {
 }
 
 function formatDateLabel(label: unknown) {
-  const d = new Date(String(label) + 'T00:00:00');
+  const d = new Date(`${String(label)}T00:00:00`);
   return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 

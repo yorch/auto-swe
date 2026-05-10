@@ -19,7 +19,7 @@ export type { EpicRepoEntry, EpicRequest, EpicResult };
 
 // ── Activity Proxies ──
 
-const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
+const _stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   retry: {
     backoffCoefficient: 2,
     initialInterval: '1s',
@@ -45,7 +45,7 @@ export const epicCancelSignal = defineSignal('epicCancelSignal');
 
 // ── Constants ──
 
-const EPIC_TIMEOUT = '30d';
+const _EPIC_TIMEOUT = '30d';
 
 // ── Workflow ──
 
@@ -70,7 +70,7 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
   const completedRepos = new Set<string>();
 
   // Build dependency graph: for each repo, track which repos it depends on
-  const repoMap = new Map(request.repos.map((r) => [r.repoId, r]));
+  const _repoMap = new Map(request.repos.map((r) => [r.repoId, r]));
 
   // Process repos respecting dependency order
   while (completedRepos.size < request.repos.length && !cancelled) {

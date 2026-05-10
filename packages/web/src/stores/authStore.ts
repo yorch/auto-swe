@@ -43,6 +43,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // by scripts. The gateway verifies the JWT on every API call, so the real
       // security boundary is server-side. Secure; ensures it is never sent over HTTP.
       const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
+      // biome-ignore lint/suspicious/noDocumentCookie: Next.js middleware needs to read this cookie on the server. HttpOnly is impossible from client JS; gateway verifies JWT on every request (real security boundary).
       document.cookie = `accessToken=${data.accessToken}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
     }
 
@@ -62,6 +63,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     api.clearToken();
     if (typeof window !== 'undefined') {
+      // biome-ignore lint/suspicious/noDocumentCookie: see login() — same cookie, server-readable by design.
       document.cookie = 'accessToken=; path=/; max-age=0';
     }
     set({ isAuthenticated: false, user: null });

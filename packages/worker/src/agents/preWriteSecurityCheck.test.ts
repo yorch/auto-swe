@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: test fixtures must contain literal `${...}` inside regular strings to exercise the SQL/command injection regexes.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkContentSecurity, wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 

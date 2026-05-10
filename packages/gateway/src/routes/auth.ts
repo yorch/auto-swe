@@ -28,7 +28,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       const { email, password } = request.body;
 
       const user = await fastify.prisma.user.findUnique({ where: { email } });
-      if (!user || !user.isActive) {
+      if (!user?.isActive) {
         return reply.status(401).send({
           error: { code: 'AUTH_FAILED', message: 'Invalid email or password' },
         });

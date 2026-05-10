@@ -18,7 +18,7 @@ const EXEC_OPTS: ExecSyncOptions = {
 const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 
 export function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 export function createWorkspace(

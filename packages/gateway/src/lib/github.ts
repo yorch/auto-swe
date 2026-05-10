@@ -12,7 +12,7 @@ export function verifyGitHubSignature(
   signature: string,
   secret: string
 ): boolean {
-  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const expected = `sha256=${crypto.createHmac('sha256', secret).update(payload).digest('hex')}`;
 
   const sigBuf = Buffer.from(signature);
   const expBuf = Buffer.from(expected);

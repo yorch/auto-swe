@@ -43,7 +43,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: repoIds[0] },
       });
-      if (!repo || !repo.isActive) {
+      if (!repo?.isActive) {
         return reply.status(404).send({
           error: {
             code: 'REPO_NOT_FOUND',

@@ -1,7 +1,6 @@
 import type {
   AggregatedReviewResult,
   CodeResult,
-  ReviewFinding,
   ReviewVerdict,
 } from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';

@@ -1,7 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
