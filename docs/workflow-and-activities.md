@@ -1,8 +1,6 @@
 # Workflow & Activity Implementations
 
-> Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for the Temporal worker.
-
-> ⚠️ **PHASE 2+ DOCUMENT** — This document describes the **full** workflow with review network, CI self-healing, memory commit, and K8s workspace provisioning. **None of this is part of the Phase 1 MVP.** The MVP workflow is a simplified linear flow: Implement → PR → Await Human Merge → Done. See `mvp-implementation.md` for the MVP workflow code.
+> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, and memory commit described here are implemented under `packages/worker/`. Note: workspace provisioning is described as Kubernetes Jobs but was implemented with Docker-in-Docker — see `STATUS.md` for the full divergence list.
 
 ## 1. Agent-to-Agent Data Flow & Typed Interfaces
 

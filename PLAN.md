@@ -1,5 +1,7 @@
 # Autonomous Agentic Engineering System (v19.0 - TDD, CI/CD, & RBAC)
 
+> **Historical design document.** This is the original v19 architectural plan that drove Phases 1–4 of the build. Some sections describe aspirational choices (Kubernetes Jobs + KEDA, multi-provider LLM routing with `gemini-2.5-pro` / `gpt-5.2`, RS256 JWT with K8s Secrets) that diverged during implementation. For what actually shipped, see [STATUS.md](./STATUS.md). For current conventions, model defaults, and tech stack, see [AGENTS.md](./AGENTS.md). For local quickstart, see [README.md](./README.md).
+
 ## 1. System Overview & Purpose
 
 This system defines a production-grade, deterministic architecture for an autonomous, agent-driven software engineering workflow. It addresses the "last mile" of engineering automation by moving beyond simple code generation into a fully integrated, self-healing, and self-improving ecosystem.
@@ -280,7 +282,7 @@ The Prisma schema, embedding pipeline, executor image build pipeline, security g
 
 **Key design decisions documented there:**
 
-- Prisma v7.x schema with 8 models (User, RefreshToken, Repository, WorkRequest, ContextSnapshot, ActiveWorkflow, PullRequest, AgentLesson)
+- Prisma v7.x schema with 10 models (User, RefreshToken, Team, TeamMembership, Repository, WorkRequest, ContextSnapshot, ActiveWorkflow, PullRequest, AgentLesson)
 - Embedding pipeline: `text-embedding-3-large` (1536d), HNSW index (m=16, ef_construction=200), cosine similarity with 0.7 threshold
 - Executor image lifecycle: ECR registry, `.auto-swe/Dockerfile` convention, GitHub Actions build pipeline, IRSA-based K8s pull credentials
 - Workspace isolation: volume sandboxing at `/workspace/target-repo`, JIT credential scoping, SecurityReviewProcessor middleware

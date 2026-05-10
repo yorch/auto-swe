@@ -1,6 +1,6 @@
 # MVP Technical Implementation Guide (Phase 1)
 
-> This document provides the complete, step-by-step technical implementation for the MVP. It covers project structure, configuration, every file that needs to be written, and the exact build order. Refer to [mvp-architecture.md](./mvp-architecture.md) for design rationale.
+> **Historical build guide.** Phase 1 has shipped. This was the original step-by-step implementation guide for the MVP and is preserved as a record of project structure, configuration, and build order at that point in time. Some snippets (notably the Mastra agent binding) describe pre-release APIs that diverged from the shipped code — refer to `packages/worker/src/` for canonical patterns. See [mvp-architecture.md](./mvp-architecture.md) for design rationale and [README](../README.md) for a current quickstart.
 
 ## 1. Project Structure
 
@@ -79,7 +79,7 @@ The implementation should proceed in this exact order. Each step produces a test
 | 7    | Worker: Bootstrap + register workflow                | Steps 2, 3  | Worker connects to Temporal, workflow appears in Temporal Web UI |
 | 8    | Worker: `updateDomainState` activity                 | Steps 2, 7  | Workflow updates `active_workflows.current_status`               |
 | 9    | Worker: Workspace provisioning (Docker container)    | Step 7      | Container created, repo cloned, container destroyed              |
-| 10   | Worker: Implementer agent (Mastra + claude-opus-4-6) | Steps 7, 9  | Agent generates code in workspace                                |
+| 10   | Worker: Implementer agent (Mastra + claude-opus-4-7) | Steps 7, 9  | Agent generates code in workspace                                |
 | 11   | Worker: TDD loop                                     | Steps 9, 10 | Agent runs tests, iterates on failures                           |
 | 12   | Worker: `createOrUpdatePullRequest` activity         | Steps 2, 7  | PR created on GitHub                                             |
 | 13   | Worker: `humanMergeSignal` handler                   | Step 7      | Workflow waits for signal, completes on receipt                  |
@@ -1620,7 +1620,7 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
 
 ### Step 11: Implementer Agent with Tool Bindings
 
-> ⚠️ **VERIFY MASTRA API BEFORE IMPLEMENTING** — The code below is based on pre-release Mastra 1.0 documentation. The constructor shape (`new Mastra({ agents: { ... } })`), tool creation pattern (`createTool`), and model binding (`anthropic('claude-opus-4-6')`) must be verified against the actual released `@mastra/core` and `@mastra/anthropic` packages. Install them first, check their exported APIs, and adapt if needed. The intent and architecture are correct — only the exact API surface may differ.
+> ⚠️ **HISTORICAL — APIs DIFFER FROM SHIPPED CODE** — The code below was written against pre-release Mastra 1.0 documentation. The shipped worker uses `@mastra/core@1.32.1` and binds models via `getModel(role)` (see `packages/worker/src/lib/models.ts`) rather than direct provider calls like `anthropic('...')`. Use `getModel('implementer')` instead so the role-based defaults and `<ROLE>_MODEL` env overrides apply. The constructor shape and `createTool` pattern below also no longer match the released API exactly — refer to the actual worker source for the canonical pattern.
 
 **packages/worker/src/agents/prompts.ts:**
 
@@ -1723,7 +1723,10 @@ export function createImplementerAgent(workspace: Workspace) {
     agents: {
       implementer: {
         name: 'implementer',
-        model: anthropic('claude-opus-4-6'),
+        // Use getModel(role) — config-driven via IMPLEMENTER_MODEL env var.
+        // Default resolves to anthropic/claude-opus-4-7. Never bind providers
+        // directly (e.g. anthropic('...')) in agent code; see AGENTS.md §6.
+        model: getModel('implementer'),
         instructions: '', // Set per-call via system message
         tools: { readFile, writeFile, listDirectory, bash },
       },
@@ -1872,7 +1875,7 @@ CMD ["node", "packages/worker/dist/index.js"]
 | ----------------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`          | Yes      | —                         | PostgreSQL connection string                                                                                                                            |
 | `TEMPORAL_ADDRESS`      | Yes      | `localhost:7233`          | Temporal gRPC endpoint                                                                                                                                  |
-| `ANTHROPIC_API_KEY`     | Yes      | —                         | API key for claude-opus-4-6                                                                                                                             |
+| `ANTHROPIC_API_KEY`     | Yes      | —                         | API key for claude-opus-4-7                                                                                                                             |
 | `GITHUB_TOKEN`          | Yes      | —                         | GitHub PAT with `repo` scope                                                                                                                            |
 | `GITHUB_WEBHOOK_SECRET` | Yes      | —                         | HMAC secret for GitHub webhook verification                                                                                                             |
 | `GITHUB_URL`            | No       | `https://github.com`      | Base URL for git operations (set for GitHub Enterprise Server)                                                                                          |

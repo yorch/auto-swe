@@ -1,8 +1,6 @@
 # Interaction Gateway & Authentication
 
-> Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for the Gateway service.
-
-> ⚠️ **PHASE 3+ DOCUMENT** — This document describes the full authentication, RBAC, and Slack integration layer. **None of this is part of the Phase 1 MVP.** The MVP uses a hardcoded ADMIN role with no JWT auth (see `mvp-implementation.md`). Read this for future context only — do not implement during Phase 1.
+> Original design doc for the Gateway service — extracted from [PLAN.md](../PLAN.md). Phase 3 has shipped; the JWT / RBAC / Slack layer described here is implemented under `packages/gateway/`. Note: the doc describes RS256 JWTs with K8s Secrets as the canonical mode; the shipped gateway also supports HS256 (the default for Docker Compose) — see [README](../README.md) and `packages/gateway/src/plugins/auth.ts` for the actual conditional behaviour.
 
 ## 1. Authentication & Session Strategy
 
