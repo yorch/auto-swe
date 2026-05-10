@@ -1620,7 +1620,7 @@ function formatPRBody(request: RepoWorkRequest, codeResult: CodeResult): string 
 
 ### Step 11: Implementer Agent with Tool Bindings
 
-> ⚠️ **VERIFY MASTRA API BEFORE IMPLEMENTING** — The code below is based on pre-release Mastra 1.0 documentation. The constructor shape (`new Mastra({ agents: { ... } })`), tool creation pattern (`createTool`), and model binding (`anthropic('claude-opus-4-7')`) must be verified against the actual released `@mastra/core` and `@mastra/anthropic` packages. Install them first, check their exported APIs, and adapt if needed. The intent and architecture are correct — only the exact API surface may differ.
+> ⚠️ **HISTORICAL — APIs DIFFER FROM SHIPPED CODE** — The code below was written against pre-release Mastra 1.0 documentation. The shipped worker uses `@mastra/core@1.32.1` and binds models via `getModel(role)` (see `packages/worker/src/lib/models.ts`) rather than direct provider calls like `anthropic('...')`. Use `getModel('implementer')` instead so the role-based defaults and `<ROLE>_MODEL` env overrides apply. The constructor shape and `createTool` pattern below also no longer match the released API exactly — refer to the actual worker source for the canonical pattern.
 
 **packages/worker/src/agents/prompts.ts:**
 
@@ -1723,7 +1723,10 @@ export function createImplementerAgent(workspace: Workspace) {
     agents: {
       implementer: {
         name: 'implementer',
-        model: anthropic('claude-opus-4-7'),
+        // Use getModel(role) — config-driven via IMPLEMENTER_MODEL env var.
+        // Default resolves to anthropic/claude-opus-4-7. Never bind providers
+        // directly (e.g. anthropic('...')) in agent code; see AGENTS.md §6.
+        model: getModel('implementer'),
         instructions: '', // Set per-call via system message
         tools: { readFile, writeFile, listDirectory, bash },
       },

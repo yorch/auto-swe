@@ -72,7 +72,7 @@ corepack enable && yarn install
 cp .env.example .env
 # Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
 
-# 3. Start infrastructure (Postgres, Temporal, Grafana/OTel)
+# 3. Start infrastructure (Postgres, Temporal)
 yarn docker:infra:up
 
 # 4. Set up the database
@@ -125,24 +125,26 @@ open http://localhost:8233
 
 ## Environment variables
 
-| Variable                | Required  | Description                                                  |
-| ----------------------- | --------- | ------------------------------------------------------------ |
-| `DATABASE_URL`          | Yes       | PostgreSQL connection string                                 |
-| `TEMPORAL_ADDRESS`      | Yes       | Temporal server address (default: `localhost:7233`)          |
-| `ANTHROPIC_API_KEY`     | Yes       | Claude API key (Implementer, Review, Planner, Memory agents) |
-| `GITHUB_TOKEN`          | Yes       | GitHub PAT with `repo` scope                                 |
-| `GITHUB_WEBHOOK_SECRET` | Yes       | Secret for verifying GitHub webhook signatures               |
-| `OPENAI_API_KEY`        | Yes       | OpenAI key for `text-embedding-3-large` embeddings           |
-| `JWT_SECRET`            | HS256     | Secret for HS256 JWTs (default mode for Docker Compose)      |
-| `JWT_PRIVATE_KEY_PATH`  | RS256     | Path to RSA private key — switches signing to RS256          |
-| `JWT_PUBLIC_KEY_PATH`   | RS256     | Path to RSA public key — required when using RS256           |
-| `SEED_ADMIN_PASSWORD`   | Seed only | Password for the seeded admin user                           |
+| Variable                | Required  | Description                                                                                  |
+| ----------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | Yes       | PostgreSQL connection string                                                                 |
+| `TEMPORAL_ADDRESS`      | Yes       | Temporal server address (default: `localhost:7233`)                                          |
+| `ANTHROPIC_API_KEY`     | Yes       | Claude API key (Implementer, Review, Planner, Memory agents)                                 |
+| `GITHUB_TOKEN`          | Yes       | GitHub PAT with `repo` scope                                                                 |
+| `GITHUB_WEBHOOK_SECRET` | Yes       | Secret for verifying GitHub webhook signatures                                               |
+| `OPENAI_API_KEY`        | Yes       | OpenAI key for `text-embedding-3-large` embeddings                                           |
+| `JWT_SECRET`            | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
+| `JWT_PRIVATE_KEY_PATH`  | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                          |
+| `JWT_PUBLIC_KEY_PATH`   | Optional¹ | Path to RSA public key. Required when using RS256                                            |
+| `SEED_ADMIN_PASSWORD`   | Seed only | Password for the seeded admin user                                                           |
 | `SLACK_CLIENT_ID`       | Optional  | Slack OAuth app credentials                                  |
 | `SLACK_CLIENT_SECRET`   | Optional  | Slack OAuth app credentials                                  |
 | `SLACK_SIGNING_SECRET`  | Optional  | For verifying Slack interactive webhook signatures           |
 | `BRANCH_PREFIX`         | Optional  | Git branch prefix (default: `auto`)                          |
 | `GITHUB_URL`            | Optional  | Override for GitHub Enterprise Server                        |
-| `GITHUB_API_URL`        | Optional  | Override for GitHub Enterprise Server API                    |
+| `GITHUB_API_URL`        | Optional  | Override for GitHub Enterprise Server API                                                    |
+
+¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
 
 ## Commands
 
@@ -157,7 +159,7 @@ yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode
 yarn dev:worker          # Worker in watch mode
 yarn dev:web             # Next.js dashboard (port 3000)
-yarn docker:infra:up     # Start infra services (postgres + temporal + otel)
+yarn docker:infra:up     # Start infra services (postgres + temporal). Observability (Grafana/OTel) starts with yarn docker:up.
 yarn docker:infra:down   # Stop infra services
 yarn docker:up           # Start everything (infra + app)
 yarn docker:down         # Stop everything
