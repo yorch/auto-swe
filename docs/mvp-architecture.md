@@ -1,6 +1,6 @@
 # MVP Architecture & Design (Phase 1: Single-Repo Agent Loop)
 
-> This document defines the architecture and design for the Minimum Viable Product. It is scoped exclusively to Phase 1 deliverables as defined in [PLAN.md](../PLAN.md). Everything outside Phase 1 is explicitly excluded.
+> **Historical design document.** Phase 1 has shipped. This file is the original architecture & design rationale for the MVP — it explains the *why* behind decisions still visible in the code. For what was actually built, see [STATUS.md](../STATUS.md). For current conventions and tech stack, see [AGENTS.md](../AGENTS.md). For a quickstart, see the [README](../README.md).
 
 ## 1. MVP Goal
 

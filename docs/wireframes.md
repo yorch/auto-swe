@@ -2,7 +2,7 @@
 
 > **Tech stack:** Next.js 16 + React 19 + Tailwind CSS 4 + shadcn/ui + Radix UI + Recharts
 > **API base:** `GET/POST/PATCH/DELETE /api/v1/*` (gateway on `:8080`)
-> **Auth:** RS256 JWT in `Authorization: Bearer <token>` header
+> **Auth:** JWT in `Authorization: Bearer <token>` header (HS256 by default for Docker Compose; RS256 if `JWT_PRIVATE_KEY_PATH` is set)
 > **Roles:** `ADMIN > LEAD > ENGINEER` (numeric hierarchy 3 > 2 > 1)
 >
 > See [Web UI Technical Stack](#web-ui-technical-stack) at the end of this document for full library details.

@@ -1,6 +1,6 @@
 # MVP Technical Implementation Guide (Phase 1)
 
-> This document provides the complete, step-by-step technical implementation for the MVP. It covers project structure, configuration, every file that needs to be written, and the exact build order. Refer to [mvp-architecture.md](./mvp-architecture.md) for design rationale.
+> **Historical build guide.** Phase 1 has shipped. This was the original step-by-step implementation guide for the MVP and is preserved as a record of project structure, configuration, and build order at that point in time. Some snippets (notably the Mastra agent binding) describe pre-release APIs that diverged from the shipped code — refer to `packages/worker/src/` for canonical patterns. See [mvp-architecture.md](./mvp-architecture.md) for design rationale and [README](../README.md) for a current quickstart.
 
 ## 1. Project Structure
 

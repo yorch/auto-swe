@@ -1,8 +1,6 @@
 # Data Layer & Infrastructure
 
-> Extracted from [PLAN.md](../PLAN.md) — Technical implementation detail for data, infra, and security.
-
-> ⚠️ **MULTI-PHASE DOCUMENT** — This document covers data and infrastructure across all phases. Sections are labeled with their target phase. For Phase 1 MVP, use the Prisma schema and Docker Compose from `mvp-implementation.md` — they are the authoritative source. This document extends them with Phase 2-4 additions.
+> Original design doc for data, infra, and security — extracted from [PLAN.md](../PLAN.md). All four phases have shipped. The shipped Prisma schema (10 models) lives at `packages/shared/src/prisma/schema.prisma` and is the authoritative reference. Note: the executor-image build pipeline and K8s/IRSA sections describe a deployment model that diverged from implementation — actual workspace isolation is Docker-in-Docker (see [STATUS.md](../STATUS.md)).
 
 ## 1. Prisma Data Model (Relational Domain Schema & RBAC)
 
