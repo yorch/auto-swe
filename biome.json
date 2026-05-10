@@ -29,6 +29,8 @@
       "!**/coverage",
       "!**/output",
       "!**/tmp",
+      "!**/.claude/worktrees",
+      "!**/.claude",
       "!**/packages/shared/src/generated",
       "!**/packages/shared/src/prisma/migrations",
       "!**/next-env.d.ts",

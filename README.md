@@ -43,18 +43,18 @@ For multi-repo epics, an `EpicOrchestratorWorkflow` decomposes the request into 
 
 ## Tech stack
 
-| Layer               | Technology                                              |
-| ------------------- | ------------------------------------------------------- |
-| HTTP API            | Fastify 5.x + Zod validation                            |
-| Orchestration       | Temporal.io 1.31.0 (server + admin-tools + ui)          |
-| Agents              | Mastra 1.6 + `@ai-sdk/anthropic` (claude-opus-4-6)      |
-| Database            | PostgreSQL 17 + pgvector (Prisma 7)                     |
-| Embeddings          | OpenAI `text-embedding-3-large` (1536d)                 |
-| Workspace isolation | Docker-in-Docker                                        |
-| Observability       | OpenTelemetry → Grafana LGTM stack                      |
-| Web dashboard       | Next.js 15 + React 19 + Tailwind CSS 4 + TanStack Query |
-| Language            | TypeScript 5.7 (strict mode, Yarn 4 monorepo)           |
-| Tests               | Vitest                                                  |
+| Layer               | Technology                                                 |
+| ------------------- | ---------------------------------------------------------- |
+| HTTP API            | Fastify 5.8 + Zod 4 validation                             |
+| Orchestration       | Temporal 1.31 (server + admin-tools + ui) + @temporalio/* SDK 1.17 |
+| Agents              | Mastra 1.32 + Vercel AI SDK 6 (claude-opus-4-6)            |
+| Database            | PostgreSQL 17 + pgvector (Prisma 7.8)                      |
+| Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
+| Workspace isolation | Docker-in-Docker                                           |
+| Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.8.1`)   |
+| Web dashboard       | Next.js 16 + React 19 + Tailwind CSS 4 + TanStack Query 5  |
+| Language            | TypeScript 6 (strict mode, Yarn 4.14 monorepo)             |
+| Tests / Lint+Format | Vitest 4 / Biome 2.4                                       |
 
 ## Prerequisites
 
@@ -72,7 +72,7 @@ corepack enable && yarn install
 cp .env.example .env
 # Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
 
-# 3. Start infrastructure (Postgres, Temporal)
+# 3. Start infrastructure (Postgres, Temporal, Grafana/OTel)
 yarn docker:infra:up
 
 # 4. Set up the database
@@ -161,7 +161,7 @@ packages/
 ├── shared/     # Prisma schema, DB client, shared TypeScript types
 ├── gateway/    # Fastify 5.x HTTP API (auth, RBAC, routes, webhooks)
 ├── worker/     # Temporal worker, Mastra agents, activities
-└── web/        # Next.js 15 web dashboard
+└── web/        # Next.js 16 web dashboard
 ```
 
 See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes, and design decisions.
