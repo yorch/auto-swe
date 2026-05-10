@@ -1,3 +1,8 @@
+# Application stack — NOT runnable standalone.
+# Services here reference infra (postgres, temporal) defined in docker-compose.infra.yml.
+# Always overlay both files: `docker compose -f docker-compose.infra.yml -f docker-compose.yml ...`
+# Use the `yarn docker:up` / `docker:down` / `docker:logs` / `docker:build` scripts for the
+# full stack, or `yarn docker:infra:up` for infra only.
 services:
   gateway:
     build:
