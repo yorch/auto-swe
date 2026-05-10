@@ -20,7 +20,7 @@ services:
       postgres-temporal:
         condition: service_healthy
     environment:
-      - DB=postgres12_pgx
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PWD=password
