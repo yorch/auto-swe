@@ -90,8 +90,6 @@ export class ApiClient {
     }
   }
 
-  // ── Convenience Methods ──
-
   get<T>(path: string) {
     return this.fetch<T>(path);
   }
