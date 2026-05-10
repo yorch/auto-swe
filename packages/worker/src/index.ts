@@ -3,6 +3,7 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE any other imports that need instrumentation
 const otel = initTelemetry('auto-swe-worker');
 
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
@@ -25,9 +26,13 @@ async function run() {
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
   });
 
-  // Resolve workflow path relative to this file (ESM-compatible)
+  // Resolve workflow path relative to this file (ESM-compatible). Prefer
+  // the TypeScript source so tsx-watch dev runs work; fall back to the
+  // compiled .js for production (`node dist/index.js`).
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const workflowsPath = path.resolve(__dirname, './workflows/index.js');
+  const workflowsTs = path.resolve(__dirname, './workflows/index.ts');
+  const workflowsJs = path.resolve(__dirname, './workflows/index.js');
+  const workflowsPath = existsSync(workflowsTs) ? workflowsTs : workflowsJs;
 
   const worker = await Worker.create({
     activities,
