@@ -1,28 +1,30 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:${PGVECTOR_TAG:-pg17}
     environment:
-      POSTGRES_DB: engineering_system
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-engineering_system}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:
-    image: postgres:17-alpine
+    image: postgres:${POSTGRES_TEMPORAL_TAG:-17-alpine}
     environment:
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     volumes:
       - ./data/postgres-temporal:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -30,15 +32,15 @@ services:
   # One-shot: install Temporal schema into postgres-temporal before the server starts.
   # Replaces the schema-setup step that temporalio/auto-setup used to do internally.
   temporal-setup:
-    image: temporalio/admin-tools:1.25.2-tctl-1.18.1-cli-1.1.2
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_TAG:-1.25.2-tctl-1.18.1-cli-1.1.2}
     depends_on:
       postgres-temporal:
         condition: service_healthy
     environment:
       - DB=postgres12
       - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=password
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_SEEDS=postgres-temporal
     volumes:
       - ./infra/scripts:/scripts
@@ -47,15 +49,15 @@ services:
     restart: on-failure:6
 
   temporal:
-    image: temporalio/server:1.25.2
+    image: temporalio/server:${TEMPORAL_VERSION:-1.25.2}
     depends_on:
       temporal-setup:
         condition: service_completed_successfully
     environment:
       - DB=postgres12
       - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=password
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_SEEDS=postgres-temporal
       - BIND_ON_IP=0.0.0.0
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
@@ -73,13 +75,13 @@ services:
   # One-shot: create the default namespace once Temporal is up.
   # Replaces the namespace-creation step that temporalio/auto-setup used to do.
   temporal-setup-namespace:
-    image: temporalio/admin-tools:1.25.2-tctl-1.18.1-cli-1.1.2
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_TAG:-1.25.2-tctl-1.18.1-cli-1.1.2}
     depends_on:
       temporal:
         condition: service_healthy
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - DEFAULT_NAMESPACE=default
+      - DEFAULT_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
     volumes:
       - ./infra/scripts:/scripts
     entrypoint: ["/bin/sh"]
@@ -90,12 +92,12 @@ services:
   # Container listens on 8080; mapped to host 8233 to keep our existing
   # TEMPORAL_UI_PORT default and avoid colliding with gateway:8080.
   temporal-ui:
-    image: temporalio/ui:2.49.1
+    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.49.1}
     depends_on:
       temporal:
         condition: service_healthy
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_CORS_ORIGINS=http://localhost:${WEB_PORT:-3000}
     ports:
       - "${TEMPORAL_UI_PORT:-8233}:8080"

@@ -16,7 +16,7 @@ services:
       temporal:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
@@ -36,7 +36,7 @@ services:
       temporal:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/engineering_system
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
