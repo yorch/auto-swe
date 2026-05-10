@@ -40,7 +40,7 @@ jobs:
           echo "name=$(echo "$REPO" | jq -r '.data.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
@@ -70,10 +70,10 @@ jobs:
         id: ecr-login
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate image metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         id: meta
         with:
           images: ${{ steps.ecr-login.outputs.registry }}/auto-swe/executors/${{ steps.config.outputs.org }}-${{ steps.config.outputs.name }}
@@ -82,7 +82,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ steps.dockerfile.outputs.path }}
