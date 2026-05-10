@@ -5,7 +5,7 @@ services:
       POSTGRES_DB: engineering_system
       POSTGRES_PASSWORD: password
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -26,8 +26,8 @@ services:
       - POSTGRES_PWD=password
       - POSTGRES_SEEDS=postgres-temporal
     ports:
-      - "7233:7233"
-      - "8233:8233"
+      - "${TEMPORAL_GRPC_PORT:-7233}:7233"
+      - "${TEMPORAL_UI_PORT:-8233}:8233"
 
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:
