@@ -162,6 +162,11 @@ model PullRequest {
   @@map("pull_requests")
 }
 
+// HNSW index on `embedding` is defined in raw SQL inside
+// migrations/20260223000000_init/migration.sql. Prisma's schema DSL cannot
+// model pgvector index types, so `prisma migrate dev` will report drift
+// here. Use `yarn db:migrate` (= migrate deploy) for routine application;
+// run `yarn db:migrate:dev` only when authoring a new migration.
 model AgentLesson {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId      String?         @map("workflow_id") @db.Uuid

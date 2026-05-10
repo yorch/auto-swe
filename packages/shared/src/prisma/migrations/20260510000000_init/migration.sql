@@ -1,5 +1,11 @@
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
 -- CreateExtension
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS "vector";
+
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'LEAD', 'ENGINEER');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -7,7 +13,7 @@ CREATE TABLE "users" (
     "email" TEXT NOT NULL,
     "password_hash" TEXT NOT NULL,
     "slack_id" TEXT,
-    "role" TEXT NOT NULL DEFAULT 'ENGINEER',
+    "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -46,7 +52,7 @@ CREATE TABLE "team_memberships" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID NOT NULL,
     "team_id" UUID NOT NULL,
-    "role" TEXT NOT NULL DEFAULT 'ENGINEER',
+    "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "team_memberships_pkey" PRIMARY KEY ("id")
@@ -58,10 +64,12 @@ CREATE TABLE "repositories" (
     "organization_name" TEXT NOT NULL,
     "repo_name" TEXT NOT NULL,
     "default_branch" TEXT NOT NULL DEFAULT 'main',
+    "language" TEXT,
+    "description" TEXT,
     "github_url" TEXT,
     "github_api_url" TEXT,
     "mcp_server_ref" TEXT,
-    "team_id" UUID,
+    "team_id" UUID NOT NULL,
     "executor_image" TEXT DEFAULT 'node:24-alpine',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
 
@@ -87,7 +95,7 @@ CREATE TABLE "context_snapshots" (
     "work_request_id" UUID NOT NULL,
     "raw_jira_epic" JSONB,
     "raw_confluence" JSONB,
-    "success_criteria" TEXT[] NOT NULL,
+    "success_criteria" TEXT[],
     "captured_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "context_snapshots_pkey" PRIMARY KEY ("id")
@@ -102,6 +110,10 @@ CREATE TABLE "active_workflows" (
     "repo_id" UUID,
     "current_status" TEXT NOT NULL,
     "assigned_branch" TEXT,
+    "budget_tier" TEXT NOT NULL DEFAULT 'STANDARD',
+    "tokens_input_used" INTEGER NOT NULL DEFAULT 0,
+    "tokens_output_used" INTEGER NOT NULL DEFAULT 0,
+    "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "active_workflows_pkey" PRIMARY KEY ("id")
@@ -157,13 +169,13 @@ CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
 CREATE UNIQUE INDEX "teams_slug_key" ON "teams"("slug");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "team_memberships_user_id_team_id_key" ON "team_memberships"("user_id", "team_id");
-
--- CreateIndex
 CREATE INDEX "team_memberships_user_id_idx" ON "team_memberships"("user_id");
 
 -- CreateIndex
 CREATE INDEX "team_memberships_team_id_idx" ON "team_memberships"("team_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "team_memberships_user_id_team_id_key" ON "team_memberships"("user_id", "team_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "repositories_organization_name_repo_name_key" ON "repositories"("organization_name", "repo_name");
@@ -173,11 +185,6 @@ CREATE UNIQUE INDEX "context_snapshots_work_request_id_key" ON "context_snapshot
 
 -- CreateIndex
 CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workflows"("temporal_workflow_id");
-
--- CreateIndex (HNSW for pgvector cosine similarity on agent_lessons)
-CREATE INDEX "idx_agent_lessons_embedding" ON "agent_lessons"
-    USING hnsw ("embedding" vector_cosine_ops)
-    WITH (m = 16, ef_construction = 200);
 
 -- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -189,7 +196,7 @@ ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_user_id_fkey" FO
 ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "repositories" ADD CONSTRAINT "repositories_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "repositories" ADD CONSTRAINT "repositories_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -211,3 +218,4 @@ ALTER TABLE "agent_lessons" ADD CONSTRAINT "agent_lessons_workflow_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "agent_lessons" ADD CONSTRAINT "agent_lessons_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repositories"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
