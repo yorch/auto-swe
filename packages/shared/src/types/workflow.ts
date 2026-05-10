@@ -89,7 +89,13 @@ export interface WorkflowResult {
   totalCIRetries?: number;
   totalReviewRetries?: number;
   lessonsGenerated?: string[];
-  /** Populated when status === 'SKIPPED'. Identifies the upstream repo that failed. */
+  /**
+   * Populated when status === 'SKIPPED'. Free-form reason the workflow was
+   * skipped — typically references the upstream repo that failed
+   * ("upstream <repoId> failed") or names the unsatisfied dependencies
+   * ("upstream dependency unsatisfied: <deps>") for repos blocked by a chain
+   * of failures.
+   */
   skippedReason?: string;
 }
 

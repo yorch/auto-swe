@@ -49,14 +49,18 @@ describe('computeTransitiveDependents', () => {
     expect(computeTransitiveDependents('A', repos)).not.toContain('A');
   });
 
-  it('does not loop forever on cyclic dependencies', () => {
+  it('terminates on cyclic dependencies and excludes the start node', () => {
     // Pathological input: B → A → B. Real plans should be DAGs but the walk
-    // must still terminate.
+    // must terminate, and must NOT include `failedRepoId` itself in the result
+    // (otherwise the caller would overwrite the failed repo's terminal verdict
+    // with SKIPPED — see PR #8 review feedback).
     const repos: EpicRepoEntry[] = [
       { dependsOn: ['B'], repoId: 'A' },
       { dependsOn: ['A'], repoId: 'B' },
     ];
-    expect(computeTransitiveDependents('A', repos)).toEqual(new Set(['B', 'A']));
+    const result = computeTransitiveDependents('A', repos);
+    expect(result).toEqual(new Set(['B']));
+    expect(result).not.toContain('A');
   });
 
   it('treats failed leaf node correctly (no dependents)', () => {
