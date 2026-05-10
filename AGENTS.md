@@ -27,65 +27,48 @@ For deeper context on architecture and design rationale, refer to:
 
 ## 3. Tech Stack
 
-| Component       | Technology                             | Version                    |
-| --------------- | -------------------------------------- | -------------------------- |
-| Runtime         | Node.js                                | >=24.0.0                   |
-| Package Manager | Yarn 4 (Berry)                         | 4.12.0 (via corepack)      |
-| HTTP Framework  | Fastify                                | ^5.7.0                     |
-| Orchestration   | Temporal.io                            | server:1.31.0 + admin-tools + ui |
-| Agent Framework | Mastra                                 | ^1.6.0                     |
-| ORM             | Prisma                                 | ^7.4.0                     |
-| Database        | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17     |
-| LLM             | Anthropic / OpenAI / Google / any OpenAI-compat | via Vercel AI SDK |
-| Language        | TypeScript                             | ^5.7.0                     |
-| Web Dashboard   | Next.js 15 + React 19 + Tailwind CSS 4 | ^15.0.0 / ^19.0.0 / ^4.0.0 |
-| Server State    | TanStack Query (React Query)           | ^5.90.0                    |
-| Client State    | Zustand                                | ^5.0.0                     |
-| Testing         | Vitest                                 | ^3.0.0                     |
-| Lint / Format   | Biome                                  | ^2.4.14                    |
+| Component             | Technology                             | Version                |
+| --------------------- | -------------------------------------- | ---------------------- |
+| Runtime               | Node.js                                | >=24.0.0               |
+| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.14.1                 |
+| Language              | TypeScript                             | 6.0.3                  |
+| HTTP Framework        | Fastify                                | 5.8.5                  |
+| Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.1                 |
+| Agent Framework       | Mastra                                 | 1.32.1                 |
+| LLM SDK               | Vercel AI SDK + provider adapters      | ai 6.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
+| ORM                   | Prisma                                 | 7.8.0                  |
+| Database              | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17 |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.6 / 19.2.6 / 4.3.0 |
+| Server State          | TanStack Query                         | 5.100.9                |
+| Client State          | Zustand                                | 5.0.13                 |
+| Validation            | Zod                                    | 4.4.3                  |
+| Testing               | Vitest                                 | 4.1.5                  |
+| Lint / Format         | Biome                                  | 2.4.14                 |
+| Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.8.1 |
 
 ---
 
-## 4. Project Structure
+## 4. Package Map
 
-```
-auto-swe/
-├── packages/
-│   ├── shared/          # Prisma schema, DB client, shared types
-│   │   └── src/
-│   │       ├── prisma/  # schema.prisma, seed.ts, migrations/
-│   │       ├── types/   # workflow.ts, api.ts
-│   │       ├── lib/     # workflowId.ts (Temporal ID generation)
-│   │       ├── db.ts    # Singleton PrismaClient
-│   │       └── index.ts # Barrel export
-│   ├── gateway/         # Fastify 5.x HTTP API
-│   │   └── src/
-│   │       ├── plugins/ # auth.ts, prisma.ts, temporal.ts (fastify-plugin)
-│   │       ├── routes/  # auth, workRequests, workflows, webhooks, teams, users, repositories, lessons, slack
-│   │       ├── lib/     # github.ts (Octokit client)
-│   │       └── index.ts # App bootstrap
-│   ├── worker/          # Temporal worker + Mastra agents
-│   │   └── src/
-│   │       ├── workflows/    # engineering.ts, epicOrchestrator.ts (V8 isolate — import type only)
-│   │       ├── activities/   # executeImplementation, ciFixLoop, commitToMemory, createOrUpdatePullRequest, runReviewNetwork, state, workspace, utils
-│   │       ├── agents/       # implementer.ts, reviewNetwork.ts, prompts.ts
-│   │       └── lib/          # embeddings.ts, lessonRetrieval.ts
-│   └── web/             # Web Dashboard (Next.js 15 + React 19 + Tailwind CSS 4)
-│       └── src/
-│           ├── app/     # Next.js App Router pages (workflows, epics, repos, lessons, teams, users, settings, login)
-│           ├── hooks/   # useWorkflows.ts (TanStack Query)
-│           ├── lib/     # api.ts (fetch client), utils.ts
-│           └── stores/  # authStore.ts, teamStore.ts (Zustand)
-├── docker-compose.infra.yml # Infra: Postgres (pgvector), Temporal (server + admin-tools + ui), Postgres-temporal
-├── docker-compose.yml   # App: Gateway, Worker, Web, otel-lgtm (overlays infra)
-├── infra/
-│   ├── scripts/        # Helper scripts mounted into temporal-setup containers
-│   └── dynamicconfig/  # Temporal dynamic config (development-sql.yaml)
-├── tsconfig.base.json   # Shared TypeScript config
-├── vitest.config.ts     # Test configuration
-├── .env.example         # Environment variable template
-└── package.json         # Yarn 4 workspace root
-```
+Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for the actual layout — only non-obvious rules live here.
+
+| Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
+| ------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared`  | Prisma schema, DB client, shared types               | Singleton `PrismaClient` exported from `db.ts`; types re-exported via `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations                                               |
+| `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
+| `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
+| `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
+
+Top-level files that matter:
+
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + setup containers
+- `docker-compose.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
+- `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
+- `tsconfig.base.json` — shared TS config inherited by every package
+- `vitest.config.ts` — root test runner; subpath aliases for `@auto-swe/shared/*` use array form (Vite prefix matching is order-sensitive)
+- `biome.json` — single source of truth for lint + format
+- `.env.example` — environment variable template
 
 ---
 
@@ -127,15 +110,27 @@ auto-swe/
 ```bash
 yarn install              # Install all dependencies
 yarn build                # Build all packages
+yarn typecheck            # Type-check all packages (no emit)
 yarn dev:gateway          # Start gateway in dev mode (tsx watch)
 yarn dev:worker           # Start worker in dev mode (tsx watch)
+yarn dev:web              # Start Next.js dashboard (port 3000)
 yarn db:migrate           # Run Prisma migrations
 yarn db:generate          # Generate Prisma client
 yarn db:seed              # Seed admin user + sample repository
+yarn db:studio            # Open Prisma Studio
 yarn test                 # Run all tests (vitest)
+yarn test:watch           # Vitest in watch mode
 yarn lint                 # Lint + format check (biome check)
 yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
 yarn format               # Format only (biome format --write)
+
+# Docker (infra = postgres + postgres-temporal + temporal (server + admin + ui); app = gateway + worker + web + otel-lgtm)
+yarn docker:infra:up      # Start infra services only
+yarn docker:infra:down    # Stop infra services
+yarn docker:up            # Start everything (infra + app)
+yarn docker:down          # Stop everything
+yarn docker:logs          # Tail logs (infra + app)
+yarn docker:build         # Rebuild app images
 ```
 
 ### Git Workflow
@@ -151,9 +146,9 @@ yarn format               # Format only (biome format --write)
 
 ## 6. Critical Implementation Notes
 
-### Mastra 1.6 API
+### Mastra API
 
-The project uses `@mastra/core@^1.6.0` with the Vercel AI SDK for model binding:
+The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
 
 - `Agent` constructor requires both `id` and `name` fields
 - `createTool()` requires `outputSchema` on all tools (structured output)
@@ -233,7 +228,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 # 1. Install
 corepack enable && yarn install
 
-# 2. Start infrastructure
+# 2. Start infrastructure (postgres + temporal + otel-lgtm)
 cp .env.example .env    # Fill in ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
 yarn docker:infra:up
 
