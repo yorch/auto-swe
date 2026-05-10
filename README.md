@@ -133,7 +133,9 @@ open http://localhost:8233
 | `GITHUB_TOKEN`          | Yes       | GitHub PAT with `repo` scope                                 |
 | `GITHUB_WEBHOOK_SECRET` | Yes       | Secret for verifying GitHub webhook signatures               |
 | `OPENAI_API_KEY`        | Yes       | OpenAI key for `text-embedding-3-large` embeddings           |
-| `JWT_SECRET`            | Yes       | Secret for signing HS256 JWTs                                |
+| `JWT_SECRET`            | HS256     | Secret for HS256 JWTs (default mode for Docker Compose)      |
+| `JWT_PRIVATE_KEY_PATH`  | RS256     | Path to RSA private key — switches signing to RS256          |
+| `JWT_PUBLIC_KEY_PATH`   | RS256     | Path to RSA public key — required when using RS256           |
 | `SEED_ADMIN_PASSWORD`   | Seed only | Password for the seeded admin user                           |
 | `SLACK_CLIENT_ID`       | Optional  | Slack OAuth app credentials                                  |
 | `SLACK_CLIENT_SECRET`   | Optional  | Slack OAuth app credentials                                  |
@@ -145,13 +147,22 @@ open http://localhost:8233
 ## Commands
 
 ```bash
-yarn build           # Build all packages
-yarn test            # Run all tests (Vitest)
-yarn db:migrate      # Run Prisma migrations
-yarn db:generate     # Regenerate Prisma client
-yarn db:seed         # Seed admin user + sample repository
-yarn dev:gateway     # Gateway in watch mode
-yarn dev:worker      # Worker in watch mode
+yarn build               # Build all packages
+yarn test                # Run all tests (Vitest)
+yarn lint                # Lint + format check (Biome)
+yarn lint:fix            # Auto-fix safe lint issues + format
+yarn db:migrate          # Run Prisma migrations
+yarn db:generate         # Regenerate Prisma client
+yarn db:seed             # Seed admin user + sample repository
+yarn dev:gateway         # Gateway in watch mode
+yarn dev:worker          # Worker in watch mode
+yarn dev:web             # Next.js dashboard (port 3000)
+yarn docker:infra:up     # Start infra services (postgres + temporal + otel)
+yarn docker:infra:down   # Stop infra services
+yarn docker:up           # Start everything (infra + app)
+yarn docker:down         # Stop everything
+yarn docker:logs         # Tail logs (infra + app)
+yarn docker:build        # Rebuild app images
 ```
 
 ## Project structure

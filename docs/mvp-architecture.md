@@ -15,7 +15,7 @@ A single Temporal workflow that accepts a work request via CLI, runs an AI agent
 | Database       | PostgreSQL 17 + pgvector with Prisma v7.x schema (subset: User, Repository, WorkRequest, ActiveWorkflow, PullRequest) |
 | Orchestration  | Temporal server + single TypeScript worker process                                                                    |
 | Workflow       | `EngineeringWorkflow` (child workflow only — no parent Epic Orchestrator)                                             |
-| Agent          | Implementer Agent (Mastra 1.32 + `claude-opus-4-6`) with bash and GitHub MCP tools                                     |
+| Agent          | Implementer Agent (Mastra 1.32 + `claude-opus-4-7`) with bash and GitHub MCP tools                                     |
 | TDD Loop       | Agent writes tests, runs them in Docker-in-Docker, iterates until green (max 5 iterations)                            |
 | PR Creation    | `createOrUpdatePullRequest` activity via GitHub API (Octokit)                                                         |
 | Merge Signal   | Human merge webhook (`POST /api/v1/webhooks/git`) fires `humanMergeSignal`                                            |
@@ -85,7 +85,7 @@ These are explicitly out of scope and must not be built during Phase 1:
 │  │    ├─ executeImplementation()                              │  │
 │  │    │    ├─ Provision DinD workspace (docker run)           │  │
 │  │    │    ├─ Clone target repo                               │  │
-│  │    │    ├─ Mastra Implementer Agent (claude-opus-4-6)      │  │
+│  │    │    ├─ Mastra Implementer Agent (claude-opus-4-7)      │  │
 │  │    │    │    └─ TDD loop (write code → run tests → fix)    │  │
 │  │    │    └─ Return CodeResult (diff, branch, test results)  │  │
 │  │    │                                                       │  │
@@ -152,7 +152,7 @@ No review-rejection loops, no CI-fix loops.
 
 ### 5.3 Implementer Agent
 
-The only LLM agent in the MVP. Powered by Mastra 1.32 with `claude-opus-4-6`.
+The only LLM agent in the MVP. Powered by Mastra 1.32 with `claude-opus-4-7`.
 
 **Tools available to the agent (MCP):**
 
@@ -220,7 +220,7 @@ These unused models can exist in the schema (for forward compatibility) but have
    → Read repository config from DB
    → Spin up DinD workspace container
    → Clone repo, checkout feature branch (auto/JIRA-1234)
-   → Mastra agent (claude-opus-4-6):
+   → Mastra agent (claude-opus-4-7):
        → Read codebase, understand requirements
        → Write code + tests
        → Run tests → iterate until green (max 5)
@@ -268,7 +268,7 @@ Four services for local development:
 | ----------------------- | --------------- | ---------------------------------------------------------------------------------- |
 | `DATABASE_URL`          | gateway, worker | PostgreSQL connection string                                                       |
 | `TEMPORAL_ADDRESS`      | gateway, worker | `temporal:7233`                                                                    |
-| `ANTHROPIC_API_KEY`     | worker          | For `claude-opus-4-6` (Implementer)                                                |
+| `ANTHROPIC_API_KEY`     | worker          | For `claude-opus-4-7` (Implementer)                                                |
 | `GITHUB_TOKEN`          | worker          | PAT or App installation token for GitHub API                                       |
 | `GITHUB_WEBHOOK_SECRET` | gateway         | HMAC secret for verifying GitHub webhooks                                          |
 | `GITHUB_URL`            | worker          | Base URL for git clone (default: `https://github.com`; set for GHE)                |
