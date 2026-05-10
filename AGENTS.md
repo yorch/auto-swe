@@ -32,7 +32,7 @@ For deeper context on architecture and design rationale, refer to:
 | Runtime         | Node.js                                | >=24.0.0                   |
 | Package Manager | Yarn 4 (Berry)                         | 4.12.0 (via corepack)      |
 | HTTP Framework  | Fastify                                | ^5.7.0                     |
-| Orchestration   | Temporal.io                            | server:1.25.2 + admin-tools + ui |
+| Orchestration   | Temporal.io                            | server:1.31.0 + admin-tools + ui |
 | Agent Framework | Mastra                                 | ^1.6.0                     |
 | ORM             | Prisma                                 | ^7.4.0                     |
 | Database        | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17     |
