@@ -7,7 +7,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -35,13 +35,9 @@ services:
     environment:
       POSTGRES_PASSWORD: password
     volumes:
-      - pgdata-temporal:/var/lib/postgresql/data
+      - ./data/postgres-temporal:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 3s
       retries: 5
-
-volumes:
-  pgdata:
-  pgdata-temporal:
