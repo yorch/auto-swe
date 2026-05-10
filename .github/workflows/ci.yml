@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+  # Prisma 7 eagerly resolves env('DATABASE_URL') in prisma.config.ts when
+  # `prisma generate` loads. Generation never connects, so a placeholder is
+  # sufficient; jobs needing a real DB must override.
+  DATABASE_URL: postgresql://ci:ci@invalid.local:5432/ci
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn db:generate
+      - run: yarn typecheck
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn db:generate
+      - run: yarn test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn db:generate
+      - run: yarn build
