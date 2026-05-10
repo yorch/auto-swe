@@ -1,12 +1,13 @@
-import { heartbeat } from '@temporalio/activity';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { createWorkspace, shellQuote } from './workspace.js';
+import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { detectTestCommand, parseTestOutput, parseDiffToFileChanges } from './utils.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import { createWorkspace, shellQuote } from './workspace.js';
 
 /**
  * Fetches CI logs from the provided URL.
@@ -17,8 +18,8 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
 
   const response = await fetch(logsUrl, {
     headers: {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
       Accept: 'application/vnd.github.v3+json',
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
     },
   });
 
@@ -37,11 +38,11 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
  */
 export async function executeCIFixImplementation(
   failureContext: string,
-  previousCodeResult: CodeResult,
+  previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { assignedBranch: previousCodeResult.branch },
     include: { repository: true },
+    where: { assignedBranch: previousCodeResult.branch },
   });
 
   if (!workflow?.repository) {
@@ -51,7 +52,7 @@ export async function executeCIFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = process.env.GITHUB_TOKEN!;
+  const githubToken = requireEnv('GITHUB_TOKEN');
 
   // Provision workspace and checkout the existing branch
   const workspace = createWorkspace(
@@ -59,7 +60,7 @@ export async function executeCIFixImplementation(
     previousCodeResult.branch,
     repo.defaultBranch,
     githubToken,
-    repo.executorImage ?? 'node:24-alpine',
+    repo.executorImage ?? 'node:24-alpine'
   );
 
   try {
@@ -74,18 +75,18 @@ export async function executeCIFixImplementation(
     // Run the agent in CI fix mode
     const ciFix = await agent.generate(
       [
-        { role: 'system', content: CI_FIX_SYSTEM_PROMPT },
+        { content: CI_FIX_SYSTEM_PROMPT, role: 'system' },
         {
-          role: 'user',
           content: JSON.stringify({
-            mode: 'CI_FIX',
             ciLogs: failureContext,
+            mode: 'CI_FIX',
             previousDiff: previousCodeResult.diff.slice(-20_000),
             previousTestResults: previousCodeResult.testResults,
           }),
+          role: 'user',
         },
       ],
-      { toolChoice: 'auto' },
+      { toolChoice: 'auto' }
     );
 
     heartbeat('CI fix agent completed');
@@ -100,20 +101,22 @@ export async function executeCIFixImplementation(
       const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
-    } catch (err: any) {
+    } catch (err: unknown) {
       testResult = {
-        passed: false,
-        total: 0,
-        passing: 0,
-        failing: 1,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
         duration_ms: 0,
+        failing: 1,
+        passed: false,
+        passing: 0,
+        stdout: getExecErrorStdout(err),
+        total: 0,
       };
     }
 
     // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
     workspace.exec('git add -A');
-    workspace.exec(`git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`);
+    workspace.exec(
+      `git diff --cached --quiet || git commit -m "auto: fix CI for ${previousCodeResult.branch}"`
+    );
     workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
@@ -121,11 +124,11 @@ export async function executeCIFixImplementation(
 
     return {
       branch: previousCodeResult.branch,
-      headSha,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: testResult,
+      headSha,
       implementationNotes: `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      testResults: testResult,
     };
   } finally {
     workspace.destroy();
@@ -141,11 +144,11 @@ export async function executeCIFixImplementation(
  */
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
-  previousCodeResult: CodeResult,
+  previousCodeResult: CodeResult
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { assignedBranch: previousCodeResult.branch },
     include: { repository: true },
+    where: { assignedBranch: previousCodeResult.branch },
   });
 
   if (!workflow?.repository) {
@@ -155,14 +158,14 @@ export async function executeReviewFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = process.env.GITHUB_TOKEN!;
+  const githubToken = requireEnv('GITHUB_TOKEN');
 
   const workspace = createWorkspace(
     repoUrl,
     previousCodeResult.branch,
     repo.defaultBranch,
     githubToken,
-    repo.executorImage ?? 'node:24-alpine',
+    repo.executorImage ?? 'node:24-alpine'
   );
 
   try {
@@ -175,18 +178,18 @@ export async function executeReviewFixImplementation(
 
     const reviewFix = await agent.generate(
       [
-        { role: 'system', content: REVIEW_FIX_SYSTEM_PROMPT },
+        { content: REVIEW_FIX_SYSTEM_PROMPT, role: 'system' },
         {
-          role: 'user',
           content: JSON.stringify({
             mode: 'REVIEW_FIX',
-            reviewFindings: rejectionSummary,
             previousDiff: previousCodeResult.diff.slice(-20_000),
             previousTestResults: previousCodeResult.testResults,
+            reviewFindings: rejectionSummary,
           }),
+          role: 'user',
         },
       ],
-      { toolChoice: 'auto' },
+      { toolChoice: 'auto' }
     );
 
     heartbeat('review fix agent completed');
@@ -200,19 +203,21 @@ export async function executeReviewFixImplementation(
       const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
       testResult = parseTestOutput(testOutput, Date.now() - startTime);
-    } catch (err: any) {
+    } catch (err: unknown) {
       testResult = {
-        passed: false,
-        total: 0,
-        passing: 0,
-        failing: 1,
-        stdout: err.stdout?.slice(-10_000) ?? err.message,
         duration_ms: 0,
+        failing: 1,
+        passed: false,
+        passing: 0,
+        stdout: getExecErrorStdout(err),
+        total: 0,
       };
     }
 
     workspace.exec('git add -A');
-    workspace.exec(`git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`);
+    workspace.exec(
+      `git diff --cached --quiet || git commit -m "auto: address review findings for ${previousCodeResult.branch}"`
+    );
     workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
@@ -220,11 +225,11 @@ export async function executeReviewFixImplementation(
 
     return {
       branch: previousCodeResult.branch,
-      headSha,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: testResult,
+      headSha,
       implementationNotes: `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      testResults: testResult,
     };
   } finally {
     workspace.destroy();

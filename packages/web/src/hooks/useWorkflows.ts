@@ -1,67 +1,68 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
 import type {
-  WorkflowSummary,
-  WorkflowDetail,
-  TeamSummary,
-  TeamDetail,
-  RepositorySummary,
-  UserSummary,
   LessonListItem,
+  RepositorySummary,
+  TeamDetail,
+  TeamSummary,
+  UserSummary,
+  WorkflowDetail,
+  WorkflowSummary,
 } from '@auto-swe/shared/types/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 
 export function useWorkflows() {
   return useQuery({
-    queryKey: ['workflows'],
     queryFn: () => api.get<{ data: WorkflowSummary[] }>('/api/v1/workflows').then((r) => r.data),
+    queryKey: ['workflows'],
     refetchInterval: 10_000,
   });
 }
 
 export function useWorkflow(id: string) {
   return useQuery({
-    queryKey: ['workflow', id],
-    queryFn: () => api.get<{ data: WorkflowDetail }>(`/api/v1/workflows/${id}`).then((r) => r.data),
-    refetchInterval: 5_000,
     enabled: !!id,
+    queryFn: () => api.get<{ data: WorkflowDetail }>(`/api/v1/workflows/${id}`).then((r) => r.data),
+    queryKey: ['workflow', id],
+    refetchInterval: 5_000,
   });
 }
 
 export function useTeams() {
   return useQuery({
-    queryKey: ['teams'],
     queryFn: () => api.get<{ data: TeamSummary[] }>('/api/v1/teams').then((r) => r.data),
+    queryKey: ['teams'],
   });
 }
 
 export function useTeam(id: string) {
   return useQuery({
-    queryKey: ['team', id],
-    queryFn: () => api.get<{ data: TeamDetail }>(`/api/v1/teams/${id}`).then((r) => r.data),
     enabled: !!id,
+    queryFn: () => api.get<{ data: TeamDetail }>(`/api/v1/teams/${id}`).then((r) => r.data),
+    queryKey: ['team', id],
   });
 }
 
 export function useRepositories() {
   return useQuery({
+    queryFn: () =>
+      api.get<{ data: RepositorySummary[] }>('/api/v1/repositories').then((r) => r.data),
     queryKey: ['repositories'],
-    queryFn: () => api.get<{ data: RepositorySummary[] }>('/api/v1/repositories').then((r) => r.data),
   });
 }
 
 export function useUsers() {
   return useQuery({
-    queryKey: ['users'],
     queryFn: () => api.get<{ data: UserSummary[] }>('/api/v1/users').then((r) => r.data),
+    queryKey: ['users'],
   });
 }
 
 export function useLessons() {
   return useQuery({
-    queryKey: ['lessons'],
     queryFn: () => api.get<{ data: LessonListItem[] }>('/api/v1/lessons').then((r) => r.data),
+    queryKey: ['lessons'],
   });
 }
 

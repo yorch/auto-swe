@@ -42,6 +42,7 @@ For deeper context on architecture and design rationale, refer to:
 | Server State    | TanStack Query (React Query)           | ^5.90.0                    |
 | Client State    | Zustand                                | ^5.0.0                     |
 | Testing         | Vitest                                 | ^3.0.0                     |
+| Lint / Format   | Biome                                  | ^2.4.14                    |
 
 ---
 
@@ -94,6 +95,7 @@ auto-swe/
 - Zod schemas for request validation via `fastify-type-provider-zod`
 - Prisma for all DB access — raw SQL (`$queryRawUnsafe`) only for pgvector operations (embeddings)
 - Prefer explicit error handling over silent failures
+- **Biome** is the single source of truth for lint + format — config at root `biome.json` (single quotes, lineWidth 100, indent 2, organizeImports on). Run `yarn lint:fix` before committing.
 
 ### Naming Conventions
 
@@ -127,6 +129,9 @@ yarn db:migrate           # Run Prisma migrations
 yarn db:generate          # Generate Prisma client
 yarn db:seed              # Seed admin user + sample repository
 yarn test                 # Run all tests (vitest)
+yarn lint                 # Lint + format check (biome check)
+yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
+yarn format               # Format only (biome format --write)
 ```
 
 ### Git Workflow

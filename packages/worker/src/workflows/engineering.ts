@@ -1,81 +1,82 @@
+import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
 import {
-  proxyActivities,
-  defineSignal,
-  setHandler,
   condition,
+  defineSignal,
+  proxyActivities,
+  setHandler,
   workflowInfo,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
-import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
 
 // ── Activity Proxies ──
 
-const stateActivities = proxyActivities<
-  Pick<typeof activitiesType, 'updateDomainState'>
->({
-  startToCloseTimeout: '30s',
+const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   retry: {
-    maximumAttempts: 5,
-    initialInterval: '1s',
     backoffCoefficient: 2,
+    initialInterval: '1s',
+    maximumAttempts: 5,
     maximumInterval: '30s',
   },
+  startToCloseTimeout: '30s',
 });
 
 const agentActivities = proxyActivities<
-  Pick<typeof activitiesType, 'executeImplementation' | 'executeCIFixImplementation' | 'executeReviewFixImplementation' | 'runReviewNetwork'>
+  Pick<
+    typeof activitiesType,
+    | 'executeImplementation'
+    | 'executeCIFixImplementation'
+    | 'executeReviewFixImplementation'
+    | 'runReviewNetwork'
+  >
 >({
-  startToCloseTimeout: '30m',
   heartbeatTimeout: '5m',
   retry: {
-    maximumAttempts: 2,
-    initialInterval: '30s',
     backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 2,
     maximumInterval: '2m',
   },
+  startToCloseTimeout: '30m',
 });
 
 const githubActivities = proxyActivities<
   Pick<typeof activitiesType, 'createOrUpdatePullRequest' | 'fetchCILogs'>
 >({
-  startToCloseTimeout: '2m',
   retry: {
-    maximumAttempts: 4,
-    initialInterval: '5s',
     backoffCoefficient: 3,
+    initialInterval: '5s',
+    maximumAttempts: 4,
     maximumInterval: '2m',
   },
+  startToCloseTimeout: '2m',
 });
 
-const contextActivities = proxyActivities<
-  Pick<typeof activitiesType, 'validateContext'>
->({
-  startToCloseTimeout: '5m',
+const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
   heartbeatTimeout: '2m',
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
-const memoryActivities = proxyActivities<
-  Pick<typeof activitiesType, 'commitToMemory'>
->({
-  startToCloseTimeout: '5m',
+const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
 // ── Signals ──
 
 export const humanMergeSignal = defineSignal<[boolean]>('humanMergeSignal');
-export const ciPipelineSignal = defineSignal<[{ passed: boolean; logsUrl?: string }]>('ciPipelineSignal');
+export const ciPipelineSignal =
+  defineSignal<[{ passed: boolean; logsUrl?: string }]>('ciPipelineSignal');
 
 // ── Constants ──
 
@@ -86,9 +87,7 @@ const HUMAN_MERGE_TIMEOUT = '7d';
 
 // ── Workflow ──
 
-export async function EngineeringWorkflow(
-  request: RepoWorkRequest,
-): Promise<WorkflowResult> {
+export async function EngineeringWorkflow(request: RepoWorkRequest): Promise<WorkflowResult> {
   let ciResult: { passed: boolean; logsUrl?: string } | null = null;
   let humanMerged = false;
   let totalCIRetries = 0;
@@ -136,16 +135,16 @@ export async function EngineeringWorkflow(
       if (totalReviewRetries >= MAX_REVIEW_RETRIES) {
         await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
+          lessonsGenerated: [],
           status: 'FAILED',
           totalCIRetries,
           totalReviewRetries,
-          lessonsGenerated: [],
         };
       }
       // Feed rejection back to implementer via a review-specific prompt
       codeResult = await agentActivities.executeReviewFixImplementation(
-        reviewResult.rejectionSummary!,
-        codeResult,
+        reviewResult.rejectionSummary ?? '',
+        codeResult
       );
       continue;
     }
@@ -153,10 +152,7 @@ export async function EngineeringWorkflow(
     // 4. Open/Update PR
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'AWAITING_CI');
 
-    const prData = await githubActivities.createOrUpdatePullRequest(
-      request,
-      codeResult,
-    );
+    const prData = await githubActivities.createOrUpdatePullRequest(request, codeResult);
 
     // 5. Wait for CI pipeline signal
     const ciSignalReceived = await condition(() => ciResult !== null, CI_SIGNAL_TIMEOUT);
@@ -164,33 +160,40 @@ export async function EngineeringWorkflow(
     if (!ciSignalReceived) {
       await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
       return {
-        status: 'TIMED_OUT',
+        lessonsGenerated: [],
         prNumber: prData.prNumber,
         prUrl: prData.prUrl,
+        status: 'TIMED_OUT',
         totalCIRetries,
         totalReviewRetries,
-        lessonsGenerated: [],
       };
     }
 
-    if (ciResult!.passed) {
+    // setHandler() reassigns ciResult from a closure (line ~97) that TS cannot
+    // see, so control-flow analysis narrows ciResult to its initializer `null`.
+    // Cast back to the declared union to restore the truthy branch.
+    const ci = ciResult as { passed: boolean; logsUrl?: string } | null;
+    if (!ci) {
+      throw new Error('CI signal received but ciResult is null — invariant violated');
+    }
+    if (ci.passed) {
       isReadyForMerge = true;
     } else {
       totalCIRetries++;
       if (totalCIRetries >= MAX_CI_RETRIES) {
         await stateActivities.updateDomainState(workflowInfo().workflowId, 'FAILED');
         return {
-          status: 'FAILED',
+          lessonsGenerated: [],
           prNumber: prData.prNumber,
           prUrl: prData.prUrl,
+          status: 'FAILED',
           totalCIRetries,
           totalReviewRetries,
-          lessonsGenerated: [],
         };
       }
 
       // 6. CI Fix Loop
-      const failedLogs = await githubActivities.fetchCILogs(ciResult!.logsUrl);
+      const failedLogs = await githubActivities.fetchCILogs(ci.logsUrl);
       codeResult = await agentActivities.executeCIFixImplementation(failedLogs, codeResult);
     }
   }
@@ -203,10 +206,10 @@ export async function EngineeringWorkflow(
   if (!merged) {
     await stateActivities.updateDomainState(workflowInfo().workflowId, 'TIMED_OUT');
     return {
+      lessonsGenerated: [],
       status: 'TIMED_OUT',
       totalCIRetries,
       totalReviewRetries,
-      lessonsGenerated: [],
     };
   }
 
@@ -215,7 +218,7 @@ export async function EngineeringWorkflow(
   try {
     const lessonId = await memoryActivities.commitToMemory(
       workflowInfo().workflowId,
-      request.repoId,
+      request.repoId
     );
     if (lessonId) lessonsGenerated.push(lessonId);
   } catch {
@@ -226,9 +229,9 @@ export async function EngineeringWorkflow(
   await stateActivities.updateDomainState(workflowInfo().workflowId, 'COMPLETED');
 
   return {
+    lessonsGenerated,
     status: 'SUCCESS',
     totalCIRetries,
     totalReviewRetries,
-    lessonsGenerated,
   };
 }

@@ -10,11 +10,9 @@ import crypto from 'node:crypto';
 export function verifyGitHubSignature(
   payload: string | Buffer,
   signature: string,
-  secret: string,
+  secret: string
 ): boolean {
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const expected = `sha256=${crypto.createHmac('sha256', secret).update(payload).digest('hex')}`;
 
   const sigBuf = Buffer.from(signature);
   const expBuf = Buffer.from(expected);

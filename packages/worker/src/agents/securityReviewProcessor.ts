@@ -1,19 +1,19 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
-import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schemas for structured output ──
 
 const SecurityFindingSchema = z.object({
+  category: z.string(),
+  description: z.string(),
   file: z.string(),
   line: z.number().optional(),
   severity: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']),
-  category: z.string(),
-  description: z.string(),
   suggestedFix: z.string(),
 });
 
@@ -27,9 +27,7 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 
 // ── Security Review Agent ──
 
-export async function scanDiffForSecurityIssues(
-  diff: string,
-): Promise<SecurityScanResult> {
+export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
   return tracer.startActiveSpan(
     'llm.security_scan',
     { attributes: { 'llm.model': getModelSpec('securityReview') } },
@@ -37,19 +35,19 @@ export async function scanDiffForSecurityIssues(
       try {
         const agent = new Agent({
           id: 'security-review-gate',
-          name: 'security-review-gate',
-          model: getModel('securityReview'),
           instructions: SECURITY_REVIEW_PROMPT,
+          model: getModel('securityReview'),
+          name: 'security-review-gate',
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: diff,
+              role: 'user',
             },
           ],
-          { structuredOutput: { schema: SecurityScanResultSchema } },
+          { structuredOutput: { schema: SecurityScanResultSchema } }
         );
 
         if (!result.object) {
@@ -69,6 +67,6 @@ export async function scanDiffForSecurityIssues(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }

@@ -1,38 +1,37 @@
-import { Agent } from '@mastra/core/agent';
-import { trace } from '@opentelemetry/api';
-import { currentWorkflowId } from '../lib/activityContext.js';
-import { z } from 'zod';
 import type {
+  AggregatedReviewResult,
   CodeResult,
   ReviewVerdict,
-  ReviewFinding,
-  AggregatedReviewResult,
 } from '@auto-swe/shared/types/workflow';
-import {
-  SECURITY_AUDITOR_PROMPT,
-  DOMAIN_LOGIC_REVIEWER_PROMPT,
-  PERFORMANCE_REVIEWER_PROMPT,
-} from './prompts.js';
+import { Agent } from '@mastra/core/agent';
+import { trace } from '@opentelemetry/api';
+import { z } from 'zod';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import {
+  DOMAIN_LOGIC_REVIEWER_PROMPT,
+  PERFORMANCE_REVIEWER_PROMPT,
+  SECURITY_AUDITOR_PROMPT,
+} from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schemas for structured output ──
 
 const ReviewFindingSchema = z.object({
-  file: z.string(),
-  line: z.number().optional(),
   category: z.string(),
   description: z.string(),
+  file: z.string(),
+  line: z.number().optional(),
   suggestedFix: z.string(),
 });
 
 const ReviewVerdictSchema = z.object({
-  reviewer: z.enum(['SECURITY', 'DOMAIN_LOGIC', 'PERFORMANCE']),
   approved: z.boolean(),
-  severity: z.enum(['PASS', 'INFO', 'WARNING', 'CRITICAL']),
   findings: z.array(ReviewFindingSchema),
+  reviewer: z.enum(['SECURITY', 'DOMAIN_LOGIC', 'PERFORMANCE']),
+  severity: z.enum(['PASS', 'INFO', 'WARNING', 'CRITICAL']),
 });
 
 // ── Individual Reviewer Agents ──
@@ -40,7 +39,7 @@ const ReviewVerdictSchema = z.object({
 async function runReviewerAgent(
   prompt: string,
   reviewerType: ReviewVerdict['reviewer'],
-  codeResult: CodeResult,
+  codeResult: CodeResult
 ): Promise<ReviewVerdict> {
   return tracer.startActiveSpan(
     `llm.review.${reviewerType}`,
@@ -49,24 +48,24 @@ async function runReviewerAgent(
       try {
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
-          name: `${reviewerType.toLowerCase()}-reviewer`,
-          model: getModel('reviewer'),
           instructions: prompt,
+          model: getModel('reviewer'),
+          name: `${reviewerType.toLowerCase()}-reviewer`,
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: JSON.stringify({
                 diff: codeResult.diff,
                 filesChanged: codeResult.filesChanged,
-                testResults: codeResult.testResults,
                 implementationNotes: codeResult.implementationNotes,
+                testResults: codeResult.testResults,
               }),
+              role: 'user',
             },
           ],
-          { structuredOutput: { schema: ReviewVerdictSchema } },
+          { structuredOutput: { schema: ReviewVerdictSchema } }
         );
 
         if (result.usage) {
@@ -74,7 +73,7 @@ async function runReviewerAgent(
             currentWorkflowId(),
             'reviewer',
             result.usage,
-            `llm.review.${reviewerType.toLowerCase()}`,
+            `llm.review.${reviewerType.toLowerCase()}`
           );
         }
 
@@ -93,7 +92,7 @@ async function runReviewerAgent(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }
 
@@ -101,7 +100,7 @@ async function runReviewerAgent(
 
 export async function runReviewNetwork(
   codeResult: CodeResult,
-  successCriteria?: string[],
+  successCriteria?: string[]
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -123,15 +122,17 @@ export async function runReviewNetwork(
     }
     // If a reviewer crashes, treat as a critical finding requiring manual review
     return {
-      reviewer: reviewerTypes[index],
       approved: false,
+      findings: [
+        {
+          category: 'REVIEWER_CRASH',
+          description: `Reviewer agent failed: ${(result as PromiseRejectedResult).reason?.message ?? 'Unknown error'}`,
+          file: '',
+          suggestedFix: 'Manual review required',
+        },
+      ],
+      reviewer: reviewerTypes[index],
       severity: 'CRITICAL' as const,
-      findings: [{
-        file: '',
-        category: 'REVIEWER_CRASH',
-        description: `Reviewer agent failed: ${(result as PromiseRejectedResult).reason?.message ?? 'Unknown error'}`,
-        suggestedFix: 'Manual review required',
-      }],
     };
   });
 
@@ -147,8 +148,8 @@ export async function runReviewNetwork(
 
   return {
     approved,
-    verdicts,
     codeResult,
     rejectionSummary,
+    verdicts,
   };
 }

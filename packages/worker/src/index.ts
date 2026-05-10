@@ -3,8 +3,8 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE any other imports that need instrumentation
 const otel = initTelemetry('auto-swe-worker');
 
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 
@@ -15,7 +15,7 @@ async function run() {
     Runtime.install({
       telemetryOptions: {
         metrics: {
-          otel: { url: otelEndpoint, headers: {} },
+          otel: { headers: {}, url: otelEndpoint },
         },
       },
     });
@@ -30,13 +30,13 @@ async function run() {
   const workflowsPath = path.resolve(__dirname, './workflows/index.js');
 
   const worker = await Worker.create({
+    activities,
     connection,
     namespace: 'default',
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).
     // Only type-only imports are allowed in workflow files.
     workflowsPath,
-    activities,
   });
 
   console.log('Worker started, polling task queue: engineering-workflow');

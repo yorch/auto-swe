@@ -1,14 +1,14 @@
-import fp from 'fastify-plugin';
-import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import type { Role } from '@auto-swe/shared';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import fp from 'fastify-plugin';
+import jwt from 'jsonwebtoken';
 
 // ── JWT Configuration ──
 
 export interface JwtPayload {
-  sub: string;              // User UUID
+  sub: string; // User UUID
   role: Role;
   slackId?: string;
   iat: number;
@@ -33,13 +33,34 @@ declare module 'fastify' {
 // Role hierarchy: ADMIN > LEAD > ENGINEER
 const ROLE_HIERARCHY: Record<string, number> = {
   ADMIN: 3,
-  LEAD: 2,
   ENGINEER: 1,
+  LEAD: 2,
 };
 
 function hasRole(userRole: string, requiredRole: string): boolean {
   return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
 }
+
+/**
+ * Asserts that requireAuth middleware ran and narrows request.user to JwtPayload.
+ * Use inside route handlers that include requireAuth() in their onRequest hook.
+ */
+export function requireUser(request: FastifyRequest): JwtPayload {
+  if (!request.user) {
+    throw new Error('requireUser called without requireAuth middleware');
+  }
+  return request.user;
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function getErrorName(err: unknown): string | undefined {
+  return err instanceof Error ? err.name : undefined;
+}
+
+export { getErrorMessage, getErrorName };
 
 const ACCESS_TOKEN_TTL = '1h';
 const REFRESH_TOKEN_BYTES = 48;
@@ -73,6 +94,13 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   const algorithm = getAlgorithm();
 
   fastify.decorate('auth', {
+    generateRefreshToken(): string {
+      return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
+    },
+
+    hashToken(token: string): string {
+      return crypto.createHash('sha256').update(token).digest('hex');
+    },
     signAccessToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
       return jwt.sign(payload, privateKey, {
         algorithm,
@@ -85,14 +113,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
         algorithms: [algorithm],
       }) as JwtPayload;
     },
-
-    generateRefreshToken(): string {
-      return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
-    },
-
-    hashToken(token: string): string {
-      return crypto.createHash('sha256').update(token).digest('hex');
-    },
   });
 };
 
@@ -102,9 +122,9 @@ export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 // ── RBAC Hook Factory ──
 
 export interface RBACOptions {
-  requiredRole?: string;       // Platform role check
-  requiredTeamRole?: string;   // Team-scoped role check (resolves via team membership)
-  teamIdParam?: string;        // Route param name containing the team ID (default: 'id')
+  requiredRole?: string; // Platform role check
+  requiredTeamRole?: string; // Team-scoped role check (resolves via team membership)
+  teamIdParam?: string; // Route param name containing the team ID (default: 'id')
 }
 
 /**
@@ -116,7 +136,7 @@ export interface RBACOptions {
  * bypass team checks.
  */
 export function requireAuth(options: RBACOptions = {}) {
-  return async function (request: FastifyRequest, reply: FastifyReply) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return reply.status(401).send({
@@ -125,17 +145,18 @@ export function requireAuth(options: RBACOptions = {}) {
     }
 
     const token = authHeader.slice(7);
+    let payload: JwtPayload;
     try {
-      const payload = request.server.auth.verifyAccessToken(token);
+      payload = request.server.auth.verifyAccessToken(token);
       request.user = payload;
-    } catch (err: any) {
+    } catch (err: unknown) {
       return reply.status(401).send({
-        error: { code: 'TOKEN_INVALID', message: err.message ?? 'Invalid token' },
+        error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
       });
     }
 
     // Platform role check
-    if (options.requiredRole && !hasRole(request.user!.role, options.requiredRole)) {
+    if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {
       return reply.status(403).send({
         error: { code: 'FORBIDDEN', message: `Requires ${options.requiredRole} role` },
       });
@@ -144,7 +165,7 @@ export function requireAuth(options: RBACOptions = {}) {
     // Team role check: resolve membership and enforce
     if (options.requiredTeamRole) {
       // Platform ADMIN bypasses team checks
-      if (request.user!.role === 'ADMIN') return;
+      if (payload.role === 'ADMIN') return;
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
       if (!teamId) {
@@ -158,12 +179,15 @@ export function requireAuth(options: RBACOptions = {}) {
 
       const prisma = request.server.prisma;
       const membership = await prisma.teamMembership.findUnique({
-        where: { userId_teamId: { userId: request.user!.sub, teamId } },
+        where: { userId_teamId: { teamId, userId: payload.sub } },
       });
 
       if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {
         return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: `Requires ${options.requiredTeamRole} role in this team` },
+          error: {
+            code: 'FORBIDDEN',
+            message: `Requires ${options.requiredTeamRole} role in this team`,
+          },
         });
       }
 

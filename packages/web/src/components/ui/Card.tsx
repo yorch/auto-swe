@@ -1,16 +1,9 @@
 import { cn } from '@/lib/utils';
 
-export function Card({
-  className,
-  children,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+export function Card({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn(
-        'rounded-lg border border-[var(--border)] bg-white p-6 shadow-sm',
-        className,
-      )}
+      className={cn('rounded-lg border border-[var(--border)] bg-white p-6 shadow-sm', className)}
       {...props}
     >
       {children}
@@ -18,7 +11,13 @@ export function Card({
   );
 }
 
-export function CardHeader({ children, className }: { children: React.ReactNode; className?: string }) {
+export function CardHeader({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return <div className={cn('mb-4', className)}>{children}</div>;
 }
 

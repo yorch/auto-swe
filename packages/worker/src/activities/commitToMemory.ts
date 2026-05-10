@@ -1,31 +1,30 @@
+import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
-import { prisma } from '@auto-swe/shared/db';
-import { generateEmbedding } from '../lib/embeddings.js';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
+import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
-  rationale: z.string(),
+  failureType: z
+    .enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT'])
+    .nullable(),
   lessonSummary: z.string(),
-  failureType: z.enum(['CI_FAILURE', 'REVIEW_REJECTION', 'SECURITY_VIOLATION', 'MERGE_CONFLICT']).nullable(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
+  rationale: z.string(),
 });
 
 /**
  * Summarizes a completed workflow into a reusable lesson and persists it
  * with a vector embedding for future semantic search.
  */
-export async function commitToMemory(
-  temporalWorkflowId: string,
-  repoId: string,
-): Promise<string> {
+export async function commitToMemory(temporalWorkflowId: string, repoId: string): Promise<string> {
   const workflow = await prisma.activeWorkflow.findFirst({
-    where: { temporalWorkflowId },
     include: {
       pullRequests: true,
       workRequest: true,
     },
+    where: { temporalWorkflowId },
   });
 
   if (!workflow) {
@@ -35,30 +34,30 @@ export async function commitToMemory(
   // Use Memory Agent to summarize the workflow
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
-    name: 'memory-summarizer',
-    model: getModel('commitToMemory'),
     instructions: MEMORY_SUMMARIZER_PROMPT,
+    model: getModel('commitToMemory'),
+    name: 'memory-summarizer',
   });
 
   const result = await memoryAgent.generate(
     [
       {
-        role: 'user',
         content: JSON.stringify({
-          workflowId: workflow.id,
-          temporalWorkflowId: workflow.temporalWorkflowId,
-          status: workflow.currentStatus,
-          externalTicketId: workflow.workRequest?.externalTicketId,
           description: workflow.workRequest?.description,
+          externalTicketId: workflow.workRequest?.externalTicketId,
           pullRequests: workflow.pullRequests.map((pr) => ({
+            ciStatus: pr.ciStatus,
             prNumber: pr.prNumber,
             status: pr.status,
-            ciStatus: pr.ciStatus,
           })),
+          status: workflow.currentStatus,
+          temporalWorkflowId: workflow.temporalWorkflowId,
+          workflowId: workflow.id,
         }),
+        role: 'user',
       },
     ],
-    { structuredOutput: { schema: LessonOutputSchema } },
+    { structuredOutput: { schema: LessonOutputSchema } }
   );
 
   if (!result.object) {
@@ -80,7 +79,7 @@ export async function commitToMemory(
     lesson.lessonSummary,
     JSON.stringify(embedding),
     lesson.failureType,
-    JSON.stringify(lesson.metadata ?? {}),
+    JSON.stringify(lesson.metadata ?? {})
   );
 
   return lessonRows[0]?.id ?? '';

@@ -1,46 +1,42 @@
-import {
-  proxyActivities,
-  defineSignal,
-  setHandler,
-  startChild,
-  ParentClosePolicy,
-} from '@temporalio/workflow';
-import type * as activitiesType from '../activities/index.js';
 import type {
+  EpicRepoEntry,
+  EpicRequest,
+  EpicResult,
   RepoWorkRequest,
   WorkflowResult,
-  EpicRequest,
-  EpicRepoEntry,
-  EpicResult,
 } from '@auto-swe/shared/types/workflow';
+import {
+  defineSignal,
+  ParentClosePolicy,
+  proxyActivities,
+  setHandler,
+  startChild,
+} from '@temporalio/workflow';
+import type * as activitiesType from '../activities/index.js';
 
 // Re-export types for external consumers
-export type { EpicRequest, EpicRepoEntry, EpicResult };
+export type { EpicRepoEntry, EpicRequest, EpicResult };
 
 // ── Activity Proxies ──
 
-const stateActivities = proxyActivities<
-  Pick<typeof activitiesType, 'updateDomainState'>
->({
-  startToCloseTimeout: '30s',
+const _stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
   retry: {
-    maximumAttempts: 5,
-    initialInterval: '1s',
     backoffCoefficient: 2,
+    initialInterval: '1s',
+    maximumAttempts: 5,
     maximumInterval: '30s',
   },
+  startToCloseTimeout: '30s',
 });
 
-const plannerActivities = proxyActivities<
-  Pick<typeof activitiesType, 'planEpic'>
->({
-  startToCloseTimeout: '5m',
+const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'>>({
   retry: {
-    maximumAttempts: 3,
-    initialInterval: '5s',
     backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
     maximumInterval: '1m',
   },
+  startToCloseTimeout: '5m',
 });
 
 // ── Signals ──
@@ -49,13 +45,11 @@ export const epicCancelSignal = defineSignal('epicCancelSignal');
 
 // ── Constants ──
 
-const EPIC_TIMEOUT = '30d';
+const _EPIC_TIMEOUT = '30d';
 
 // ── Workflow ──
 
-export async function EpicOrchestratorWorkflow(
-  request: EpicRequest,
-): Promise<EpicResult> {
+export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<EpicResult> {
   let cancelled = false;
   setHandler(epicCancelSignal, () => {
     cancelled = true;
@@ -65,8 +59,8 @@ export async function EpicOrchestratorWorkflow(
   if (request.repos.length === 0 && request.repoIds && request.repoIds.length > 0) {
     const plannedRepos = await plannerActivities.planEpic({
       description: request.description,
-      requestPayload: request.requestPayload,
       repoIds: request.repoIds,
+      requestPayload: request.requestPayload,
       workRequestId: request.workRequestId,
     });
     request = { ...request, repos: plannedRepos };
@@ -76,15 +70,13 @@ export async function EpicOrchestratorWorkflow(
   const completedRepos = new Set<string>();
 
   // Build dependency graph: for each repo, track which repos it depends on
-  const repoMap = new Map(request.repos.map((r) => [r.repoId, r]));
+  const _repoMap = new Map(request.repos.map((r) => [r.repoId, r]));
 
   // Process repos respecting dependency order
   while (completedRepos.size < request.repos.length && !cancelled) {
     // Find repos whose dependencies are all satisfied
     const ready = request.repos.filter(
-      (r) =>
-        !completedRepos.has(r.repoId) &&
-        r.dependsOn.every((dep) => completedRepos.has(dep)),
+      (r) => !completedRepos.has(r.repoId) && r.dependsOn.every((dep) => completedRepos.has(dep))
     );
 
     if (ready.length === 0) {
@@ -95,12 +87,12 @@ export async function EpicOrchestratorWorkflow(
     // Start ready repos in parallel as child workflows
     const childPromises = ready.map(async (repo) => {
       const childRequest: RepoWorkRequest = {
-        workRequestId: request.workRequestId,
-        repoId: repo.repoId,
-        externalTicketId: request.externalTicketId,
         description: request.description,
-        requestPayload: request.requestPayload,
+        externalTicketId: request.externalTicketId,
         parentWorkflowId: request.epicWorkflowId,
+        repoId: repo.repoId,
+        requestPayload: request.requestPayload,
+        workRequestId: request.workRequestId,
       };
 
       // Scope the child ID to this epic execution so that retrying the epic
@@ -110,22 +102,22 @@ export async function EpicOrchestratorWorkflow(
 
       try {
         const handle = await startChild('EngineeringWorkflow', {
-          workflowId: childWorkflowId,
-          taskQueue: 'engineering-workflow',
           args: [childRequest],
           parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+          taskQueue: 'engineering-workflow',
+          workflowId: childWorkflowId,
         });
 
-        childResults[repo.repoId] = await handle.result() as WorkflowResult;
+        childResults[repo.repoId] = (await handle.result()) as WorkflowResult;
         if (childResults[repo.repoId].status === 'SUCCESS') {
           completedRepos.add(repo.repoId);
         }
-      } catch (err: any) {
+      } catch (_err: unknown) {
         childResults[repo.repoId] = {
+          lessonsGenerated: [],
           status: 'FAILED',
           totalCIRetries: 0,
           totalReviewRetries: 0,
-          lessonsGenerated: [],
         };
       }
     });
@@ -134,16 +126,14 @@ export async function EpicOrchestratorWorkflow(
   }
 
   // Determine overall status
-  const allSuccess = request.repos.every(
-    (r) => childResults[r.repoId]?.status === 'SUCCESS',
-  );
+  const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
 
   if (cancelled) {
-    return { status: 'FAILED', childResults };
+    return { childResults, status: 'FAILED' };
   }
 
   return {
-    status: allSuccess ? 'SUCCESS' : 'FAILED',
     childResults,
+    status: allSuccess ? 'SUCCESS' : 'FAILED',
   };
 }

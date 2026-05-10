@@ -3,25 +3,25 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
-import { temporalPlugin } from './plugins/temporal.js';
-import { prismaPlugin } from './plugins/prisma.js';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import authPlugin from './plugins/auth.js';
-import { workRequestRoutes } from './routes/workRequests.js';
-import { workflowRoutes } from './routes/workflows.js';
-import { webhookRoutes } from './routes/webhooks.js';
+import { prismaPlugin } from './plugins/prisma.js';
+import { temporalPlugin } from './plugins/temporal.js';
 import { authRoutes } from './routes/auth.js';
+import { epicRoutes } from './routes/epics.js';
+import { lessonRoutes } from './routes/lessons.js';
+import { repositoryRoutes } from './routes/repositories.js';
+import { slackRoutes } from './routes/slack.js';
 import { teamRoutes } from './routes/teams.js';
 import { userRoutes } from './routes/users.js';
-import { repositoryRoutes } from './routes/repositories.js';
-import { lessonRoutes } from './routes/lessons.js';
-import { slackRoutes } from './routes/slack.js';
-import { epicRoutes } from './routes/epics.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { workflowRoutes } from './routes/workflows.js';
+import { workRequestRoutes } from './routes/workRequests.js';
 
 async function start() {
   const app = Fastify({ logger: true });
@@ -32,12 +32,12 @@ async function start() {
 
   // CORS — allow the web dashboard and any additional origins from env
   await app.register(cors, {
-    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
     credentials: true,
+    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
   });
 
   // Raw body for HMAC webhook verification (opt-in per route)
-  await app.register(fastifyRawBody, { global: false, runFirst: true, encoding: 'utf8' });
+  await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
   await app.register(cookie);
 
@@ -50,7 +50,7 @@ async function start() {
   await app.register(authPlugin);
 
   // Global error handler
-  app.setErrorHandler(async (error: any, request, reply) => {
+  app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error(error);
     const statusCode = error.statusCode ?? 500;
     return reply.status(statusCode).send({
@@ -79,7 +79,7 @@ async function start() {
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
 
   const port = Number(process.env.PORT ?? 8080);
-  await app.listen({ port, host: '0.0.0.0' });
+  await app.listen({ host: '0.0.0.0', port });
 }
 
 start().catch(async (err) => {

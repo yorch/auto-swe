@@ -1,20 +1,20 @@
+import type { PlannedRepo, RepoInfo } from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { currentWorkflowId } from '../lib/activityContext.js';
 import { z } from 'zod';
-import type { RepoInfo, PlannedRepo } from '@auto-swe/shared/types/workflow';
-import { PLANNER_AGENT_PROMPT } from './prompts.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
+import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schema for structured output ──
 
 const PlannedRepoSchema = z.object({
-  repoId: z.string(),
-  description: z.string(),
   dependsOn: z.array(z.string()),
+  description: z.string(),
+  repoId: z.string(),
 });
 
 const PlannerOutputSchema = z.object({
@@ -25,31 +25,36 @@ const PlannerOutputSchema = z.object({
 
 export async function decomposeEpic(
   epicDescription: string,
-  availableRepos: RepoInfo[],
+  availableRepos: RepoInfo[]
 ): Promise<PlannedRepo[]> {
   return tracer.startActiveSpan(
     'llm.epic_planning',
-    { attributes: { 'llm.model': getModelSpec('planner'), 'epic.repo_count': availableRepos.length } },
+    {
+      attributes: {
+        'epic.repo_count': availableRepos.length,
+        'llm.model': getModelSpec('planner'),
+      },
+    },
     async (span) => {
       try {
         const agent = new Agent({
           id: 'epic-planner',
-          name: 'epic-planner',
-          model: getModel('planner'),
           instructions: PLANNER_AGENT_PROMPT,
+          model: getModel('planner'),
+          name: 'epic-planner',
         });
 
         const result = await agent.generate(
           [
             {
-              role: 'user',
               content: JSON.stringify({
-                epicDescription,
                 availableRepos,
+                epicDescription,
               }),
+              role: 'user',
             },
           ],
-          { structuredOutput: { schema: PlannerOutputSchema } },
+          { structuredOutput: { schema: PlannerOutputSchema } }
         );
 
         if (result.usage) {
@@ -77,6 +82,6 @@ export async function decomposeEpic(
       } finally {
         span.end();
       }
-    },
+    }
   );
 }

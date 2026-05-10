@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
@@ -16,7 +16,7 @@ const NAV_ITEMS = [
   { href: '/settings', label: 'Settings', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
 ];
 
-const ROLE_HIERARCHY: Record<string, number> = { ADMIN: 3, LEAD: 2, ENGINEER: 1 };
+const ROLE_HIERARCHY: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -24,7 +24,7 @@ export function Sidebar() {
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
 
   const visibleItems = NAV_ITEMS.filter((item) =>
-    item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel),
+    item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel)
   );
 
   return (
@@ -36,14 +36,14 @@ export function Sidebar() {
       <nav className="flex-1 p-2 space-y-1">
         {visibleItems.map((item) => (
           <Link
-            key={item.href}
-            href={item.href}
             className={cn(
               'block px-3 py-2 rounded-md text-sm transition-colors',
               pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
                 ? 'bg-[var(--primary)] text-white'
-                : 'text-[var(--foreground)] hover:bg-[var(--muted)]',
+                : 'text-[var(--foreground)] hover:bg-[var(--muted)]'
             )}
+            href={item.href}
+            key={item.href}
           >
             {item.label}
           </Link>

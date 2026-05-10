@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Vitest 4 hoists `vi.mock()` factories above ALL imports/top-level code.
 // Any variable the factory closes over MUST also be hoisted via `vi.hoisted()`.
 const { embedMock, openaiEmbeddingFactory, openaiCompatTextEmbeddingFactory } = vi.hoisted(() => ({
   embedMock: vi.fn(),
-  openaiEmbeddingFactory: vi.fn(),
   openaiCompatTextEmbeddingFactory: vi.fn(),
+  openaiEmbeddingFactory: vi.fn(),
 }));
 
 vi.mock('ai', () => ({
@@ -20,7 +20,7 @@ vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: vi.fn(() => ({ textEmbeddingModel: openaiCompatTextEmbeddingFactory })),
 }));
 
-import { generateEmbedding, _resetEmbeddingClientForTests } from './embeddings.js';
+import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
 
 const originalEnv = { ...process.env };
 
@@ -48,8 +48,8 @@ describe('generateEmbedding', () => {
     expect(openaiEmbeddingFactory).toHaveBeenCalledWith('text-embedding-3-large');
     expect(embedMock).toHaveBeenCalledWith({
       model: { tag: 'openai-embed' },
-      value: 'hello world',
       providerOptions: { openai: { dimensions: 1536 } },
+      value: 'hello world',
     });
   });
 

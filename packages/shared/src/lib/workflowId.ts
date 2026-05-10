@@ -8,7 +8,7 @@
 export function generateWorkflowId(
   externalTicketId: string,
   organizationName: string,
-  repoName: string,
+  repoName: string
 ): string {
   return `eng-${organizationName}-${repoName}-${externalTicketId}`;
 }

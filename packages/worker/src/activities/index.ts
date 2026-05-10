@@ -1,10 +1,14 @@
-export { updateDomainState } from './state.js';
-export { executeImplementation } from './executeImplementation.js';
-export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
-// Phase 2
-export { runReviewNetwork } from './runReviewNetwork.js';
-export { fetchCILogs, executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
+export {
+  executeCIFixImplementation,
+  executeReviewFixImplementation,
+  fetchCILogs,
+} from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
-export { validateContext } from './validateContext.js';
+export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
+export { executeImplementation } from './executeImplementation.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
+// Phase 2
+export { runReviewNetwork } from './runReviewNetwork.js';
+export { updateDomainState } from './state.js';
+export { validateContext } from './validateContext.js';

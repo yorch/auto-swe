@@ -10,14 +10,32 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+  checkAuth: () => {
+    const token = api.getToken();
+    if (!token) {
+      set({ isAuthenticated: false, user: null });
+      return;
+    }
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp * 1000 < Date.now()) {
+        api.clearToken();
+        set({ isAuthenticated: false, user: null });
+        return;
+      }
+      set({ isAuthenticated: true, user: payload });
+    } catch {
+      api.clearToken();
+      set({ isAuthenticated: false, user: null });
+    }
+  },
   isAuthenticated: false,
 
   login: async (email, password) => {
-    const { data } = await api.post<{ data: { accessToken: string } }>(
-      '/api/v1/auth/login',
-      { email, password },
-    );
+    const { data } = await api.post<{ data: { accessToken: string } }>('/api/v1/auth/login', {
+      email,
+      password,
+    });
     api.setToken(data.accessToken);
     if (typeof window !== 'undefined') {
       // Set cookie so Next.js middleware can detect auth on server-side navigation.
@@ -25,6 +43,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // by scripts. The gateway verifies the JWT on every API call, so the real
       // security boundary is server-side. Secure; ensures it is never sent over HTTP.
       const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
+      // biome-ignore lint/suspicious/noDocumentCookie: Next.js middleware needs to read this cookie on the server. HttpOnly is impossible from client JS; gateway verifies JWT on every request (real security boundary).
       document.cookie = `accessToken=${data.accessToken}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
     }
 
@@ -38,34 +57,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       throw new Error('Received an invalid access token from the server');
     }
-    set({ user: payload as any, isAuthenticated: true });
+    set({ isAuthenticated: true, user: payload as AuthState['user'] });
   },
 
   logout: () => {
     api.clearToken();
     if (typeof window !== 'undefined') {
+      // biome-ignore lint/suspicious/noDocumentCookie: see login() — same cookie, server-readable by design.
       document.cookie = 'accessToken=; path=/; max-age=0';
     }
-    set({ user: null, isAuthenticated: false });
+    set({ isAuthenticated: false, user: null });
   },
-
-  checkAuth: () => {
-    const token = api.getToken();
-    if (!token) {
-      set({ user: null, isAuthenticated: false });
-      return;
-    }
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.exp * 1000 < Date.now()) {
-        api.clearToken();
-        set({ user: null, isAuthenticated: false });
-        return;
-      }
-      set({ user: payload, isAuthenticated: true });
-    } catch {
-      api.clearToken();
-      set({ user: null, isAuthenticated: false });
-    }
-  },
+  user: null,
 }));

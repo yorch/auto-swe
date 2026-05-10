@@ -1,4 +1,4 @@
-import { execSync, type ExecSyncOptions } from 'node:child_process';
+import { type ExecSyncOptions, execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
 export interface Workspace {
@@ -9,8 +9,8 @@ export interface Workspace {
 
 const EXEC_OPTS: ExecSyncOptions = {
   encoding: 'utf-8' as BufferEncoding,
-  timeout: 120_000, // 2 minutes per command
   maxBuffer: 10 * 1024 * 1024, // 10MB
+  timeout: 120_000, // 2 minutes per command
 };
 
 // Validate Docker image names to prevent shell injection.
@@ -18,7 +18,7 @@ const EXEC_OPTS: ExecSyncOptions = {
 const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 
 export function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 export function createWorkspace(
@@ -26,7 +26,7 @@ export function createWorkspace(
   branch: string,
   defaultBranch: string,
   githubToken: string,
-  image: string = 'node:24-alpine',
+  image: string = 'node:24-alpine'
 ): Workspace {
   if (!DOCKER_IMAGE_RE.test(image)) {
     throw new Error(`Invalid Docker image name: ${image}`);
@@ -35,22 +35,19 @@ export function createWorkspace(
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
-  const authedUrl = repoUrl.replace(
-    'https://',
-    `https://x-access-token:${githubToken}@`,
-  );
+  const authedUrl = repoUrl.replace('https://', `https://x-access-token:${githubToken}@`);
 
   // Start container — use '--' to separate docker flags from the image argument
   execSync(
     `docker run -d --name ${containerName} -- ${shellQuote(image)} sleep infinity`,
-    EXEC_OPTS,
+    EXEC_OPTS
   );
 
   // Initial exec function (root of container)
   const rootExec = (command: string): string => {
     return execSync(
       `docker exec ${containerName} sh -c ${shellQuote(command)}`,
-      EXEC_OPTS,
+      EXEC_OPTS
     ) as string;
   };
 
@@ -66,27 +63,33 @@ export function createWorkspace(
     rootExec("git config --global user.email 'auto-swe@localhost'");
 
     // Clone repo — shell-quote branch names to prevent injection
-    rootExec(`git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`);
+    rootExec(
+      `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`
+    );
     rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
   } catch (err) {
-    try { execSync(`docker rm -f ${containerName}`, EXEC_OPTS); } catch { /* already gone */ }
+    try {
+      execSync(`docker rm -f ${containerName}`, EXEC_OPTS);
+    } catch {
+      /* already gone */
+    }
     throw err;
   }
 
   return {
     containerId: containerName,
-    exec: (command: string) => {
-      return execSync(
-        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
-        EXEC_OPTS,
-      ) as string;
-    },
     destroy: () => {
       try {
         execSync(`docker rm -f ${containerName}`, EXEC_OPTS);
       } catch {
         // Container may already be gone
       }
+    },
+    exec: (command: string) => {
+      return execSync(
+        `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
+        EXEC_OPTS
+      ) as string;
     },
   };
 }

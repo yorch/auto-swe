@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getModelSpec, resolveModel, getModel, type AgentRole } from './models.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type AgentRole, getModel, getModelSpec, resolveModel } from './models.js';
 
 const ROLES: AgentRole[] = [
   'implementer',
@@ -11,12 +11,12 @@ const ROLES: AgentRole[] = [
 ];
 
 const ROLE_ENV: Record<AgentRole, string> = {
-  implementer:     'IMPLEMENTER_MODEL',
-  reviewer:        'REVIEWER_MODEL',
-  planner:         'PLANNER_MODEL',
-  securityReview:  'SECURITY_REVIEW_MODEL',
+  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
+  implementer: 'IMPLEMENTER_MODEL',
+  planner: 'PLANNER_MODEL',
+  reviewer: 'REVIEWER_MODEL',
+  securityReview: 'SECURITY_REVIEW_MODEL',
   validateContext: 'CONTEXT_VALIDATOR_MODEL',
-  commitToMemory:  'MEMORY_SUMMARIZER_MODEL',
 };
 
 describe('getModelSpec', () => {

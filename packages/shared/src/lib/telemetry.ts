@@ -1,5 +1,5 @@
-import { NodeSDK } from '@opentelemetry/sdk-node';
 import { resourceFromAttributes } from '@opentelemetry/resources';
+import { NodeSDK } from '@opentelemetry/sdk-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
 type NodeSDKConfig = NonNullable<ConstructorParameters<typeof NodeSDK>[0]>;
@@ -33,10 +33,10 @@ export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Pro
   });
 
   const sdk = new NodeSDK({
+    instrumentations: opts.instrumentations ?? [],
+    metricReader: opts.metricReader,
     resource,
     traceExporter: opts.traceExporter,
-    metricReader: opts.metricReader,
-    instrumentations: opts.instrumentations ?? [],
   });
 
   sdk.start();

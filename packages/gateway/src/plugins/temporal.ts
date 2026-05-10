@@ -1,7 +1,7 @@
-import fp from 'fastify-plugin';
+import type { EpicRequest, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { Client, Connection } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
-import type { RepoWorkRequest, EpicRequest } from '@auto-swe/shared/types/workflow';
+import fp from 'fastify-plugin';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -20,25 +20,28 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   const client = new Client({ connection });
 
   fastify.decorate('temporal', {
-    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
-      await client.workflow.start('EngineeringWorkflow', {
-        taskQueue: 'engineering-workflow',
-        workflowId,
-        args: [request],
-      });
+    async signalWorkflow(
+      workflowId: string,
+      signalName: string,
+      args: unknown[] = []
+    ): Promise<void> {
+      const handle = client.workflow.getHandle(workflowId);
+      await handle.signal(signalName, ...args);
     },
 
     async startEpicWorkflow(workflowId: string, request: EpicRequest): Promise<void> {
       await client.workflow.start('EpicOrchestratorWorkflow', {
+        args: [request],
         taskQueue: 'engineering-workflow',
         workflowId,
-        args: [request],
       });
     },
-
-    async signalWorkflow(workflowId: string, signalName: string, args: unknown[] = []): Promise<void> {
-      const handle = client.workflow.getHandle(workflowId);
-      await handle.signal(signalName, ...args);
+    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
+      await client.workflow.start('EngineeringWorkflow', {
+        args: [request],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
     },
   });
 

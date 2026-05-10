@@ -1,4 +1,4 @@
-import type { WorkflowStatus, BudgetTier } from './workflow.js';
+import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
 export interface ApiResponse<T> {
   data: T;

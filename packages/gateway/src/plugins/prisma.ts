@@ -1,7 +1,7 @@
-import fp from 'fastify-plugin';
 import { PrismaClient } from '@auto-swe/shared';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { FastifyPluginAsync } from 'fastify';
+import fp from 'fastify-plugin';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -10,10 +10,12 @@ declare module 'fastify' {
 }
 
 const prismaPlugin: FastifyPluginAsync = async (fastify) => {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL environment variable is required');
+  }
   const prisma = new PrismaClient({
-    adapter: new PrismaPg({
-      connectionString: process.env.DATABASE_URL!,
-    }),
+    adapter: new PrismaPg({ connectionString }),
   });
   await prisma.$connect();
 

@@ -1,23 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApplicationFailure } from '@temporalio/activity';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock prisma before importing the module under test
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: {
-      update: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
     },
   },
 }));
 
 import { prisma } from '@auto-swe/shared/db';
 import {
-  calculateCostUsd,
   BUDGET_LIMITS,
-  recordLlmUsage,
+  calculateCostUsd,
   getModelPrice,
   MODEL_PRICES,
+  recordLlmUsage,
 } from './costTracking.js';
 
 const originalEnv = { ...process.env };
@@ -97,13 +97,13 @@ describe('recordLlmUsage', () => {
 
   it('updates DB and returns when under budget', async () => {
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      id: 'wf-1',
       budgetTier: 'STANDARD',
+      costUsdAccrued: 0,
+      id: 'wf-1',
       tokensInputUsed: 0,
       tokensOutputUsed: 0,
-      costUsdAccrued: 0,
-    } as any);
-    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as any);
+    } as never);
+    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as never);
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
@@ -111,8 +111,8 @@ describe('recordLlmUsage', () => {
 
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
+        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }), // DB columns unchanged
         where: { id: 'wf-1' },
-        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }),  // DB columns unchanged
       })
     );
   });
@@ -129,12 +129,12 @@ describe('recordLlmUsage', () => {
 
   it('throws BUDGET_EXCEEDED when cumulative input tokens exceed tier limit', async () => {
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      id: 'wf-1',
       budgetTier: 'STANDARD',
+      costUsdAccrued: 29.99,
+      id: 'wf-1',
       tokensInputUsed: 1_999_900,
       tokensOutputUsed: 0,
-      costUsdAccrued: 29.99,
-    } as any);
+    } as never);
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200, outputTokens: 10 })
@@ -144,21 +144,21 @@ describe('recordLlmUsage', () => {
   it('still records usage for unknown models, just at zero cost', async () => {
     process.env.IMPLEMENTER_MODEL = 'mystery/unreleased';
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      id: 'wf-1',
       budgetTier: 'STANDARD',
+      costUsdAccrued: 0,
+      id: 'wf-1',
       tokensInputUsed: 0,
       tokensOutputUsed: 0,
-      costUsdAccrued: 0,
-    } as any);
+    } as never);
 
     await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1000, outputTokens: 500 });
 
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          costUsdAccrued: 0,
           tokensInputUsed: 1000,
           tokensOutputUsed: 500,
-          costUsdAccrued: 0,
         }),
       })
     );

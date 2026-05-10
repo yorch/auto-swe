@@ -3,9 +3,7 @@
  * These operate on the arrays already returned by useWorkflows() / useLessons().
  */
 
-import type { WorkflowSummary, LessonListItem } from '@auto-swe/shared/types/api';
-
-const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'TIMED_OUT'];
+import type { LessonListItem, WorkflowSummary } from '@auto-swe/shared/types/api';
 
 function toDateKey(dateStr: string): string {
   return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
@@ -25,23 +23,23 @@ function last30Days(): string[] {
 // ── Workflow transformations ──────────────────────────────────────────
 
 export function groupWorkflowsByStatus(
-  workflows: WorkflowSummary[],
+  workflows: WorkflowSummary[]
 ): { status: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const w of workflows) {
     const s = w.currentStatus ?? 'UNKNOWN';
     counts[s] = (counts[s] ?? 0) + 1;
   }
-  return Object.entries(counts).map(([status, count]) => ({ status, count }));
+  return Object.entries(counts).map(([status, count]) => ({ count, status }));
 }
 
 export function groupWorkflowsByDate(
   workflows: WorkflowSummary[],
-  days = 30,
+  days = 30
 ): { date: string; completed: number; failed: number; active: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
-  for (const d of buckets) map[d] = { completed: 0, failed: 0, active: 0 };
+  for (const d of buckets) map[d] = { active: 0, completed: 0, failed: 0 };
 
   for (const w of workflows) {
     const key = toDateKey(w.updatedAt);
@@ -54,7 +52,7 @@ export function groupWorkflowsByDate(
 }
 
 export function groupWorkflowsByRepo(
-  workflows: WorkflowSummary[],
+  workflows: WorkflowSummary[]
 ): { repo: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const w of workflows) {
@@ -62,28 +60,26 @@ export function groupWorkflowsByRepo(
     counts[repo] = (counts[repo] ?? 0) + 1;
   }
   return Object.entries(counts)
-    .map(([repo, count]) => ({ repo, count }))
+    .map(([repo, count]) => ({ count, repo }))
     .sort((a, b) => b.count - a.count);
 }
 
 // ── Lesson transformations ────────────────────────────────────────────
 
-export function groupLessonsByType(
-  lessons: LessonListItem[],
-): { type: string; count: number }[] {
+export function groupLessonsByType(lessons: LessonListItem[]): { type: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const l of lessons) {
     const t = l.failureType?.replace(/_/g, ' ') ?? 'Unknown';
     counts[t] = (counts[t] ?? 0) + 1;
   }
   return Object.entries(counts)
-    .map(([type, count]) => ({ type, count }))
+    .map(([type, count]) => ({ count, type }))
     .sort((a, b) => b.count - a.count);
 }
 
 export function groupLessonsByDate(
   lessons: LessonListItem[],
-  days = 30,
+  days = 30
 ): { date: string; count: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, number> = {};
@@ -93,5 +89,5 @@ export function groupLessonsByDate(
     const key = toDateKey(l.createdAt);
     if (map[key] !== undefined) map[key]++;
   }
-  return buckets.map((date) => ({ date, count: map[date] }));
+  return buckets.map((date) => ({ count: map[date], date }));
 }

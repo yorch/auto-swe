@@ -38,15 +38,15 @@ export interface PreWriteCheckResult {
 
 export const SECURITY_RULES: SecurityRule[] = [
   {
-    id: 'HARDCODED_AWS_KEY',
-    severity: 'CRITICAL',
-    pattern: /AKIA[0-9A-Z]{16}/,
     description: 'Hardcoded AWS access key ID detected',
+    id: 'HARDCODED_AWS_KEY',
+    pattern: /AKIA[0-9A-Z]{16}/,
+    severity: 'CRITICAL',
     suggestedFix: 'Use process.env.AWS_ACCESS_KEY_ID or a secrets manager',
   },
   {
+    description: 'Hardcoded secret or credential detected',
     id: 'HARDCODED_SECRET',
-    severity: 'CRITICAL',
     // Matches assignments like: secret = "longvalue", password: 'longvalue', api_key = `longvalue`
     // Excludes process.env references and short values (< 8 chars)
     // Known limitation: the negative lookahead (?!process\.env) only prevents
@@ -57,58 +57,63 @@ export const SECURITY_RULES: SecurityRule[] = [
     // is at the start of the value, or use a variable: const val = process.env.X.
     pattern:
       /(?:secret|password|passwd|api_key|apikey|access_token|auth_token|private_key)\s*[:=]\s*['"`](?!process\.env)[^'"`\n]{8,}['"`]/i,
-    description: 'Hardcoded secret or credential detected',
+    severity: 'CRITICAL',
     suggestedFix: 'Use environment variables (process.env.*) or a secrets manager',
   },
   {
-    id: 'HARDCODED_PRIVATE_KEY',
-    severity: 'CRITICAL',
-    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/,
     description: 'Private key embedded in source code',
+    id: 'HARDCODED_PRIVATE_KEY',
+    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/,
+    severity: 'CRITICAL',
     suggestedFix: 'Load private keys from files or environment variables at runtime',
   },
   {
-    id: 'HARDCODED_JWT_SECRET',
-    severity: 'CRITICAL',
-    pattern: /jwt\.sign\([^)]*,\s*['"][^'"]{8,}['"]/i,
     description: 'JWT signed with hardcoded secret string',
+    id: 'HARDCODED_JWT_SECRET',
+    pattern: /jwt\.sign\([^)]*,\s*['"][^'"]{8,}['"]/i,
+    severity: 'CRITICAL',
     suggestedFix: 'Use process.env.JWT_SECRET or a key management service',
   },
   {
-    id: 'SQL_INJECTION',
-    severity: 'HIGH',
-    pattern: /\.\$(?:queryRawUnsafe|executeRawUnsafe)\(|\.(?:\$queryRaw|\$executeRaw)\s*\(`[^`]*\$\{/,
     description: 'Potential SQL injection via unsafe raw query or template interpolation',
+    id: 'SQL_INJECTION',
+    pattern:
+      /\.\$(?:queryRawUnsafe|executeRawUnsafe)\(|\.(?:\$queryRaw|\$executeRaw)\s*\(`[^`]*\$\{/,
+    severity: 'HIGH',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: example string shown to the agent in the suggested fix; the ${id} is literal documentation.
     suggestedFix: 'Use parameterized queries: prisma.$queryRaw`SELECT * FROM ... WHERE id = ${id}`',
   },
   {
-    id: 'COMMAND_INJECTION',
-    severity: 'HIGH',
-    pattern: /(?:exec|execSync|spawn|spawnSync)\s*\(\s*`[^`]*\$\{/,
     description: 'Potential command injection via template literal interpolation',
+    id: 'COMMAND_INJECTION',
+    pattern: /(?:exec|execSync|spawn|spawnSync)\s*\(\s*`[^`]*\$\{/,
+    severity: 'HIGH',
     suggestedFix: 'Use execFile/execFileSync with argument arrays instead of string interpolation',
   },
   {
+    description: 'Dynamic code execution detected',
     id: 'UNSAFE_CODE_EVALUATION',
-    severity: 'HIGH',
     // Detects dynamic code execution patterns in agent-generated code
     // Uses character-class construction to avoid triggering lint/hook false positives
-    pattern: new RegExp(String.raw`(?:^|[^.\w])ev` + String.raw`al\s*\(|new\s+Fun` + String.raw`ction\s*\(`),
-    description: 'Dynamic code execution detected',
-    suggestedFix: 'Avoid dynamic code execution; use safer alternatives like JSON.parse or a sandboxed interpreter',
+    pattern: new RegExp(
+      String.raw`(?:^|[^.\w])ev` + String.raw`al\s*\(|new\s+Fun` + String.raw`ction\s*\(`
+    ),
+    severity: 'HIGH',
+    suggestedFix:
+      'Avoid dynamic code execution; use safer alternatives like JSON.parse or a sandboxed interpreter',
   },
   {
-    id: 'INSECURE_CRYPTO',
-    severity: 'MEDIUM',
-    pattern: /createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)/,
     description: 'Insecure hash algorithm (MD5 or SHA-1) used',
+    id: 'INSECURE_CRYPTO',
+    pattern: /createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)/,
+    severity: 'MEDIUM',
     suggestedFix: 'Use createHash("sha256") or createHash("sha512") instead',
   },
   {
-    id: 'CORS_WILDCARD',
-    severity: 'MEDIUM',
-    pattern: /origin\s*:\s*['"`]\*['"`]/,
     description: 'CORS configured with wildcard origin',
+    id: 'CORS_WILDCARD',
+    pattern: /origin\s*:\s*['"`]\*['"`]/,
+    severity: 'MEDIUM',
     suggestedFix: 'Restrict CORS origin to specific allowed domains',
   },
 ];
@@ -131,10 +136,7 @@ function isTestFile(filePath: string): boolean {
 
 // ── Core check function ──
 
-export function checkContentSecurity(
-  filePath: string,
-  content: string,
-): PreWriteCheckResult {
+export function checkContentSecurity(filePath: string, content: string): PreWriteCheckResult {
   if (isTestFile(filePath)) {
     return { passed: true, violations: [] };
   }
@@ -145,7 +147,7 @@ export function checkContentSecurity(
   for (const rule of SECURITY_RULES) {
     // Skip if rule is extension-restricted and file doesn't match
     if (rule.fileExtensions) {
-      const ext = '.' + filePath.split('.').pop();
+      const ext = `.${filePath.split('.').pop()}`;
       if (!rule.fileExtensions.includes(ext)) continue;
     }
 
@@ -159,11 +161,11 @@ export function checkContentSecurity(
       const match = lines[i].match(rule.pattern);
       if (match) {
         violations.push({
-          ruleId: rule.id,
-          severity: rule.severity,
+          description: rule.description,
           line: i + 1,
           match: match[0].slice(0, 100), // Truncate for readability
-          description: rule.description,
+          ruleId: rule.id,
+          severity: rule.severity,
           suggestedFix: rule.suggestedFix,
         });
       }
@@ -177,29 +179,21 @@ export function checkContentSecurity(
 
 // ── Tool wrapper ──
 
-type WriteExecuteFn = (params: {
-  path: string;
-  content: string;
-}) => Promise<{ result: string }>;
+type WriteExecuteFn = (params: { path: string; content: string }) => Promise<{ result: string }>;
 
-export function wrapWriteToolWithSecurityCheck(
-  originalExecute: WriteExecuteFn,
-): WriteExecuteFn {
+export function wrapWriteToolWithSecurityCheck(originalExecute: WriteExecuteFn): WriteExecuteFn {
   return async (params) => {
     return tracer.startActiveSpan(
       'security.pre_write_check',
       {
         attributes: {
-          'security.file_path': params.path,
           'security.content_length': params.content.length,
+          'security.file_path': params.path,
         },
       },
       async (span) => {
         try {
-          const result = checkContentSecurity(
-            params.path,
-            params.content,
-          );
+          const result = checkContentSecurity(params.path, params.content);
 
           span.setAttributes({
             'security.passed': result.passed,
@@ -228,15 +222,12 @@ export function wrapWriteToolWithSecurityCheck(
         } finally {
           span.end();
         }
-      },
+      }
     );
   };
 }
 
-function formatViolationMessage(
-  violations: PreWriteViolation[],
-  blocked: boolean,
-): string {
+function formatViolationMessage(violations: PreWriteViolation[], blocked: boolean): string {
   const header = blocked
     ? 'SECURITY CHECK FAILED — write blocked'
     : 'SECURITY WARNINGS detected (write allowed)';
@@ -244,7 +235,7 @@ function formatViolationMessage(
   const details = violations
     .map(
       (v) =>
-        `  [${v.severity}] ${v.ruleId} (line ${v.line}): ${v.description}\n    Fix: ${v.suggestedFix}`,
+        `  [${v.severity}] ${v.ruleId} (line ${v.line}): ${v.description}\n    Fix: ${v.suggestedFix}`
     )
     .join('\n');
 

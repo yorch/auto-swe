@@ -1,8 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  checkContentSecurity,
-  wrapWriteToolWithSecurityCheck,
-} from './preWriteSecurityCheck.js';
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: test fixtures must contain literal `${...}` inside regular strings to exercise the SQL/command injection regexes.
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { checkContentSecurity, wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 // These tests use intentionally vulnerable code snippets as test input
 // to verify the security scanner catches them. No actual dangerous
@@ -12,10 +10,7 @@ import {
 
 describe('HARDCODED_AWS_KEY', () => {
   it('detects AWS access key IDs', () => {
-    const result = checkContentSecurity(
-      'src/config.ts',
-      'const key = "AKIAIOSFODNN7EXAMPLE";',
-    );
+    const result = checkContentSecurity('src/config.ts', 'const key = "AKIAIOSFODNN7EXAMPLE";');
     expect(result.passed).toBe(false);
     expect(result.violations).toHaveLength(1);
     expect(result.violations[0].ruleId).toBe('HARDCODED_AWS_KEY');
@@ -23,10 +18,7 @@ describe('HARDCODED_AWS_KEY', () => {
   });
 
   it('does not flag strings that look similar but are not AWS keys', () => {
-    const result = checkContentSecurity(
-      'src/config.ts',
-      'const prefix = "AKIA"; // just a prefix',
-    );
+    const result = checkContentSecurity('src/config.ts', 'const prefix = "AKIA"; // just a prefix');
     expect(result.passed).toBe(true);
     expect(result.violations).toHaveLength(0);
   });
@@ -36,19 +28,13 @@ describe('HARDCODED_AWS_KEY', () => {
 
 describe('HARDCODED_SECRET', () => {
   it('detects hardcoded password assignments', () => {
-    const result = checkContentSecurity(
-      'src/db.ts',
-      'const password = "superSecretPassword123";',
-    );
+    const result = checkContentSecurity('src/db.ts', 'const password = "superSecretPassword123";');
     expect(result.passed).toBe(false);
     expect(result.violations[0].ruleId).toBe('HARDCODED_SECRET');
   });
 
   it('detects hardcoded api_key with colon syntax', () => {
-    const result = checkContentSecurity(
-      'src/api.ts',
-      "  api_key: 'sk-1234567890abcdef',",
-    );
+    const result = checkContentSecurity('src/api.ts', "  api_key: 'sk-1234567890abcdef',");
     expect(result.passed).toBe(false);
     expect(result.violations[0].ruleId).toBe('HARDCODED_SECRET');
   });
@@ -56,32 +42,26 @@ describe('HARDCODED_SECRET', () => {
   it('detects hardcoded access_token', () => {
     const result = checkContentSecurity(
       'src/auth.ts',
-      'const access_token = "ghp_xxxxxxxxxxxxxxxxxxxx";',
+      'const access_token = "ghp_xxxxxxxxxxxxxxxxxxxx";'
     );
     expect(result.passed).toBe(false);
     expect(result.violations[0].ruleId).toBe('HARDCODED_SECRET');
   });
 
   it('does not flag process.env references', () => {
-    const result = checkContentSecurity(
-      'src/config.ts',
-      'const secret = process.env.MY_SECRET;',
-    );
+    const result = checkContentSecurity('src/config.ts', 'const secret = process.env.MY_SECRET;');
     expect(result.passed).toBe(true);
   });
 
   it('does not flag short values (< 8 chars)', () => {
-    const result = checkContentSecurity(
-      'src/config.ts',
-      'const password = "short";',
-    );
+    const result = checkContentSecurity('src/config.ts', 'const password = "short";');
     expect(result.passed).toBe(true);
   });
 
   it('does not flag process.env inside string assignment', () => {
     const result = checkContentSecurity(
       'src/config.ts',
-      "const secret = `process.env.SECRET_KEY`;",
+      'const secret = `process.env.SECRET_KEY`;'
     );
     expect(result.violations.filter((v) => v.ruleId === 'HARDCODED_SECRET')).toHaveLength(0);
   });
@@ -93,7 +73,7 @@ describe('HARDCODED_PRIVATE_KEY', () => {
   it('detects RSA private keys', () => {
     const result = checkContentSecurity(
       'src/crypto.ts',
-      'const key = `-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...`;',
+      'const key = `-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...`;'
     );
     expect(result.passed).toBe(false);
     expect(result.violations[0].ruleId).toBe('HARDCODED_PRIVATE_KEY');
@@ -102,16 +82,13 @@ describe('HARDCODED_PRIVATE_KEY', () => {
   it('detects generic private keys', () => {
     const result = checkContentSecurity(
       'src/crypto.ts',
-      'const key = "-----BEGIN PRIVATE KEY-----";',
+      'const key = "-----BEGIN PRIVATE KEY-----";'
     );
     expect(result.passed).toBe(false);
   });
 
   it('detects EC private keys', () => {
-    const result = checkContentSecurity(
-      'src/crypto.ts',
-      '-----BEGIN EC PRIVATE KEY-----',
-    );
+    const result = checkContentSecurity('src/crypto.ts', '-----BEGIN EC PRIVATE KEY-----');
     expect(result.passed).toBe(false);
   });
 });
@@ -122,7 +99,7 @@ describe('HARDCODED_JWT_SECRET', () => {
   it('detects jwt.sign with inline secret', () => {
     const result = checkContentSecurity(
       'src/auth.ts',
-      'const token = jwt.sign(payload, "my-super-secret-key");',
+      'const token = jwt.sign(payload, "my-super-secret-key");'
     );
     expect(result.passed).toBe(false);
     expect(result.violations[0].ruleId).toBe('HARDCODED_JWT_SECRET');
@@ -131,21 +108,14 @@ describe('HARDCODED_JWT_SECRET', () => {
   it('does not flag jwt.sign with env var reference', () => {
     const result = checkContentSecurity(
       'src/auth.ts',
-      'const token = jwt.sign(payload, process.env.JWT_SECRET);',
+      'const token = jwt.sign(payload, process.env.JWT_SECRET);'
     );
-    expect(
-      result.violations.filter((v) => v.ruleId === 'HARDCODED_JWT_SECRET'),
-    ).toHaveLength(0);
+    expect(result.violations.filter((v) => v.ruleId === 'HARDCODED_JWT_SECRET')).toHaveLength(0);
   });
 
   it('does not flag jwt.sign with short secret', () => {
-    const result = checkContentSecurity(
-      'src/auth.ts',
-      'const token = jwt.sign(payload, "short");',
-    );
-    expect(
-      result.violations.filter((v) => v.ruleId === 'HARDCODED_JWT_SECRET'),
-    ).toHaveLength(0);
+    const result = checkContentSecurity('src/auth.ts', 'const token = jwt.sign(payload, "short");');
+    expect(result.violations.filter((v) => v.ruleId === 'HARDCODED_JWT_SECRET')).toHaveLength(0);
   });
 });
 
@@ -155,7 +125,7 @@ describe('SQL_INJECTION', () => {
   it('detects $queryRawUnsafe', () => {
     const result = checkContentSecurity(
       'src/db.ts',
-      'await prisma.$queryRawUnsafe(`SELECT * FROM users WHERE id = ${id}`);',
+      'await prisma.$queryRawUnsafe(`SELECT * FROM users WHERE id = ${id}`);'
     );
     expect(result.passed).toBe(true); // HIGH, not CRITICAL
     expect(result.violations[0].ruleId).toBe('SQL_INJECTION');
@@ -165,7 +135,7 @@ describe('SQL_INJECTION', () => {
   it('detects $queryRaw with template interpolation', () => {
     const result = checkContentSecurity(
       'src/db.ts',
-      'await prisma.$queryRaw(`SELECT * FROM users WHERE name = ${name}`);',
+      'await prisma.$queryRaw(`SELECT * FROM users WHERE name = ${name}`);'
     );
     expect(result.violations[0].ruleId).toBe('SQL_INJECTION');
   });
@@ -211,9 +181,7 @@ describe('UNSAFE_CODE_EVALUATION', () => {
   it('does not flag method calls on objects', () => {
     const methodCall = 'obj.ev' + 'al()';
     const result = checkContentSecurity('src/parser.ts', methodCall);
-    expect(
-      result.violations.filter((v) => v.ruleId === 'UNSAFE_CODE_EVALUATION'),
-    ).toHaveLength(0);
+    expect(result.violations.filter((v) => v.ruleId === 'UNSAFE_CODE_EVALUATION')).toHaveLength(0);
   });
 });
 
@@ -221,31 +189,20 @@ describe('UNSAFE_CODE_EVALUATION', () => {
 
 describe('INSECURE_CRYPTO', () => {
   it('detects MD5 usage', () => {
-    const result = checkContentSecurity(
-      'src/hash.ts',
-      "const hash = createHash('md5');",
-    );
+    const result = checkContentSecurity('src/hash.ts', "const hash = createHash('md5');");
     expect(result.passed).toBe(true); // MEDIUM, not CRITICAL
     expect(result.violations[0].ruleId).toBe('INSECURE_CRYPTO');
     expect(result.violations[0].severity).toBe('MEDIUM');
   });
 
   it('detects SHA-1 usage', () => {
-    const result = checkContentSecurity(
-      'src/hash.ts',
-      'const hash = createHash("sha1");',
-    );
+    const result = checkContentSecurity('src/hash.ts', 'const hash = createHash("sha1");');
     expect(result.violations[0].ruleId).toBe('INSECURE_CRYPTO');
   });
 
   it('does not flag SHA-256', () => {
-    const result = checkContentSecurity(
-      'src/hash.ts',
-      "const hash = createHash('sha256');",
-    );
-    expect(
-      result.violations.filter((v) => v.ruleId === 'INSECURE_CRYPTO'),
-    ).toHaveLength(0);
+    const result = checkContentSecurity('src/hash.ts', "const hash = createHash('sha256');");
+    expect(result.violations.filter((v) => v.ruleId === 'INSECURE_CRYPTO')).toHaveLength(0);
   });
 });
 
@@ -253,10 +210,7 @@ describe('INSECURE_CRYPTO', () => {
 
 describe('CORS_WILDCARD', () => {
   it('detects wildcard CORS origin', () => {
-    const result = checkContentSecurity(
-      'src/server.ts',
-      "app.use(cors({ origin: '*' }));",
-    );
+    const result = checkContentSecurity('src/server.ts', "app.use(cors({ origin: '*' }));");
     expect(result.passed).toBe(true); // MEDIUM, not CRITICAL
     expect(result.violations[0].ruleId).toBe('CORS_WILDCARD');
   });
@@ -264,11 +218,9 @@ describe('CORS_WILDCARD', () => {
   it('does not flag specific origins', () => {
     const result = checkContentSecurity(
       'src/server.ts',
-      "app.use(cors({ origin: 'https://example.com' }));",
+      "app.use(cors({ origin: 'https://example.com' }));"
     );
-    expect(
-      result.violations.filter((v) => v.ruleId === 'CORS_WILDCARD'),
-    ).toHaveLength(0);
+    expect(result.violations.filter((v) => v.ruleId === 'CORS_WILDCARD')).toHaveLength(0);
   });
 });
 
@@ -278,32 +230,26 @@ describe('test file exclusion', () => {
   it('skips .test.ts files', () => {
     const result = checkContentSecurity(
       'src/auth.test.ts',
-      'const password = "superSecretPassword123";',
+      'const password = "superSecretPassword123";'
     );
     expect(result.passed).toBe(true);
     expect(result.violations).toHaveLength(0);
   });
 
   it('skips .spec.ts files', () => {
-    const result = checkContentSecurity(
-      'src/auth.spec.ts',
-      'const key = "AKIAIOSFODNN7EXAMPLE";',
-    );
+    const result = checkContentSecurity('src/auth.spec.ts', 'const key = "AKIAIOSFODNN7EXAMPLE";');
     expect(result.passed).toBe(true);
   });
 
   it('skips __tests__ directory files', () => {
-    const result = checkContentSecurity(
-      'src/__tests__/auth.ts',
-      '-----BEGIN RSA PRIVATE KEY-----',
-    );
+    const result = checkContentSecurity('src/__tests__/auth.ts', '-----BEGIN RSA PRIVATE KEY-----');
     expect(result.passed).toBe(true);
   });
 
   it('skips fixtures directory files', () => {
     const result = checkContentSecurity(
       'src/fixtures/sample.ts',
-      'const secret = "a-very-long-secret-value";',
+      'const secret = "a-very-long-secret-value";'
     );
     expect(result.passed).toBe(true);
   });
@@ -336,10 +282,7 @@ describe('edge cases', () => {
   });
 
   it('reports multiple violations across different rules', () => {
-    const content = [
-      'const key = "AKIAIOSFODNN7EXAMPLE";',
-      "createHash('md5');",
-    ].join('\n');
+    const content = ['const key = "AKIAIOSFODNN7EXAMPLE";', "createHash('md5');"].join('\n');
     const result = checkContentSecurity('src/config.ts', content);
     expect(result.violations).toHaveLength(2);
     expect(result.violations[0].ruleId).toBe('HARDCODED_AWS_KEY');
@@ -359,8 +302,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('blocks write on CRITICAL violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      path: 'src/config.ts',
       content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
+      path: 'src/config.ts',
     });
     expect(mockExecute).not.toHaveBeenCalled();
     expect(result.result).toContain('SECURITY CHECK FAILED');
@@ -370,8 +313,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('allows write with warnings for HIGH/MEDIUM violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      path: 'src/hash.ts',
       content: "createHash('md5');",
+      path: 'src/hash.ts',
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toContain('SECURITY WARNINGS');
@@ -381,8 +324,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('passes through cleanly for safe content', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      path: 'src/utils.ts',
       content: 'export const add = (a: number, b: number) => a + b;',
+      path: 'src/utils.ts',
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toBe('File written: test.ts');
@@ -391,8 +334,8 @@ describe('wrapWriteToolWithSecurityCheck', () => {
   it('passes through for test files even with violations', async () => {
     const wrapped = wrapWriteToolWithSecurityCheck(mockExecute);
     const result = await wrapped({
-      path: 'src/__tests__/config.test.ts',
       content: 'const key = "AKIAIOSFODNN7EXAMPLE";',
+      path: 'src/__tests__/config.test.ts',
     });
     expect(mockExecute).toHaveBeenCalledOnce();
     expect(result.result).toBe('File written: test.ts');

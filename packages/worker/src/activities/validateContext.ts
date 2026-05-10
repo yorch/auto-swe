@@ -1,9 +1,9 @@
-import { heartbeat } from '@temporalio/activity';
-import { Agent } from '@mastra/core/agent';
-import { trace } from '@opentelemetry/api';
-import { z } from 'zod';
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { Agent } from '@mastra/core/agent';
+import { trace } from '@opentelemetry/api';
+import { heartbeat } from '@temporalio/activity';
+import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 
@@ -18,7 +18,7 @@ const ContextValidationSchema = z.object({
 // ── Context Validator Activity ──
 
 export async function validateContext(
-  workRequest: RepoWorkRequest,
+  workRequest: RepoWorkRequest
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
@@ -32,23 +32,23 @@ export async function validateContext(
         try {
           const agent = new Agent({
             id: 'context-validator',
-            name: 'context-validator',
-            model: getModel('validateContext'),
             instructions: CONTEXT_VALIDATOR_PROMPT,
+            model: getModel('validateContext'),
+            name: 'context-validator',
           });
 
           const result = await agent.generate(
             [
               {
-                role: 'user',
                 content: JSON.stringify({
-                  title: workRequest.externalTicketId,
                   description: workRequest.description,
                   requestPayload: workRequest.requestPayload,
+                  title: workRequest.externalTicketId,
                 }),
+                role: 'user',
               },
             ],
-            { structuredOutput: { schema: ContextValidationSchema } },
+            { structuredOutput: { schema: ContextValidationSchema } }
           );
 
           if (!result.object) return [];
@@ -60,7 +60,7 @@ export async function validateContext(
         } finally {
           span.end();
         }
-      },
+      }
     );
   } catch {
     // Graceful degradation: empty criteria still allows workflow to proceed
@@ -70,14 +70,14 @@ export async function validateContext(
 
   // Upsert to handle Temporal retries idempotently
   const snapshot = await prisma.contextSnapshot.upsert({
-    where: { workRequestId: workRequest.workRequestId },
     create: {
-      workRequestId: workRequest.workRequestId,
       successCriteria,
+      workRequestId: workRequest.workRequestId,
     },
     update: {
       successCriteria,
     },
+    where: { workRequestId: workRequest.workRequestId },
   });
 
   return {

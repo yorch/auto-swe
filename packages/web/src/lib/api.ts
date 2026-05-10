@@ -5,6 +5,10 @@ interface ApiError {
   message: string;
 }
 
+interface ApiErrorBody {
+  error?: ApiError;
+}
+
 export class ApiClient {
   private accessToken: string | null = null;
 
@@ -34,7 +38,7 @@ export class ApiClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers as Record<string, string> ?? {}),
+      ...((options.headers as Record<string, string>) ?? {}),
     };
 
     const response = await fetch(`${API_BASE}${path}`, {
@@ -50,7 +54,7 @@ export class ApiClient {
         const retryResponse = await fetch(`${API_BASE}${path}`, { ...options, headers });
         if (!retryResponse.ok) {
           const err = await retryResponse.json().catch(() => ({}));
-          throw new Error((err as any).error?.message ?? `HTTP ${retryResponse.status}`);
+          throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${retryResponse.status}`);
         }
         return retryResponse.json();
       }
@@ -63,7 +67,7 @@ export class ApiClient {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error((err as any).error?.message ?? `HTTP ${response.status}`);
+      throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${response.status}`);
     }
 
     return response.json();
@@ -72,8 +76,8 @@ export class ApiClient {
   private async tryRefresh(): Promise<boolean> {
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
-        method: 'POST',
         credentials: 'include',
+        method: 'POST',
       });
 
       if (!response.ok) return false;
@@ -93,11 +97,11 @@ export class ApiClient {
   }
 
   post<T>(path: string, body: unknown) {
-    return this.fetch<T>(path, { method: 'POST', body: JSON.stringify(body) });
+    return this.fetch<T>(path, { body: JSON.stringify(body), method: 'POST' });
   }
 
   patch<T>(path: string, body: unknown) {
-    return this.fetch<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+    return this.fetch<T>(path, { body: JSON.stringify(body), method: 'PATCH' });
   }
 
   delete<T>(path: string) {

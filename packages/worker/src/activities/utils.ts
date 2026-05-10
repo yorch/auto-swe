@@ -1,4 +1,4 @@
-import type { TestRunResult, FileChange } from '@auto-swe/shared/types/workflow';
+import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
 /**
  * Detect the test command from a package.json string.
@@ -38,12 +38,12 @@ export function parseTestOutput(output: string, durationMs: number): TestRunResu
   const failing = failMatch ? parseInt(failMatch[1], 10) : 0;
 
   return {
-    passed: failing === 0 && passing > 0,
-    total: passing + failing,
-    passing,
-    failing,
-    stdout: output.slice(-10_000),
     duration_ms: durationMs,
+    failing,
+    passed: failing === 0 && passing > 0,
+    passing,
+    stdout: output.slice(-10_000),
+    total: passing + failing,
   };
 }
 
@@ -53,8 +53,7 @@ export function parseTestOutput(output: string, durationMs: number): TestRunResu
 export function parseDiffToFileChanges(diff: string): FileChange[] {
   const files: FileChange[] = [];
   const fileRegex = /^diff --git a\/(.+) b\/(.+)$/gm;
-  let match;
-  while ((match = fileRegex.exec(diff)) !== null) {
+  for (const match of diff.matchAll(fileRegex)) {
     const path = match[2];
     const ext = path.split('.').pop() ?? '';
     const nextDiffIndex = diff.indexOf('diff --git', match.index + 1);
@@ -65,11 +64,11 @@ export function parseDiffToFileChanges(diff: string): FileChange[] {
     const isDeleted = section.includes('deleted file mode');
 
     files.push({
-      path,
-      operation: isNew ? 'CREATE' : isDeleted ? 'DELETE' : 'MODIFY',
       language: ext,
       linesAdded: added,
       linesRemoved: removed,
+      operation: isNew ? 'CREATE' : isDeleted ? 'DELETE' : 'MODIFY',
+      path,
     });
   }
   return files;
