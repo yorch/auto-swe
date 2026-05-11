@@ -24,6 +24,37 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/types/workflow.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/spec',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/spec.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/expr',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/expr.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/registry-types',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/registry-types.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/codemod',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/codemod.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/defaultEngineeringSpec',
+        replacement: path.resolve(
+          __dirname,
+          'packages/shared/src/workflow/defaultEngineeringSpec.ts'
+        ),
+      },
+      {
+        find: '@auto-swe/shared/workflow/interpreter',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/interpreter.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
+      },
+      {
         find: '@auto-swe/shared',
         replacement: path.resolve(__dirname, 'packages/shared/src/index.ts'),
       },

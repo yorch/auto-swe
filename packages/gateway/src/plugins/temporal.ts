@@ -7,6 +7,10 @@ declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
       startWorkflow: (workflowId: string, request: RepoWorkRequest) => Promise<void>;
+      startRunnableWorkflow: (
+        workflowId: string,
+        input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
+      ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
     };
@@ -38,6 +42,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         // Temporal terminates the workflow on timeout; child workflows are released
         // via PARENT_CLOSE_POLICY_REQUEST_CANCEL set in the orchestrator.
         workflowExecutionTimeout: '30d',
+        workflowId,
+      });
+    },
+    async startRunnableWorkflow(
+      workflowId: string,
+      input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
+    ): Promise<void> {
+      await client.workflow.start('RunnableWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
         workflowId,
       });
     },

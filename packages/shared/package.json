@@ -10,7 +10,14 @@
     "./types/workflow": "./dist/types/workflow.js",
     "./types/api": "./dist/types/api.js",
     "./lib/workflowId": "./dist/lib/workflowId.js",
-    "./lib/telemetry": "./dist/lib/telemetry.js"
+    "./lib/telemetry": "./dist/lib/telemetry.js",
+    "./workflow": "./dist/workflow/index.js",
+    "./workflow/spec": "./dist/workflow/spec.js",
+    "./workflow/expr": "./dist/workflow/expr.js",
+    "./workflow/registry-types": "./dist/workflow/registry-types.js",
+    "./workflow/codemod": "./dist/workflow/codemod.js",
+    "./workflow/defaultEngineeringSpec": "./dist/workflow/defaultEngineeringSpec.js",
+    "./workflow/interpreter": "./dist/workflow/interpreter.js"
   },
   "scripts": {
     "build": "tsc",
@@ -26,7 +33,8 @@
     "@prisma/client": "7.8.0",
     "bcrypt": "6.0.0",
     "dotenv-expand": "13.0.0",
-    "pg": "8.20.0"
+    "pg": "8.20.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/bcrypt": "6.0.0",

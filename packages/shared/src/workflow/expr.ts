@@ -1,0 +1,361 @@
+/**
+ * Safe expression evaluator for workflow conditionals and bindings.
+ *
+ * Supports only:
+ *   - path lookups:   foo.bar[0].baz
+ *   - literals:       numbers, strings, true, false, null
+ *   - arithmetic:     +  -  *  /   (numbers only; no string concat side effects beyond +)
+ *   - comparisons:    ==  !=  <  <=  >  >=
+ *   - boolean logic:  &&  ||  !
+ *   - nullish/default: a ?? b
+ *   - parentheses for grouping
+ *
+ * Intentionally NO function calls, NO assignment, NO property access via
+ * expressions, NO `eval`. Strict to keep workflow templates deterministic
+ * and safe.
+ */
+
+import type { Binding } from './spec.js';
+
+export type Context = Record<string, unknown>;
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+export function resolveBinding(binding: Binding, ctx: Context): unknown {
+  if ('literal' in binding) return binding.literal;
+  if ('from' in binding) {
+    const v = lookupPath(ctx, binding.from);
+    return v === undefined ? binding.default : v;
+  }
+  if ('expr' in binding) {
+    return evalExpr(binding.expr, ctx);
+  }
+  throw new Error('binding must have one of: literal, from, expr');
+}
+
+export function lookupPath(ctx: Context, path: string): unknown {
+  const tokens = tokenizePath(path);
+  let current: unknown = ctx;
+  for (const tok of tokens) {
+    if (current == null) return undefined;
+    if (typeof tok === 'number') {
+      if (!Array.isArray(current)) return undefined;
+      current = current[tok];
+    } else {
+      if (typeof current !== 'object') return undefined;
+      current = (current as Record<string, unknown>)[tok];
+    }
+  }
+  return current;
+}
+
+export function evalExpr(expr: string, ctx: Context): unknown {
+  const tokens = tokenizeExpr(expr);
+  const parser = new Parser(tokens, ctx);
+  const result = parser.parseOr();
+  parser.expectEnd();
+  return result;
+}
+
+export function evalBoolean(expr: string, ctx: Context): boolean {
+  const v = evalExpr(expr, ctx);
+  return Boolean(v);
+}
+
+// ── Path tokenization ─────────────────────────────────────────────────────
+
+function tokenizePath(path: string): Array<string | number> {
+  const out: Array<string | number> = [];
+  let i = 0;
+  while (i < path.length) {
+    if (path[i] === '.') {
+      i++;
+      continue;
+    }
+    if (path[i] === '[') {
+      const end = path.indexOf(']', i);
+      if (end < 0) throw new Error(`unterminated [ in path: ${path}`);
+      const idx = path.slice(i + 1, end).trim();
+      if (/^-?\d+$/.test(idx)) {
+        out.push(Number.parseInt(idx, 10));
+      } else if (
+        (idx.startsWith('"') && idx.endsWith('"')) ||
+        (idx.startsWith("'") && idx.endsWith("'"))
+      ) {
+        out.push(idx.slice(1, -1));
+      } else {
+        throw new Error(`invalid index '${idx}' in path: ${path}`);
+      }
+      i = end + 1;
+      continue;
+    }
+    // identifier
+    let j = i;
+    while (j < path.length && path[j] !== '.' && path[j] !== '[') j++;
+    const id = path.slice(i, j);
+    if (!id) throw new Error(`empty segment in path: ${path}`);
+    out.push(id);
+    i = j;
+  }
+  return out;
+}
+
+// ── Expression tokenization + parsing ─────────────────────────────────────
+
+type Tok =
+  | { kind: 'num'; val: number }
+  | { kind: 'str'; val: string }
+  | { kind: 'bool'; val: boolean }
+  | { kind: 'null' }
+  | { kind: 'path'; val: string }
+  | {
+      kind: 'op';
+      val:
+        | '=='
+        | '!='
+        | '<'
+        | '<='
+        | '>'
+        | '>='
+        | '&&'
+        | '||'
+        | '!'
+        | '??'
+        | '+'
+        | '-'
+        | '*'
+        | '/'
+        | '('
+        | ')';
+    };
+
+function tokenizeExpr(input: string): Tok[] {
+  const tokens: Tok[] = [];
+  let i = 0;
+  const len = input.length;
+  while (i < len) {
+    const c = input[i];
+    if (c === undefined) break;
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
+      i++;
+      continue;
+    }
+    // string literal
+    if (c === '"' || c === "'") {
+      const quote = c;
+      let j = i + 1;
+      let val = '';
+      while (j < len && input[j] !== quote) {
+        if (input[j] === '\\' && j + 1 < len) {
+          const next = input[j + 1] as string;
+          val += next === 'n' ? '\n' : next === 't' ? '\t' : next;
+          j += 2;
+        } else {
+          val += input[j];
+          j++;
+        }
+      }
+      if (j >= len) throw new Error(`unterminated string in expr: ${input}`);
+      tokens.push({ kind: 'str', val });
+      i = j + 1;
+      continue;
+    }
+    // number
+    if ((c >= '0' && c <= '9') || (c === '-' && /\d/.test(input[i + 1] ?? ''))) {
+      let j = i + 1;
+      while (j < len && /[0-9.]/.test(input[j] as string)) j++;
+      tokens.push({ kind: 'num', val: Number.parseFloat(input.slice(i, j)) });
+      i = j;
+      continue;
+    }
+    // operators (2-char first)
+    const two = input.slice(i, i + 2);
+    if (
+      two === '==' ||
+      two === '!=' ||
+      two === '<=' ||
+      two === '>=' ||
+      two === '&&' ||
+      two === '||' ||
+      two === '??'
+    ) {
+      tokens.push({ kind: 'op', val: two });
+      i += 2;
+      continue;
+    }
+    if (
+      c === '<' ||
+      c === '>' ||
+      c === '!' ||
+      c === '(' ||
+      c === ')' ||
+      c === '+' ||
+      c === '-' ||
+      c === '*' ||
+      c === '/'
+    ) {
+      tokens.push({ kind: 'op', val: c as '<' | '>' | '!' | '(' | ')' | '+' | '-' | '*' | '/' });
+      i++;
+      continue;
+    }
+    // identifier / path / keyword
+    if (/[A-Za-z_$]/.test(c)) {
+      let j = i + 1;
+      while (j < len && /[A-Za-z0-9_$.[\]'"]/.test(input[j] as string)) j++;
+      const id = input.slice(i, j);
+      if (id === 'true') tokens.push({ kind: 'bool', val: true });
+      else if (id === 'false') tokens.push({ kind: 'bool', val: false });
+      else if (id === 'null') tokens.push({ kind: 'null' });
+      else tokens.push({ kind: 'path', val: id });
+      i = j;
+      continue;
+    }
+    throw new Error(`unexpected character '${c}' at position ${i} in expr: ${input}`);
+  }
+  return tokens;
+}
+
+class Parser {
+  private pos = 0;
+  constructor(
+    private readonly toks: Tok[],
+    private readonly ctx: Context
+  ) {}
+
+  expectEnd(): void {
+    if (this.pos < this.toks.length) {
+      throw new Error(`unexpected trailing tokens at position ${this.pos}`);
+    }
+  }
+
+  parseOr(): unknown {
+    let left = this.parseAnd();
+    while (this.matchOp('||')) {
+      const right = this.parseAnd();
+      left = Boolean(left) || Boolean(right);
+    }
+    return left;
+  }
+
+  parseAnd(): unknown {
+    let left = this.parseCoalesce();
+    while (this.matchOp('&&')) {
+      const right = this.parseCoalesce();
+      left = Boolean(left) && Boolean(right);
+    }
+    return left;
+  }
+
+  parseCoalesce(): unknown {
+    let left = this.parseCompare();
+    while (this.matchOp('??')) {
+      const right = this.parseCompare();
+      left = left == null ? right : left;
+    }
+    return left;
+  }
+
+  parseCompare(): unknown {
+    const left = this.parseAdd();
+    const op = this.peekOp();
+    if (op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') {
+      this.pos++;
+      const right = this.parseAdd();
+      return compare(op, left, right);
+    }
+    return left;
+  }
+
+  parseAdd(): unknown {
+    let left = this.parseMul();
+    while (true) {
+      if (this.matchOp('+')) {
+        const right = this.parseMul();
+        left = (left as number) + (right as number);
+      } else if (this.matchOp('-')) {
+        const right = this.parseMul();
+        left = (left as number) - (right as number);
+      } else break;
+    }
+    return left;
+  }
+
+  parseMul(): unknown {
+    let left = this.parseUnary();
+    while (true) {
+      if (this.matchOp('*')) {
+        const right = this.parseUnary();
+        left = (left as number) * (right as number);
+      } else if (this.matchOp('/')) {
+        const right = this.parseUnary();
+        left = (left as number) / (right as number);
+      } else break;
+    }
+    return left;
+  }
+
+  parseUnary(): unknown {
+    if (this.matchOp('!')) {
+      const v = this.parseUnary();
+      return !v;
+    }
+    if (this.matchOp('-')) {
+      const v = this.parseUnary();
+      return -(v as number);
+    }
+    return this.parsePrimary();
+  }
+
+  parsePrimary(): unknown {
+    const tok = this.toks[this.pos];
+    if (!tok) throw new Error('unexpected end of expression');
+    if (tok.kind === 'op' && tok.val === '(') {
+      this.pos++;
+      const v = this.parseOr();
+      if (!this.matchOp(')')) throw new Error('expected )');
+      return v;
+    }
+    this.pos++;
+    switch (tok.kind) {
+      case 'num':
+      case 'str':
+      case 'bool':
+        return tok.val;
+      case 'null':
+        return null;
+      case 'path':
+        return lookupPath(this.ctx, tok.val);
+      default:
+        throw new Error(`unexpected operator ${tok.val}`);
+    }
+  }
+
+  private peekOp(): string | null {
+    const tok = this.toks[this.pos];
+    return tok && tok.kind === 'op' ? tok.val : null;
+  }
+  private matchOp(op: string): boolean {
+    if (this.peekOp() === op) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+}
+
+function compare(op: '==' | '!=' | '<' | '<=' | '>' | '>=', l: unknown, r: unknown): boolean {
+  switch (op) {
+    case '==':
+      return l === r;
+    case '!=':
+      return l !== r;
+    case '<':
+      return (l as number) < (r as number);
+    case '<=':
+      return (l as number) <= (r as number);
+    case '>':
+      return (l as number) > (r as number);
+    case '>=':
+      return (l as number) >= (r as number);
+  }
+}

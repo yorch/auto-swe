@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
+import { DEFAULT_ENGINEERING_SPEC } from '../workflow/defaultEngineeringSpec.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -75,6 +76,40 @@ async function main() {
     },
   });
   console.log(`Seed: sample repository created (${repo.id})`);
+
+  // Seed the global default engineering workflow template. teamId=null means
+  // "global default" — used when a team has no team-scoped default. Postgres
+  // unique indexes treat NULL as distinct from NULL, so we look up explicitly
+  // by (teamId IS NULL, name) rather than using upsert with the compound key.
+  const existingTpl = await prisma.workflowTemplate.findFirst({
+    where: { name: 'default-engineering', teamId: null },
+  });
+  const tpl = existingTpl
+    ? await prisma.workflowTemplate.update({
+        data: { activeVersion: 1, isDefault: true, status: 'ACTIVE' },
+        where: { id: existingTpl.id },
+      })
+    : await prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          description: 'Default engineering workflow (parity with EngineeringWorkflow).',
+          isDefault: true,
+          name: 'default-engineering',
+          status: 'ACTIVE',
+          teamId: null,
+        },
+      });
+  await prisma.workflowTemplateVersion.upsert({
+    create: {
+      createdBy: admin.id,
+      spec: DEFAULT_ENGINEERING_SPEC as unknown as object,
+      templateId: tpl.id,
+      version: 1,
+    },
+    update: { spec: DEFAULT_ENGINEERING_SPEC as unknown as object },
+    where: { templateId_version: { templateId: tpl.id, version: 1 } },
+  });
+  console.log(`Seed: default workflow template seeded (${tpl.id}@v1)`);
   console.log('');
   console.log('  To submit a work request, use this repo ID:');
   console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);

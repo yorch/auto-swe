@@ -100,16 +100,21 @@ model Repository {
 }
 
 model WorkRequest {
-  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  externalTicketId String           @map("external_ticket_id")
-  description      String           @default("")
-  requestPayload   String           @map("request_payload")
-  slackMessageTs   String?          @map("slack_message_ts")
-  isCrossRepo      Boolean          @default(false) @map("is_cross_repo")
-  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  externalTicketId   String           @map("external_ticket_id")
+  description        String           @default("")
+  requestPayload     String           @map("request_payload")
+  slackMessageTs     String?          @map("slack_message_ts")
+  isCrossRepo        Boolean          @default(false) @map("is_cross_repo")
+  /// Optional template override; null → use team default. Snapshotted into
+  /// WorkflowRun at start so live edits to templates don't affect in-flight runs.
+  templateId         String?          @map("template_id") @db.Uuid
+  templateVersion    Int?             @map("template_version")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
-  contextSnapshot  ContextSnapshot?
-  activeWorkflows  ActiveWorkflow[]
+  contextSnapshot    ContextSnapshot?
+  activeWorkflows    ActiveWorkflow[]
+  workflowRuns       WorkflowRun[]
 
   @@map("work_requests")
 }
@@ -167,6 +172,132 @@ model PullRequest {
 // model pgvector index types, so `prisma migrate dev` will report drift
 // here. Use `yarn db:migrate` (= migrate deploy) for routine application;
 // run `yarn db:migrate:dev` only when authoring a new migration.
+enum WorkflowTemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum WorkflowRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  TIMED_OUT
+  SKIPPED
+  CANCELLED
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+  SKIPPED
+}
+
+/// A named, team-owned workflow template. Versions are immutable; "edit" creates
+/// a new WorkflowTemplateVersion. Exactly one version may be marked active per
+/// template (enforced in application code).
+model WorkflowTemplate {
+  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?                   @map("team_id") @db.Uuid
+  name          String
+  description   String                    @default("")
+  status        WorkflowTemplateStatus    @default(DRAFT)
+  isDefault     Boolean                   @default(false) @map("is_default")
+  activeVersion Int?                      @map("active_version")
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  versions      WorkflowTemplateVersion[]
+  workflowRuns  WorkflowRun[]
+
+  @@unique([teamId, name])
+  @@map("workflow_templates")
+}
+
+/// Immutable snapshot of a template at version N. `spec` is validated against
+/// WorkflowSpecSchema on insert in the gateway.
+model WorkflowTemplateVersion {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId   String           @map("template_id") @db.Uuid
+  template     WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version      Int
+  spec         Json
+  createdBy    String?          @map("created_by") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([templateId, version])
+  @@map("workflow_template_versions")
+}
+
+/// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
+/// start time, so live edits to the template do not affect this run.
+model WorkflowRun {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId      String             @unique @map("workflow_id")
+  templateId      String             @map("template_id") @db.Uuid
+  template        WorkflowTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion Int                @map("template_version")
+  workRequestId   String?            @map("work_request_id") @db.Uuid
+  workRequest     WorkRequest?       @relation(fields: [workRequestId], references: [id])
+  specSnapshot    Json               @map("spec_snapshot")
+  contextSnapshot Json?              @map("context_snapshot")
+  status          WorkflowRunStatus  @default(RUNNING)
+  startedAt       DateTime           @default(now()) @map("started_at") @db.Timestamptz
+  endedAt         DateTime?          @map("ended_at") @db.Timestamptz
+
+  steps           WorkflowStep[]
+  artifacts       WorkflowArtifact[]
+
+  @@index([templateId])
+  @@index([workRequestId])
+  @@map("workflow_runs")
+}
+
+/// One node execution within a run. Recorded incrementally so the UI can show
+/// live progress and post-mortems can trace which nodes ran in what order.
+model WorkflowStep {
+  id        String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId     String              @map("run_id") @db.Uuid
+  run       WorkflowRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId    String              @map("node_id")
+  attempt   Int                 @default(1)
+  status    WorkflowStepStatus  @default(PENDING)
+  startedAt DateTime?           @map("started_at") @db.Timestamptz
+  endedAt   DateTime?           @map("ended_at") @db.Timestamptz
+  inputs    Json?
+  outputs   Json?
+  error     String?
+
+  @@index([runId])
+  @@index([runId, nodeId])
+  @@map("workflow_steps")
+}
+
+/// Large step outputs (diffs, logs, scan artifacts) are kept out of the
+/// workflow-history context to stay under Temporal's 50MB cap. The interpreter
+/// passes the artifact ID around; activities fetch the blob on demand.
+///
+/// `backend` is "s3" when AS3_BUCKET is configured, "pg" otherwise.
+/// For "pg" the bytes live in `inlineBlob`; for "s3" only `s3Key` is set.
+model WorkflowArtifact {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String?      @map("run_id") @db.Uuid
+  run         WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind        String
+  contentType String       @default("application/octet-stream") @map("content_type")
+  sizeBytes   Int          @map("size_bytes")
+  backend     String
+  s3Bucket    String?      @map("s3_bucket")
+  s3Key       String?      @map("s3_key")
+  inlineBlob  Bytes?       @map("inline_blob")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId])
+  @@map("workflow_artifacts")
+}
+
 model AgentLesson {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId      String?         @map("workflow_id") @db.Uuid

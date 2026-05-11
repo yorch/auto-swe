@@ -1,9 +1,31 @@
 import crypto from 'node:crypto';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
-import type { FastifyPluginAsync } from 'fastify';
+import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+
+/**
+ * Resolve the active workflow template for a team, falling back to the
+ * global default (teamId IS NULL). Returns {templateId, version} or null
+ * if nothing is configured.
+ */
+async function resolveDefaultTemplate(
+  prisma: FastifyInstance['prisma'],
+  teamId: string
+): Promise<{ templateId: string; version: number } | null> {
+  const teamTpl = await prisma.workflowTemplate.findFirst({
+    where: { isDefault: true, status: 'ACTIVE', teamId },
+  });
+  const tpl =
+    teamTpl ??
+    (await prisma.workflowTemplate.findFirst({
+      where: { isDefault: true, status: 'ACTIVE', teamId: null },
+    }));
+  if (!tpl?.activeVersion) return null;
+  return { templateId: tpl.id, version: tpl.activeVersion };
+}
 
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
@@ -74,15 +96,42 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Start Temporal workflow FIRST — this is the idempotency gate.
       // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
       // and we haven't written any orphan DB rows yet.
+      //
+      // USE_INTERPRETER=true routes through the generic RunnableWorkflow with
+      // the team's default-engineering template. The hardcoded EngineeringWorkflow
+      // remains the fallback for one release so we can verify parity before
+      // cutting over.
+      const useInterpreter = process.env.USE_INTERPRETER === 'true';
+      const repoWorkRequest: RepoWorkRequest = {
+        budgetTier,
+        description,
+        externalTicketId,
+        repoId: repo.id,
+        requestPayload: JSON.stringify(request.body),
+        workRequestId,
+      };
+      let resolvedTemplate: { templateId: string; version: number } | null = null;
+      if (useInterpreter) {
+        resolvedTemplate = await resolveDefaultTemplate(fastify.prisma, repo.teamId);
+        if (!resolvedTemplate) {
+          return reply.status(500).send({
+            error: {
+              code: 'NO_DEFAULT_TEMPLATE',
+              message: 'No default workflow template configured. Run `yarn db:seed`.',
+            },
+          });
+        }
+      }
       try {
-        await fastify.temporal.startWorkflow(temporalWorkflowId, {
-          budgetTier,
-          description,
-          externalTicketId,
-          repoId: repo.id,
-          requestPayload: JSON.stringify(request.body),
-          workRequestId,
-        });
+        if (resolvedTemplate) {
+          await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+            request: repoWorkRequest,
+            templateId: resolvedTemplate.templateId,
+            templateVersion: resolvedTemplate.version,
+          });
+        } else {
+          await fastify.temporal.startWorkflow(temporalWorkflowId, repoWorkRequest);
+        }
       } catch (err: unknown) {
         if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
           return reply.status(409).send({
@@ -104,6 +153,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           externalTicketId,
           id: workRequestId,
           requestPayload: JSON.stringify(request.body),
+          templateId: resolvedTemplate?.templateId,
+          templateVersion: resolvedTemplate?.version,
         },
       });
 
