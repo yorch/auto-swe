@@ -1,6 +1,8 @@
 # MVP Technical Implementation Guide (Phase 1)
 
-> **Historical build guide.** Phase 1 has shipped. This was the original step-by-step implementation guide for the MVP and is preserved as a record of project structure, configuration, and build order at that point in time. Some snippets (notably the Mastra agent binding) describe pre-release APIs that diverged from the shipped code — refer to `packages/worker/src/` for canonical patterns. See [mvp-architecture.md](./mvp-architecture.md) for design rationale and [README](../README.md) for a current quickstart.
+> **Historical build guide.** Phase 1 has shipped. This was the original step-by-step implementation guide for the MVP and is preserved as a record of project structure, configuration, and build order at that point in time. Some snippets (notably the Mastra agent binding) describe pre-release APIs that diverged from the shipped code — refer to `packages/worker/src/` for canonical patterns.
+>
+> The hardcoded `EngineeringWorkflow` shown in code samples here was deleted by the configurable-workflow engine (PR #13). The current worker registers a single generic `RunnableWorkflow` (`packages/worker/src/workflows/runnable.ts`) that interprets a JSON `WorkflowSpec`; the seeded `default-engineering@v1` spec reproduces this MVP's behaviour. See [configurable-workflows.md](./configurable-workflows.md) for the runtime and [STATUS.md](../STATUS.md) for the current implementation. For design rationale see [mvp-architecture.md](./mvp-architecture.md); for a quickstart see [README](../README.md).
 
 ## 1. Project Structure
 

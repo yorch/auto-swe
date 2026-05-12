@@ -1,6 +1,11 @@
 # Workflow & Activity Implementations
 
-> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, and memory commit described here are implemented under `packages/worker/`. Note: workspace provisioning is described as Kubernetes Jobs but was implemented with Docker-in-Docker — see `STATUS.md` for the full divergence list.
+> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, and memory commit described here are implemented under `packages/worker/`.
+>
+> **Two implementation drifts to keep in mind while reading:**
+>
+> 1. **Workspace provisioning** is described as Kubernetes Jobs but was implemented with Docker-in-Docker — see `STATUS.md` for the full divergence list.
+> 2. **The hardcoded `EngineeringWorkflow` no longer exists.** It was deleted by the configurable-workflow engine (PR #13) and replaced by a single generic `RunnableWorkflow` that walks a JSON `WorkflowSpec` (default seed: `default-engineering@v1`). The pseudo-code at the bottom of this file shows the old top-down structure; the actual orchestration logic now lives in `packages/worker/src/workflows/runnable.ts` and the seeded spec in `packages/shared/src/workflow/defaultEngineeringSpec.ts`. The set of available activities has also grown beyond what's listed here — see [configurable-workflows.md](./configurable-workflows.md#current-entry-points) for the full step catalog (quality gates, fan-out, decomposition, merge-branches, …).
 
 ## 1. Agent-to-Agent Data Flow & Typed Interfaces
 

@@ -1,6 +1,6 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-09.
+> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-12.
 
 ## Legend
 
@@ -17,7 +17,7 @@
 | PostgreSQL 17 + pgvector database with Prisma schema                | Done   |                                                                   |
 | Team + TeamMembership tables (schema only, no enforcement)          | Done   |                                                                   |
 | Temporal server + single worker process                             | Done   |                                                                   |
-| `EngineeringWorkflow` (child workflow)                              | Done   | Full loop: Implement → Review → PR → CI → Merge → Memory          |
+| `EngineeringWorkflow` (child workflow)                              | Done   | Full loop: Implement → Review → PR → CI → Merge → Memory. **Superseded** by `RunnableWorkflow` + the seeded `default-engineering@v1` spec (PR #13); the hardcoded class no longer exists. |
 | Implementer Agent (Mastra + `claude-opus-4-7`) with bash/file tools | Done   |                                                                   |
 | Local TDD loop (write tests, run in DinD, iterate)                  | Done   |                                                                   |
 | `createOrUpdatePullRequest` activity via GitHub API                 | Done   |                                                                   |
@@ -120,6 +120,23 @@ Work done after the original 4-phase plan was complete:
 | Dependency-failure propagation in epic                            | Done   | `computeTransitiveDependents` walks the dep graph; downstream repos marked `SKIPPED` with `skippedReason` instead of silently omitted                        |
 | `updateDomainState` upsert                                        | Done   | Workflows self-register their `ActiveWorkflow` row on first state call (epic + epic-spawned children no longer silently fail)                                |
 | Docker Compose split (infra vs app)                               | Done   | `docker-compose.infra.yml` (postgres, postgres-temporal, temporal server+admin+ui, setup containers) + `docker-compose.yml` (gateway, worker, web, otel-lgtm — overlays infra). PR #10 split monolithic `auto-setup` into separate server / admin-tools / ui images. |
+
+---
+
+## Post-Phase 4: Configurable Workflow Engine
+
+Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurable-workflows.md). Phases 1–3 of the engine have shipped; 4–7 (web editor, versioning UI, custom shell steps, Slack/CLI first-class) are not started.
+
+| Item                                                                                                  | Status | PR    | Notes                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------- | ------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workflow-engine Phase 1 — interpreter + spec schema + parity refactor                                 | Done   | #13   | `WorkflowSpec` (Zod-validated DAG: step / set / cond / signal / terminate) + pure interpreter; `RunnableWorkflow` replaces the hardcoded `EngineeringWorkflow`; seeded `default-engineering@v1` template preserves the old behavior. |
+| Workflow-engine Phase 2 — quality gates + onFail policy + gate-fix loop                               | Done   | #14   | Six gate steps (lint / typecheck / tests / build / vulnScan / perfBench) with `onFail: block \| warn \| { retry: N }`; `executeGateFixImplementation` closes the loop; `Repository.gateCommands` for per-repo overrides.              |
+| Workflow-engine Phase 3 — fan-out + decomposition + branch merging                                    | Done   | #15   | `fanOut` node (sealed child contexts, `exports`, `pluck`, `onBranchFail`); `planDecomposition` Mastra agent → `Subtask[]`; `mergeBranches` activity (real `git merge`, aborts on conflict). Sequential per branch; parallel is 3.5.   |
+| Workflow-engine Phase 3.5 — parallel fan-out + conflict resolution                                    | Not started | —  | `Promise.all`-with-concurrency-limit in `runFanOut`; `resolveMergeConflict` agent for `mergeBranches`.                                                                                                                              |
+| Workflow-engine Phase 4 — web editor (React Flow) + run viewer                                        | Not started | —  | `/workflows/[id]/edit` DAG editor, `/runs/[id]` live status, palette from `stepRegistry.ts`.                                                                                                                                         |
+| Workflow-engine Phase 5 — versioning UI + per-team A/B + analytics                                    | Not started | —  | Version history, "promote to active," per-template `experimentSplit`, $/run + per-step failure analytics from `workflow_runs` / `workflow_steps`.                                                                                   |
+| Workflow-engine Phase 6 — custom shell steps with RBAC + audit                                        | Not started | —  | Per-step ephemeral container (`--network=none`, workspace-only writable), `workflow:write:shell` permission, `WorkflowShellAudit` table.                                                                                            |
+| Workflow-engine Phase 7 — first-class in Slack + CLI                                                  | Not started | —  | `/auto-swe workflows list`, Slack workflow picker on work-request create, new `packages/cli`.                                                                                                                                       |
 
 ---
 

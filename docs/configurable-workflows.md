@@ -30,6 +30,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 14 | Fan-out branches use a **sealed child context** (frozen parent copy + `[itemKey]:item`); only declared `exports` flow back to the parent at join |
 | 15 | Phase-3 fan-out is **sequential**; parallel `Promise.all`-with-concurrency-limit is a follow-up |
 | 16 | Phase-3 `mergeBranches` does **not** auto-resolve conflicts (records the conflict + fails the run); a `resolveMergeConflict` agent is reserved for phase 3.5 |
+| 17 | `mergeBranches.sourceBranches` is an **explicit binding** — no heuristic discovery from `nodes.*.output`. Specs use `fanOut.pluck: '<path>'` to project a flat array and bind it via `inputs.sourceBranches`. |
 
 ---
 
@@ -165,32 +166,35 @@ Per-gate `onFail` mode lives on the step node:
 ### What shipped
 
 - `packages/shared/src/workflow/spec.ts` — `fanOut` node type:
-  - `{ type: 'fanOut', over: Binding, subgraph: NodeId, join: NodeId, itemKey?: string, exports?: string[], onBranchFail?: 'block'|'continue', concurrency?: number }`
+  - `{ type: 'fanOut', over: Binding, subgraph: NodeId, join: NodeId, itemKey?: string, exports?: string[], pluck?: string, onBranchFail?: 'block'|'continue', concurrency?: number }`
   - `concurrency` is parsed but **not yet enforced** (phase 3.5 wires the parallel implementation). `SPEC_SCHEMA_VERSION` bumped to 3.
 - `packages/shared/src/workflow/codemods.ts` — v2 → v3 codemod (bump-only; v2 specs without `fanOut` upgrade silently).
 - `packages/shared/src/workflow/interpreter.ts` — `runFanOut`:
   - Resolves `over`, requires an array (throws otherwise).
   - Per branch builds a **sealed child context**: fresh `nodes:{}` + cloned `context:{}` + `[itemKey]: item` + `[itemKey + 'Index']: i`. Branch writes never reach the parent.
   - Runs a nested `walk` on the same spec from `node.subgraph`. Branch `terminate` ends the branch (not the run), and the result is captured.
-  - Aggregates into `nodes.<fanOutId>.output = { count, succeeded, failed, results: [{ status, result, exports? }] }` and continues at `join`.
-  - `onBranchFail: 'block'` (default) propagates the first failure; `'continue'` keeps going and surfaces failures via the aggregate.
+  - Aggregates into `nodes.<fanOutId>.output = { count, succeeded, failed, results: [{ status, result, exports? }], plucked? }` and continues at `join`.
+  - `pluck: '<dotPath>'` projects one path (relative to each result entry — e.g. `result.branch`) into a flat `output.plucked: unknown[]`, so downstream nodes can bind a flat array directly (`{ from: 'nodes.fan.output.plucked' }`) without a shaping step.
+  - `onBranchFail: 'block'` (default) propagates the first failure — both thrown errors **and** branches that reach `terminate { status: !== 'SUCCESS' }`; `'continue'` keeps going and surfaces failures via the aggregate.
   - Branch step records carry a `<fanOutId>[i]/` prefix on `nodeId` so workflow_steps shows per-branch attempts distinctly.
 - `packages/worker/src/agents/decomposer.ts` — Mastra agent + Zod-validated structured output. Caps at 8 subtasks; subtask ids must match `^[a-z][a-z0-9-]{0,39}$`. Falls back to a singleton plan when the LLM returns nothing structured.
 - `packages/worker/src/agents/prompts.ts` — `DECOMPOSER_AGENT_PROMPT` (splits along feature surface, not technical layers).
-- `packages/worker/src/activities/decomposition.ts` — `planDecomposition`, `mergeBranches` (real `git fetch + git merge --no-ff` in a fresh workspace; aborts on conflict; pushes only on full success). Exports `subtaskBranchName(featureBranch, subtask)` helper.
+- `packages/worker/src/activities/decomposition.ts` — `planDecomposition`, `mergeBranches` (real `git fetch + git merge --no-ff` in a fresh workspace; **batched fetch** for target + every source in one round-trip with per-ref fallback; aborts on conflict; pushes only on full success). Exports `subtaskBranchName(featureBranch, subtask)` helper.
 - `packages/worker/src/activities/executeImplementation.ts` — accepts optional `subtask?: Subtask`; switches to `auto/<ticket>/<subtask.id>` and injects subtask description + title + file scope into the implementer prompt.
 - `packages/worker/src/lib/stepRegistry.ts` — `planDecomposition` (agent, costHint) + `mergeBranches` (vcs, `mergeMessagePrefix` config field). Both added to `BUILTIN_STEPS`.
-- `packages/worker/src/workflows/runnable.ts` — dispatcher cases for the two new steps; `executeImplementation` resolves `inputs.subtask ?? lookupCtx(ctx, 'subtask')`. New `mergeActivities` proxy (15m STC). `deriveSourceBranches(ctx, target)` heuristic locates branches from any `nodes.<fanOutId>.output.results[].result.branch` when `mergeBranches.inputs.sourceBranches` is not bound explicitly.
+- `packages/worker/src/workflows/runnable.ts` — dispatcher cases for the two new steps; `executeImplementation` resolves `inputs.subtask ?? lookupPath(ctx, 'subtask')`. New `mergeActivities` proxy (15m STC). `mergeBranches` requires an explicit `inputs.sourceBranches: string[]` binding — the example spec wires `fanOut.pluck: 'result.branch'` and binds `sourceBranches` to `nodes.fan.output.plucked`.
+- `packages/worker/src/lib/activityContext.ts` — `currentWorkflowRunId()` lookup hoisted here so artifact-producing activities don't redefine it.
+- `packages/worker/src/lib/errors.ts` — `getExecErrorOutput(err, maxBytes)` companion to `getExecErrorStdout` (also concatenates stderr + falls back to message). Used by `mergeBranches` for conflict reporting.
 - `packages/shared/src/types/workflow.ts` — `Subtask` + `DecompositionResult`.
-- `packages/shared/src/workflow/examples/decomposition.spec.ts` — example DAG: `plan → fanOut(per-subtask implementer) → merge → review → done`.
+- `packages/shared/src/workflow/examples/decomposition.spec.ts` — example DAG: `plan → fanOut(per-subtask implementer, pluck: 'result.branch') → merge → review → done`.
 
-### Tests (224 total)
+### Tests (226 total)
 
 Phase 3 additions:
 - `spec.test.ts` — 4 new tests covering minimal fanOut spec, dangling-edge detection on `subgraph`/`join`, required-field rejection, `exports` cardinality cap.
-- `interpreter.test.ts` — 7 new tests: basic aggregation, sealed child context isolation, branch step inputs bound to `itemKey`, `onBranchFail: block` abort, `onBranchFail: continue` failure tally, non-array `over` rejection, empty-array short-circuit.
+- `interpreter.test.ts` — 9 new tests: basic aggregation, sealed child context isolation, branch step inputs bound to `itemKey`, `onBranchFail: block` abort on thrown error, `onBranchFail: block` abort on `terminate FAILED`, `onBranchFail: continue` failure tally, non-array `over` rejection, empty-array short-circuit, `pluck` projection into `output.plucked`.
 - `codemods.test.ts` — chained v1 → v2 → v3 migration + fanOut-node preservation across v2 → v3.
-- `examples/decomposition.spec.test.ts` — example spec parses, uses the expected step names, and lifts `currentCodeResult` via exports.
+- `examples/decomposition.spec.test.ts` — example spec parses, uses the expected step names, and binds `mergeBranches.sourceBranches` to the fanOut's `output.plucked`.
 - `stepRegistry.test.ts` — `planDecomposition` (agent) + `mergeBranches` (vcs) categorized correctly; covered by the existing `assertBuiltinStepsRegistered` invariant.
 - `activities/decomposition.test.ts` (worker) — `subtaskBranchName` helper; `mergeBranches` short-circuits on empty `sourceBranches`, merges + pushes on happy path, aborts + skips later sources on conflict.
 
@@ -199,11 +203,12 @@ Phase 3 additions:
 ```
 planDecomposition
   └─ set context.featureBranch
-  └─ fanOut(over: $.subtasks, itemKey: 'subtask', exports: ['context.currentCodeResult'])
+  └─ fanOut(over: nodes.plan.output.subtasks, itemKey: 'subtask', pluck: 'result.branch')
       └─ executeImplementation  (uses subtask → branches to auto/<ticket>/<id>)
       └─ set context.currentCodeResult
-      └─ terminate SUCCESS (branch boundary; captures CodeResult)
-  └─ merge (mergeBranches, target = context.featureBranch)
+      └─ terminate SUCCESS with result { branch }  (branch boundary)
+  └─ merge (mergeBranches, inputs.sourceBranches = nodes.fan.output.plucked,
+                          inputs.targetBranch  = context.featureBranch)
   └─ review → terminate
 ```
 
