@@ -1,3 +1,6 @@
+// Side-effect import: registers built-in codemods (v1→v2, …) at module load.
+import './codemods.js';
+
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
@@ -22,6 +25,7 @@ export type {
   Binding,
   CondNode,
   Node,
+  OnFailMode,
   SetNode,
   SignalNode,
   StepNode,

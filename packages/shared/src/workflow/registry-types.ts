@@ -39,8 +39,9 @@ export interface StepMetadata {
   };
 }
 
-/** Canonical list of step names known to phase 1. Worker validates at startup. */
+/** Canonical list of step names registered by the worker. Validated at startup. */
 export const BUILTIN_STEPS = [
+  // Phase 1 — agent + control + vcs
   'updateDomainState',
   'validateContext',
   'executeImplementation',
@@ -50,5 +51,13 @@ export const BUILTIN_STEPS = [
   'createOrUpdatePullRequest',
   'fetchCILogs',
   'commitToMemory',
+  // Phase 2 — quality gates + gate fix loop
+  'runLint',
+  'runTypecheck',
+  'runTests',
+  'runBuild',
+  'runVulnScan',
+  'runPerfBench',
+  'executeGateFixImplementation',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

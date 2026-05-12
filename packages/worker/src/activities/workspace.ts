@@ -1,9 +1,23 @@
-import { type ExecSyncOptions, execSync } from 'node:child_process';
+import { type ExecSyncOptions, execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+
+export interface CapturedExec {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  /** Set when the command did not exit cleanly (timeout, signal, spawn error). */
+  signal?: string;
+}
 
 export interface Workspace {
   containerId: string;
   exec: (command: string) => string;
+  /**
+   * Run a command and capture stdout/stderr/exitCode without throwing on
+   * non-zero exits. Used by quality-gate activities that interpret exit
+   * code themselves rather than relying on exec's throw-on-error semantics.
+   */
+  execCapture: (command: string, options?: { timeoutMs?: number }) => CapturedExec;
   destroy: () => void;
 }
 
@@ -90,6 +104,41 @@ export function createWorkspace(
         `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
         EXEC_OPTS
       ) as string;
+    },
+    execCapture: (command: string, options) => {
+      const timeoutMs = options?.timeoutMs ?? 600_000; // 10 min default for gate runs
+      const result = spawnSync(
+        'docker',
+        ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
+        {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: timeoutMs,
+        }
+      );
+      // Three failure shapes to disambiguate:
+      //   - spawn error (e.g. docker not on PATH): result.error set, status null, signal null
+      //   - timeout (Node killed the child): result.error set with ETIMEDOUT, status null, signal SIGTERM
+      //   - clean exit (including non-zero): status is a number
+      const stderr = result.stderr ?? '';
+      if (typeof result.status === 'number') {
+        return {
+          exitCode: result.status,
+          stderr,
+          stdout: result.stdout ?? '',
+          ...(result.signal ? { signal: result.signal } : {}),
+        };
+      }
+      const errMsg = result.error ? `${result.error.name}: ${result.error.message}` : '';
+      const spawnErr = errMsg ? `${stderr}\n${errMsg}`.trim() : stderr;
+      // Convention: 124 == timeout (coreutils), 127 == spawn failure (sh "command not found").
+      const isTimeout = !!result.signal || /ETIMEDOUT/.test(errMsg);
+      return {
+        exitCode: isTimeout ? 124 : 127,
+        signal: result.signal ?? (isTimeout ? 'SIGTERM' : 'SPAWN_ERROR'),
+        stderr: spawnErr,
+        stdout: result.stdout ?? '',
+      };
     },
   };
 }

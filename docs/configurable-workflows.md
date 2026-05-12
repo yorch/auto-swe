@@ -24,6 +24,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 8 | Conditional `expr` language: jsonpath + comparison + arithmetic only — no JS sandbox, no function calls |
 | 9 | Single PR per work request; subagents merge into the feature branch first |
 | 10 | Workflows are first-class in UI, Slack, and CLI |
+| 11 | Gate fix uses an explicit `executeGateFixImplementation` step; the spec wires the loop so it's visible in the DAG |
+| 12 | Gate-runtime configs follow precedence: step config → `Repository.gateCommands` → built-in defaults |
+| 13 | `runTests` always runs the full suite fresh (independent of implementer TDD); TDD may use a faster subset |
 
 ---
 
@@ -32,7 +35,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | Phase | Status | Slice |
 |---|---|---|
 | 1. Interpreter + parity refactor | **Done** | PR #13 |
-| 2. Quality-gate steps | Not started | lint / typecheck / test / build / vuln / perf |
+| 2. Quality-gate steps | **Done** | lint / typecheck / test / build / vuln / perf + onFail policy + gate-fix loop |
 | 3. Fan-out + decomposition + branch merging | Not started | parallel subagents, one workspace each, merged into feature branch |
 | 4. Web editor (React Flow + run viewer) | Not started | `/workflows` page, DAG editor, live run viewer |
 | 5. Versioning UI, A/B per team, analytics | Not started | version history page, per-team active version selector, $/run analytics |
@@ -80,7 +83,35 @@ Smoke test (manual, one-time): start a real Temporal worker + gateway + Postgres
 
 ---
 
-## Phase 2 — Quality-gate steps
+## Phase 2 — Quality-gate steps (Done)
+
+### What shipped
+
+- `packages/shared/src/workflow/spec.ts` — `StepNodeSchema.onFail: 'block' | 'warn' | { retry: N }`. Default behavior is `block`. `SPEC_SCHEMA_VERSION` bumped to 2.
+- `packages/shared/src/workflow/codemods.ts` — registers built-in v1 → v2 codemod (bumps version; v1 specs upgrade silently since `onFail` is optional).
+- `packages/shared/src/workflow/interpreter.ts` — honors `onFail`:
+  - `block`: throws on failure (or `passed === false`) and aborts the run.
+  - `warn`: records FAILED + writes the output/error to `nodes.<id>` then continues via `next`.
+  - `{ retry: N }`: re-runs up to N additional times (recording each attempt); falls back to `block` semantics if every attempt fails.
+- `packages/worker/src/activities/qualityGates.ts` — six gate activities (`runLint`, `runTypecheck`, `runTests`, `runBuild`, `runVulnScan`, `runPerfBench`) + `executeGateFixImplementation`. Each gate captures stdout/stderr/exit code via `Workspace.execCapture` (new), stores full logs as a `WorkflowArtifact`, returns `{passed, summary, artifactId?, exitCode}`. Command resolution: step config → `Repository.gateCommands` → built-in default.
+- `packages/worker/src/activities/workspace.ts` — `execCapture` helper (non-throwing, returns `{exitCode, stdout, stderr, signal?}`).
+- `packages/shared/prisma/schema.prisma` — `Repository.gateCommands JSON?` for per-repo command overrides (squashed into the init migration).
+- `packages/worker/src/lib/stepRegistry.ts` — six gate entries (category `gate`) plus `executeGateFixImplementation`; gates expose `command` + `timeoutMs` config fields.
+- `packages/worker/src/workflows/runnable.ts` — dispatcher cases for all seven new steps with a dedicated `gateActivities` proxy (15m STC, low Temporal-level retry — workflow-level retry comes from `onFail`).
+- `packages/shared/src/workflow/examples/qualityGates.spec.ts` — example DAG: implement → lint → typecheck → tests → build (each `onFail: { retry: 1 }`) → vulnScan (`onFail: 'warn'`) → done. Failed gates fan into `executeGateFixImplementation` with a 3-iteration budget.
+
+### Tests (203 total)
+
+Phase 2 additions:
+- `spec.test.ts` — 5 new tests for `onFail` shape validation (block / warn / retry / bad retry / bad literal).
+- `interpreter.test.ts` — 6 new tests for `onFail` semantics (block aborts on `passed:false` or thrown; warn continues; retry retries N then blocks; retry stops on recovery; `passed:true` skips policy).
+- `codemods.test.ts` — built-in v1 → v2 chain registration, idempotent field preservation, no mutation of input.
+- `examples/qualityGates.spec.test.ts` — example spec parses + every gate node uses a known gate step + blocking gates carry `onFail`.
+- `stepRegistry.test.ts` (worker) — `assertBuiltinStepsRegistered` invariant + every gate has `command` + `timeoutMs` fields.
+- `artifactStore.test.ts` (worker) — postgres backend round-trip; lazy-load error when `ARTIFACT_S3_BUCKET` set without the SDK.
+- `templates.test.ts` (worker) — `createWorkflowRun` migration of stored v1 spec, upsert-by-workflowId, error paths; `recordWorkflowStep` attempt-aware; `resolveTemplateForRepo` precedence + missing-template throw.
+- `qualityGates.test.ts` (worker) — `resolveCommand` precedence (step → repo → default → null for runPerfBench); empty step override falls through; `truncate` helper.
+- `workRequests.test.ts` (gateway) — `resolveDefaultTemplate` team default wins, global fallback, missing template returns null, missing activeVersion returns null.
 
 ### Adds
 

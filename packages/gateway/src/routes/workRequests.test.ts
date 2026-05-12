@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { workRequestRoutes } from './workRequests.js';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 describe('POST /api/v1/work-requests', () => {
   const app = Fastify();
@@ -95,5 +95,66 @@ describe('POST /api/v1/work-requests', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
+  });
+});
+
+describe('resolveDefaultTemplate', () => {
+  function fakePrisma(opts: {
+    teamMatch?: { id: string; activeVersion: number | null } | null;
+    globalMatch?: { id: string; activeVersion: number | null } | null;
+  }) {
+    const findFirst = vi
+      .fn()
+      .mockImplementationOnce(async () => opts.teamMatch ?? null)
+      .mockImplementationOnce(async () => opts.globalMatch ?? null);
+    return { findFirst, prisma: { workflowTemplate: { findFirst } } };
+  }
+
+  it('prefers the team default over the global default', async () => {
+    const { prisma } = fakePrisma({
+      globalMatch: { activeVersion: 2, id: 'global-tpl' },
+      teamMatch: { activeVersion: 5, id: 'team-tpl' },
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1'
+    );
+    expect(out).toEqual({ templateId: 'team-tpl', version: 5 });
+  });
+
+  it('falls back to the global default when no team default exists', async () => {
+    const { findFirst, prisma } = fakePrisma({
+      globalMatch: { activeVersion: 1, id: 'global-tpl' },
+      teamMatch: null,
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1'
+    );
+    expect(out).toEqual({ templateId: 'global-tpl', version: 1 });
+    expect(findFirst).toHaveBeenCalledTimes(2);
+    const secondWhere = findFirst.mock.calls[1]?.[0]?.where as Record<string, unknown>;
+    expect(secondWhere.teamId).toBeNull();
+  });
+
+  it('returns null when neither a team nor global default is configured', async () => {
+    const { prisma } = fakePrisma({ globalMatch: null, teamMatch: null });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1'
+    );
+    expect(out).toBeNull();
+  });
+
+  it('returns null when the matched template has no activeVersion', async () => {
+    const { prisma } = fakePrisma({
+      globalMatch: null,
+      teamMatch: { activeVersion: null, id: 'team-tpl' },
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1'
+    );
+    expect(out).toBeNull();
   });
 });

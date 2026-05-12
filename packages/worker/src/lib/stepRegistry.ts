@@ -109,6 +109,85 @@ register({
   name: 'commitToMemory',
 });
 
+// ── Phase 2 — Quality gates ─────────────────────────────────────────────────
+//
+// Each gate accepts an optional `command` override and `timeoutMs`. The
+// activity falls back through repo-level overrides (Repository.gateCommands)
+// and the built-in defaults if a value is not supplied here.
+
+const GATE_CONFIG_FIELDS = [
+  {
+    description:
+      'Shell command run in the workspace. Overrides repo-level Repository.gateCommands and the built-in default.',
+    key: 'command',
+    label: 'Command',
+    type: 'string' as const,
+  },
+  {
+    description: 'Wall-clock limit for the gate run, in milliseconds. Defaults to 600000 (10 min).',
+    key: 'timeoutMs',
+    label: 'Timeout (ms)',
+    type: 'number' as const,
+  },
+] as const;
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run the repo lint command in the workspace and surface pass/fail.',
+  label: 'Run lint',
+  name: 'runLint',
+});
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run the repo typecheck command in the workspace.',
+  label: 'Run typecheck',
+  name: 'runTypecheck',
+});
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run the full test suite as a hard gate (separate from implementer TDD).',
+  label: 'Run tests',
+  name: 'runTests',
+});
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run the build command (e.g. yarn build) in the workspace.',
+  label: 'Run build',
+  name: 'runBuild',
+});
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run a vulnerability scan against the workspace dependencies.',
+  label: 'Run vuln scan',
+  name: 'runVulnScan',
+});
+
+register({
+  category: 'gate',
+  configFields: GATE_CONFIG_FIELDS,
+  description: 'Run an operator-provided performance benchmark. No default command.',
+  label: 'Run perf bench',
+  name: 'runPerfBench',
+});
+
+register({
+  category: 'agent',
+  configFields: [],
+  costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
+  description: 'Re-run the implementer with a failed gate output as context.',
+  label: 'Apply gate fix',
+  name: 'executeGateFixImplementation',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);
