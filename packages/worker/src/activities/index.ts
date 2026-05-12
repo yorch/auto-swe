@@ -8,7 +8,17 @@ export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export { executeImplementation } from './executeImplementation.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
-// Phase 2
+// Phase 2 quality gates
+export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
+export {
+  executeGateFixImplementation,
+  runBuild,
+  runLint,
+  runPerfBench,
+  runTests,
+  runTypecheck,
+  runVulnScan,
+} from './qualityGates.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
 export { updateDomainState } from './state.js';
 export {

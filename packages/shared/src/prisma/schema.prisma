@@ -136,6 +136,10 @@ model Repository {
   team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
+  /// Optional per-repo overrides for phase-2 quality-gate commands. Shape:
+  /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
+  /// Resolution order: step config → this field → built-in defaults.
+  gateCommands     Json?            @map("gate_commands")
 
   activeWorkflows  ActiveWorkflow[]
   pullRequests     PullRequest[]

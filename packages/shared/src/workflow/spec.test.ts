@@ -33,6 +33,85 @@ describe('parseWorkflowSpec', () => {
     ).toThrow(/unknown node/);
   });
 
+  // ── Phase 2: onFail field on step nodes ──
+
+  it('parses a step node with onFail=block', () => {
+    const spec = parseWorkflowSpec({
+      ...minimal,
+      entry: 'g',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        g: { next: 'done', onFail: 'block', step: 'runLint', type: 'step' },
+      },
+    });
+    expect((spec.nodes.g as { onFail?: unknown }).onFail).toBe('block');
+  });
+
+  it('parses a step node with onFail=warn', () => {
+    const spec = parseWorkflowSpec({
+      ...minimal,
+      entry: 'g',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        g: { next: 'done', onFail: 'warn', step: 'runVulnScan', type: 'step' },
+      },
+    });
+    expect((spec.nodes.g as { onFail?: unknown }).onFail).toBe('warn');
+  });
+
+  it('parses a step node with onFail={retry:N}', () => {
+    const spec = parseWorkflowSpec({
+      ...minimal,
+      entry: 'g',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        g: { next: 'done', onFail: { retry: 3 }, step: 'runTests', type: 'step' },
+      },
+    });
+    expect((spec.nodes.g as { onFail?: { retry: number } }).onFail).toEqual({ retry: 3 });
+  });
+
+  it('rejects onFail with a non-numeric retry', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        ...minimal,
+        entry: 'g',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          g: { next: 'done', onFail: { retry: 'lots' }, step: 'runTests', type: 'step' },
+        },
+      })
+    ).toThrow();
+  });
+
+  it('rejects onFail with retry=0 or negative', () => {
+    for (const bad of [0, -1]) {
+      expect(() =>
+        parseWorkflowSpec({
+          ...minimal,
+          entry: 'g',
+          nodes: {
+            done: { status: 'SUCCESS', type: 'terminate' },
+            g: { next: 'done', onFail: { retry: bad }, step: 'runTests', type: 'step' },
+          },
+        })
+      ).toThrow();
+    }
+  });
+
+  it('rejects onFail with an unrecognized literal', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        ...minimal,
+        entry: 'g',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          g: { next: 'done', onFail: 'ignore', step: 'runTests', type: 'step' },
+        },
+      })
+    ).toThrow();
+  });
+
   it('parses a multi-node spec with all node types', () => {
     const spec = parseWorkflowSpec({
       entry: 'a',

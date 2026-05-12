@@ -16,10 +16,11 @@ import { z } from 'zod';
  *   - signal    : wait for a Temporal signal with timeout
  *   - terminate : end the run with a status
  *
- * Phase 2+ adds: fanOut, joinAll, gate, shell, conditional retry.
+ * Phase 2 extends step nodes with `onFail` modes (block / warn / retry).
+ * Phase 3+ adds: fanOut, joinAll, shell.
  */
 
-export const SPEC_SCHEMA_VERSION = 1 as const;
+export const SPEC_SCHEMA_VERSION = 2 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
@@ -48,12 +49,30 @@ const RetryPolicySchema = z
 
 const OnErrorSchema = z.enum(['fail', 'continue']).default('fail');
 
+/**
+ * Per-step failure policy (phase 2). Layered on top of activity-level retry:
+ *   - `block`        : a failure terminates the run with FAILED (default)
+ *   - `warn`         : record FAILED, then continue via `next`
+ *   - `{ retry: N }` : re-run the step up to N additional times; after the
+ *                      final attempt fails, fall back to `block` semantics
+ *
+ * Use this for workflow-level failure handling. Activity-level retry policy
+ * (transient infra/IO errors) still lives on the `retry` field.
+ */
+const OnFailSchema = z.union([
+  z.literal('block'),
+  z.literal('warn'),
+  z.object({ retry: z.number().int().min(1).max(10) }),
+]);
+export type OnFailMode = z.infer<typeof OnFailSchema>;
+
 const StepNodeSchema = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   heartbeatTimeout: z.string().optional(),
   inputs: InputMapSchema.optional(),
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
   retry: RetryPolicySchema,
   startToCloseTimeout: z.string().optional(),
   step: z.string().min(1),

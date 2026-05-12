@@ -1,0 +1,28 @@
+/**
+ * Built-in codemods registered at module load.
+ *
+ * Importing this module has the side effect of registering every spec
+ * migration in order. The package barrel (./index.ts) imports it so any
+ * consumer that uses `migrateSpec` automatically picks up the chain.
+ *
+ * Tests in `codemod.test.ts` bypass this file via `vi.resetModules()` to
+ * exercise the registration machinery in isolation; production code paths
+ * pull in the barrel and get the registered chain.
+ */
+
+import { registerCodemod } from './codemod.js';
+
+/**
+ * v1 → v2: Phase 2 introduces the optional `onFail` field on step nodes
+ * (block | warn | { retry: N }). v1 specs have no `onFail` field and behave
+ * as `block` by default, so the migration only needs to bump the version.
+ * Existing `onError: 'continue'` semantics are preserved by the interpreter.
+ */
+registerCodemod({
+  from: 1,
+  to: 2,
+  transform: (spec) => {
+    const s = spec as Record<string, unknown>;
+    return { ...s, schemaVersion: 2 };
+  },
+});

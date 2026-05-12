@@ -222,6 +222,142 @@ describe('runSpec', () => {
     await expect(runSpec(spec, baseCtx(), dispatcher, 50)).rejects.toThrow(/MAX_NODE_TRANSITIONS/);
   });
 
+  // ── Phase 2: onFail semantics ──
+
+  it('onFail=block (default): a passed=false output throws and aborts the run', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-block',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        gate: { next: 'done', step: 'runLint', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runLint: { exitCode: 1, passed: false, summary: 'lint failed' } },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('lint failed');
+  });
+
+  it('onFail=warn: a passed=false output records FAILED but the run continues', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-warn',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        gate: { next: 'done', onFail: 'warn', step: 'runVulnScan', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runVulnScan: { exitCode: 2, passed: false, summary: 'CVE-2024-x' } },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(records).toContainEqual(expect.objectContaining({ nodeId: 'gate', status: 'FAILED' }));
+  });
+
+  it('onFail.retry: retries N times before falling back to block', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-retry',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        gate: { next: 'done', onFail: { retry: 2 }, step: 'runTests', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let calls = 0;
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        runTests: () => {
+          calls++;
+          return { exitCode: 1, passed: false, summary: 'flaky' };
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('flaky');
+    // retry: 2 → 1 initial + 2 retries = 3 attempts before terminal failure.
+    expect(calls).toBe(3);
+    const failed = records.filter((r) => r.nodeId === 'gate' && r.status === 'FAILED');
+    expect(failed.length).toBe(3);
+  });
+
+  it('onFail.retry: stops retrying as soon as a retry passes', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-retry-recover',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        gate: { next: 'done', onFail: { retry: 3 }, step: 'runTests', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let calls = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        runTests: () => {
+          calls++;
+          return calls < 3
+            ? { exitCode: 1, passed: false, summary: 'flaky' }
+            : { exitCode: 0, passed: true, summary: 'ok' };
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls).toBe(3);
+  });
+
+  it('onFail=block: a thrown exception (not just passed=false) still aborts', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-throw',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        gate: { next: 'done', step: 'runLint', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        runLint: () => {
+          throw new Error('docker exec failed');
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('docker exec failed');
+  });
+
+  it('a step returning passed=true continues without invoking onFail policy', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'gate-pass',
+      nodes: {
+        done: {
+          result: { ok: { from: 'nodes.gate.output.passed' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        gate: { next: 'done', onFail: 'block', step: 'runLint', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runLint: { exitCode: 0, passed: true, summary: 'ok' } },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.ok).toBe(true);
+  });
+
   it('refuses to write through __proto__ / prototype / constructor segments', async () => {
     for (const danger of [
       '__proto__.polluted',

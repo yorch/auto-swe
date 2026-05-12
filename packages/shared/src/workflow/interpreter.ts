@@ -42,6 +42,7 @@ export interface Dispatcher {
     inputs?: unknown;
     outputs?: unknown;
     error?: string;
+    attempt?: number;
   }): Promise<void>;
 }
 
@@ -105,11 +106,15 @@ export async function runSpec(
         }
       }
     } catch (err) {
-      await safeRecord(dispatcher, {
-        error: err instanceof Error ? err.message : String(err),
-        nodeId,
-        status: 'FAILED',
-      });
+      // Step nodes already record their own per-attempt FAILED rows (so the
+      // workflow_steps table reflects each retry). Don't double-record here.
+      if (node.type !== 'step') {
+        await safeRecord(dispatcher, {
+          error: err instanceof Error ? err.message : String(err),
+          nodeId,
+          status: 'FAILED',
+        });
+      }
       throw err;
     }
   }
@@ -135,29 +140,110 @@ async function runStep(
       inputs[k] = resolveBinding(b, ctx);
     }
   }
-  try {
-    const output = await dispatcher.dispatchStep({ config, ctx, inputs, nodeId, step: node.step });
-    setPath(ctx, `nodes.${nodeId}.output`, output);
-    await safeRecord(dispatcher, {
-      inputs,
-      nodeId,
-      outputs: output,
-      status: 'PASSED',
-    });
-    return node.next;
-  } catch (err) {
-    if (node.onError === 'continue') {
+
+  // A quality-gate step may also return { passed: false, ... } to signal a
+  // logical failure without throwing. Treat that the same as a thrown error
+  // under the configured onFail policy.
+  const isGateFailure = (out: unknown): boolean =>
+    typeof out === 'object' && out !== null && (out as { passed?: unknown }).passed === false;
+
+  // onFail.retry: re-run the step up to N additional times before falling
+  // back to terminal (block) semantics. Attempts are passed to recordStep so
+  // each iteration shows up as its own row in workflow_steps.
+  const maxAttempts =
+    node.onFail && typeof node.onFail === 'object' && 'retry' in node.onFail
+      ? node.onFail.retry + 1
+      : 1;
+
+  let lastError: unknown = null;
+  let lastOutput: unknown = null;
+  let lastFailedAsGate = false;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const output = await dispatcher.dispatchStep({
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: node.step,
+      });
+
+      if (isGateFailure(output)) {
+        lastOutput = output;
+        lastFailedAsGate = true;
+        await safeRecord(dispatcher, {
+          attempt,
+          error: gateFailureMessage(output),
+          inputs,
+          nodeId,
+          outputs: output,
+          status: 'FAILED',
+        });
+        if (attempt < maxAttempts) continue;
+        break;
+      }
+
+      setPath(ctx, `nodes.${nodeId}.output`, output);
       await safeRecord(dispatcher, {
+        attempt,
+        inputs,
+        nodeId,
+        outputs: output,
+        status: 'PASSED',
+      });
+      return node.next;
+    } catch (err) {
+      lastError = err;
+      lastFailedAsGate = false;
+      // Legacy onError: 'continue' wins — record SKIPPED and proceed.
+      if (node.onError === 'continue') {
+        await safeRecord(dispatcher, {
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+          nodeId,
+          status: 'SKIPPED',
+        });
+        setPath(ctx, `nodes.${nodeId}.output`, null);
+        setPath(ctx, `nodes.${nodeId}.error`, String(err));
+        return node.next;
+      }
+      // Record the failed attempt; retry if budget remains.
+      await safeRecord(dispatcher, {
+        attempt,
         error: err instanceof Error ? err.message : String(err),
         nodeId,
-        status: 'SKIPPED',
+        status: 'FAILED',
       });
-      setPath(ctx, `nodes.${nodeId}.output`, null);
-      setPath(ctx, `nodes.${nodeId}.error`, String(err));
-      return node.next;
+      if (attempt < maxAttempts) continue;
+      // Fall through to terminal handling.
     }
-    throw err;
   }
+
+  // All attempts exhausted. Decide terminal mode from onFail (default block).
+  const mode = node.onFail ?? 'block';
+  const terminalBlock = mode === 'block' || (typeof mode === 'object' && 'retry' in mode);
+
+  if (!terminalBlock) {
+    // warn: surface the failure in context but continue.
+    setPath(ctx, `nodes.${nodeId}.output`, lastOutput ?? null);
+    if (lastError) setPath(ctx, `nodes.${nodeId}.error`, String(lastError));
+    return node.next;
+  }
+
+  if (lastFailedAsGate) {
+    setPath(ctx, `nodes.${nodeId}.output`, lastOutput);
+    throw new Error(gateFailureMessage(lastOutput));
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function gateFailureMessage(output: unknown): string {
+  if (typeof output === 'object' && output !== null) {
+    const summary = (output as { summary?: unknown }).summary;
+    if (typeof summary === 'string' && summary.length > 0) return summary;
+  }
+  return 'step returned passed=false';
 }
 
 function runSet(node: SetNode, ctx: Context): string | undefined {

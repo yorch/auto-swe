@@ -16,7 +16,8 @@ import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
  * a well-formed database. The explicit `orderBy` is a deterministic
  * tiebreaker if the index is dropped or someone bypasses Prisma.
  */
-async function resolveDefaultTemplate(
+// Exported for unit tests; the route handler is the only production caller.
+export async function resolveDefaultTemplate(
   prisma: FastifyInstance['prisma'],
   teamId: string
 ): Promise<{ templateId: string; version: number } | null> {

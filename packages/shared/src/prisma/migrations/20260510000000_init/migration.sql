@@ -81,6 +81,7 @@ CREATE TABLE "repositories" (
     "team_id" UUID NOT NULL,
     "executor_image" TEXT DEFAULT 'node:24-alpine',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "gate_commands" JSONB,
 
     CONSTRAINT "repositories_pkey" PRIMARY KEY ("id")
 );

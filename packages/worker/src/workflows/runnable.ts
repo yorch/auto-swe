@@ -44,6 +44,7 @@ const agentActivities = proxyActivities<
     | 'executeImplementation'
     | 'executeCIFixImplementation'
     | 'executeReviewFixImplementation'
+    | 'executeGateFixImplementation'
     | 'runReviewNetwork'
   >
 >({
@@ -55,6 +56,25 @@ const agentActivities = proxyActivities<
     maximumInterval: '2m',
   },
   startToCloseTimeout: '30m',
+});
+
+// Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
+// kept low — workflow-level retry/warn/block comes from the spec's onFail
+// policy (handled by the interpreter), not the activity proxy.
+const gateActivities = proxyActivities<
+  Pick<
+    typeof activitiesType,
+    'runLint' | 'runTypecheck' | 'runTests' | 'runBuild' | 'runVulnScan' | 'runPerfBench'
+  >
+>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '15m',
 });
 
 const githubActivities = proxyActivities<
@@ -221,6 +241,41 @@ async function dispatchStepImpl(
       const repoId = (inputs.repoId as string | undefined) ?? request.repoId;
       const lessonId = await memoryActivities.commitToMemory(workflowInfo().workflowId, repoId);
       return { lessonId };
+    }
+    // ── Phase 2 quality gates ──────────────────────────────────────────────
+    case 'runLint':
+    case 'runTypecheck':
+    case 'runTests':
+    case 'runBuild':
+    case 'runVulnScan':
+    case 'runPerfBench': {
+      const gateInput = {
+        command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
+        request,
+        timeoutMs:
+          (inputs.timeoutMs as number | undefined) ?? (config.timeoutMs as number | undefined),
+      };
+      return await gateActivities[step](gateInput);
+    }
+    case 'executeGateFixImplementation': {
+      const gateName =
+        (inputs.gateName as string | undefined) ??
+        (config.gateName as string | undefined) ??
+        'unknown';
+      const gateOutput = (inputs.gateOutput ?? lookupCtx(ctx, 'context.lastGateOutput')) as
+        | activitiesType.GateResult
+        | undefined;
+      if (!gateOutput) {
+        throw new Error(
+          'executeGateFixImplementation requires inputs.gateOutput or context.lastGateOutput'
+        );
+      }
+      const prev = pickCodeResult(inputs.previousCodeResult, ctx);
+      return await agentActivities.executeGateFixImplementation({
+        gateName,
+        gateOutput,
+        previousCodeResult: prev,
+      });
     }
     default:
       throw new Error(`unknown step: ${step}`);
