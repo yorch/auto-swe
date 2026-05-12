@@ -783,10 +783,10 @@ describe('runSpec', () => {
     expect(result.result.plucked).toEqual(['a', 'b', 'c', 'd']);
   });
 
-  it('fanOut: onBranchFail=block stops scheduling new branches but drains in-flight ones', async () => {
+  it('fanOut: onBranchFail=continue runs every branch and reports skipped=0', async () => {
     const spec = parseWorkflowSpec({
       entry: 'fan',
-      name: 'fanout-drain',
+      name: 'fanout-continue-skipped',
       nodes: {
         branchDone: { status: 'SUCCESS', type: 'terminate' },
         done: {
@@ -800,7 +800,7 @@ describe('runSpec', () => {
         fan: {
           concurrency: 2,
           join: 'done',
-          onBranchFail: 'continue', // keep going so we can observe skipped count
+          onBranchFail: 'continue',
           over: { literal: [0, 1, 2, 3, 4, 5] },
           subgraph: 'flaky',
           type: 'fanOut',
@@ -820,7 +820,6 @@ describe('runSpec', () => {
         },
       },
     });
-    // continue mode: all 6 branches run, 1 fails, 5 succeed, 0 skipped.
     const result = await runSpec(spec, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
     expect(result.result.failed).toBe(1);

@@ -164,9 +164,9 @@ export interface ResolveMergeConflictInput {
 /**
  * Replay the unmerged tail through the implementer agent. For each source:
  * attempt the merge; on conflict, invoke the resolver agent against the
- * conflicted files; verify markers are gone via `git ls-files -u` +
- * `git diff --check`; stage + commit. After the loop, push the target if
- * every branch resolved.
+ * conflicted files; verify the resolution via `git diff --diff-filter=U`
+ * (unmerged stages) + `git diff --check` (working-tree markers); stage +
+ * commit. After the loop, push the target if every branch resolved.
  */
 export async function resolveMergeConflict(
   input: ResolveMergeConflictInput
@@ -182,7 +182,13 @@ export async function resolveMergeConflict(
     };
   }
 
-  const maxAttemptsPerBranch = Math.max(1, input.maxAttemptsPerBranch ?? 1);
+  const rawAttempts = input.maxAttemptsPerBranch;
+  // Guard against NaN / Infinity / 0 / negatives — any of those would silently
+  // skip every attempt and report an exhausted-NaN counter.
+  const maxAttemptsPerBranch =
+    typeof rawAttempts === 'number' && Number.isFinite(rawAttempts) && rawAttempts >= 1
+      ? Math.floor(rawAttempts)
+      : 1;
   const messagePrefix = input.mergeMessagePrefix ?? 'auto-merge';
 
   const { workspace, log } = await provisionMergeWorkspace(

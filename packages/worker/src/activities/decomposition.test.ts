@@ -279,6 +279,35 @@ describe('resolveMergeConflict', () => {
     expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
   });
 
+  it('coerces non-finite maxAttemptsPerBranch back to the default of 1', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff')) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
+      if (cmd.startsWith('git diff --check')) throw new Error('markers present');
+      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      return '';
+    });
+    generateMock.mockResolvedValue({ usage: { totalTokens: 50 } });
+
+    const result = await resolveMergeConflict({
+      // NaN would otherwise propagate through Math.max and skip the loop entirely.
+      maxAttemptsPerBranch: Number.NaN,
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(false);
+    // Default of 1 attempt → resolver ran exactly once.
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces remaining conflict + unmerged tail when the resolver cannot finish in maxAttempts', async () => {
     primeRepo();
     fakeWorkspace.exec.mockImplementation((cmd: string) => {

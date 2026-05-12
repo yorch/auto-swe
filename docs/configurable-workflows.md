@@ -243,7 +243,7 @@ planDecomposition
 - `packages/worker/src/activities/decomposition.ts` — `resolveMergeConflict` activity:
   - Mirrors `mergeBranches`' workspace lifecycle (batched fetch, hard reset to target, per-source merge with abort-on-failure).
   - When a `git merge` fails with conflict markers, lists the conflicted files via `git diff --name-only --diff-filter=U`, reads each file's content (truncated to 8KB per file), and invokes the implementer agent with the resolver prompt.
-  - After the agent returns, re-checks `git ls-files -u` + `git diff --check`; if both are clean, stages + commits with the configured prefix. Otherwise retries up to `maxAttemptsPerBranch` (default 1) before aborting and surfacing the unmerged tail.
+  - After the agent returns, re-checks `git diff --diff-filter=U` (unmerged stages) + `git diff --check` (working-tree markers); if both are clean, stages + commits with the configured prefix. Otherwise retries up to `maxAttemptsPerBranch` (default 1) before aborting and surfacing the unmerged tail.
   - Returns a `MergeBranchesResult`-shaped payload so spec authors can chain `merge → cond(passed) → resolveMergeConflict → cond(passed) → review` without shaping nodes.
 - `mergeBranches` now also returns `unmergedBranches: string[]` — the conflicted source + every queued source after it — so the resolver step can bind directly via `inputs.sourceBranches: { from: 'nodes.merge.output.unmergedBranches' }`.
 - `packages/worker/src/lib/stepRegistry.ts` — `resolveMergeConflict` (category `agent`, `costHint` on implementer role, config fields `mergeMessagePrefix` + `maxAttemptsPerBranch`). Added to `BUILTIN_STEPS`.
