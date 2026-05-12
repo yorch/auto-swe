@@ -683,6 +683,186 @@ describe('runSpec', () => {
     );
   });
 
+  // ── Phase 3.5: parallel fan-out semantics ──
+
+  it('fanOut: runs branches in parallel and caps in-flight count to `concurrency`', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-cap',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: {
+            count: { from: 'nodes.fan.output.count' },
+            succeeded: { from: 'nodes.fan.output.succeeded' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          over: { literal: [0, 1, 2, 3, 4] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'work', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let active = 0;
+    let maxActive = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        work: () => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          // Schedule decrement asynchronously so the worker actually yields
+          // and the next item can be picked up. Returning a promise from a
+          // step output is supported by the dispatcher's `out(merged)` path.
+          return Promise.resolve().then(() => {
+            active--;
+            return { ok: true };
+          });
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.count).toBe(5);
+    expect(result.result.succeeded).toBe(5);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(maxActive).toBeGreaterThan(1); // confirms parallelism actually happened
+  });
+
+  it('fanOut: aggregate preserves item-index order even when branches finish out of order', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-order',
+      nodes: {
+        branchDone: {
+          result: { id: { from: 'subtask' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        done: {
+          result: { plucked: { from: 'nodes.fan.output.plucked' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 4,
+          join: 'done',
+          over: { literal: ['a', 'b', 'c', 'd'] },
+          pluck: 'result.id',
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'echo', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    // Resolve in reverse order: index 3 first, index 0 last.
+    const order = ['a', 'b', 'c', 'd'];
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        echo: (i: Record<string, unknown>) => {
+          const idx = order.indexOf(i.subtask as string);
+          // Wrap in a chain of resolved promises so later indexes settle first.
+          let p: Promise<unknown> = Promise.resolve({ ok: true });
+          for (let k = 0; k < idx; k++) {
+            p = p.then((v) => Promise.resolve(v));
+          }
+          return p;
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.result.plucked).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('fanOut: onBranchFail=continue runs every branch and reports skipped=0', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-continue-skipped',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: {
+            failed: { from: 'nodes.fan.output.failed' },
+            skipped: { from: 'nodes.fan.output.skipped' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'continue',
+          over: { literal: [0, 1, 2, 3, 4, 5] },
+          subgraph: 'flaky',
+          type: 'fanOut',
+        },
+        flaky: { next: 'branchDone', step: 'maybe', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let n = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        maybe: () => {
+          const i = n++;
+          if (i === 2) return Promise.reject(new Error('boom'));
+          return Promise.resolve({ ok: true });
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.failed).toBe(1);
+    expect(result.result.skipped).toBe(0);
+  });
+
+  it('fanOut: defaults to DEFAULT_FANOUT_CONCURRENCY when unset', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-default-cap',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          over: { literal: [0, 1, 2, 3, 4, 5, 6, 7] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'work', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let active = 0;
+    let maxActive = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        work: () => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          return Promise.resolve().then(() => {
+            active--;
+            return { ok: true };
+          });
+        },
+      },
+    });
+    await runSpec(spec, baseCtx(), dispatcher);
+    // DEFAULT_FANOUT_CONCURRENCY is 4.
+    expect(maxActive).toBeLessThanOrEqual(4);
+  });
+
   it('refuses to write through __proto__ / prototype / constructor segments', async () => {
     for (const danger of [
       '__proto__.polluted',

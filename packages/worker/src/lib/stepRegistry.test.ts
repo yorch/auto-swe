@@ -57,4 +57,12 @@ describe('stepRegistry', () => {
     expect(getStepMetadata('planDecomposition').category).toBe('agent');
     expect(getStepMetadata('mergeBranches').category).toBe('vcs');
   });
+
+  it('phase-3.5 resolveMergeConflict is registered as an agent step with attempt cap', () => {
+    const meta = getStepMetadata('resolveMergeConflict');
+    expect(meta.category).toBe('agent');
+    const keys = meta.configFields.map((f) => f.key);
+    expect(keys).toContain('maxAttemptsPerBranch');
+    expect(keys).toContain('mergeMessagePrefix');
+  });
 });

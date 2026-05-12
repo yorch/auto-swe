@@ -62,5 +62,7 @@ export const BUILTIN_STEPS = [
   // Phase 3 — feature decomposition + branch merging (fan-out uses these)
   'planDecomposition',
   'mergeBranches',
+  // Phase 3.5 — implementer-driven merge conflict resolution
+  'resolveMergeConflict',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

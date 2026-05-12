@@ -216,6 +216,30 @@ register({
   name: 'mergeBranches',
 });
 
+register({
+  category: 'agent',
+  configFields: [
+    {
+      description: 'Prefix for the merge commit produced after conflicts are resolved.',
+      key: 'mergeMessagePrefix',
+      label: 'Merge commit prefix',
+      type: 'string',
+    },
+    {
+      description:
+        'How many resolver passes to run per conflicted branch before giving up. Default: 1.',
+      key: 'maxAttemptsPerBranch',
+      label: 'Max attempts per branch',
+      type: 'number',
+    },
+  ],
+  costHint: { role: 'implementer', tokensIn: 12000, tokensOut: 4000 },
+  description:
+    'Run the implementer agent against conflict markers to resolve a failed merge in-place, then push.',
+  label: 'Resolve merge conflict',
+  name: 'resolveMergeConflict',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);

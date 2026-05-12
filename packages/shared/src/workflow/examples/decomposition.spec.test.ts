@@ -35,4 +35,30 @@ describe('DECOMPOSITION_EXAMPLE_SPEC', () => {
       });
     }
   });
+
+  // Phase 3.5
+  it('fanOut declares a concurrency cap so subagent runs are bounded', () => {
+    const fan = DECOMPOSITION_EXAMPLE_SPEC.nodes.fanOutSubtasks;
+    if (fan?.type === 'fanOut') {
+      expect(typeof fan.concurrency).toBe('number');
+      expect(fan.concurrency).toBeGreaterThan(0);
+    }
+  });
+
+  it('wires resolveMergeConflict after a failed merge and binds its unmergedBranches tail', () => {
+    const resolve = DECOMPOSITION_EXAMPLE_SPEC.nodes.resolveConflict;
+    expect(resolve?.type).toBe('step');
+    if (resolve?.type === 'step') {
+      expect(resolve.step).toBe('resolveMergeConflict');
+      expect(resolve.inputs?.sourceBranches).toEqual({
+        from: 'nodes.merge.output.unmergedBranches',
+      });
+    }
+    // The cond on merge.passed must route the failure path to the resolver.
+    const checkMerge = DECOMPOSITION_EXAMPLE_SPEC.nodes.checkMerge;
+    expect(checkMerge?.type).toBe('cond');
+    if (checkMerge?.type === 'cond') {
+      expect(checkMerge.onFalse).toBe('resolveConflict');
+    }
+  });
 });

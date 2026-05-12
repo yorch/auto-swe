@@ -56,6 +56,13 @@ export interface InterpreterResult {
 
 export const DEFAULT_MAX_TRANSITIONS = 500;
 
+/**
+ * Default per-fanOut concurrency cap when a spec doesn't supply one. Bounded
+ * to avoid swamping LLM providers when a planner returns the maximum
+ * subtask count — operators can raise this per-node via `fanOut.concurrency`.
+ */
+export const DEFAULT_FANOUT_CONCURRENCY = 4;
+
 /** Outcome of a single branch walk (used by fanOut). */
 interface BranchOutcome {
   status: string;
@@ -343,12 +350,18 @@ function runTerminate(
 }
 
 /**
- * Phase-3 fan-out. Resolves `over` to an array, spawns one nested walk per
- * element using a sealed child context, then aggregates results into the
- * parent under `nodes.<fanOutId>.output`.
+ * Fan-out: resolve `over` to an array, run the subgraph once per element in
+ * a sealed child context, aggregate results into `nodes.<fanOutId>.output`.
  *
- * Branches run sequentially; concurrency is reserved for the follow-up that
- * adds Promise.all-with-limit and tighter Temporal-history budgeting.
+ * Branches run through a `concurrency`-bounded worker pool (default
+ * {@link DEFAULT_FANOUT_CONCURRENCY}). `onBranchFail: 'block'` stops
+ * scheduling new branches but lets in-flight ones drain — Temporal activity
+ * cancellation isn't plumbed through the dispatcher, so we can't abort
+ * mid-flight without losing replay determinism.
+ *
+ * Determinism: Temporal workflows run on a single-threaded event loop, so
+ * the worker pool's shared `nextIndex` counter and `Promise.all` of N
+ * workers produce a fully deterministic activity-scheduling order.
  */
 async function runFanOut(
   recordingId: string,
@@ -360,75 +373,100 @@ async function runFanOut(
   cursor: Cursor,
   parentPrefix: string
 ): Promise<string> {
-  const raw = resolveBinding(node.over, ctx);
-  if (!Array.isArray(raw)) {
+  const resolved = resolveBinding(node.over, ctx);
+  if (!Array.isArray(resolved)) {
     throw new Error(
-      `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(raw)})`
+      `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(resolved)})`
     );
   }
+  const raw: unknown[] = resolved;
+
+  const concurrency = Math.max(1, node.concurrency ?? DEFAULT_FANOUT_CONCURRENCY);
 
   await safeRecord(dispatcher, {
-    inputs: { count: raw.length, itemKey: node.itemKey, over: summarizeForRecord(raw) },
+    inputs: {
+      concurrency,
+      count: raw.length,
+      itemKey: node.itemKey,
+      over: summarizeForRecord(raw),
+    },
     nodeId: recordingId,
     status: 'RUNNING',
   });
 
-  const results: Array<{
+  type Entry = {
     status: string;
     result: Record<string, unknown>;
     exports?: Record<string, unknown>;
     error?: string;
-  }> = [];
-  let failed = 0;
-  let succeeded = 0;
+  };
+
+  // Pre-allocated by index so the aggregate preserves item order regardless
+  // of completion order. Holes (un-scheduled branches when block fires) are
+  // filtered out at the end.
+  const slots: Array<Entry | undefined> = new Array(raw.length);
   let firstError: unknown = null;
+  let nextIndex = 0;
+  let stop = false;
 
-  for (let i = 0; i < raw.length; i++) {
-    const item = raw[i];
-    const branchPrefix = `${parentPrefix}${nodeId}[${i}]/`;
-    const childCtx = makeChildContext(ctx, node.itemKey, item, i);
+  async function worker(): Promise<void> {
+    while (!stop) {
+      const i = nextIndex++;
+      if (i >= raw.length) return;
+      const item = raw[i];
+      const branchPrefix = `${parentPrefix}${nodeId}[${i}]/`;
+      const childCtx = makeChildContext(ctx, node.itemKey, item, i);
 
-    try {
-      const outcome = await walk(spec, node.subgraph, childCtx, dispatcher, cursor, branchPrefix);
-      const exports = collectExports(node.exports, childCtx);
-      const entry: (typeof results)[number] = {
-        ...(exports ? { exports } : {}),
-        result: outcome.result,
-        status: outcome.status,
-      };
-      results.push(entry);
-      if (outcome.status === 'SUCCESS') {
-        succeeded++;
-      } else {
-        failed++;
-        // A branch that reaches `terminate { status: !== 'SUCCESS' }` never
-        // throws, so we need to surface the failure here for onBranchFail:'block'.
-        if (firstError === null) {
-          firstError = new Error(
+      try {
+        const outcome = await walk(spec, node.subgraph, childCtx, dispatcher, cursor, branchPrefix);
+        const exports = collectExports(node.exports, childCtx);
+        slots[i] = {
+          ...(exports ? { exports } : {}),
+          result: outcome.result,
+          status: outcome.status,
+        };
+        if (outcome.status !== 'SUCCESS') {
+          // A branch that terminates non-SUCCESS never throws — surface it
+          // here so onBranchFail:'block' still fires.
+          firstError ??= new Error(
             `fanOut '${recordingId}' branch ${i} terminated with status ${outcome.status}`
           );
+          if (node.onBranchFail === 'block') stop = true;
         }
-        if (node.onBranchFail === 'block') break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        slots[i] = { error: msg, result: {}, status: 'FAILED' };
+        firstError ??= err;
+        if (node.onBranchFail === 'block') stop = true;
       }
-    } catch (err) {
-      failed++;
-      const msg = err instanceof Error ? err.message : String(err);
-      results.push({ error: msg, result: {}, status: 'FAILED' });
-      if (firstError === null) firstError = err;
-      if (node.onBranchFail === 'block') break;
     }
   }
+
+  const workerCount = Math.min(concurrency, raw.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  // Drop holes (branches that block-mode skipped) but preserve index order
+  // for everything that did run.
+  const results: Entry[] = [];
+  for (const slot of slots) {
+    if (slot !== undefined) results.push(slot);
+  }
+  const succeeded = results.filter((r) => r.status === 'SUCCESS').length;
+  const failed = results.length - succeeded;
+  const skipped = raw.length - results.length;
 
   const aggregate: {
     count: number;
     failed: number;
     plucked?: unknown[];
-    results: typeof results;
+    results: Entry[];
+    skipped: number;
     succeeded: number;
   } = {
     count: raw.length,
     failed,
     results,
+    skipped,
     succeeded,
   };
   if (node.pluck) {

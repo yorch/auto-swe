@@ -76,6 +76,19 @@ const mergeActivities = proxyActivities<Pick<typeof activitiesType, 'mergeBranch
   startToCloseTimeout: '15m',
 });
 
+// Conflict resolution is implementer-bound (one or more LLM calls per branch);
+// share the long-lived agent timeouts rather than the cheaper merge proxy.
+const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveMergeConflict'>>({
+  heartbeatTimeout: '5m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 2,
+    maximumInterval: '2m',
+  },
+  startToCloseTimeout: '30m',
+});
+
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
 // kept low — workflow-level retry/warn/block comes from the spec's onFail
 // policy (handled by the interpreter), not the activity proxy.
@@ -285,21 +298,30 @@ async function dispatchStepImpl(
     case 'planDecomposition':
       return await agentActivities.planDecomposition(request);
     case 'mergeBranches': {
-      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
-      const targetBranch =
-        (inputs.targetBranch as string | undefined) ??
-        (config.targetBranch as string | undefined) ??
-        `${branchPrefix}/${request.externalTicketId}`;
-      const sourceBranches = inputs.sourceBranches;
-      if (!Array.isArray(sourceBranches) || sourceBranches.some((b) => typeof b !== 'string')) {
-        throw new Error('mergeBranches: inputs.sourceBranches must be a string[]');
-      }
+      const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
       return await mergeActivities.mergeBranches({
         ...(config.mergeMessagePrefix
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
         request,
-        sourceBranches: sourceBranches as string[],
+        sourceBranches,
+        targetBranch,
+      });
+    }
+    case 'resolveMergeConflict': {
+      // Decision 17 symmetry: sourceBranches must be bound explicitly
+      // (typically `{ from: 'nodes.merge.output.unmergedBranches' }`).
+      const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
+      const maxAttemptsPerBranch =
+        (inputs.maxAttemptsPerBranch as number | undefined) ??
+        (config.maxAttemptsPerBranch as number | undefined);
+      return await conflictActivities.resolveMergeConflict({
+        ...(config.mergeMessagePrefix
+          ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
+          : {}),
+        ...(typeof maxAttemptsPerBranch === 'number' ? { maxAttemptsPerBranch } : {}),
+        request,
+        sourceBranches,
         targetBranch,
       });
     }
@@ -336,6 +358,29 @@ function pickCodeResult(provided: unknown, ctx: Context): CodeResult {
     throw new Error('step requires a CodeResult but none is bound (context.currentCodeResult)');
   }
   return v as CodeResult;
+}
+
+/**
+ * Resolve the shared `targetBranch` + `sourceBranches` bindings used by
+ * `mergeBranches` and `resolveMergeConflict`. Both require `sourceBranches`
+ * to be an explicit `string[]` input binding (decision 17).
+ */
+function resolveMergeBindings(
+  step: string,
+  request: RepoWorkRequest,
+  config: Record<string, unknown>,
+  inputs: Record<string, unknown>
+): { targetBranch: string; sourceBranches: string[] } {
+  const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
+  const targetBranch =
+    (inputs.targetBranch as string | undefined) ??
+    (config.targetBranch as string | undefined) ??
+    `${branchPrefix}/${request.externalTicketId}`;
+  const raw = inputs.sourceBranches;
+  if (!Array.isArray(raw) || raw.some((b) => typeof b !== 'string')) {
+    throw new Error(`${step}: inputs.sourceBranches must be a string[]`);
+  }
+  return { sourceBranches: raw as string[], targetBranch };
 }
 
 /**
