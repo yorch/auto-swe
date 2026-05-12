@@ -43,9 +43,13 @@ export interface MergeBranchesResult {
   mergedBranches: string[];
   /** Per-branch conflict report, populated when `passed === false`. */
   conflicts: Array<{ branch: string; output: string }>;
-  /** Full git log + diff lives here; the inline summary is truncated. */
+  /**
+   * Reference to a `WorkflowArtifact` whose body is the line-oriented merge log
+   * (one entry per fetch / reset / merge / abort / push, plus the truncated
+   * conflict output for the failing branch). Unset if artifact storage failed.
+   */
   artifactId?: string;
-  /** HEAD SHA of the target branch after all successful merges. Unset on failure. */
+  /** HEAD SHA of the target branch after a successful push. Unset on failure. */
   headSha?: string;
 }
 

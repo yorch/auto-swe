@@ -114,8 +114,10 @@ const TerminateNodeSchema = z.object({
  *
  * `fanOut` evaluates `over` to an array and runs the subgraph (entered at the
  * node id in `subgraph`) once per element. Each branch executes in a sealed
- * **child context**: a frozen copy of the parent plus `[itemKey]: <element>`
- * and a freshly initialized `nodes:{}` / `context:{}` for branch-local writes.
+ * **child context**: the parent's `request` and `workflow` are passed by
+ * reference, `context` is shallow-cloned (so the branch can read parent
+ * values but its mutations stay local), and `nodes` is reinitialized to
+ * `{}`. The element is bound at `[itemKey]` and the index at `[itemKey]Index`.
  *
  * A branch terminates when it reaches a `terminate` node (the branch result is
  * captured rather than ending the whole run). After all branches finish, the
@@ -123,16 +125,22 @@ const TerminateNodeSchema = z.object({
  *
  *   nodes.<fanOutId>.output = {
  *     count, results: [{ status, result, exports? }, …],
- *     failed: number, succeeded: number
+ *     failed: number, succeeded: number, plucked?: unknown[]
  *   }
  *
  * and execution continues at `join`. If `exports` is set, each entry's
  * `exports` field is populated with the listed child-context paths.
  *
- * Phase 3 ships sequential execution (`concurrency` is reserved for the
- * follow-up that adds Promise.all-with-limit).
+ * Phase 3 ships sequential execution. `concurrency` is parsed but not
+ * enforced; the follow-up (3.5) wires the Promise.all-with-limit runtime.
  */
 const FanOutNodeSchema = z.object({
+  /**
+   * Reserved for phase 3.5 — max number of branches to run concurrently.
+   * Currently parsed for forward-compat; the interpreter still runs branches
+   * sequentially regardless of value.
+   */
+  concurrency: z.number().int().min(1).max(20).optional(),
   /** Optional dot-path exports lifted from each branch's child context. */
   exports: z.array(z.string().min(1).max(120)).max(20).optional(),
   /** Key under which each element is bound in the branch's child context. */
@@ -141,7 +149,7 @@ const FanOutNodeSchema = z.object({
   join: NodeIdSchema,
   /** When true, a single failed branch still allows the parent to continue. */
   onBranchFail: z.enum(['block', 'continue']).default('block'),
-  /** Binding that must resolve to an array (or an iterable of plain values). */
+  /** Binding that must resolve to a JavaScript array. */
   over: BindingSchema,
   /**
    * Optional path (relative to each branch result entry — e.g.
