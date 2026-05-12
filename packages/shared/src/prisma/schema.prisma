@@ -15,20 +15,96 @@ enum Role {
   ENGINEER
 }
 
-model User {
-  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email          String         @unique
-  passwordHash   String         @map("password_hash")
-  slackId        String?        @unique @map("slack_id")
-  role           Role           @default(ENGINEER)
-  isActive       Boolean        @default(true) @map("is_active")
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+enum WorkflowRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  TIMED_OUT
+  SKIPPED
+  CANCELLED
+}
 
-  refreshTokens  RefreshToken[]
-  memberships    TeamMembership[]
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+  SKIPPED
+}
 
-  @@map("users")
+enum WorkflowTemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model ActiveWorkflow {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  temporalWorkflowId String         @unique @map("temporal_workflow_id")
+  parentWorkflowId   String?        @map("parent_workflow_id")
+  workRequestId      String?        @map("work_request_id") @db.Uuid
+  workRequest        WorkRequest?   @relation(fields: [workRequestId], references: [id])
+  repoId             String?        @map("repo_id") @db.Uuid
+  repository         Repository?    @relation(fields: [repoId], references: [id])
+  currentStatus      String         @map("current_status")
+  assignedBranch     String?        @map("assigned_branch")
+  budgetTier         String         @default("STANDARD") @map("budget_tier")
+  tokensInputUsed    Int            @default(0) @map("tokens_input_used")
+  tokensOutputUsed   Int            @default(0) @map("tokens_output_used")
+  costUsdAccrued     Float          @default(0) @map("cost_usd_accrued")
+  updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  pullRequests       PullRequest[]
+  agentLessons       AgentLesson[]
+
+  @@map("active_workflows")
+}
+
+// HNSW index on `embedding` is defined in raw SQL inside
+// migrations/20260510000001_pgvector_hnsw_index/migration.sql. Prisma's schema
+// DSL cannot model pgvector index types, so `prisma migrate dev` will report
+// drift here. Use `yarn db:migrate` (= migrate deploy) for routine application;
+// run `yarn db:migrate:dev` only when authoring a new migration.
+model AgentLesson {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId      String?         @map("workflow_id") @db.Uuid
+  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
+  repoId          String?         @map("repo_id") @db.Uuid
+  repository      Repository?     @relation(fields: [repoId], references: [id])
+  rationale       String
+  lessonSummary   String          @map("lesson_summary")
+  embedding       Unsupported("vector(1536)")?
+  failureType     String?         @map("failure_type")
+  metadata        Json?
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("agent_lessons")
+}
+
+model ContextSnapshot {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workRequestId    String       @unique @map("work_request_id") @db.Uuid
+  workRequest      WorkRequest  @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
+  rawTicketData    Json?        @map("raw_jira_epic")
+  rawDocumentation Json?        @map("raw_confluence")
+  successCriteria  String[]     @map("success_criteria")
+  capturedAt       DateTime     @default(now()) @map("captured_at") @db.Timestamptz
+
+  @@map("context_snapshots")
+}
+
+model PullRequest {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId      String?         @map("workflow_id") @db.Uuid
+  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
+  repoId          String?         @map("repo_id") @db.Uuid
+  repository      Repository?     @relation(fields: [repoId], references: [id])
+  prNumber        Int?            @map("pr_number")
+  headSha         String          @map("head_sha")
+  status          String
+  ciStatus        String          @default("PENDING") @map("ci_status")
+
+  @@map("pull_requests")
 }
 
 model RefreshToken {
@@ -44,6 +120,29 @@ model RefreshToken {
   @@index([userId])
   @@index([family])
   @@map("refresh_tokens")
+}
+
+model Repository {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationName String           @map("organization_name")
+  repoName         String           @map("repo_name")
+  defaultBranch    String           @default("main") @map("default_branch")
+  language         String?          @map("language")
+  description      String?          @map("description")
+  githubUrl        String?          @map("github_url")
+  githubApiUrl     String?          @map("github_api_url")
+  mcpServerRef     String?          @map("mcp_server_ref")
+  teamId           String           @map("team_id") @db.Uuid
+  team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  executorImage    String?          @default("node:24-alpine") @map("executor_image")
+  isActive         Boolean          @default(true) @map("is_active")
+
+  activeWorkflows  ActiveWorkflow[]
+  pullRequests     PullRequest[]
+  agentLessons     AgentLesson[]
+
+  @@unique([organizationName, repoName])
+  @@map("repositories")
 }
 
 model Team {
@@ -76,27 +175,20 @@ model TeamMembership {
   @@map("team_memberships")
 }
 
-model Repository {
-  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationName String           @map("organization_name")
-  repoName         String           @map("repo_name")
-  defaultBranch    String           @default("main") @map("default_branch")
-  language         String?          @map("language")
-  description      String?          @map("description")
-  githubUrl        String?          @map("github_url")
-  githubApiUrl     String?          @map("github_api_url")
-  mcpServerRef     String?          @map("mcp_server_ref")
-  teamId           String           @map("team_id") @db.Uuid
-  team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  executorImage    String?          @default("node:24-alpine") @map("executor_image")
-  isActive         Boolean          @default(true) @map("is_active")
+model User {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String         @unique
+  passwordHash   String         @map("password_hash")
+  slackId        String?        @unique @map("slack_id")
+  role           Role           @default(ENGINEER)
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  activeWorkflows  ActiveWorkflow[]
-  pullRequests     PullRequest[]
-  agentLessons     AgentLesson[]
+  refreshTokens  RefreshToken[]
+  memberships    TeamMembership[]
 
-  @@unique([organizationName, repoName])
-  @@map("repositories")
+  @@map("users")
 }
 
 model WorkRequest {
@@ -119,116 +211,27 @@ model WorkRequest {
   @@map("work_requests")
 }
 
-model ContextSnapshot {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workRequestId    String       @unique @map("work_request_id") @db.Uuid
-  workRequest      WorkRequest  @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
-  rawTicketData    Json?        @map("raw_jira_epic")
-  rawDocumentation Json?        @map("raw_confluence")
-  successCriteria  String[]     @map("success_criteria")
-  capturedAt       DateTime     @default(now()) @map("captured_at") @db.Timestamptz
+/// Large step outputs (diffs, logs, scan artifacts) are kept out of the
+/// workflow-history context to stay under Temporal's 50MB cap. The interpreter
+/// passes the artifact ID around; activities fetch the blob on demand.
+///
+/// `backend` is "s3" when ARTIFACT_S3_BUCKET is configured, "pg" otherwise.
+/// For "pg" the bytes live in `inlineBlob`; for "s3" only `s3Key` is set.
+model WorkflowArtifact {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String?      @map("run_id") @db.Uuid
+  run         WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind        String
+  contentType String       @default("application/octet-stream") @map("content_type")
+  sizeBytes   Int          @map("size_bytes")
+  backend     String
+  s3Bucket    String?      @map("s3_bucket")
+  s3Key       String?      @map("s3_key")
+  inlineBlob  Bytes?       @map("inline_blob")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
-  @@map("context_snapshots")
-}
-
-model ActiveWorkflow {
-  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  temporalWorkflowId String         @unique @map("temporal_workflow_id")
-  parentWorkflowId   String?        @map("parent_workflow_id")
-  workRequestId      String?        @map("work_request_id") @db.Uuid
-  workRequest        WorkRequest?   @relation(fields: [workRequestId], references: [id])
-  repoId             String?        @map("repo_id") @db.Uuid
-  repository         Repository?    @relation(fields: [repoId], references: [id])
-  currentStatus      String         @map("current_status")
-  assignedBranch     String?        @map("assigned_branch")
-  budgetTier         String         @default("STANDARD") @map("budget_tier")
-  tokensInputUsed    Int            @default(0) @map("tokens_input_used")
-  tokensOutputUsed   Int            @default(0) @map("tokens_output_used")
-  costUsdAccrued     Float          @default(0) @map("cost_usd_accrued")
-  updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  pullRequests       PullRequest[]
-  agentLessons       AgentLesson[]
-
-  @@map("active_workflows")
-}
-
-model PullRequest {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workflowId      String?         @map("workflow_id") @db.Uuid
-  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
-  repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
-  prNumber        Int?            @map("pr_number")
-  headSha         String          @map("head_sha")
-  status          String
-  ciStatus        String          @default("PENDING") @map("ci_status")
-
-  @@map("pull_requests")
-}
-
-// HNSW index on `embedding` is defined in raw SQL inside
-// migrations/20260223000000_init/migration.sql. Prisma's schema DSL cannot
-// model pgvector index types, so `prisma migrate dev` will report drift
-// here. Use `yarn db:migrate` (= migrate deploy) for routine application;
-// run `yarn db:migrate:dev` only when authoring a new migration.
-enum WorkflowTemplateStatus {
-  DRAFT
-  ACTIVE
-  ARCHIVED
-}
-
-enum WorkflowRunStatus {
-  RUNNING
-  SUCCESS
-  FAILED
-  TIMED_OUT
-  SKIPPED
-  CANCELLED
-}
-
-enum WorkflowStepStatus {
-  PENDING
-  RUNNING
-  PASSED
-  FAILED
-  SKIPPED
-}
-
-/// A named, team-owned workflow template. Versions are immutable; "edit" creates
-/// a new WorkflowTemplateVersion. Exactly one version may be marked active per
-/// template (enforced in application code).
-model WorkflowTemplate {
-  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  teamId        String?                   @map("team_id") @db.Uuid
-  name          String
-  description   String                    @default("")
-  status        WorkflowTemplateStatus    @default(DRAFT)
-  isDefault     Boolean                   @default(false) @map("is_default")
-  activeVersion Int?                      @map("active_version")
-  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  versions      WorkflowTemplateVersion[]
-  workflowRuns  WorkflowRun[]
-
-  @@unique([teamId, name])
-  @@map("workflow_templates")
-}
-
-/// Immutable snapshot of a template at version N. `spec` is validated against
-/// WorkflowSpecSchema on insert in the gateway.
-model WorkflowTemplateVersion {
-  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateId   String           @map("template_id") @db.Uuid
-  template     WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  version      Int
-  spec         Json
-  createdBy    String?          @map("created_by") @db.Uuid
-  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
-
-  @@unique([templateId, version])
-  @@map("workflow_template_versions")
+  @@index([runId])
+  @@map("workflow_artifacts")
 }
 
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
@@ -275,41 +278,38 @@ model WorkflowStep {
   @@map("workflow_steps")
 }
 
-/// Large step outputs (diffs, logs, scan artifacts) are kept out of the
-/// workflow-history context to stay under Temporal's 50MB cap. The interpreter
-/// passes the artifact ID around; activities fetch the blob on demand.
-///
-/// `backend` is "s3" when AS3_BUCKET is configured, "pg" otherwise.
-/// For "pg" the bytes live in `inlineBlob`; for "s3" only `s3Key` is set.
-model WorkflowArtifact {
-  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId       String?      @map("run_id") @db.Uuid
-  run         WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
-  kind        String
-  contentType String       @default("application/octet-stream") @map("content_type")
-  sizeBytes   Int          @map("size_bytes")
-  backend     String
-  s3Bucket    String?      @map("s3_bucket")
-  s3Key       String?      @map("s3_key")
-  inlineBlob  Bytes?       @map("inline_blob")
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+/// A named, team-owned workflow template. Versions are immutable; "edit" creates
+/// a new WorkflowTemplateVersion. Exactly one version may be marked active per
+/// template (enforced in application code).
+model WorkflowTemplate {
+  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?                   @map("team_id") @db.Uuid
+  name          String
+  description   String                    @default("")
+  status        WorkflowTemplateStatus    @default(DRAFT)
+  isDefault     Boolean                   @default(false) @map("is_default")
+  activeVersion Int?                      @map("active_version")
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  @@index([runId])
-  @@map("workflow_artifacts")
+  versions      WorkflowTemplateVersion[]
+  workflowRuns  WorkflowRun[]
+
+  @@unique([teamId, name])
+  @@map("workflow_templates")
 }
 
-model AgentLesson {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workflowId      String?         @map("workflow_id") @db.Uuid
-  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
-  repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
-  rationale       String
-  lessonSummary   String          @map("lesson_summary")
-  embedding       Unsupported("vector(1536)")?
-  failureType     String?         @map("failure_type")
-  metadata        Json?
-  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+/// Immutable snapshot of a template at version N. `spec` is validated against
+/// WorkflowSpecSchema on insert in the gateway.
+model WorkflowTemplateVersion {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId   String           @map("template_id") @db.Uuid
+  template     WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version      Int
+  spec         Json
+  createdBy    String?          @map("created_by") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
-  @@map("agent_lessons")
+  @@unique([templateId, version])
+  @@map("workflow_template_versions")
 }
