@@ -46,6 +46,8 @@ export {
   SPEC_SCHEMA_VERSION,
   WorkflowSpecSchema,
 } from './spec.js';
+export type { SpecDiff, SpecMetaChange } from './specDiff.js';
+export { diffSpecs, specsEqual } from './specDiff.js';
 export {
   assertBuiltinStepsRegistered,
   getStepMetadata,

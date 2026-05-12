@@ -14,6 +14,7 @@ import {
   useStepRegistry,
   useUpdateWorkflowTemplate,
   useWorkflowTemplate,
+  useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
@@ -39,6 +40,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id, effectiveVersion);
   const { data: stepRegistry } = useStepRegistry();
+  const { data: analytics } = useWorkflowTemplateAnalytics(id, 30);
   const createVersion = useCreateWorkflowVersion(id);
   const promoteVersion = usePromoteWorkflowVersion(id);
   const updateTemplate = useUpdateWorkflowTemplate(id);
@@ -140,6 +142,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="flex items-center gap-3">
           <Link
             className="text-sm text-[var(--muted-foreground)] hover:underline"
+            href={`/templates/${id}/analytics`}
+          >
+            Analytics →
+          </Link>
+          <Link
+            className="text-sm text-[var(--muted-foreground)] hover:underline"
+            href={`/templates/${id}/diff`}
+          >
+            Compare versions →
+          </Link>
+          <Link
+            className="text-sm text-[var(--muted-foreground)] hover:underline"
             href={`/templates/${id}/runs`}
           >
             Run history →
@@ -169,6 +183,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
                       title={`Static estimate from step costHints. Branches take max; fanOut assumes width ${costEstimate.fanOutWidthAssumed}.`}
                     >
                       ~${costEstimate.totalUsd.toFixed(2)}/run
+                    </span>
+                  )}
+                  {analytics?.avgCostPerRun != null && analytics.totalRuns > 0 && (
+                    <span
+                      className="ml-2 text-xs px-1.5 py-0.5 bg-blue-50 text-blue-800 rounded font-normal"
+                      title={`Observed: average across ${analytics.totalRuns} run(s) in the last ${analytics.windowDays}d.`}
+                    >
+                      ${analytics.avgCostPerRun.toFixed(2)}/run (observed)
                     </span>
                   )}
                 </CardTitle>
@@ -318,6 +340,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                             active
                           </span>
                         )}
+                        {v.version === template.experimentVersion && (
+                          <span className="ml-2 text-xs px-1 py-0.5 bg-purple-100 text-purple-800 rounded">
+                            exp
+                          </span>
+                        )}
                       </span>
                       <span className="text-xs text-[var(--muted-foreground)]">
                         {formatRelativeTime(v.createdAt)}
@@ -353,17 +380,138 @@ export default function TemplateDetailPage({ params }: PageProps) {
             <CardHeader>
               <CardTitle>Settings</CardTitle>
             </CardHeader>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                checked={template.isDefault}
-                disabled={updateTemplate.isPending}
-                onChange={(e) => updateTemplate.mutate({ isDefault: e.target.checked })}
-                type="checkbox"
+            <div className="space-y-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  checked={template.isDefault}
+                  disabled={updateTemplate.isPending}
+                  onChange={(e) => updateTemplate.mutate({ isDefault: e.target.checked })}
+                  type="checkbox"
+                />
+                Default for {template.team?.name ?? 'all teams'}
+              </label>
+              <ExperimentForm
+                activeVersion={template.activeVersion}
+                experimentSplit={template.experimentSplit}
+                experimentVersion={template.experimentVersion}
+                onSave={(body) => updateTemplate.mutate(body)}
+                pending={updateTemplate.isPending}
+                versions={template.versions}
               />
-              Default for {template.team?.name ?? 'all teams'}
-            </label>
+            </div>
           </Card>
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface ExperimentFormProps {
+  versions: Array<{ id: string; version: number }>;
+  activeVersion: number | null;
+  experimentVersion: number | null;
+  experimentSplit: number | null;
+  pending: boolean;
+  onSave: (body: { experimentVersion: number | null; experimentSplit: number | null }) => void;
+}
+
+function ExperimentForm({
+  versions,
+  activeVersion,
+  experimentVersion,
+  experimentSplit,
+  pending,
+  onSave,
+}: ExperimentFormProps) {
+  const [version, setVersion] = useState<number | null>(experimentVersion);
+  const [split, setSplit] = useState<number>(experimentSplit ?? 0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setVersion(experimentVersion);
+    setSplit(experimentSplit ?? 0);
+  }, [experimentVersion, experimentSplit]);
+
+  const dirty = version !== experimentVersion || split !== (experimentSplit ?? 0);
+
+  const handleSave = () => {
+    if (split > 0 && version === null) {
+      setError('Pick an experiment version before enabling the split.');
+      return;
+    }
+    setError(null);
+    onSave({
+      experimentSplit: split === 0 ? null : split,
+      experimentVersion: version,
+    });
+  };
+
+  const handleDisable = () => {
+    setError(null);
+    setVersion(null);
+    setSplit(0);
+    onSave({ experimentSplit: null, experimentVersion: null });
+  };
+
+  return (
+    <div className="pt-4 border-t border-[var(--border)] space-y-2">
+      <div className="font-medium text-xs uppercase text-[var(--muted-foreground)]">
+        A/B Experiment
+      </div>
+      <p className="text-xs text-[var(--muted-foreground)]">
+        Route a percentage of incoming work requests to a non-active version. Bucketing is
+        deterministic by ticket ID so re-runs land on the same arm.
+      </p>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-xs">Experiment version</span>
+        <select
+          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] flex-1 max-w-[140px]"
+          onChange={(e) => setVersion(e.target.value === '' ? null : Number(e.target.value))}
+          value={version ?? ''}
+        >
+          <option value="">— none —</option>
+          {versions
+            .filter((v) => v.version !== activeVersion)
+            .map((v) => (
+              <option key={v.id} value={v.version}>
+                v{v.version}
+              </option>
+            ))}
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-xs">Split (%)</span>
+        <input
+          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] w-20 text-right"
+          max={100}
+          min={0}
+          onChange={(e) =>
+            setSplit(Math.max(0, Math.min(100, Number.parseInt(e.target.value, 10) || 0)))
+          }
+          type="number"
+          value={split}
+        />
+      </label>
+      {error && <div className="text-xs text-red-700">{error}</div>}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          className="text-xs px-3 py-1 bg-[var(--primary)] text-white rounded hover:opacity-90 disabled:opacity-50"
+          disabled={pending || !dirty}
+          onClick={handleSave}
+          type="button"
+        >
+          {pending ? 'Saving…' : 'Save'}
+        </button>
+        {(experimentVersion !== null || (experimentSplit ?? 0) > 0) && (
+          <button
+            className="text-xs px-3 py-1 border border-[var(--border)] rounded hover:bg-[var(--muted)] disabled:opacity-50"
+            disabled={pending}
+            onClick={handleDisable}
+            type="button"
+          >
+            Disable
+          </button>
+        )}
       </div>
     </div>
   );

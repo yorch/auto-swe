@@ -168,10 +168,14 @@ CREATE TABLE "workflow_templates" (
     "status" "WorkflowTemplateStatus" NOT NULL DEFAULT 'DRAFT',
     "is_default" BOOLEAN NOT NULL DEFAULT false,
     "active_version" INTEGER,
+    "experiment_version" INTEGER,
+    "experiment_split" INTEGER,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "workflow_templates_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "workflow_templates_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "workflow_templates_experiment_split_range"
+        CHECK ("experiment_split" IS NULL OR ("experiment_split" >= 0 AND "experiment_split" <= 100))
 );
 
 -- CreateTable

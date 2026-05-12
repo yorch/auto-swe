@@ -7,9 +7,29 @@ import { z } from 'zod';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
+ * Deterministic 0–99 bucket for an A/B key. Uses sha1 mod 100 so the same
+ * `externalTicketId` always lands in the same bucket — re-runs of the same
+ * ticket cannot accidentally cross the experiment boundary.
+ *
+ * Salting by `templateId` keeps two templates' experiments statistically
+ * independent: a ticket bucketed into the experiment arm on template A is
+ * uncorrelated with its bucket on template B.
+ */
+export function experimentBucket(externalTicketId: string, templateId: string): number {
+  const hash = crypto.createHash('sha1').update(`${templateId}:${externalTicketId}`).digest();
+  // First 4 bytes is plenty of entropy for a mod-100 bucket.
+  return hash.readUInt32BE(0) % 100;
+}
+
+/**
  * Resolve the active workflow template for a team, falling back to the
  * global default (teamId IS NULL). Returns {templateId, version} or null
  * if nothing is configured.
+ *
+ * Honors per-template A/B experiment configuration: if `experimentSplit` is
+ * set and the bucketed externalTicketId lands below the split, returns
+ * `experimentVersion` instead of `activeVersion`. Falls back silently to
+ * `activeVersion` when either experiment field is missing.
  *
  * Uniqueness is enforced at the DB layer via partial unique indexes on
  * (team_id WHERE is_default), so `findFirst` returns at most one row in
@@ -19,8 +39,9 @@ import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 // Exported for unit tests; the route handler is the only production caller.
 export async function resolveDefaultTemplate(
   prisma: FastifyInstance['prisma'],
-  teamId: string
-): Promise<{ templateId: string; version: number } | null> {
+  teamId: string,
+  externalTicketId?: string
+): Promise<{ templateId: string; version: number; isExperiment: boolean } | null> {
   const teamTpl = await prisma.workflowTemplate.findFirst({
     orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
     where: { isDefault: true, status: 'ACTIVE', teamId },
@@ -32,7 +53,16 @@ export async function resolveDefaultTemplate(
       where: { isDefault: true, status: 'ACTIVE', teamId: null },
     }));
   if (!tpl?.activeVersion) return null;
-  return { templateId: tpl.id, version: tpl.activeVersion };
+
+  const split = tpl.experimentSplit ?? 0;
+  const expVersion = tpl.experimentVersion ?? null;
+  if (split > 0 && expVersion !== null && externalTicketId) {
+    const bucket = experimentBucket(externalTicketId, tpl.id);
+    if (bucket < split) {
+      return { isExperiment: true, templateId: tpl.id, version: expVersion };
+    }
+  }
+  return { isExperiment: false, templateId: tpl.id, version: tpl.activeVersion };
 }
 
 const CreateWorkRequestSchema = z.object({
@@ -103,7 +133,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Resolve which workflow template to run. Team-scoped default wins; falls
       // back to the global teamId=null template seeded by `yarn db:seed`.
-      const resolvedTemplate = await resolveDefaultTemplate(fastify.prisma, repo.teamId);
+      // A/B experiments are honored via deterministic bucketing on externalTicketId.
+      const resolvedTemplate = await resolveDefaultTemplate(
+        fastify.prisma,
+        repo.teamId,
+        externalTicketId
+      );
       if (!resolvedTemplate) {
         return reply.status(500).send({
           error: {

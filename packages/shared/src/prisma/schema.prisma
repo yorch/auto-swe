@@ -287,16 +287,20 @@ model WorkflowStep {
 /// a new WorkflowTemplateVersion. Exactly one version may be marked active per
 /// template (enforced in application code).
 model WorkflowTemplate {
-  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  teamId        String?                   @map("team_id") @db.Uuid
-  team          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  name          String
-  description   String                    @default("")
-  status        WorkflowTemplateStatus    @default(DRAFT)
-  isDefault     Boolean                   @default(false) @map("is_default")
-  activeVersion Int?                      @map("active_version")
-  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?                   @map("team_id") @db.Uuid
+  team              Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  name              String
+  description       String                    @default("")
+  status            WorkflowTemplateStatus    @default(DRAFT)
+  isDefault         Boolean                   @default(false) @map("is_default")
+  activeVersion     Int?                      @map("active_version")
+  /// A/B experiment: percent of incoming work requests routed to `experimentVersion`
+  /// instead of `activeVersion`. 0 or NULL disables the experiment.
+  experimentVersion Int?                      @map("experiment_version")
+  experimentSplit   Int?                      @map("experiment_split")
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   versions      WorkflowTemplateVersion[]
   workflowRuns  WorkflowRun[]

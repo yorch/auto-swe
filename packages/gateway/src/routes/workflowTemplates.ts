@@ -1,6 +1,11 @@
 import type { Prisma } from '@auto-swe/shared';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
-import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import {
+  diffSpecs,
+  parseWorkflowSpec,
+  SPEC_SCHEMA_VERSION,
+  type WorkflowSpec,
+} from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -19,6 +24,8 @@ const CreateTemplateBody = z.object({
 
 const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
+  experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
+  experimentVersion: z.number().int().min(1).nullable().optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -76,6 +83,8 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     activeVersion: tpl.activeVersion,
     createdAt: tpl.createdAt,
     description: tpl.description,
+    experimentSplit: tpl.experimentSplit,
+    experimentVersion: tpl.experimentVersion,
     id: tpl.id,
     isDefault: tpl.isDefault,
     lastRun: lastRun
@@ -293,6 +302,37 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Experiment-config validation. Done at PATCH time (vs. a CHECK constraint)
+      // because the rule depends on a sibling row (the version must exist for
+      // this template) which Postgres can't express cheaply.
+      const expVersion = request.body.experimentVersion;
+      const expSplit = request.body.experimentSplit;
+      if (expVersion !== undefined && expVersion !== null) {
+        const v = await fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: existing.id, version: expVersion } },
+        });
+        if (!v) {
+          return reply.status(400).send({
+            error: {
+              code: 'EXPERIMENT_VERSION_NOT_FOUND',
+              message: `Version ${expVersion} does not exist on this template`,
+            },
+          });
+        }
+      }
+      // Enabling traffic split without a destination version is meaningless and
+      // would silently no-op in the resolver — reject it up front.
+      const nextExpVersion = expVersion !== undefined ? expVersion : existing.experimentVersion;
+      const nextExpSplit = expSplit !== undefined ? expSplit : existing.experimentSplit;
+      if (nextExpSplit !== null && nextExpSplit > 0 && nextExpVersion === null) {
+        return reply.status(400).send({
+          error: {
+            code: 'EXPERIMENT_VERSION_REQUIRED',
+            message: 'experimentSplit > 0 requires experimentVersion to be set',
+          },
+        });
+      }
+
       const updated = await fastify.prisma.workflowTemplate.update({
         data: request.body,
         include: TEMPLATE_INCLUDE,
@@ -494,4 +534,214 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
   );
+
+  // ── Spec diff between two versions ──
+  // GET /:id/diff?a=<version>&b=<version>
+  // Returns the structural diff between two versions of the same template,
+  // so the editor can paint added/removed/changed nodes in the DAG.
+  const DiffQuery = z.object({
+    a: z.coerce.number().int().min(1),
+    b: z.coerce.number().int().min(1),
+  });
+  app.get(
+    '/:id/diff',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TemplateIdParam, querystring: DiffQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+        });
+      }
+      const [verA, verB] = await Promise.all([
+        fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: tpl.id, version: request.query.a } },
+        }),
+        fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: tpl.id, version: request.query.b } },
+        }),
+      ]);
+      if (!verA || !verB) {
+        return reply.status(404).send({
+          error: { code: 'VERSION_NOT_FOUND', message: 'One or both versions not found' },
+        });
+      }
+      // `spec` is stored as parsed JSON; cast at the boundary. Both rows were
+      // validated against WorkflowSpecSchema when they landed, so the cast is safe.
+      const specA = verA.spec as unknown as WorkflowSpec;
+      const specB = verB.spec as unknown as WorkflowSpec;
+      const diff = diffSpecs(specA, specB);
+      return {
+        data: {
+          a: { spec: specA, version: verA.version },
+          b: { spec: specB, version: verB.version },
+          diff,
+        },
+      };
+    }
+  );
+
+  // ── Analytics for a template ──
+  // GET /:id/analytics?window=<days>
+  // Aggregates from workflow_runs + workflow_steps. Cost data is joined via
+  // workRequest → activeWorkflow (cost accrues on the Temporal workflow, not
+  // the per-run record).
+  const AnalyticsQuery = z.object({
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  });
+  app.get(
+    '/:id/analytics',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TemplateIdParam, querystring: AnalyticsQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+        });
+      }
+      const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+
+      const runs = await fastify.prisma.workflowRun.findMany({
+        select: {
+          endedAt: true,
+          startedAt: true,
+          status: true,
+          templateVersion: true,
+          workRequest: {
+            select: {
+              activeWorkflows: {
+                select: {
+                  costUsdAccrued: true,
+                  tokensInputUsed: true,
+                  tokensOutputUsed: true,
+                },
+              },
+            },
+          },
+        },
+        where: { startedAt: { gte: windowStart }, templateId: tpl.id },
+      });
+
+      const steps = await fastify.prisma.workflowStep.findMany({
+        select: { nodeId: true, runId: true, status: true },
+        where: { run: { startedAt: { gte: windowStart }, templateId: tpl.id } },
+      });
+
+      return { data: computeAnalytics(runs, steps, request.query.window) };
+    }
+  );
 };
+
+// ── Analytics computation (pure; exported for testing) ──
+
+interface AnalyticsRunRow {
+  endedAt: Date | null;
+  startedAt: Date;
+  status: string;
+  templateVersion: number;
+  workRequest: {
+    activeWorkflows: {
+      costUsdAccrued: number;
+      tokensInputUsed: number;
+      tokensOutputUsed: number;
+    }[];
+  } | null;
+}
+
+interface AnalyticsStepRow {
+  nodeId: string;
+  runId: string;
+  status: string;
+}
+
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+  return sorted[idx] ?? null;
+}
+
+export function computeAnalytics(
+  runs: AnalyticsRunRow[],
+  steps: AnalyticsStepRow[],
+  windowDays: number
+) {
+  const totalRuns = runs.length;
+  const finished = runs.filter((r) => r.status !== 'RUNNING');
+  const succeeded = finished.filter((r) => r.status === 'SUCCESS').length;
+  const failed = finished.filter((r) =>
+    ['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(r.status)
+  ).length;
+  const successRate = finished.length > 0 ? succeeded / finished.length : null;
+
+  const durationsMs = finished
+    .filter((r) => r.endedAt)
+    .map((r) => (r.endedAt as Date).getTime() - r.startedAt.getTime())
+    .sort((a, b) => a - b);
+  const p50DurationMs = percentile(durationsMs, 0.5);
+  const p95DurationMs = percentile(durationsMs, 0.95);
+
+  // Cost rollup: sum across all activeWorkflows tied to the run's workRequest.
+  // Epics + decomposition both fan out to multiple activeWorkflows under one
+  // workRequest, so summing is correct.
+  const runCosts = runs
+    .map((r) => (r.workRequest?.activeWorkflows ?? []).reduce((s, aw) => s + aw.costUsdAccrued, 0))
+    .filter((c) => c > 0);
+  const totalCost = runCosts.reduce((s, c) => s + c, 0);
+  const avgCostPerRun = runCosts.length > 0 ? totalCost / runCosts.length : null;
+
+  // Per-step failure: count of FAILED step records per nodeId / count of total
+  // step records per nodeId (across attempts and runs). Skipped excluded.
+  const perNode = new Map<string, { failed: number; total: number }>();
+  for (const s of steps) {
+    if (s.status === 'SKIPPED' || s.status === 'PENDING') continue;
+    const entry = perNode.get(s.nodeId) ?? { failed: 0, total: 0 };
+    entry.total += 1;
+    if (s.status === 'FAILED') entry.failed += 1;
+    perNode.set(s.nodeId, entry);
+  }
+  const perStepFailureRates = Array.from(perNode.entries())
+    .map(([nodeId, { failed, total }]) => ({
+      failed,
+      failureRate: total > 0 ? failed / total : 0,
+      nodeId,
+      total,
+    }))
+    .sort((a, b) => b.failureRate - a.failureRate);
+
+  // Per-version run counts so the UI can see whether the experiment is actually
+  // routing the configured share of traffic.
+  const versionCounts = new Map<number, number>();
+  for (const r of runs) {
+    versionCounts.set(r.templateVersion, (versionCounts.get(r.templateVersion) ?? 0) + 1);
+  }
+
+  return {
+    avgCostPerRun,
+    failed,
+    p50DurationMs,
+    p95DurationMs,
+    perStepFailureRates,
+    perVersionCounts: Array.from(versionCounts.entries())
+      .map(([version, count]) => ({ count, version }))
+      .sort((a, b) => a.version - b.version),
+    succeeded,
+    successRate,
+    totalCost,
+    totalRuns,
+    windowDays,
+  };
+}

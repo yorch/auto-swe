@@ -1,0 +1,193 @@
+'use client';
+
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import Link from 'next/link';
+import { use, useEffect, useMemo, useState } from 'react';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useWorkflows';
+
+interface PageProps {
+  params: Promise<{ id: string }>;
+}
+
+function diffMarkers(
+  diff: { addedNodes: string[]; changedNodes: string[]; removedNodes: string[] },
+  side: 'a' | 'b'
+): Record<string, DiffKind> {
+  const out: Record<string, DiffKind> = {};
+  if (side === 'a') {
+    for (const id of diff.removedNodes) out[id] = 'removed';
+    for (const id of diff.changedNodes) out[id] = 'changed';
+  } else {
+    for (const id of diff.addedNodes) out[id] = 'added';
+    for (const id of diff.changedNodes) out[id] = 'changed';
+  }
+  return out;
+}
+
+export default function TemplateDiffPage({ params }: PageProps) {
+  const { id } = use(params);
+  const { data: template } = useWorkflowTemplate(id);
+  const sortedVersions = useMemo(
+    () => (template ? [...template.versions].sort((a, b) => b.version - a.version) : []),
+    [template]
+  );
+  const [a, setA] = useState<number | null>(null);
+  const [b, setB] = useState<number | null>(null);
+
+  // Pick sensible defaults the first time the version list arrives: the active
+  // version on one side, the next-newest on the other so the diff is
+  // immediately meaningful.
+  useEffect(() => {
+    if (!template || sortedVersions.length === 0) return;
+    if (a === null) setA(template.activeVersion ?? sortedVersions[0]?.version ?? null);
+    if (b === null) {
+      const fallback =
+        sortedVersions.find((v) => v.version !== template.activeVersion)?.version ??
+        sortedVersions[0]?.version ??
+        null;
+      setB(fallback);
+    }
+  }, [template, sortedVersions, a, b]);
+
+  const { data: diffPayload, isLoading } = useWorkflowSpecDiff(id, a, b);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <Link className="text-[var(--primary)] hover:underline text-sm" href={`/templates/${id}`}>
+          &larr; {template?.name ?? 'Template'}
+        </Link>
+        <h2 className="text-2xl font-bold">Compare versions</h2>
+      </div>
+
+      <Card>
+        <div className="flex items-center gap-4">
+          <label className="text-sm flex items-center gap-2">
+            <span className="text-[var(--muted-foreground)]">A</span>
+            <select
+              className="px-2 py-1 border border-[var(--border)] rounded text-sm bg-[var(--background)]"
+              onChange={(e) => setA(Number(e.target.value))}
+              value={a ?? ''}
+            >
+              {sortedVersions.map((v) => (
+                <option key={v.id} value={v.version}>
+                  v{v.version}
+                  {v.version === template?.activeVersion ? ' (active)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm flex items-center gap-2">
+            <span className="text-[var(--muted-foreground)]">B</span>
+            <select
+              className="px-2 py-1 border border-[var(--border)] rounded text-sm bg-[var(--background)]"
+              onChange={(e) => setB(Number(e.target.value))}
+              value={b ?? ''}
+            >
+              {sortedVersions.map((v) => (
+                <option key={v.id} value={v.version}>
+                  v{v.version}
+                  {v.version === template?.activeVersion ? ' (active)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {a !== null && b !== null && a === b && (
+            <span className="text-xs text-[var(--muted-foreground)]">
+              Pick two distinct versions to compare.
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {isLoading && (
+        <div className="text-center py-12 text-[var(--muted-foreground)]">Computing diff…</div>
+      )}
+
+      {diffPayload && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Summary</CardTitle>
+            </CardHeader>
+            <ul className="text-sm space-y-1">
+              <li>
+                <span className="inline-block w-2 h-2 rounded-full bg-green-600 mr-2" />
+                Added: <span className="font-mono">{diffPayload.diff.addedNodes.length}</span>{' '}
+                {diffPayload.diff.addedNodes.length > 0 && (
+                  <span className="text-[var(--muted-foreground)] text-xs">
+                    [{diffPayload.diff.addedNodes.join(', ')}]
+                  </span>
+                )}
+              </li>
+              <li>
+                <span className="inline-block w-2 h-2 rounded-full bg-red-600 mr-2" />
+                Removed: <span className="font-mono">{diffPayload.diff.removedNodes.length}</span>{' '}
+                {diffPayload.diff.removedNodes.length > 0 && (
+                  <span className="text-[var(--muted-foreground)] text-xs">
+                    [{diffPayload.diff.removedNodes.join(', ')}]
+                  </span>
+                )}
+              </li>
+              <li>
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-600 mr-2" />
+                Changed: <span className="font-mono">{diffPayload.diff.changedNodes.length}</span>{' '}
+                {diffPayload.diff.changedNodes.length > 0 && (
+                  <span className="text-[var(--muted-foreground)] text-xs">
+                    [{diffPayload.diff.changedNodes.join(', ')}]
+                  </span>
+                )}
+              </li>
+              <li className="text-[var(--muted-foreground)]">
+                Unchanged: {diffPayload.diff.unchangedNodes.length}
+              </li>
+              {diffPayload.diff.metaChanges.length > 0 && (
+                <li className="pt-2 border-t border-[var(--border)] mt-2">
+                  <span className="text-xs font-medium">Metadata changes:</span>
+                  <ul className="ml-4 mt-1 text-xs space-y-1">
+                    {diffPayload.diff.metaChanges.map((m) => (
+                      <li key={m.field}>
+                        <span className="font-mono">{m.field}</span>:{' '}
+                        <span className="line-through text-[var(--muted-foreground)]">
+                          {JSON.stringify(m.before)}
+                        </span>{' '}
+                        → <span className="font-mono">{JSON.stringify(m.after)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              )}
+            </ul>
+          </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>v{diffPayload.a.version} (before)</CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <WorkflowDag
+                  diffMarkers={diffMarkers(diffPayload.diff, 'a')}
+                  spec={diffPayload.a.spec as WorkflowSpec}
+                />
+              </div>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>v{diffPayload.b.version} (after)</CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <WorkflowDag
+                  diffMarkers={diffMarkers(diffPayload.diff, 'b')}
+                  spec={diffPayload.b.spec as WorkflowSpec}
+                />
+              </div>
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

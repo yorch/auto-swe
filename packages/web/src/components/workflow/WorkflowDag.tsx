@@ -17,14 +17,34 @@ export interface DagStatusOverlay {
   byNodeId: Record<string, { status: string; attempt: number } | undefined>;
 }
 
+/** Optional per-node tint for the diff viewer. The diff page passes a map
+ *  where each key is a nodeId and the value is the change kind. The renderer
+ *  paints a coloured outline so added/removed/changed nodes pop visually. */
+export type DiffKind = 'added' | 'removed' | 'changed';
+
 interface Props {
   spec: WorkflowSpec;
   /** Optional per-node status — used by the run viewer to colour live state. */
   statuses?: DagStatusOverlay;
+  /** Optional per-node diff highlight — used by the diff viewer. */
+  diffMarkers?: Record<string, DiffKind>;
   selectedNodeId?: string | null;
   onSelect?: (id: string | null) => void;
   /** When true, the diagram fills its container; otherwise uses natural width. */
   responsive?: boolean;
+}
+
+function diffStrokeColor(kind: DiffKind | undefined): string | null {
+  switch (kind) {
+    case 'added':
+      return '#16a34a';
+    case 'removed':
+      return '#dc2626';
+    case 'changed':
+      return '#d97706';
+    default:
+      return null;
+  }
 }
 
 function edgeStrokeColor(kind: LayoutEdge['kind']): string {
@@ -75,6 +95,7 @@ function edgePath(from: LayoutNode, to: LayoutNode): string {
 export function WorkflowDag({
   spec,
   statuses,
+  diffMarkers,
   selectedNodeId,
   onSelect,
   responsive = true,
@@ -155,8 +176,11 @@ export function WorkflowDag({
               fill={color.fill}
               height={NODE_HEIGHT}
               rx={8}
-              stroke={isSelected ? '#0f172a' : color.stroke}
-              strokeWidth={isSelected ? 2.5 : 1.5}
+              stroke={
+                isSelected ? '#0f172a' : (diffStrokeColor(diffMarkers?.[n.id]) ?? color.stroke)
+              }
+              strokeDasharray={diffMarkers?.[n.id] === 'removed' ? '4 3' : undefined}
+              strokeWidth={isSelected || diffMarkers?.[n.id] ? 2.5 : 1.5}
               width={NODE_WIDTH}
             />
             {statusColor && <rect fill={statusColor} height={NODE_HEIGHT} rx={8} width={4} />}
