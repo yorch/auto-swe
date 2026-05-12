@@ -5,6 +5,13 @@ export {
 } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
+// Phase 3 — decomposition + branch merging
+export type { MergeBranchesInput, MergeBranchesResult } from './decomposition.js';
+export {
+  mergeBranches,
+  planDecomposition,
+  subtaskBranchName,
+} from './decomposition.js';
 export { executeImplementation } from './executeImplementation.js';
 // Phase 3
 export { planEpic } from './planEpic.js';

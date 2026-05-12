@@ -51,8 +51,8 @@ describe('built-in codemods', () => {
 
   it('throws when asked to migrate beyond the registered chain', async () => {
     const { migrateSpec } = await loadFresh();
-    // Only v1 → v2 is registered as a built-in at this layer.
-    expect(() => migrateSpec({ schemaVersion: 2 }, 99)).toThrow(/no codemod registered/);
+    // Built-in chain currently ends at v3.
+    expect(() => migrateSpec({ schemaVersion: 3 }, 99)).toThrow(/no codemod registered/);
   });
 
   it('does not mutate the original spec object', async () => {
@@ -61,5 +61,41 @@ describe('built-in codemods', () => {
     const out = migrateSpec(input, 2) as Record<string, unknown>;
     expect(input.schemaVersion).toBe(1);
     expect(out.schemaVersion).toBe(2);
+  });
+
+  it('chains v1 → v2 → v3 in a single migrateSpec call', async () => {
+    const { migrateSpec } = await loadFresh();
+    const input = {
+      description: 'desc',
+      entry: 'a',
+      name: 'chain',
+      nodes: { a: { status: 'SUCCESS', type: 'terminate' } },
+      schemaVersion: 1,
+    };
+    const out = migrateSpec(input, 3) as Record<string, unknown>;
+    expect(out.schemaVersion).toBe(3);
+    expect(out.name).toBe('chain');
+    expect(out.nodes).toEqual(input.nodes);
+  });
+
+  it('v2 → v3 preserves fanOut nodes verbatim', async () => {
+    const { migrateSpec } = await loadFresh();
+    const input = {
+      entry: 'fan',
+      name: 'preserve-fanout',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          over: { literal: [] },
+          subgraph: 'done',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: 2,
+    };
+    const out = migrateSpec(input, 3) as Record<string, unknown>;
+    expect(out.schemaVersion).toBe(3);
+    expect(out.nodes).toEqual(input.nodes);
   });
 });

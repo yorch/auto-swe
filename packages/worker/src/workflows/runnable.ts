@@ -1,4 +1,9 @@
-import type { CodeResult, RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
+import type {
+  CodeResult,
+  RepoWorkRequest,
+  Subtask,
+  WorkflowResult,
+} from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import { runSpec } from '@auto-swe/shared/workflow/interpreter';
@@ -45,6 +50,7 @@ const agentActivities = proxyActivities<
     | 'executeCIFixImplementation'
     | 'executeReviewFixImplementation'
     | 'executeGateFixImplementation'
+    | 'planDecomposition'
     | 'runReviewNetwork'
   >
 >({
@@ -56,6 +62,19 @@ const agentActivities = proxyActivities<
     maximumInterval: '2m',
   },
   startToCloseTimeout: '30m',
+});
+
+// Branch merge is cheap on the happy path but needs room to clone + push
+// large repos. Reuses the github-style retry posture.
+const mergeActivities = proxyActivities<Pick<typeof activitiesType, 'mergeBranches'>>({
+  heartbeatTimeout: '5m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '15m',
 });
 
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
@@ -206,8 +225,18 @@ async function dispatchStepImpl(
     }
     case 'validateContext':
       return await contextActivities.validateContext(request);
-    case 'executeImplementation':
-      return await agentActivities.executeImplementation(request);
+    case 'executeImplementation': {
+      // Phase 3: when a fanOut binds a per-branch `subtask` value, the
+      // interpreter exposes it on the child context as the configured
+      // `itemKey` (default 'subtask'). Threading it into the activity lets
+      // the implementer use the per-subtask branch + description.
+      const subtask =
+        (inputs.subtask as Subtask | undefined) ??
+        (lookupCtx(ctx, 'subtask') as Subtask | undefined);
+      return subtask
+        ? await agentActivities.executeImplementation(request, subtask)
+        : await agentActivities.executeImplementation(request);
+    }
     case 'runReviewNetwork': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
       const successCriteria =
@@ -257,6 +286,29 @@ async function dispatchStepImpl(
       };
       return await gateActivities[step](gateInput);
     }
+    // ── Phase 3 decomposition + merge ─────────────────────────────────────
+    case 'planDecomposition':
+      return await agentActivities.planDecomposition(request);
+    case 'mergeBranches': {
+      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
+      const targetBranch =
+        (inputs.targetBranch as string | undefined) ??
+        (config.targetBranch as string | undefined) ??
+        `${branchPrefix}/${request.externalTicketId}`;
+      const sourceBranches =
+        (inputs.sourceBranches as string[] | undefined) ?? deriveSourceBranches(ctx, targetBranch);
+      if (!Array.isArray(sourceBranches)) {
+        throw new Error('mergeBranches: sourceBranches must be a string[]');
+      }
+      return await mergeActivities.mergeBranches({
+        ...(config.mergeMessagePrefix
+          ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
+          : {}),
+        request,
+        sourceBranches,
+        targetBranch,
+      });
+    }
     case 'executeGateFixImplementation': {
       const gateName =
         (inputs.gateName as string | undefined) ??
@@ -300,6 +352,39 @@ function lookupCtx(ctx: Context, path: string): unknown {
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
+}
+
+/**
+ * Heuristic fallback for `mergeBranches.sourceBranches`: walk `nodes.*.output`
+ * looking for a fanOut aggregate whose branch results carry CodeResult-shaped
+ * exports (a `branch` field). This lets specs wire `mergeBranches` without
+ * passing `inputs.sourceBranches` explicitly — the most common case.
+ *
+ * Returns the discovered branches in the order they appear, excluding
+ * `targetBranch` if it sneaks in. Empty array if nothing matches.
+ */
+function deriveSourceBranches(ctx: Context, targetBranch: string): string[] {
+  const nodes = (ctx.nodes ?? {}) as Record<string, { output?: unknown }>;
+  const branches: string[] = [];
+  for (const node of Object.values(nodes)) {
+    const out = node?.output as
+      | { results?: Array<{ result?: { branch?: unknown }; exports?: Record<string, unknown> }> }
+      | undefined;
+    if (!out || !Array.isArray(out.results)) continue;
+    for (const r of out.results) {
+      const fromResult =
+        r?.result && typeof r.result === 'object' ? (r.result.branch as unknown) : undefined;
+      const fromExports =
+        r?.exports && typeof r.exports === 'object'
+          ? (r.exports['context.currentCodeResult.branch'] ??
+            r.exports['nodes.implement.output.branch'] ??
+            r.exports.branch)
+          : undefined;
+      const b = typeof fromResult === 'string' ? fromResult : fromExports;
+      if (typeof b === 'string' && b !== targetBranch) branches.push(b);
+    }
+  }
+  return branches;
 }
 
 /**

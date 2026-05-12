@@ -59,5 +59,8 @@ export const BUILTIN_STEPS = [
   'runVulnScan',
   'runPerfBench',
   'executeGateFixImplementation',
+  // Phase 3 — feature decomposition + branch merging (fan-out uses these)
+  'planDecomposition',
+  'mergeBranches',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

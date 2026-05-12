@@ -26,3 +26,18 @@ registerCodemod({
     return { ...s, schemaVersion: 2 };
   },
 });
+
+/**
+ * v2 → v3: Phase 3 adds the `fanOut` node type. Existing specs without any
+ * `fanOut` node are valid v3 specs as-is, so the migration just bumps the
+ * version. Codemod runs idempotently — re-applying it to a spec that already
+ * has `fanOut` nodes does not perturb them.
+ */
+registerCodemod({
+  from: 2,
+  to: 3,
+  transform: (spec) => {
+    const s = spec as Record<string, unknown>;
+    return { ...s, schemaVersion: 3 };
+  },
+});

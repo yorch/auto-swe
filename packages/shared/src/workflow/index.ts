@@ -24,6 +24,7 @@ export { SignalSlots } from './signalSlots.js';
 export type {
   Binding,
   CondNode,
+  FanOutNode,
   Node,
   OnFailMode,
   SetNode,
