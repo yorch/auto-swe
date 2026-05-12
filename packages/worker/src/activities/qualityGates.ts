@@ -57,7 +57,7 @@ export interface GateResult {
   signal?: string;
 }
 
-const DEFAULT_COMMANDS: Record<GateName, string | null> = {
+export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
   runBuild: 'yarn build',
   runLint: 'yarn lint',
   // runPerfBench has no sensible default — operators must supply one or skip the step.
@@ -81,7 +81,7 @@ const ARTIFACT_KIND: Record<GateName, string> = {
  *  boundaries (Buffer.from + decode) so we never split a multi-byte sequence
  *  mid-codepoint.
  */
-function truncate(s: string, maxBytes: number): string {
+export function truncate(s: string, maxBytes: number): string {
   const buf = Buffer.from(s, 'utf8');
   if (buf.byteLength <= maxBytes) return s;
   const half = Math.floor(maxBytes / 2);
@@ -97,7 +97,7 @@ function truncate(s: string, maxBytes: number): string {
  * null when no command is configured anywhere; the caller should report this
  * as a non-failure SKIP via `passed: true` so the spec can decide policy.
  */
-async function resolveCommand(
+export async function resolveCommand(
   gate: GateName,
   request: RepoWorkRequest,
   override: string | undefined
@@ -407,6 +407,3 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     workspace.destroy();
   }
 }
-
-// Exported for unit tests.
-export const __internal = { DEFAULT_COMMANDS, resolveCommand, truncate };
