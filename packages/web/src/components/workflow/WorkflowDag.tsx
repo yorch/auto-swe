@@ -80,9 +80,9 @@ export function WorkflowDag({
   responsive = true,
 }: Props) {
   const layout = useMemo(() => layoutSpec(spec), [spec]);
+  const nodeIndex = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout.nodes]);
   const padding = 24;
   const viewBox = `${-padding} ${-padding} ${layout.width + padding * 2} ${layout.height + padding * 2}`;
-  const nodeIndex = new Map(layout.nodes.map((n) => [n.id, n]));
 
   return (
     <svg

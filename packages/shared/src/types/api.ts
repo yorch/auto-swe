@@ -185,15 +185,27 @@ export interface CreateEpicResponse {
 
 // ── Workflow Templates / Runs (Phase 4) ──
 
-export type WorkflowTemplateStatus = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
-export type WorkflowRunStatus =
-  | 'RUNNING'
-  | 'SUCCESS'
-  | 'FAILED'
-  | 'TIMED_OUT'
-  | 'CANCELLED'
-  | 'SKIPPED';
-export type WorkflowStepRecordStatus = 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
+export const WORKFLOW_TEMPLATE_STATUSES = ['DRAFT', 'ACTIVE', 'ARCHIVED'] as const;
+export type WorkflowTemplateStatus = (typeof WORKFLOW_TEMPLATE_STATUSES)[number];
+
+export const WORKFLOW_RUN_STATUSES = [
+  'RUNNING',
+  'SUCCESS',
+  'FAILED',
+  'TIMED_OUT',
+  'CANCELLED',
+  'SKIPPED',
+] as const;
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
+
+export const WORKFLOW_STEP_RECORD_STATUSES = [
+  'PENDING',
+  'RUNNING',
+  'PASSED',
+  'FAILED',
+  'SKIPPED',
+] as const;
+export type WorkflowStepRecordStatus = (typeof WORKFLOW_STEP_RECORD_STATUSES)[number];
 
 /** Shape returned by GET /api/v1/workflow-templates (list) */
 export interface WorkflowTemplateSummary {

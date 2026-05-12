@@ -62,7 +62,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   const handleSave = async () => {
     if (!parsed?.ok) {
-      setSaveError(parsed?.ok === false ? parsed.error : 'JSON not parsed');
+      setSaveError(parsed?.error ?? 'JSON not parsed');
       return;
     }
     try {

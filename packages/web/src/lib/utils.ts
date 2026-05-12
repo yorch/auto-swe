@@ -38,12 +38,25 @@ export function formatTokens(n: number): string {
 }
 
 export const STATUS_COLORS: Record<string, string> = {
+  // ── WorkflowTemplateStatus ──
+  ACTIVE: 'bg-green-100 text-green-800',
+  ARCHIVED: 'bg-gray-100 text-gray-800',
+  // ── ActiveWorkflow.currentStatus ──
   AWAITING_CI: 'bg-yellow-100 text-yellow-800',
   AWAITING_HUMAN_MERGE: 'bg-orange-100 text-orange-800',
+  // ── WorkflowRunStatus ──
+  CANCELLED: 'bg-gray-100 text-gray-800',
   COMPLETED: 'bg-green-100 text-green-800',
+  DRAFT: 'bg-yellow-100 text-yellow-800',
   FAILED: 'bg-red-100 text-red-800',
   IMPLEMENTING: 'bg-blue-100 text-blue-800',
   IN_REVIEW: 'bg-purple-100 text-purple-800',
+  // ── WorkflowStepRecordStatus (PASSED unique to step rows; others shared) ──
+  PASSED: 'bg-green-100 text-green-800',
+  PENDING: 'bg-purple-100 text-purple-800',
+  RUNNING: 'bg-blue-100 text-blue-800',
+  SKIPPED: 'bg-gray-100 text-gray-700',
+  SUCCESS: 'bg-green-100 text-green-800',
   TIMED_OUT: 'bg-gray-100 text-gray-800',
   VALIDATING_CONTEXT: 'bg-indigo-100 text-indigo-800',
 };

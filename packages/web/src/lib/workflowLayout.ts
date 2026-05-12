@@ -1,11 +1,14 @@
 /**
  * Lightweight layered layout for WorkflowSpec DAGs.
  *
- * Computes (x, y) coordinates for every node using a longest-path / BFS rank
- * assignment with index-within-rank for x. Back-edges (cond → onTrue pointing
- * to an already-ranked ancestor) are kept in the edge list but do not affect
- * ranks. This avoids pulling in a real graph-layout dep like dagre while still
- * producing readable diagrams for the workflow sizes we expect (<100 nodes).
+ * Computes (x, y) coordinates for every node using a shortest-path BFS rank
+ * assignment from the entry node, with index-within-rank for x. Back-edges
+ * (cond → onTrue pointing to an already-ranked ancestor) are kept in the edge
+ * list but do not affect ranks. Disconnected nodes are placed in a trailing
+ * column (one past the deepest ranked node) so they don't crowd the entry
+ * column. This avoids pulling in a real graph-layout dep like dagre while
+ * still producing readable diagrams for the workflow sizes we expect
+ * (<100 nodes).
  */
 import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
 
@@ -87,27 +90,31 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
 
   // BFS rank assignment from the entry. Cycles are tolerated: a back-edge
   // visits a node whose rank is already set, so we skip it.
+  const edgesByFrom = new Map<string, LayoutEdge[]>();
+  for (const e of allEdges) {
+    const bucket = edgesByFrom.get(e.from);
+    if (bucket) bucket.push(e);
+    else edgesByFrom.set(e.from, [e]);
+  }
   const rank = new Map<string, number>();
   rank.set(spec.entry, 0);
   const queue: string[] = [spec.entry];
   while (queue.length > 0) {
     const id = queue.shift() as string;
     const r = rank.get(id) ?? 0;
-    for (const e of allEdges) {
-      if (e.from !== id) continue;
-      const existing = rank.get(e.to);
-      if (existing === undefined || existing < r + 1) {
-        // Only enqueue if we improved the rank; protects against cycles.
-        if (existing === undefined) {
-          rank.set(e.to, r + 1);
-          queue.push(e.to);
-        }
+    for (const e of edgesByFrom.get(id) ?? []) {
+      if (!rank.has(e.to)) {
+        rank.set(e.to, r + 1);
+        queue.push(e.to);
       }
     }
   }
-  // Any disconnected nodes get parked at rank 0 + a separate column.
+  // Park any disconnected nodes in a trailing column past the deepest ranked
+  // node so they don't crowd the entry column.
+  let deepest = 0;
+  for (const r of rank.values()) deepest = Math.max(deepest, r);
   for (const id of nodeIds) {
-    if (!rank.has(id)) rank.set(id, 0);
+    if (!rank.has(id)) rank.set(id, deepest + 1);
   }
 
   // Group by rank, then assign indexInRank deterministically by id.

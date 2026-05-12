@@ -1,9 +1,11 @@
 import type { Prisma } from '@auto-swe/shared';
+import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 const TemplateIdParam = z.object({ id: z.string().uuid() });
 const VersionParam = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) });
@@ -19,17 +21,12 @@ const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
-  status: z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED']).optional(),
+  status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
 });
 
 const CreateVersionBody = z.object({ spec: z.unknown() });
 const PromoteBody = z.object({ version: z.number().int().min(1) });
 const ListTemplatesQuery = z.object({ teamId: z.string().uuid().optional() });
-const ListRunsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
 const TEMPLATE_INCLUDE = {
   _count: { select: { versions: true } },
   team: { select: { id: true, name: true, slug: true } },
@@ -98,9 +95,11 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
 }
 
 function parseSpecOrThrow(input: unknown): unknown {
-  // We accept the spec in whatever schemaVersion the client sent it; the only
-  // requirement is that it parses against the current schema. Codemods run on
-  // the worker side at run start (templates.ts → migrateSpec).
+  // Strict check: the spec must already declare the current SPEC_SCHEMA_VERSION.
+  // Codemods exist (and run at workflow start in templates.ts → migrateSpec) for
+  // already-stored specs, but the editor is expected to migrate before saving,
+  // so we don't auto-upgrade here — otherwise older clients could silently
+  // round-trip a spec they don't fully understand.
   const spec = input as { schemaVersion?: unknown } | null;
   if (!spec || typeof spec !== 'object') {
     throw Object.assign(new Error('spec must be an object'), { statusCode: 400 });
@@ -190,11 +189,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
+        // Single create — `activeVersion: 1` + `status: 'ACTIVE'` are set inline
+        // so a failure can't leave a half-promoted template behind.
         const tpl = await fastify.prisma.workflowTemplate.create({
           data: {
+            activeVersion: 1,
             description: description ?? '',
             name,
-            status: 'DRAFT',
+            status: 'ACTIVE',
             teamId: teamId ?? null,
             versions: {
               create: { createdBy: user.sub, spec: parsed as object, version: 1 },
@@ -202,13 +204,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           },
           include: TEMPLATE_INCLUDE,
         });
-        // Set activeVersion = 1 so the template is immediately usable.
-        const promoted = await fastify.prisma.workflowTemplate.update({
-          data: { activeVersion: 1, status: 'ACTIVE' },
-          include: TEMPLATE_INCLUDE,
-          where: { id: tpl.id },
-        });
-        return reply.status(201).send({ data: projectTemplate(promoted, undefined) });
+        return reply.status(201).send({ data: projectTemplate(tpl, undefined) });
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
         if (e.code === 'P2002') {
@@ -375,20 +371,41 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INVALID_SPEC', message: e.message } });
       }
 
-      const last = await fastify.prisma.workflowTemplateVersion.findFirst({
-        orderBy: { version: 'desc' },
-        select: { version: true },
-        where: { templateId: tpl.id },
-      });
-      const next = (last?.version ?? 0) + 1;
-      const created = await fastify.prisma.workflowTemplateVersion.create({
-        data: {
-          createdBy: user.sub,
-          spec: parsed as object,
-          templateId: tpl.id,
-          version: next,
-        },
-      });
+      // SELECT max(version)+1 / INSERT is racy under concurrent saves — two
+      // simultaneous POSTs would pick the same `next`, and Prisma's unique
+      // (templateId, version) constraint would 500 the loser. Retry on
+      // P2002 with a fresh max; bounded so a runaway loop can't spin forever.
+      const MAX_RETRIES = 5;
+      let created: Awaited<
+        ReturnType<typeof fastify.prisma.workflowTemplateVersion.create>
+      > | null = null;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const last = await fastify.prisma.workflowTemplateVersion.findFirst({
+          orderBy: { version: 'desc' },
+          select: { version: true },
+          where: { templateId: tpl.id },
+        });
+        const next = (last?.version ?? 0) + 1;
+        try {
+          created = await fastify.prisma.workflowTemplateVersion.create({
+            data: {
+              createdBy: user.sub,
+              spec: parsed as object,
+              templateId: tpl.id,
+              version: next,
+            },
+          });
+          break;
+        } catch (err: unknown) {
+          const e = err as { code?: string };
+          if (e.code !== 'P2002' || attempt === MAX_RETRIES - 1) throw err;
+        }
+      }
+      if (!created) {
+        return reply.status(409).send({
+          error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
+        });
+      }
       return reply.status(201).send({
         data: {
           createdAt: created.createdAt,
@@ -443,7 +460,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/runs',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TemplateIdParam, querystring: ListRunsQuery },
+      schema: { params: TemplateIdParam, querystring: RunListPaginationQuery },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -472,16 +489,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.count({ where: { templateId: tpl.id } }),
       ]);
       return {
-        data: rows.map((r) => ({
-          endedAt: r.endedAt,
-          id: r.id,
-          startedAt: r.startedAt,
-          status: r.status,
-          templateId: r.templateId,
-          templateVersion: r.templateVersion,
-          workflowId: r.workflowId,
-          workRequest: r.workRequest,
-        })),
+        data: rows.map(projectRunSummary),
         meta: { limit, offset, total },
       };
     }

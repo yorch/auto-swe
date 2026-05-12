@@ -1,15 +1,15 @@
 import type { Prisma } from '@auto-swe/shared';
+import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
-const ListRunsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-  status: z.enum(['RUNNING', 'SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'SKIPPED']).optional(),
+const ListRunsQuery = RunListPaginationQuery.extend({
+  status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
   workRequestId: z.string().uuid().optional(),
 });
@@ -67,16 +67,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.count({ where }),
       ]);
       return {
-        data: rows.map((r) => ({
-          endedAt: r.endedAt,
-          id: r.id,
-          startedAt: r.startedAt,
-          status: r.status,
-          templateId: r.templateId,
-          templateVersion: r.templateVersion,
-          workflowId: r.workflowId,
-          workRequest: r.workRequest,
-        })),
+        data: rows.map(projectRunSummary),
         meta: { limit, offset, total },
       };
     }

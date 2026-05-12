@@ -90,7 +90,7 @@ function buildApp(state: {
         const idx = state.templates.length + 1;
         const id = `00000000-0000-4000-8000-00000000000${idx}`;
         const tpl: FakeTemplate = {
-          activeVersion: null,
+          activeVersion: (data.activeVersion as number | null) ?? null,
           createdAt: new Date(),
           description: (data.description as string) ?? '',
           id,
