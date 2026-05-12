@@ -212,13 +212,26 @@ async function safeRecord(
   }
 }
 
+const RESERVED_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+
 function setPath(ctx: Context, path: string, value: unknown): void {
   const parts = path.split('.');
+  for (const seg of parts) {
+    if (RESERVED_SEGMENTS.has(seg)) {
+      // Specs are team-authored JSON; in phase 6 they'll be user-authored
+      // shell-step configs. Refuse to write through prototype-pollution
+      // segments regardless of source so an attacker who slips a crafted
+      // spec past validation cannot corrupt subsequent workflow execution.
+      throw new Error(`setPath: refusing to write through reserved segment '${seg}' in '${path}'`);
+    }
+  }
   let cur: Record<string, unknown> = ctx as unknown as Record<string, unknown>;
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i] as string;
     if (cur[k] == null || typeof cur[k] !== 'object') {
-      cur[k] = {};
+      // Use a null-prototype object so even if a future code path bypasses
+      // the segment check above, there's no prototype to walk into.
+      cur[k] = Object.create(null) as Record<string, unknown>;
     }
     cur = cur[k] as Record<string, unknown>;
   }

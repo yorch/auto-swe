@@ -221,6 +221,29 @@ describe('runSpec', () => {
     const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
     await expect(runSpec(spec, baseCtx(), dispatcher, 50)).rejects.toThrow(/MAX_NODE_TRANSITIONS/);
   });
+
+  it('refuses to write through __proto__ / prototype / constructor segments', async () => {
+    for (const danger of [
+      '__proto__.polluted',
+      'context.__proto__.polluted',
+      'context.constructor.x',
+      'context.prototype.x',
+    ]) {
+      const spec = parseWorkflowSpec({
+        entry: 'attack',
+        name: 'proto',
+        nodes: {
+          attack: { next: 'done', type: 'set', values: { [danger]: { literal: 1 } } },
+          done: { status: 'SUCCESS', type: 'terminate' },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      });
+      const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+      await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/reserved segment/);
+      // Verify the prototype was not actually polluted by the failed attempt
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    }
+  });
 });
 
 // ── Parity tests against DEFAULT_ENGINEERING_SPEC ──

@@ -163,7 +163,10 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     summarizeContext(outcome.finalContext)
   );
 
-  return { status: outcome.status as WorkflowResult['status'], ...outcome.result };
+  // Spread result FIRST so a `status` key inside the terminate node's result
+  // cannot overwrite the workflow's actual outcome status. `status` always
+  // tracks `outcome.status`.
+  return { ...outcome.result, status: outcome.status as WorkflowResult['status'] };
 }
 
 // ── Step dispatch ──

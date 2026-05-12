@@ -14,7 +14,6 @@ export { updateDomainState } from './state.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,
-  loadTemplateSpec,
   recordWorkflowStep,
   resolveTemplateForRepo,
 } from './templates.js';

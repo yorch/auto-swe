@@ -56,6 +56,35 @@ describe('evalExpr', () => {
     expect(() => evalExpr('foo()', ctx)).toThrow();
   });
 
+  it('rejects malformed number literals like 1.2.3', () => {
+    expect(() => evalExpr('1.2.3', ctx)).toThrow(/invalid number literal/);
+    expect(() => evalExpr('1..2', ctx)).toThrow(/invalid number literal/);
+  });
+
+  it('throws a clear error when arithmetic gets a non-number', () => {
+    const c = { a: 'hello', b: null, c: undefined };
+    expect(() => evalExpr('a + 1', c)).toThrow(/operator '\+' requires a number/);
+    expect(() => evalExpr('b - 1', c)).toThrow(/requires a number, got null/);
+    expect(() => evalExpr('c * 2', c)).toThrow(/requires a number, got undefined/);
+  });
+
+  it('throws a clear error when ordered comparison gets a non-number', () => {
+    expect(() => evalExpr("'foo' < 1", {})).toThrow(/operator '<' requires a number/);
+    expect(() => evalExpr('missing >= 3', {})).toThrow(/requires a number, got undefined/);
+  });
+
+  it('still permits === / !== across any types (identity, no coercion)', () => {
+    expect(evalExpr("'a' == 'a'", {})).toBe(true);
+    expect(evalExpr("'a' != 1", {})).toBe(true);
+    expect(evalExpr('null == null', {})).toBe(true);
+  });
+
+  it('rejects unary minus on non-numbers', () => {
+    expect(() => evalExpr('-name', { name: 'foo' })).toThrow(
+      /operator 'unary -' requires a number/
+    );
+  });
+
   it('evalBoolean coerces to boolean', () => {
     expect(evalBoolean('counters.ci', ctx)).toBe(false);
     expect(evalBoolean('counters.review', ctx)).toBe(true);

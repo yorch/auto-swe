@@ -10,17 +10,24 @@ import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
  * Resolve the active workflow template for a team, falling back to the
  * global default (teamId IS NULL). Returns {templateId, version} or null
  * if nothing is configured.
+ *
+ * Uniqueness is enforced at the DB layer via partial unique indexes on
+ * (team_id WHERE is_default), so `findFirst` returns at most one row in
+ * a well-formed database. The explicit `orderBy` is a deterministic
+ * tiebreaker if the index is dropped or someone bypasses Prisma.
  */
 async function resolveDefaultTemplate(
   prisma: FastifyInstance['prisma'],
   teamId: string
 ): Promise<{ templateId: string; version: number } | null> {
   const teamTpl = await prisma.workflowTemplate.findFirst({
+    orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
     where: { isDefault: true, status: 'ACTIVE', teamId },
   });
   const tpl =
     teamTpl ??
     (await prisma.workflowTemplate.findFirst({
+      orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
       where: { isDefault: true, status: 'ACTIVE', teamId: null },
     }));
   if (!tpl?.activeVersion) return null;

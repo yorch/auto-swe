@@ -1,8 +1,13 @@
 import { z } from 'zod';
 
 /**
- * WorkflowSpec — a serializable, versioned DAG that the RunnableWorkflow
+ * WorkflowSpec — a serializable, versioned graph that the RunnableWorkflow
  * interpreter executes. Stored as JSON in WorkflowTemplateVersion.spec.
+ *
+ * The graph is intentionally not acyclic — `cond` edges may form back-edges
+ * to express loops (e.g. the retry-on-failure loop in the seeded default
+ * engineering spec). The interpreter caps the total node-transition count
+ * (DEFAULT_MAX_TRANSITIONS) to prevent runaway specs from looping forever.
  *
  * Phase 1 node types cover the existing hardcoded EngineeringWorkflow:
  *   - step      : run a registered activity
@@ -11,7 +16,7 @@ import { z } from 'zod';
  *   - signal    : wait for a Temporal signal with timeout
  *   - terminate : end the run with a status
  *
- * Phase 2+ adds: fanOut, joinAll, gate, shell, loop, conditional retry.
+ * Phase 2+ adds: fanOut, joinAll, gate, shell, conditional retry.
  */
 
 export const SPEC_SCHEMA_VERSION = 1 as const;

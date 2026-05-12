@@ -223,9 +223,6 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     terminateReviewFailed: {
-      result: {
-        status: { literal: 'FAILED' },
-      },
       status: 'FAILED',
       type: 'terminate',
     },

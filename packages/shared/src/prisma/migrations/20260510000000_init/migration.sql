@@ -276,6 +276,20 @@ CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workf
 CREATE UNIQUE INDEX "workflow_templates_team_id_name_key" ON "workflow_templates"("team_id", "name");
 
 -- CreateIndex
+-- Postgres treats NULLs as distinct under standard UNIQUE constraints, so the
+-- (team_id, name) index above does NOT prevent duplicate global templates with
+-- the same name. Enforce it explicitly via a partial unique index.
+CREATE UNIQUE INDEX "workflow_templates_global_name_key" ON "workflow_templates"("name") WHERE "team_id" IS NULL;
+
+-- CreateIndex
+-- Resolve-default queries (gateway resolveDefaultTemplate / worker
+-- resolveTemplateForRepo) pick the single active default per team and fall
+-- back to the global default. Both must be unique to keep resolution
+-- deterministic.
+CREATE UNIQUE INDEX "workflow_templates_team_default_unique" ON "workflow_templates"("team_id") WHERE "is_default" = TRUE AND "team_id" IS NOT NULL;
+CREATE UNIQUE INDEX "workflow_templates_global_default_unique" ON "workflow_templates"((1)) WHERE "is_default" = TRUE AND "team_id" IS NULL;
+
+-- CreateIndex
 CREATE UNIQUE INDEX "workflow_template_versions_template_id_version_key" ON "workflow_template_versions"("template_id", "version");
 
 -- CreateIndex

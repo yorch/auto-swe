@@ -7,24 +7,6 @@ import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/s
  * the interpreter (which runs in the V8 isolate) can call them through proxies.
  */
 
-export async function loadTemplateSpec(
-  templateId: string,
-  version: number
-): Promise<{ runId: string; spec: WorkflowSpec; workflowId: string } | { error: string }> {
-  const row = await prisma.workflowTemplateVersion.findUnique({
-    where: { templateId_version: { templateId, version } },
-  });
-  if (!row) return { error: `template ${templateId}@v${version} not found` };
-  try {
-    const migrated = migrateSpec(row.spec, SPEC_SCHEMA_VERSION);
-    const spec = parseWorkflowSpec(migrated);
-    // Caller (createWorkflowRun) provides runId/workflowId.
-    return { runId: '', spec, workflowId: '' };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 export interface CreateWorkflowRunInput {
   workflowId: string;
   templateId: string;
@@ -129,11 +111,13 @@ export async function resolveTemplateForRepo(
   });
 
   const teamTpl = await prisma.workflowTemplate.findFirst({
+    orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
     where: { isDefault: true, status: 'ACTIVE', teamId: repo.teamId },
   });
   const tpl =
     teamTpl ??
     (await prisma.workflowTemplate.findFirst({
+      orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
       where: { isDefault: true, status: 'ACTIVE', teamId: null },
     }));
 

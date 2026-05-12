@@ -160,11 +160,30 @@ function tokenizeExpr(input: string): Tok[] {
       i = j + 1;
       continue;
     }
-    // number
+    // number — accept at most one decimal point so malformed literals like
+    // `1.2.3` fail fast instead of being silently truncated by parseFloat.
     if ((c >= '0' && c <= '9') || (c === '-' && /\d/.test(input[i + 1] ?? ''))) {
       let j = i + 1;
-      while (j < len && /[0-9.]/.test(input[j] as string)) j++;
-      tokens.push({ kind: 'num', val: Number.parseFloat(input.slice(i, j)) });
+      let seenDot = false;
+      while (j < len) {
+        const ch = input[j] as string;
+        if (ch >= '0' && ch <= '9') {
+          j++;
+        } else if (ch === '.') {
+          if (seenDot) {
+            throw new Error(`invalid number literal at position ${i} in expr: ${input}`);
+          }
+          seenDot = true;
+          j++;
+        } else {
+          break;
+        }
+      }
+      const literal = input.slice(i, j);
+      if (literal === '.' || literal === '-' || literal === '-.') {
+        throw new Error(`invalid number literal '${literal}' in expr: ${input}`);
+      }
+      tokens.push({ kind: 'num', val: Number.parseFloat(literal) });
       i = j;
       continue;
     }
@@ -271,10 +290,10 @@ class Parser {
     while (true) {
       if (this.matchOp('+')) {
         const right = this.parseMul();
-        left = (left as number) + (right as number);
+        left = requireNumber(left, '+') + requireNumber(right, '+');
       } else if (this.matchOp('-')) {
         const right = this.parseMul();
-        left = (left as number) - (right as number);
+        left = requireNumber(left, '-') - requireNumber(right, '-');
       } else break;
     }
     return left;
@@ -285,10 +304,10 @@ class Parser {
     while (true) {
       if (this.matchOp('*')) {
         const right = this.parseUnary();
-        left = (left as number) * (right as number);
+        left = requireNumber(left, '*') * requireNumber(right, '*');
       } else if (this.matchOp('/')) {
         const right = this.parseUnary();
-        left = (left as number) / (right as number);
+        left = requireNumber(left, '/') / requireNumber(right, '/');
       } else break;
     }
     return left;
@@ -301,7 +320,7 @@ class Parser {
     }
     if (this.matchOp('-')) {
       const v = this.parseUnary();
-      return -(v as number);
+      return -requireNumber(v, 'unary -');
     }
     return this.parsePrimary();
   }
@@ -343,6 +362,20 @@ class Parser {
   }
 }
 
+function requireNumber(v: unknown, op: string): number {
+  if (typeof v !== 'number' || Number.isNaN(v)) {
+    throw new Error(`operator '${op}' requires a number, got ${describeOperand(v)}`);
+  }
+  return v;
+}
+
+function describeOperand(v: unknown): string {
+  if (v === null) return 'null';
+  if (v === undefined) return 'undefined';
+  if (typeof v === 'string') return `string '${v.slice(0, 32)}'`;
+  return `${typeof v}`;
+}
+
 function compare(op: '==' | '!=' | '<' | '<=' | '>' | '>=', l: unknown, r: unknown): boolean {
   switch (op) {
     case '==':
@@ -350,12 +383,12 @@ function compare(op: '==' | '!=' | '<' | '<=' | '>' | '>=', l: unknown, r: unkno
     case '!=':
       return l !== r;
     case '<':
-      return (l as number) < (r as number);
+      return requireNumber(l, '<') < requireNumber(r, '<');
     case '<=':
-      return (l as number) <= (r as number);
+      return requireNumber(l, '<=') <= requireNumber(r, '<=');
     case '>':
-      return (l as number) > (r as number);
+      return requireNumber(l, '>') > requireNumber(r, '>');
     case '>=':
-      return (l as number) >= (r as number);
+      return requireNumber(l, '>=') >= requireNumber(r, '>=');
   }
 }
