@@ -57,9 +57,21 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
+const generateMock = vi.fn();
+vi.mock('../agents/implementer.js', () => ({
+  createImplementerAgent: vi.fn(() => ({
+    agent: { generate: generateMock },
+    mastra: {},
+  })),
+}));
+
+vi.mock('../lib/costTracking.js', () => ({
+  recordLlmUsage: vi.fn(),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { mergeBranches, subtaskBranchName } from './decomposition.js';
+import { mergeBranches, resolveMergeConflict, subtaskBranchName } from './decomposition.js';
 
 const baseRequest = {
   description: 'test',
@@ -74,6 +86,7 @@ afterEach(() => {
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
   (fakeWorkspace.destroy as ReturnType<typeof vi.fn>).mockReset();
+  generateMock.mockReset();
 });
 
 describe('subtaskBranchName', () => {
@@ -103,6 +116,7 @@ describe('mergeBranches', () => {
     });
     expect(result.passed).toBe(true);
     expect(result.mergedBranches).toEqual([]);
+    expect(result.unmergedBranches).toEqual([]);
     // No workspace provisioned in the no-op path.
     expect(fakeWorkspace.exec).not.toHaveBeenCalled();
   });
@@ -159,6 +173,9 @@ describe('mergeBranches', () => {
     expect(result.mergedBranches).toEqual(['auto/TICK-1/auth']);
     expect(result.conflicts.length).toBe(1);
     expect(result.conflicts[0]?.branch).toBe('auto/TICK-1/db');
+    // Conflicted branch + every queued source becomes the unmerged tail so
+    // a downstream resolveMergeConflict step can pick up where merge failed.
+    expect(result.unmergedBranches).toEqual(['auto/TICK-1/db', 'auto/TICK-1/api']);
 
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     // Conflict branch triggers `git merge --abort`, and we never reach the third source.
@@ -167,6 +184,134 @@ describe('mergeBranches', () => {
       false
     );
     // No push on failure path.
+    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(false);
+  });
+});
+
+describe('resolveMergeConflict', () => {
+  function primeRepo() {
+    mockedFindUnique.mockResolvedValue({
+      defaultBranch: 'main',
+      executorImage: 'node:24-alpine',
+      githubUrl: 'https://github.com',
+      id: 'repo-1',
+      organizationName: 'acme',
+      repoName: 'svc',
+    } as never);
+  }
+
+  it('short-circuits when sourceBranches is empty', async () => {
+    primeRepo();
+    const result = await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: [],
+      targetBranch: 'auto/TICK-1',
+    });
+    expect(result.passed).toBe(true);
+    expect(result.unmergedBranches).toEqual([]);
+    expect(fakeWorkspace.exec).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it('skips the resolver when all branches merge cleanly', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.includes('git rev-parse HEAD')) return 'abc\n';
+      return '';
+    });
+
+    const result = await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.mergedBranches).toEqual(['auto/TICK-1/db']);
+    expect(result.unmergedBranches).toEqual([]);
+    expect(generateMock).not.toHaveBeenCalled();
+    const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
+    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
+  });
+
+  it('invokes the implementer agent on conflicts, then commits + pushes when resolved', async () => {
+    primeRepo();
+    let conflictResolved = false;
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff') && !conflictResolved) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT (content): Merge conflict in foo.ts';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
+        return conflictResolved ? '' : 'foo.ts\n';
+      }
+      if (cmd.startsWith('git diff --check')) {
+        if (conflictResolved) return '';
+        const err = new Error('markers present');
+        throw err;
+      }
+      if (cmd.startsWith('cat ')) return 'before\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>>\nafter\n';
+      if (cmd === 'git add -A') return '';
+      if (cmd.startsWith('git commit')) return 'committed';
+      if (cmd.includes('git rev-parse HEAD')) return 'resolved-sha\n';
+      return '';
+    });
+
+    generateMock.mockImplementation(async () => {
+      // Simulate the agent successfully resolving the conflict.
+      conflictResolved = true;
+      return { usage: { totalTokens: 100 } };
+    });
+
+    const result = await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.mergedBranches).toEqual(['auto/TICK-1/db']);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
+    expect(cmds).toContain('git add -A');
+    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
+  });
+
+  it('surfaces remaining conflict + unmerged tail when the resolver cannot finish in maxAttempts', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff')) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
+      if (cmd.startsWith('git diff --check')) {
+        throw new Error('still has markers');
+      }
+      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      if (cmd.includes('git rev-parse HEAD')) return 'sha\n';
+      return '';
+    });
+    // Resolver call returns without actually fixing the file.
+    generateMock.mockResolvedValue({ usage: { totalTokens: 50 } });
+
+    const result = await resolveMergeConflict({
+      maxAttemptsPerBranch: 1,
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db', 'auto/TICK-1/api'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.mergedBranches).toEqual([]);
+    expect(result.conflicts.length).toBe(1);
+    expect(result.unmergedBranches).toEqual(['auto/TICK-1/db', 'auto/TICK-1/api']);
+    // No push on failure.
+    const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(false);
   });
 });

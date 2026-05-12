@@ -1,27 +1,35 @@
 /**
- * Example spec — decompose a work request, run a parallel implementer per
- * subtask, merge the resulting branches into the parent feature branch, then
- * fall through to a single review pass.
+ * Example spec — decompose a work request, run implementers in parallel per
+ * subtask (concurrency-bounded), merge the resulting branches into the parent
+ * feature branch, fall back to the conflict-resolver agent if any branch
+ * conflicts, then run a single review pass.
  *
  * The fan-out subgraph is intentionally narrow (just the implementer) so the
- * example stays readable. Real teams will want per-branch review + gates;
- * see the phase-3 follow-ups in docs/configurable-workflows.md.
+ * example stays readable. Real teams will want per-branch review + gates.
  *
  * Spec shape:
  *
- *   plan → fanOut(over: $.subtasks)              ─┐
- *                                                 ├─ per subtask:
- *                                                 │     subImpl
- *                                                 │     subDone (terminate SUCCESS, branch in result)
- *                                                ─┘
- *   → merge (sourceBranches = fan.output.plucked) → review → done
+ *   plan → fanOut(over: $.subtasks, concurrency: 3)   ─┐
+ *                                                       ├─ per subtask:
+ *                                                       │     subImpl
+ *                                                       │     subDone (terminate SUCCESS, branch in result)
+ *                                                      ─┘
+ *   → merge (sourceBranches = fan.output.plucked)
+ *     ↓ if merge.passed → review
+ *     ↓ if !merge.passed → resolveConflict
+ *                          ↓ if passed → review
+ *                          ↓ if !passed → terminateMergeFailed
+ *
+ * `resolveConflict` consumes `nodes.merge.output.unmergedBranches` (the tail
+ * starting at the conflict) so the resolver only retries the branches that
+ * actually need help, not the ones that already merged cleanly.
  */
 
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 
 export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
   description:
-    'Example workflow: decompose work request → fan-out implementer per subtask → merge subtask branches into the feature branch → review.',
+    'Example workflow: decompose → parallel fan-out implementer per subtask → merge → resolve conflicts if needed → review.',
   entry: 'plan',
   name: 'engineering-with-decomposition',
   nodes: {
@@ -29,6 +37,18 @@ export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
       expr: 'nodes.review.output.approved == true',
       onFalse: 'terminateRejected',
       onTrue: 'done',
+      type: 'cond',
+    },
+    checkMerge: {
+      expr: 'nodes.merge.output.passed == true',
+      onFalse: 'resolveConflict',
+      onTrue: 'review',
+      type: 'cond',
+    },
+    checkResolved: {
+      expr: 'nodes.resolveConflict.output.passed == true',
+      onFalse: 'terminateMergeFailed',
+      onTrue: 'review',
       type: 'cond',
     },
     done: {
@@ -40,6 +60,7 @@ export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
       type: 'terminate',
     },
     fanOutSubtasks: {
+      concurrency: 3,
       itemKey: 'subtask',
       join: 'merge',
       onBranchFail: 'block',
@@ -55,7 +76,8 @@ export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
         sourceBranches: { from: 'nodes.fanOutSubtasks.output.plucked' },
         targetBranch: { from: 'context.featureBranch' },
       },
-      next: 'review',
+      next: 'checkMerge',
+      onFail: 'warn',
       step: 'mergeBranches',
       type: 'step',
     },
@@ -70,6 +92,18 @@ export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
       values: {
         'context.featureBranch': { literal: 'auto/feature' },
       },
+    },
+    resolveConflict: {
+      inputs: {
+        // mergeBranches surfaces the conflicted tail at `output.unmergedBranches`
+        // so the resolver only retries branches that actually need help.
+        sourceBranches: { from: 'nodes.merge.output.unmergedBranches' },
+        targetBranch: { from: 'context.featureBranch' },
+      },
+      next: 'checkResolved',
+      onFail: 'warn',
+      step: 'resolveMergeConflict',
+      type: 'step',
     },
     review: {
       inputs: {
@@ -100,6 +134,13 @@ export const DECOMPOSITION_EXAMPLE_SPEC: WorkflowSpec = {
       values: {
         'context.currentCodeResult': { from: 'nodes.subImpl.output' },
       },
+    },
+    terminateMergeFailed: {
+      result: {
+        conflicts: { from: 'nodes.resolveConflict.output.conflicts' },
+      },
+      status: 'FAILED',
+      type: 'terminate',
     },
     terminateRejected: {
       result: { rejection: { from: 'nodes.review.output.rejectionSummary' } },

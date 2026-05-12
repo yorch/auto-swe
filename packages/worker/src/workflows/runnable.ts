@@ -76,6 +76,19 @@ const mergeActivities = proxyActivities<Pick<typeof activitiesType, 'mergeBranch
   startToCloseTimeout: '15m',
 });
 
+// Conflict resolution is implementer-bound (one or more LLM calls per branch);
+// share the long-lived agent timeouts rather than the cheaper merge proxy.
+const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveMergeConflict'>>({
+  heartbeatTimeout: '5m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 2,
+    maximumInterval: '2m',
+  },
+  startToCloseTimeout: '30m',
+});
+
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
 // kept low — workflow-level retry/warn/block comes from the spec's onFail
 // policy (handled by the interpreter), not the activity proxy.
@@ -300,6 +313,32 @@ async function dispatchStepImpl(
           : {}),
         request,
         sourceBranches: sourceBranches as string[],
+        targetBranch,
+      });
+    }
+    case 'resolveMergeConflict': {
+      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
+      const targetBranch =
+        (inputs.targetBranch as string | undefined) ??
+        (config.targetBranch as string | undefined) ??
+        `${branchPrefix}/${request.externalTicketId}`;
+      // Decision 17 symmetry: `sourceBranches` must be wired explicitly via
+      // inputs (typically `{ from: 'nodes.merge.output.unmergedBranches' }`).
+      // No heuristic discovery from `nodes.*` or `context.*`.
+      const rawSources = inputs.sourceBranches;
+      if (!Array.isArray(rawSources) || rawSources.some((b: unknown) => typeof b !== 'string')) {
+        throw new Error('resolveMergeConflict: inputs.sourceBranches must be a string[]');
+      }
+      const maxAttemptsPerBranch =
+        (inputs.maxAttemptsPerBranch as number | undefined) ??
+        (config.maxAttemptsPerBranch as number | undefined);
+      return await conflictActivities.resolveMergeConflict({
+        ...(config.mergeMessagePrefix
+          ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
+          : {}),
+        ...(typeof maxAttemptsPerBranch === 'number' ? { maxAttemptsPerBranch } : {}),
+        request,
+        sourceBranches: rawSources as string[],
         targetBranch,
       });
     }

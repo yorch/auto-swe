@@ -31,6 +31,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 15 | Phase-3 fan-out is **sequential**; parallel `Promise.all`-with-concurrency-limit is a follow-up |
 | 16 | Phase-3 `mergeBranches` does **not** auto-resolve conflicts (records the conflict + fails the run); a `resolveMergeConflict` agent is reserved for phase 3.5 |
 | 17 | `mergeBranches.sourceBranches` is an **explicit binding** — no heuristic discovery from `nodes.*.output`. Specs use `fanOut.pluck: '<path>'` to project a flat array and bind it via `inputs.sourceBranches`. |
+| 18 | Phase-3.5 fan-out defaults to `concurrency=4` and tops out at the spec field's max (20). `onBranchFail: 'block'` stops scheduling but lets in-flight branches drain — we don't cancel mid-flight because activity cancellation isn't wired through the dispatcher yet. |
+| 19 | `mergeBranches.unmergedBranches` is the canonical binding for chaining `merge → cond(passed) → resolveMergeConflict`. The resolver consumes the tail directly rather than re-deriving it from `conflicts[*]` (which the expr language can't project anyway). |
+| 20 | The phase-3.5 conflict resolver reuses the existing implementer agent (one Mastra `Agent` instance per branch attempt) with a tight `MERGE_CONFLICT_RESOLVER_PROMPT`. Resolutions are verified via `git diff --check` + `git ls-files -u` before the commit lands. |
 
 ---
 
@@ -41,7 +44,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 1. Interpreter + parity refactor | **Done** | PR #13 |
 | 2. Quality-gate steps | **Done** | lint / typecheck / test / build / vuln / perf + onFail policy + gate-fix loop |
 | 3. Fan-out + decomposition + branch merging | **Done** | `fanOut` node + sealed child contexts, `planDecomposition` + `mergeBranches` activities, sequential execution; per-subagent workspace via `executeImplementation(request, subtask)` |
-| 3.5 Parallel fan-out + conflict resolution | Not started | `Promise.all`-with-concurrency-limit + `resolveMergeConflict` agent |
+| 3.5 Parallel fan-out + conflict resolution | **Done** | concurrency-bounded worker pool inside `runFanOut`, `resolveMergeConflict` activity backed by the implementer agent, `mergeBranches.unmergedBranches` tail |
 | 4. Web editor (React Flow + run viewer) | Not started | `/workflows` page, DAG editor, live run viewer |
 | 5. Versioning UI, A/B per team, analytics | Not started | version history page, per-team active version selector, $/run analytics |
 | 6. Custom shell steps with RBAC + audit | Not started | team-admin-only step authoring, ephemeral container, audit log |
@@ -226,6 +229,40 @@ planDecomposition
 - `packages/worker/src/activities/decomposition.ts`, `activities/executeImplementation.ts`, `activities/index.ts` (+ tests)
 - `packages/worker/src/lib/stepRegistry.ts` (+ tests)
 - `packages/worker/src/workflows/runnable.ts`
+
+---
+
+## Phase 3.5 — Parallel fan-out + conflict resolution (Done)
+
+### What shipped
+
+- `packages/shared/src/workflow/interpreter.ts` — `runFanOut` now runs branches through a `concurrency`-bounded worker pool (`Promise.all` over N workers sharing a `nextIndex` counter). Default cap is `DEFAULT_FANOUT_CONCURRENCY = 4`; specs can raise it via `fanOut.concurrency` (max 20 per the schema). Branches still walk a sealed child context — only `exports` flow back to the parent.
+  - `onBranchFail: 'block'` flips a `stop` flag so no further branches are scheduled; in-flight branches drain to completion. Activity cancellation would need to be plumbed through the dispatcher first, so the trade-off is that a block-mode failure may still pay for one full batch of LLM calls. The aggregate now carries `skipped: number` so spec authors can tell apart "ran-and-failed" from "never-launched."
+  - Result aggregate preserves item-index order regardless of completion order (slots pre-allocated by index, holes filtered at the end). `pluck` still works because it operates on completed entries in their stored order.
+- `packages/worker/src/agents/prompts.ts` — `MERGE_CONFLICT_RESOLVER_PROMPT` (tight, surgical, marker-removing only).
+- `packages/worker/src/activities/decomposition.ts` — `resolveMergeConflict` activity:
+  - Mirrors `mergeBranches`' workspace lifecycle (batched fetch, hard reset to target, per-source merge with abort-on-failure).
+  - When a `git merge` fails with conflict markers, lists the conflicted files via `git diff --name-only --diff-filter=U`, reads each file's content (truncated to 8KB per file), and invokes the implementer agent with the resolver prompt.
+  - After the agent returns, re-checks `git ls-files -u` + `git diff --check`; if both are clean, stages + commits with the configured prefix. Otherwise retries up to `maxAttemptsPerBranch` (default 1) before aborting and surfacing the unmerged tail.
+  - Returns a `MergeBranchesResult`-shaped payload so spec authors can chain `merge → cond(passed) → resolveMergeConflict → cond(passed) → review` without shaping nodes.
+- `mergeBranches` now also returns `unmergedBranches: string[]` — the conflicted source + every queued source after it — so the resolver step can bind directly via `inputs.sourceBranches: { from: 'nodes.merge.output.unmergedBranches' }`.
+- `packages/worker/src/lib/stepRegistry.ts` — `resolveMergeConflict` (category `agent`, `costHint` on implementer role, config fields `mergeMessagePrefix` + `maxAttemptsPerBranch`). Added to `BUILTIN_STEPS`.
+- `packages/worker/src/workflows/runnable.ts` — new `conflictActivities` proxy (30m STC, 5m heartbeat; matches the agent-bound timeouts) and a dispatch case that pulls `targetBranch` / `sourceBranches` / `maxAttemptsPerBranch` from inputs+config.
+- `packages/shared/src/workflow/examples/decomposition.spec.ts` — updated to demonstrate `concurrency: 3` on the fan-out and `merge → cond(passed) → resolveConflict → cond(passed) → review | terminateMergeFailed`. The `merge` and `resolveConflict` steps both use `onFail: 'warn'` so their outputs land in `nodes.<id>.output` for the downstream cond to read.
+
+### Tests (237 total)
+
+Phase 3.5 additions:
+- `interpreter.test.ts` — 4 new tests: concurrency cap enforced (≤2 in-flight w/ deferred-resolution stubs), aggregate order preserved when branches finish out of order, `skipped` field reports zero in `continue` mode, default cap honored when `concurrency` is unset.
+- `examples/decomposition.spec.test.ts` — 2 new tests: fan-out declares a concurrency cap; the conflict resolver is wired after `merge` and binds `unmergedBranches`.
+- `activities/decomposition.test.ts` — 3 new tests for `resolveMergeConflict`: empty-sources short-circuit, clean-merge path skips the agent, unresolvable conflict surfaces `conflicts` + `unmergedBranches` tail and skips the push. Also extended the existing `mergeBranches` conflict test to assert the new `unmergedBranches` field.
+- `stepRegistry.test.ts` — `resolveMergeConflict` registered as an `agent` step with both config fields.
+
+### Known follow-ups
+
+- **Activity cancellation.** Block-mode wastes the tail end of in-flight branches because the dispatcher doesn't expose Temporal cancellation scopes. Wiring `CancellationScope.cancel()` into the dispatcher's `dispatchStep` would let block-mode actually abort in-flight LLM calls, but it'd also surface as a new failure category callers need to handle.
+- **Per-branch quality gates.** The example spec still only runs the implementer per subtask before merging. Teams will want lint/typecheck/tests per branch before any merge — that's a spec-level change, not a runtime one, but worth a follow-up example.
+- **Resolver memory.** A successful conflict resolution is exactly the kind of outcome `commitToMemory` should capture (`failureType: 'MERGE_CONFLICT'` already exists in `MEMORY_SUMMARIZER_PROMPT`), but the wiring from the resolver activity into the memory pipeline is not yet there.
 
 ---
 
