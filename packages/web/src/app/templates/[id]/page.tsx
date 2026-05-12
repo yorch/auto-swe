@@ -1,10 +1,12 @@
 'use client';
 
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { NodeConfigForm } from '@/components/workflow/NodeConfigForm';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
@@ -56,6 +58,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const parsed = useMemo(() => (editorJson ? tryParseSpec(editorJson) : null), [editorJson]);
   const spec = parsed?.ok ? parsed.spec : null;
 
+  const stepRegistryByName = useMemo(
+    () => (stepRegistry ? new Map(stepRegistry.map((s) => [s.name, s as StepMetadata])) : null),
+    [stepRegistry]
+  );
+  const costEstimate = useMemo(() => {
+    if (!spec || !stepRegistryByName) return null;
+    return estimateSpecCost(spec, { stepLookup: (name) => stepRegistryByName.get(name) });
+  }, [spec, stepRegistryByName]);
+
   if (isLoading || !template) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
   }
@@ -86,6 +97,32 @@ export default function TemplateDetailPage({ params }: PageProps) {
     selectedNode && selectedNode.type === 'step'
       ? stepRegistry?.find((s) => s.name === selectedNode.step)
       : null;
+
+  // Per-field config edits mutate the in-memory spec and re-serialize into
+  // editorJson. Switches to edit mode so the existing Save/Cancel buttons
+  // can land the change as a new version. Falls through silently if the spec
+  // is in an unparseable state — the JSON editor stays the source of truth.
+  const handleConfigChange = (key: string, value: unknown) => {
+    if (!parsed?.ok || !selectedNodeId) return;
+    const node = parsed.spec.nodes[selectedNodeId];
+    if (!node || node.type !== 'step') return;
+    const currentConfig = node.config ?? {};
+    // No-op if the value didn't actually change. Stops a typed-then-erased
+    // keystroke from triggering a full spec re-serialize + DAG re-layout.
+    if (Object.is(currentConfig[key], value)) return;
+    const nextConfig = { ...currentConfig };
+    if (value === undefined) delete nextConfig[key];
+    else nextConfig[key] = value;
+    const nextSpec: WorkflowSpec = {
+      ...parsed.spec,
+      nodes: {
+        ...parsed.spec.nodes,
+        [selectedNodeId]: { ...node, config: nextConfig },
+      },
+    };
+    setEditorJson(JSON.stringify(nextSpec, null, 2));
+    setEditorMode('edit');
+  };
 
   return (
     <div className="space-y-6">
@@ -124,6 +161,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   {effectiveVersion === template.activeVersion && (
                     <span className="ml-2 text-xs px-1.5 py-0.5 bg-green-100 text-green-800 rounded">
                       active
+                    </span>
+                  )}
+                  {costEstimate && costEstimate.totalUsd > 0 && (
+                    <span
+                      className="ml-2 text-xs px-1.5 py-0.5 bg-gray-100 text-gray-700 rounded font-normal"
+                      title={`Static estimate from step costHints. Branches take max; fanOut assumes width ${costEstimate.fanOutWidthAssumed}.`}
+                    >
+                      ~${costEstimate.totalUsd.toFixed(2)}/run
                     </span>
                   )}
                 </CardTitle>
@@ -228,18 +273,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
                     <div className="text-xs text-[var(--muted-foreground)] pt-2 border-t border-[var(--border)]">
                       {selectedStepMeta.description}
                     </div>
-                    {selectedStepMeta.configFields.length > 0 && (
-                      <div className="pt-2 text-xs">
-                        <div className="font-medium mb-1">Config fields</div>
-                        <ul className="space-y-1 text-[var(--muted-foreground)]">
-                          {selectedStepMeta.configFields.map((f) => (
-                            <li key={f.key}>
-                              <span className="font-mono">{f.key}</span> ({f.type})
-                              {f.required && <span className="text-red-600"> *</span>} — {f.label}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                    {selectedNode.type === 'step' && (
+                      <NodeConfigForm
+                        fields={selectedStepMeta.configFields}
+                        onChange={handleConfigChange}
+                        values={(selectedNode.config ?? {}) as Record<string, unknown>}
+                      />
                     )}
                   </>
                 )}

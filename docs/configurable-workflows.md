@@ -310,11 +310,18 @@ The phase-4 plan originally put templates at `/workflows`, but `/workflows` alre
 | `/templates/[id]/runs` | Template's paginated run history |
 | `/runs/[id]` | WorkflowRun detail with DAG + per-node live status |
 
+### Static `$/run` cost estimate
+
+`packages/shared/src/workflow/costEstimator.ts` — pure walker that sums each step node's `costHint.tokensIn` × input price + `costHint.tokensOut` × output price using `DEFAULT_ROLE_PRICING` (overrideable per call). Branching nodes take the **max** of both arms (pessimistic worst-case); `fanOut` multiplies the subgraph's estimate by an assumed width (`DEFAULT_FANOUT_WIDTH = 4`); cycles are guarded by a visited set so retry loops count once. The estimate renders as a chip in the editor card title (`~$X.YY/run`) with the assumption surface in the tooltip. 8 tests in `costEstimator.test.ts`.
+
+### Editable per-node config form
+
+`packages/web/src/components/workflow/NodeConfigForm.tsx` — per-`StepFieldDef.type` form input (string / number / boolean / enum / json). Edits write through to the parsed spec, re-serialize, push into `editorJson`, and auto-switch to edit mode so the existing Save flow can land the change as a new version. Falls back silently if the spec is mid-edit and unparseable (the JSON editor remains the source of truth).
+
 ### Known follow-ups
 
-- **Canvas drag-edit.** The current editor is a JSON textarea + read-only DAG viz. A proper drag-and-drop node editor (React Flow or equivalent) is the natural phase 5 follow-up — JSON works but is friction-y for non-spec-literate users.
-- **Form-driven node config.** Per-node config fields are surfaced read-only in the inspector. Phase 5 should let users edit `node.config.<field>` through hand-rolled per-field forms (~6 widget types from `StepFieldDef.type`).
-- **Cost estimation.** `stepRegistry.costHint` exists but the editor doesn't surface a `$/run` estimate yet. Phase 5 analytics page should aggregate recent-run averages and project per-spec estimates.
+- **Canvas drag-edit.** The current editor is a JSON textarea + DAG viz (now with form-based config edits for the selected node). A proper drag-and-drop node editor (React Flow or equivalent) is the natural phase 5 follow-up — useful for adding/removing nodes and rewiring edges without hand-editing JSON.
+- **Recent-run cost averages.** The estimate is static (from `costHint`s). Phase 5 analytics should fold in observed token usage from `workflow_runs` so the displayed number tracks reality per template.
 - **Version diff.** Selecting a non-active version shows the spec but not a diff vs. active. A side-by-side textual diff (or DAG-level node/edge diff highlighting) would close the loop.
 - **A11y.** SVG nodes are focusable buttons, but the DAG itself has no keyboard navigation between nodes. Worth wiring an arrow-key traversal in phase 5 once the editor grows.
 

@@ -1,17 +1,6 @@
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { makeSpec as spec } from '@auto-swe/shared/workflow/testHelpers';
 import { describe, expect, it } from 'vitest';
 import { layoutSpec, NODE_WIDTH, RANK_X_SPACING } from './workflowLayout.js';
-
-function spec(partial: Partial<WorkflowSpec>): WorkflowSpec {
-  return {
-    description: '',
-    entry: 'start',
-    name: 'test',
-    nodes: {},
-    schemaVersion: 3,
-    ...partial,
-  } as WorkflowSpec;
-}
 
 describe('layoutSpec', () => {
   it('returns an empty layout for an empty node map', () => {
