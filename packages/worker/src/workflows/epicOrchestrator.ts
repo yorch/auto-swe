@@ -39,6 +39,16 @@ const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'
   startToCloseTimeout: '5m',
 });
 
+const templateActivities = proxyActivities<Pick<typeof activitiesType, 'resolveTemplateForRepo'>>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '1s',
+    maximumAttempts: 3,
+    maximumInterval: '10s',
+  },
+  startToCloseTimeout: '30s',
+});
+
 // ── Signals ──
 
 export const epicCancelSignal = defineSignal('epicCancelSignal');
@@ -157,8 +167,14 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
       const childWorkflowId = `${request.epicWorkflowId}-${repo.repoId}`;
 
       try {
-        const handle = await startChild('EngineeringWorkflow', {
-          args: [childRequest],
+        // Each child resolves its own template from its repo's team default
+        // (with global fallback). Different repos in one epic may belong to
+        // different teams and want different workflows.
+        const { templateId, templateVersion } = await templateActivities.resolveTemplateForRepo(
+          repo.repoId
+        );
+        const handle = await startChild('RunnableWorkflow', {
+          args: [{ request: childRequest, templateId, templateVersion }],
           parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
           taskQueue: 'engineering-workflow',
           workflowId: childWorkflowId,

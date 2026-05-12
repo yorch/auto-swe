@@ -22,6 +22,7 @@ For deeper context on architecture and design rationale, refer to:
 | `docs/data-and-infra.md`          | Embedding pipeline, executor images, security review |
 | `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |
 | `docs/wireframes.md`              | Web dashboard wireframes and page layouts            |
+| `docs/configurable-workflows.md`  | Living roadmap for the configurable-workflow engine (phases, decisions, open questions) |
 
 ---
 

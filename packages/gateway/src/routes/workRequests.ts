@@ -1,9 +1,38 @@
 import crypto from 'node:crypto';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
-import type { FastifyPluginAsync } from 'fastify';
+import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+
+/**
+ * Resolve the active workflow template for a team, falling back to the
+ * global default (teamId IS NULL). Returns {templateId, version} or null
+ * if nothing is configured.
+ *
+ * Uniqueness is enforced at the DB layer via partial unique indexes on
+ * (team_id WHERE is_default), so `findFirst` returns at most one row in
+ * a well-formed database. The explicit `orderBy` is a deterministic
+ * tiebreaker if the index is dropped or someone bypasses Prisma.
+ */
+async function resolveDefaultTemplate(
+  prisma: FastifyInstance['prisma'],
+  teamId: string
+): Promise<{ templateId: string; version: number } | null> {
+  const teamTpl = await prisma.workflowTemplate.findFirst({
+    orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
+    where: { isDefault: true, status: 'ACTIVE', teamId },
+  });
+  const tpl =
+    teamTpl ??
+    (await prisma.workflowTemplate.findFirst({
+      orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
+      where: { isDefault: true, status: 'ACTIVE', teamId: null },
+    }));
+  if (!tpl?.activeVersion) return null;
+  return { templateId: tpl.id, version: tpl.activeVersion };
+}
 
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
@@ -71,17 +100,34 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // the workflow needs the ID but the DB write happens after workflow start.
       const workRequestId = crypto.randomUUID();
 
+      // Resolve which workflow template to run. Team-scoped default wins; falls
+      // back to the global teamId=null template seeded by `yarn db:seed`.
+      const resolvedTemplate = await resolveDefaultTemplate(fastify.prisma, repo.teamId);
+      if (!resolvedTemplate) {
+        return reply.status(500).send({
+          error: {
+            code: 'NO_DEFAULT_TEMPLATE',
+            message: 'No default workflow template configured. Run `yarn db:seed`.',
+          },
+        });
+      }
+
       // Start Temporal workflow FIRST — this is the idempotency gate.
       // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
       // and we haven't written any orphan DB rows yet.
+      const repoWorkRequest: RepoWorkRequest = {
+        budgetTier,
+        description,
+        externalTicketId,
+        repoId: repo.id,
+        requestPayload: JSON.stringify(request.body),
+        workRequestId,
+      };
       try {
-        await fastify.temporal.startWorkflow(temporalWorkflowId, {
-          budgetTier,
-          description,
-          externalTicketId,
-          repoId: repo.id,
-          requestPayload: JSON.stringify(request.body),
-          workRequestId,
+        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+          request: repoWorkRequest,
+          templateId: resolvedTemplate.templateId,
+          templateVersion: resolvedTemplate.version,
         });
       } catch (err: unknown) {
         if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
@@ -104,6 +150,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           externalTicketId,
           id: workRequestId,
           requestPayload: JSON.stringify(request.body),
+          templateId: resolvedTemplate.templateId,
+          templateVersion: resolvedTemplate.version,
         },
       });
 

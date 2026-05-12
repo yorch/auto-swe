@@ -33,6 +33,13 @@ describe('POST /api/v1/work-requests', () => {
           organizationName: 'org',
           repoName: 'test',
           team: { memberships: [{ userId: 'user-1' }] },
+          teamId: 'team-1',
+        }),
+      },
+      workflowTemplate: {
+        findFirst: async () => ({
+          activeVersion: 1,
+          id: 'tpl-1',
         }),
       },
       workRequest: {
@@ -42,7 +49,7 @@ describe('POST /api/v1/work-requests', () => {
     app.decorate('temporal', {
       signalWorkflow: async () => {},
       startEpicWorkflow: async () => {},
-      startWorkflow: async () => {},
+      startRunnableWorkflow: async () => {},
     });
 
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
