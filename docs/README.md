@@ -1,6 +1,8 @@
 # Docs
 
-Most files in this folder are **historical design documents** — the design rationale that drove each phase of the build, preserved for context. For day-to-day work, prefer the top-level docs:
+Most files in this folder are **historical design documents** — the design rationale that drove each phase of the build, preserved for context. The exception is [`configurable-workflows.md`](./configurable-workflows.md), which is a **living roadmap** updated as phases ship.
+
+For day-to-day work, prefer the top-level docs:
 
 - [`README.md`](../README.md) — quickstart, env vars, commands
 - [`AGENTS.md`](../AGENTS.md) — current conventions, tech stack, model defaults, tool/agent rules
@@ -17,3 +19,4 @@ Most files in this folder are **historical design documents** — the design rat
 | [gateway-and-auth.md](./gateway-and-auth.md)               | Full Gateway API spec, JWT/RBAC, Slack OAuth                                   | Reference — RS256 framing; HS256 is the Docker Compose default      |
 | [workflow-and-activities.md](./workflow-and-activities.md) | Temporal workflow, agent data flow, review network, CI loop, memory commit    | Reference — workspace provisioning is DinD, not K8s Jobs            |
 | [wireframes.md](./wireframes.md)                           | Web dashboard wireframes (ASCII) for every page                                | Reference — matches `packages/web/src/app/`                         |
+| [configurable-workflows.md](./configurable-workflows.md)   | Roadmap for the user-configurable workflow engine (interpreter, gates, fan-out, editor, shell steps) | **Living** — phase 1 shipped (PR #13); phases 2–7 pending          |
