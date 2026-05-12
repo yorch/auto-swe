@@ -216,8 +216,6 @@ register({
   name: 'mergeBranches',
 });
 
-// ── Phase 3.5 — implementer-driven merge conflict resolution ────────────────
-
 register({
   category: 'agent',
   configFields: [

@@ -350,20 +350,18 @@ function runTerminate(
 }
 
 /**
- * Phase-3.5 fan-out. Resolves `over` to an array, spawns one nested walk per
- * element using a sealed child context, then aggregates results into the
- * parent under `nodes.<fanOutId>.output`.
+ * Fan-out: resolve `over` to an array, run the subgraph once per element in
+ * a sealed child context, aggregate results into `nodes.<fanOutId>.output`.
  *
- * Branches run in parallel with a `concurrency`-bounded worker pool (default
- * {@link DEFAULT_FANOUT_CONCURRENCY}). When `onBranchFail: 'block'` fires, no
- * further branches are scheduled, but in-flight ones drain to completion;
- * trying to cancel mid-flight would require activity cancellation plumbing
- * that doesn't yet exist on the Temporal-backed dispatcher.
+ * Branches run through a `concurrency`-bounded worker pool (default
+ * {@link DEFAULT_FANOUT_CONCURRENCY}). `onBranchFail: 'block'` stops
+ * scheduling new branches but lets in-flight ones drain — Temporal activity
+ * cancellation isn't plumbed through the dispatcher, so we can't abort
+ * mid-flight without losing replay determinism.
  *
- * Determinism: Temporal workflow code runs in a single-threaded event loop;
- * the worker pool reads from a shared `nextIndex` counter inside that loop,
- * so the order in which branches schedule their activities is fully
- * deterministic across replay.
+ * Determinism: Temporal workflows run on a single-threaded event loop, so
+ * the worker pool's shared `nextIndex` counter and `Promise.all` of N
+ * workers produce a fully deterministic activity-scheduling order.
  */
 async function runFanOut(
   recordingId: string,
@@ -428,19 +426,17 @@ async function runFanOut(
           status: outcome.status,
         };
         if (outcome.status !== 'SUCCESS') {
-          // A branch that reaches `terminate { status: !== 'SUCCESS' }` never
-          // throws — surface it here so onBranchFail:'block' still fires.
-          if (firstError === null) {
-            firstError = new Error(
-              `fanOut '${recordingId}' branch ${i} terminated with status ${outcome.status}`
-            );
-          }
+          // A branch that terminates non-SUCCESS never throws — surface it
+          // here so onBranchFail:'block' still fires.
+          firstError ??= new Error(
+            `fanOut '${recordingId}' branch ${i} terminated with status ${outcome.status}`
+          );
           if (node.onBranchFail === 'block') stop = true;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         slots[i] = { error: msg, result: {}, status: 'FAILED' };
-        if (firstError === null) firstError = err;
+        firstError ??= err;
         if (node.onBranchFail === 'block') stop = true;
       }
     }

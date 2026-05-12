@@ -298,37 +298,20 @@ async function dispatchStepImpl(
     case 'planDecomposition':
       return await agentActivities.planDecomposition(request);
     case 'mergeBranches': {
-      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
-      const targetBranch =
-        (inputs.targetBranch as string | undefined) ??
-        (config.targetBranch as string | undefined) ??
-        `${branchPrefix}/${request.externalTicketId}`;
-      const sourceBranches = inputs.sourceBranches;
-      if (!Array.isArray(sourceBranches) || sourceBranches.some((b) => typeof b !== 'string')) {
-        throw new Error('mergeBranches: inputs.sourceBranches must be a string[]');
-      }
+      const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
       return await mergeActivities.mergeBranches({
         ...(config.mergeMessagePrefix
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
         request,
-        sourceBranches: sourceBranches as string[],
+        sourceBranches,
         targetBranch,
       });
     }
     case 'resolveMergeConflict': {
-      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
-      const targetBranch =
-        (inputs.targetBranch as string | undefined) ??
-        (config.targetBranch as string | undefined) ??
-        `${branchPrefix}/${request.externalTicketId}`;
-      // Decision 17 symmetry: `sourceBranches` must be wired explicitly via
-      // inputs (typically `{ from: 'nodes.merge.output.unmergedBranches' }`).
-      // No heuristic discovery from `nodes.*` or `context.*`.
-      const rawSources = inputs.sourceBranches;
-      if (!Array.isArray(rawSources) || rawSources.some((b: unknown) => typeof b !== 'string')) {
-        throw new Error('resolveMergeConflict: inputs.sourceBranches must be a string[]');
-      }
+      // Decision 17 symmetry: sourceBranches must be bound explicitly
+      // (typically `{ from: 'nodes.merge.output.unmergedBranches' }`).
+      const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
       const maxAttemptsPerBranch =
         (inputs.maxAttemptsPerBranch as number | undefined) ??
         (config.maxAttemptsPerBranch as number | undefined);
@@ -338,7 +321,7 @@ async function dispatchStepImpl(
           : {}),
         ...(typeof maxAttemptsPerBranch === 'number' ? { maxAttemptsPerBranch } : {}),
         request,
-        sourceBranches: rawSources as string[],
+        sourceBranches,
         targetBranch,
       });
     }
@@ -375,6 +358,29 @@ function pickCodeResult(provided: unknown, ctx: Context): CodeResult {
     throw new Error('step requires a CodeResult but none is bound (context.currentCodeResult)');
   }
   return v as CodeResult;
+}
+
+/**
+ * Resolve the shared `targetBranch` + `sourceBranches` bindings used by
+ * `mergeBranches` and `resolveMergeConflict`. Both require `sourceBranches`
+ * to be an explicit `string[]` input binding (decision 17).
+ */
+function resolveMergeBindings(
+  step: string,
+  request: RepoWorkRequest,
+  config: Record<string, unknown>,
+  inputs: Record<string, unknown>
+): { targetBranch: string; sourceBranches: string[] } {
+  const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
+  const targetBranch =
+    (inputs.targetBranch as string | undefined) ??
+    (config.targetBranch as string | undefined) ??
+    `${branchPrefix}/${request.externalTicketId}`;
+  const raw = inputs.sourceBranches;
+  if (!Array.isArray(raw) || raw.some((b) => typeof b !== 'string')) {
+    throw new Error(`${step}: inputs.sourceBranches must be a string[]`);
+  }
+  return { sourceBranches: raw as string[], targetBranch };
 }
 
 /**
