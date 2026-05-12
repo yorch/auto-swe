@@ -37,6 +37,18 @@ export function formatTokens(n: number): string {
   return `${n}`;
 }
 
+export function formatDuration(ms: number | null): string {
+  if (ms === null) return '—';
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  return `${(ms / 3_600_000).toFixed(2)}h`;
+}
+
+export function formatPercent(p: number | null): string {
+  if (p === null) return '—';
+  return `${(p * 100).toFixed(1)}%`;
+}
+
 export const STATUS_COLORS: Record<string, string> = {
   // ── WorkflowTemplateStatus ──
   ACTIVE: 'bg-green-100 text-green-800',

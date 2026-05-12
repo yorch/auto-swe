@@ -1,6 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import {
+  computeAnalytics,
   diffSpecs,
   parseWorkflowSpec,
   SPEC_SCHEMA_VERSION,
@@ -614,134 +615,37 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+      // Hard cap on rows pulled into memory. Templates with high run volume
+      // would otherwise OOM the gateway on a 90d window. At the cap the rollup
+      // becomes an approximation of the most recent N runs/steps in the window.
+      const ANALYTICS_ROW_CAP = 10_000;
 
-      const runs = await fastify.prisma.workflowRun.findMany({
-        select: {
-          endedAt: true,
-          startedAt: true,
-          status: true,
-          templateVersion: true,
-          workRequest: {
-            select: {
-              activeWorkflows: {
-                select: {
-                  costUsdAccrued: true,
-                  tokensInputUsed: true,
-                  tokensOutputUsed: true,
-                },
+      const [runs, steps] = await Promise.all([
+        fastify.prisma.workflowRun.findMany({
+          orderBy: { startedAt: 'desc' },
+          select: {
+            endedAt: true,
+            startedAt: true,
+            status: true,
+            templateVersion: true,
+            workRequest: {
+              select: {
+                activeWorkflows: { select: { costUsdAccrued: true } },
               },
             },
           },
-        },
-        where: { startedAt: { gte: windowStart }, templateId: tpl.id },
-      });
-
-      const steps = await fastify.prisma.workflowStep.findMany({
-        select: { nodeId: true, runId: true, status: true },
-        where: { run: { startedAt: { gte: windowStart }, templateId: tpl.id } },
-      });
+          take: ANALYTICS_ROW_CAP,
+          where: { startedAt: { gte: windowStart }, templateId: tpl.id },
+        }),
+        fastify.prisma.workflowStep.findMany({
+          orderBy: { startedAt: 'desc' },
+          select: { nodeId: true, status: true },
+          take: ANALYTICS_ROW_CAP,
+          where: { run: { startedAt: { gte: windowStart }, templateId: tpl.id } },
+        }),
+      ]);
 
       return { data: computeAnalytics(runs, steps, request.query.window) };
     }
   );
 };
-
-// ── Analytics computation (pure; exported for testing) ──
-
-interface AnalyticsRunRow {
-  endedAt: Date | null;
-  startedAt: Date;
-  status: string;
-  templateVersion: number;
-  workRequest: {
-    activeWorkflows: {
-      costUsdAccrued: number;
-      tokensInputUsed: number;
-      tokensOutputUsed: number;
-    }[];
-  } | null;
-}
-
-interface AnalyticsStepRow {
-  nodeId: string;
-  runId: string;
-  status: string;
-}
-
-function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null;
-  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
-  return sorted[idx] ?? null;
-}
-
-export function computeAnalytics(
-  runs: AnalyticsRunRow[],
-  steps: AnalyticsStepRow[],
-  windowDays: number
-) {
-  const totalRuns = runs.length;
-  const finished = runs.filter((r) => r.status !== 'RUNNING');
-  const succeeded = finished.filter((r) => r.status === 'SUCCESS').length;
-  const failed = finished.filter((r) =>
-    ['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(r.status)
-  ).length;
-  const successRate = finished.length > 0 ? succeeded / finished.length : null;
-
-  const durationsMs = finished
-    .filter((r) => r.endedAt)
-    .map((r) => (r.endedAt as Date).getTime() - r.startedAt.getTime())
-    .sort((a, b) => a - b);
-  const p50DurationMs = percentile(durationsMs, 0.5);
-  const p95DurationMs = percentile(durationsMs, 0.95);
-
-  // Cost rollup: sum across all activeWorkflows tied to the run's workRequest.
-  // Epics + decomposition both fan out to multiple activeWorkflows under one
-  // workRequest, so summing is correct.
-  const runCosts = runs
-    .map((r) => (r.workRequest?.activeWorkflows ?? []).reduce((s, aw) => s + aw.costUsdAccrued, 0))
-    .filter((c) => c > 0);
-  const totalCost = runCosts.reduce((s, c) => s + c, 0);
-  const avgCostPerRun = runCosts.length > 0 ? totalCost / runCosts.length : null;
-
-  // Per-step failure: count of FAILED step records per nodeId / count of total
-  // step records per nodeId (across attempts and runs). Skipped excluded.
-  const perNode = new Map<string, { failed: number; total: number }>();
-  for (const s of steps) {
-    if (s.status === 'SKIPPED' || s.status === 'PENDING') continue;
-    const entry = perNode.get(s.nodeId) ?? { failed: 0, total: 0 };
-    entry.total += 1;
-    if (s.status === 'FAILED') entry.failed += 1;
-    perNode.set(s.nodeId, entry);
-  }
-  const perStepFailureRates = Array.from(perNode.entries())
-    .map(([nodeId, { failed, total }]) => ({
-      failed,
-      failureRate: total > 0 ? failed / total : 0,
-      nodeId,
-      total,
-    }))
-    .sort((a, b) => b.failureRate - a.failureRate);
-
-  // Per-version run counts so the UI can see whether the experiment is actually
-  // routing the configured share of traffic.
-  const versionCounts = new Map<number, number>();
-  for (const r of runs) {
-    versionCounts.set(r.templateVersion, (versionCounts.get(r.templateVersion) ?? 0) + 1);
-  }
-
-  return {
-    avgCostPerRun,
-    failed,
-    p50DurationMs,
-    p95DurationMs,
-    perStepFailureRates,
-    perVersionCounts: Array.from(versionCounts.entries())
-      .map(([version, count]) => ({ count, version }))
-      .sort((a, b) => a.version - b.version),
-    succeeded,
-    successRate,
-    totalCost,
-    totalRuns,
-    windowDays,
-  };
-}

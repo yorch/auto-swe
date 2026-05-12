@@ -169,6 +169,21 @@ export function nodeCategoryColor(node: Node): { fill: string; stroke: string; t
   }
 }
 
+export type DiffKind = 'added' | 'removed' | 'changed';
+
+export function diffStrokeColor(kind: DiffKind | undefined): string | null {
+  switch (kind) {
+    case 'added':
+      return '#16a34a';
+    case 'removed':
+      return '#dc2626';
+    case 'changed':
+      return '#d97706';
+    default:
+      return null;
+  }
+}
+
 export function statusFill(status: string | undefined): string | undefined {
   if (!status) return undefined;
   switch (status) {

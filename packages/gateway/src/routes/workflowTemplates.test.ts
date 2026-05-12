@@ -1,7 +1,8 @@
+import { computeAnalytics } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { computeAnalytics, workflowTemplateRoutes } from './workflowTemplates.js';
+import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 type Mutable = Record<string, unknown>;
 
@@ -411,7 +412,7 @@ describe('computeAnalytics', () => {
           status: 'SUCCESS',
           templateVersion: 1,
           workRequest: {
-            activeWorkflows: [{ costUsdAccrued: 1, tokensInputUsed: 0, tokensOutputUsed: 0 }],
+            activeWorkflows: [{ costUsdAccrued: 1 }],
           },
         },
         {
@@ -420,7 +421,7 @@ describe('computeAnalytics', () => {
           status: 'SUCCESS',
           templateVersion: 1,
           workRequest: {
-            activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 0, tokensOutputUsed: 0 }],
+            activeWorkflows: [{ costUsdAccrued: 3 }],
           },
         },
         {
@@ -429,7 +430,7 @@ describe('computeAnalytics', () => {
           status: 'FAILED',
           templateVersion: 2,
           workRequest: {
-            activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 0, tokensOutputUsed: 0 }],
+            activeWorkflows: [{ costUsdAccrued: 2 }],
           },
         },
         // still running — ignored from rates + durations
@@ -442,11 +443,11 @@ describe('computeAnalytics', () => {
         },
       ],
       [
-        { nodeId: 'lint', runId: 'r1', status: 'PASSED' },
-        { nodeId: 'lint', runId: 'r2', status: 'FAILED' },
-        { nodeId: 'lint', runId: 'r3', status: 'PASSED' },
-        { nodeId: 'test', runId: 'r1', status: 'PASSED' },
-        { nodeId: 'skip-me', runId: 'r1', status: 'SKIPPED' },
+        { nodeId: 'lint', status: 'PASSED' },
+        { nodeId: 'lint', status: 'FAILED' },
+        { nodeId: 'lint', status: 'PASSED' },
+        { nodeId: 'test', status: 'PASSED' },
+        { nodeId: 'skip-me', status: 'SKIPPED' },
       ],
       30
     );

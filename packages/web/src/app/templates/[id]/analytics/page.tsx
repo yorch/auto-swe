@@ -4,29 +4,15 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useWorkflows';
+import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-function fmtDuration(ms: number | null): string {
-  if (ms === null) return '—';
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
-  return `${(ms / 3_600_000).toFixed(2)}h`;
-}
-
-function fmtPercent(p: number | null): string {
-  if (p === null) return '—';
-  return `${(p * 100).toFixed(1)}%`;
-}
-
-function fmtUsd(n: number | null): string {
-  if (n === null) return '—';
-  return `$${n.toFixed(2)}`;
-}
-
 const WINDOWS = [7, 14, 30, 90] as const;
+
+const formatUsdNullable = (n: number | null) => (n === null ? '—' : formatCost(n));
 
 export default function TemplateAnalyticsPage({ params }: PageProps) {
   const { id } = use(params);
@@ -65,11 +51,11 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <KpiCard label="Total runs" value={String(stats.totalRuns)} />
-            <KpiCard label="Success rate" value={fmtPercent(stats.successRate)} />
-            <KpiCard label="p50 duration" value={fmtDuration(stats.p50DurationMs)} />
-            <KpiCard label="p95 duration" value={fmtDuration(stats.p95DurationMs)} />
-            <KpiCard label="Avg cost / run" value={fmtUsd(stats.avgCostPerRun)} />
-            <KpiCard label="Total cost" value={fmtUsd(stats.totalCost)} />
+            <KpiCard label="Success rate" value={formatPercent(stats.successRate)} />
+            <KpiCard label="p50 duration" value={formatDuration(stats.p50DurationMs)} />
+            <KpiCard label="p95 duration" value={formatDuration(stats.p95DurationMs)} />
+            <KpiCard label="Avg cost / run" value={formatUsdNullable(stats.avgCostPerRun)} />
+            <KpiCard label="Total cost" value={formatUsdNullable(stats.totalCost)} />
             <KpiCard label="Succeeded" value={String(stats.succeeded)} />
             <KpiCard label="Failed" value={String(stats.failed)} />
           </div>
@@ -148,7 +134,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                                 : 'text-[var(--muted-foreground)]'
                           }
                         >
-                          {fmtPercent(row.failureRate)}
+                          {formatPercent(row.failureRate)}
                         </span>
                       </td>
                     </tr>

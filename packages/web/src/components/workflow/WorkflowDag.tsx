@@ -3,6 +3,8 @@
 import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { useMemo } from 'react';
 import {
+  type DiffKind,
+  diffStrokeColor,
   type LayoutEdge,
   type LayoutNode,
   layoutSpec,
@@ -12,15 +14,12 @@ import {
   statusFill,
 } from '@/lib/workflowLayout';
 
+export type { DiffKind } from '@/lib/workflowLayout';
+
 export interface DagStatusOverlay {
   /** Latest status per nodeId (after dedup by attempt). */
   byNodeId: Record<string, { status: string; attempt: number } | undefined>;
 }
-
-/** Optional per-node tint for the diff viewer. The diff page passes a map
- *  where each key is a nodeId and the value is the change kind. The renderer
- *  paints a coloured outline so added/removed/changed nodes pop visually. */
-export type DiffKind = 'added' | 'removed' | 'changed';
 
 interface Props {
   spec: WorkflowSpec;
@@ -32,19 +31,6 @@ interface Props {
   onSelect?: (id: string | null) => void;
   /** When true, the diagram fills its container; otherwise uses natural width. */
   responsive?: boolean;
-}
-
-function diffStrokeColor(kind: DiffKind | undefined): string | null {
-  switch (kind) {
-    case 'added':
-      return '#16a34a';
-    case 'removed':
-      return '#dc2626';
-    case 'changed':
-      return '#d97706';
-    default:
-      return null;
-  }
 }
 
 function edgeStrokeColor(kind: LayoutEdge['kind']): string {

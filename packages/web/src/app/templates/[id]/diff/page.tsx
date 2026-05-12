@@ -36,9 +36,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
   const [a, setA] = useState<number | null>(null);
   const [b, setB] = useState<number | null>(null);
 
-  // Pick sensible defaults the first time the version list arrives: the active
-  // version on one side, the next-newest on the other so the diff is
-  // immediately meaningful.
+  // Default A to active, B to next-newest so the first diff render is meaningful.
   useEffect(() => {
     if (!template || sortedVersions.length === 0) return;
     if (a === null) setA(template.activeVersion ?? sortedVersions[0]?.version ?? null);
@@ -64,36 +62,20 @@ export default function TemplateDiffPage({ params }: PageProps) {
 
       <Card>
         <div className="flex items-center gap-4">
-          <label className="text-sm flex items-center gap-2">
-            <span className="text-[var(--muted-foreground)]">A</span>
-            <select
-              className="px-2 py-1 border border-[var(--border)] rounded text-sm bg-[var(--background)]"
-              onChange={(e) => setA(Number(e.target.value))}
-              value={a ?? ''}
-            >
-              {sortedVersions.map((v) => (
-                <option key={v.id} value={v.version}>
-                  v{v.version}
-                  {v.version === template?.activeVersion ? ' (active)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm flex items-center gap-2">
-            <span className="text-[var(--muted-foreground)]">B</span>
-            <select
-              className="px-2 py-1 border border-[var(--border)] rounded text-sm bg-[var(--background)]"
-              onChange={(e) => setB(Number(e.target.value))}
-              value={b ?? ''}
-            >
-              {sortedVersions.map((v) => (
-                <option key={v.id} value={v.version}>
-                  v{v.version}
-                  {v.version === template?.activeVersion ? ' (active)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          <VersionSelect
+            activeVersion={template?.activeVersion ?? null}
+            label="A"
+            onChange={setA}
+            value={a}
+            versions={sortedVersions}
+          />
+          <VersionSelect
+            activeVersion={template?.activeVersion ?? null}
+            label="B"
+            onChange={setB}
+            value={b}
+            versions={sortedVersions}
+          />
           {a !== null && b !== null && a === b && (
             <span className="text-xs text-[var(--muted-foreground)]">
               Pick two distinct versions to compare.
@@ -189,5 +171,33 @@ export default function TemplateDiffPage({ params }: PageProps) {
         </>
       )}
     </div>
+  );
+}
+
+interface VersionSelectProps {
+  label: string;
+  versions: Array<{ id: string; version: number }>;
+  value: number | null;
+  onChange: (v: number) => void;
+  activeVersion: number | null;
+}
+
+function VersionSelect({ label, versions, value, onChange, activeVersion }: VersionSelectProps) {
+  return (
+    <label className="text-sm flex items-center gap-2">
+      <span className="text-[var(--muted-foreground)]">{label}</span>
+      <select
+        className="px-2 py-1 border border-[var(--border)] rounded text-sm bg-[var(--background)]"
+        onChange={(e) => onChange(Number(e.target.value))}
+        value={value ?? ''}
+      >
+        {versions.map((v) => (
+          <option key={v.id} value={v.version}>
+            v{v.version}
+            {v.version === activeVersion ? ' (active)' : ''}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
