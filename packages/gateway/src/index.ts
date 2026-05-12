@@ -20,7 +20,9 @@ import { slackRoutes } from './routes/slack.js';
 import { teamRoutes } from './routes/teams.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { stepRegistryRoutes, workflowRunRoutes } from './routes/workflowRuns.js';
 import { workflowRoutes } from './routes/workflows.js';
+import { workflowTemplateRoutes } from './routes/workflowTemplates.js';
 import { workRequestRoutes } from './routes/workRequests.js';
 
 async function start() {
@@ -70,6 +72,9 @@ async function start() {
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
+  await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
+  await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
+  await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });

@@ -1,5 +1,5 @@
-import { BUILTIN_STEPS } from '@auto-swe/shared/workflow';
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_STEPS } from './registry-types.js';
 import {
   assertBuiltinStepsRegistered,
   getStepMetadata,

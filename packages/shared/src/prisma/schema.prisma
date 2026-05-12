@@ -158,8 +158,9 @@ model Team {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships  TeamMembership[]
-  repositories Repository[]
+  memberships       TeamMembership[]
+  repositories      Repository[]
+  workflowTemplates WorkflowTemplate[]
 
   @@map("teams")
 }
@@ -288,6 +289,7 @@ model WorkflowStep {
 model WorkflowTemplate {
   id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId        String?                   @map("team_id") @db.Uuid
+  team          Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   name          String
   description   String                    @default("")
   status        WorkflowTemplateStatus    @default(DRAFT)

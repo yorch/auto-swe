@@ -1,21 +1,21 @@
 /**
- * Step registry — the catalog of activity-backed steps that workflow specs
- * may reference. Activity wiring happens inside the workflow file (see
- * runnable.ts); this module only owns metadata used for:
+ * Step registry — the catalog of step metadata that workflow specs may
+ * reference. Lives in `shared` so the gateway can validate templates against
+ * the catalog and the web editor can render the palette + per-node config
+ * forms without pulling in worker-only code.
  *
- *   - Editor UI (config fields, labels, descriptions)
- *   - Validation at template-write time (gateway)
- *   - Cost estimation
+ * Activity wiring still lives in the worker package (see
+ * packages/worker/src/workflows/runnable.ts) — only the metadata is shared.
  *
  * Adding a new step:
  *   1. Implement the activity in packages/worker/src/activities/.
  *   2. Export it from activities/index.ts.
- *   3. Register a StepMetadata entry here.
- *   4. Add a dispatch case to dispatchStep() in workflows/runnable.ts.
+ *   3. Add the name to `BUILTIN_STEPS` in registry-types.ts.
+ *   4. Register a StepMetadata entry here.
+ *   5. Add a dispatch case to dispatchStep() in workflows/runnable.ts.
  */
 
-import type { StepMetadata } from '@auto-swe/shared/workflow';
-import { BUILTIN_STEPS } from '@auto-swe/shared/workflow';
+import { BUILTIN_STEPS, type StepMetadata } from './registry-types.js';
 
 const REGISTRY = new Map<string, StepMetadata>();
 

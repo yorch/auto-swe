@@ -19,7 +19,10 @@
     "./workflow/codemod": "./dist/workflow/codemod.js",
     "./workflow/defaultEngineeringSpec": "./dist/workflow/defaultEngineeringSpec.js",
     "./workflow/interpreter": "./dist/workflow/interpreter.js",
-    "./workflow/signalSlots": "./dist/workflow/signalSlots.js"
+    "./workflow/signalSlots": "./dist/workflow/signalSlots.js",
+    "./workflow/stepRegistry": "./dist/workflow/stepRegistry.js",
+    "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
+    "./workflow/testHelpers": "./dist/workflow/testHelpers.js"
   },
   "scripts": {
     "build": "tsc",

@@ -34,6 +34,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 18 | Phase-3.5 fan-out defaults to `concurrency=4` and tops out at the spec field's max (20). `onBranchFail: 'block'` stops scheduling but lets in-flight branches drain — we don't cancel mid-flight because activity cancellation isn't wired through the dispatcher yet. |
 | 19 | `mergeBranches.unmergedBranches` is the canonical binding for chaining `merge → cond(passed) → resolveMergeConflict`. The resolver consumes the tail directly rather than re-deriving it from `conflicts[*]` (which the expr language can't project anyway). |
 | 20 | The phase-3.5 conflict resolver reuses the existing implementer agent (one Mastra `Agent` instance per branch attempt) with a tight `MERGE_CONFLICT_RESOLVER_PROMPT`. Resolutions are verified via `git diff --check` + `git ls-files -u` before the commit lands. |
+| 21 | The web URLs are split: `/workflows` keeps its existing meaning (in-flight `ActiveWorkflow` rows, relabeled "Active Runs"), `/templates` owns the workflow-template editor + version history, and `/runs/[id]` is the WorkflowRun viewer. Phase 4 doc originally proposed `/workflows` for templates, but renaming a live-traffic route was riskier than introducing two new ones. |
+| 22 | Phase-4 editor ships a JSON-text spec editor + SVG DAG viewer (custom 150-line layered layout in `packages/web/src/lib/workflowLayout.ts`) instead of pulling in React Flow / dagre. Keeps the bundle small and avoids drag-and-drop scope creep; full canvas drag-edit can land in phase 5 if the JSON editor proves friction-y. |
+| 23 | The step registry lives in `packages/shared/src/workflow/stepRegistry.ts` so gateway + web can import metadata without depending on the worker package. Worker-only activity wiring still lives in `packages/worker/src/workflows/runnable.ts`. |
 
 ---
 
@@ -45,7 +48,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 2. Quality-gate steps | **Done** | lint / typecheck / test / build / vuln / perf + onFail policy + gate-fix loop |
 | 3. Fan-out + decomposition + branch merging | **Done** | `fanOut` node + sealed child contexts, `planDecomposition` + `mergeBranches` activities, sequential execution; per-subagent workspace via `executeImplementation(request, subtask)` |
 | 3.5 Parallel fan-out + conflict resolution | **Done** | concurrency-bounded worker pool inside `runFanOut`, `resolveMergeConflict` activity backed by the implementer agent, `mergeBranches.unmergedBranches` tail |
-| 4. Web editor (React Flow + run viewer) | Not started | `/workflows` page, DAG editor, live run viewer |
+| 4. Web editor + run viewer | **Done** | `/templates` list, JSON spec editor + SVG DAG viewer, version sidebar + promote, `/templates/[id]/runs` paginated history, `/runs/[id]` live DAG viewer with per-node status overlay; gateway CRUD + step-registry catalog |
 | 5. Versioning UI, A/B per team, analytics | Not started | version history page, per-team active version selector, $/run analytics |
 | 6. Custom shell steps with RBAC + audit | Not started | team-admin-only step authoring, ephemeral container, audit log |
 | 7. First-class in Slack + CLI | Not started | `/auto-swe workflow list` etc.; Slack picker on work-request create |
@@ -266,30 +269,69 @@ Phase 3.5 additions:
 
 ---
 
-## Phase 4 — Web editor + run viewer
+## Phase 4 — Web editor + run viewer (Done)
 
-### Adds
+### What shipped
 
-- `/workflows` — list per team (active version, last edited, last run status)
-- `/workflows/[id]/edit` — React Flow DAG editor
-  - Step palette generated from `stepRegistry.ts` metadata
-  - Right sidebar: Zod-derived form for the selected node's config
-  - Live $/run estimate from `stepRegistry.ts` cost hints + recent run averages
-  - Save creates a new `WorkflowTemplateVersion` (immutable; old in-flight runs unaffected)
-- `/workflows/[id]/runs` — paginated run history
-- `/runs/[id]` — DAG view with per-node live status (TanStack Query polling on `workflow_steps`)
+- **Step registry relocated.** `packages/shared/src/workflow/stepRegistry.ts` (moved from `packages/worker/src/lib/`) — gateway can validate templates and web can render the palette without depending on the worker package. Re-exported via `@auto-swe/shared/workflow`; package.json/exports + vitest.config alias updated. The startup invariant `assertBuiltinStepsRegistered` moves with it.
+- **Gateway routes.** Three new route files mounted at `/api/v1/workflow-templates`, `/api/v1/workflow-runs`, `/api/v1/workflow-steps`:
+  - `workflowTemplates.ts` — list, create (POST with spec — parses against `WorkflowSpecSchema` + checks `schemaVersion`), get detail (with versions sidebar + active spec inlined), patch metadata (name / description / isDefault / status; toggling `isDefault` clears the flag on the other templates in that team scope), get/create version, promote-to-active, paginated runs. Team-scoped: non-admins see global + their teams' templates only; non-admins cannot create global templates.
+  - `workflowRuns.ts` — list runs (filterable by status / templateId / workRequestId) and get-with-steps. Visibility expands to repos on the user's team so engineers can see runs for work requests they don't own.
+  - `stepRegistryRoutes` — `GET /api/v1/workflow-steps/registry` returns the full step catalog for the editor palette.
+- **Schema.** Bidirectional `Team ↔ WorkflowTemplate` relation added (was a dangling scalar). Foreign key added to the squashed init migration (`workflow_templates_team_id_fkey` with `ON DELETE SET NULL`). No new migration file — per the repo convention, this lands in the existing init migration.
+- **Web pages** (all under `packages/web/src/app/`):
+  - `templates/page.tsx` — team-filtered template list with last-run summary chip per row.
+  - `templates/[id]/page.tsx` — version sidebar + SVG DAG viz + JSON spec editor (textarea-based; parses on every keystroke and POSTs `{spec}` as a new version on Save) + step palette (read-only metadata catalog) + per-node config-field summary in the inspector. `Promote to active` button when viewing a non-active version. Default-template toggle.
+  - `templates/[id]/runs/page.tsx` — paginated run history with duration + work-request preview.
+  - `runs/[id]/page.tsx` — live DAG viewer. TanStack Query polls every 3s while the run is `RUNNING`, 30s otherwise. Per-node status overlay (left edge strip + status text) computed by collapsing fan-out branch prefixes (`fanId[i]/subNode`) onto the parent DAG nodes. Click-to-inspect surfaces every attempt + outputs + error per node.
+- **DAG layout.** `packages/web/src/lib/workflowLayout.ts` — pure layered layout (longest-path BFS rank assignment + index-within-rank). Tolerates back-edges (cond loops, fan-out join) without infinite recursion. Outputs `(x, y, rank)` per node plus a typed edge list with kind metadata for stroke colour. No new bundled dependency (no React Flow / dagre / elkjs).
+- **DAG renderer.** `packages/web/src/components/workflow/WorkflowDag.tsx` — single SVG component used by both the template editor and the run viewer. Cubic-bezier edges with kind-coloured strokes (onTrue green / onFalse red / onTimeout amber / subgraph purple / join teal / next slate). Accessible: each node is a focusable button with `role` / `tabIndex` / `onKeyDown` for Enter+Space activation.
+- **Hooks.** New TanStack Query hooks in `useWorkflows.ts`: `useWorkflowTemplates`, `useWorkflowTemplate`, `useWorkflowTemplateVersion`, `useTemplateRuns`, `useWorkflowRun` (status-aware refetch interval), `useStepRegistry` (5min stale), `useCreateWorkflowVersion`, `usePromoteWorkflowVersion`, `useUpdateWorkflowTemplate`.
+- **Shared API types.** `packages/shared/src/types/api.ts` — `WorkflowTemplateSummary` / `WorkflowTemplateDetail` / `WorkflowTemplateVersionSummary` / `WorkflowTemplateVersionDetail` / `WorkflowRunSummary` / `WorkflowRunDetail` / `WorkflowStepRecord` / `StepRegistryEntry` + body types for the create/patch/promote endpoints.
+- **Sidebar nav.** Existing `/workflows` link is now labelled "Active Runs" (still points at `ActiveWorkflow` rows); new "Templates" link points at `/templates`.
 
-### Files to touch
+### Tests (260 total, +8 from phase 3.5)
 
-- New `packages/web/app/workflows/page.tsx`, `[id]/edit/page.tsx`, `[id]/runs/page.tsx`, `runs/[id]/page.tsx`
-- New `packages/gateway/src/routes/workflows.ts` — CRUD endpoints (list templates, get version, create version, list runs, get run + steps)
-- Shared `packages/shared/src/workflow/registry-types.ts` already exports `StepMetadata`; web imports it to render the palette
+Phase 4 additions:
 
-### Open questions
+- `workflowLayout.test.ts` (web) — empty-spec short-circuit, entry-at-rank-0, longest-path BFS rank ordering, cond/signal/fanOut edge-kind collection, cycle tolerance, dangling-edge omission, layout width formula.
+- `workflowTemplates.test.ts` (gateway) — rejects invalid spec (wrong `schemaVersion`); creates a template + initial version + auto-promotes to active; list returns last-run summary; new-version POST increments monotonically; new-version POST rejects invalid spec; promote-to-active flips `activeVersion`; 404 on unknown template ID.
+- `stepRegistry.test.ts` moved to shared (same 7 cases, now in `packages/shared/src/workflow/`).
 
-1. **Editor library choice.** React Flow is the obvious pick (auto-layout via `dagre` or `elkjs`). Confirm vs. lighter alternatives.
-2. **Form generation.** Zod → form is a known weak spot. Options: hand-roll per-field from `StepFieldDef`, use `@rjsf/core` (JSON Schema Form), or `react-hook-form` + custom field renderers. Default: hand-roll, ~6 field types is manageable.
-3. **Permissions.** `workflow:read` (any team member), `workflow:write` (team admin), `workflow:write:shell` (team admin, gated separately in phase 6).
+### URL routing decision
+
+The phase-4 plan originally put templates at `/workflows`, but `/workflows` already serves the in-flight `ActiveWorkflow` table. Renaming a live route was riskier than splitting the namespace, so the final layout is:
+
+| Path | Purpose |
+|---|---|
+| `/workflows` | In-flight ActiveWorkflow rows (relabelled "Active Runs" in the nav) |
+| `/templates` | Workflow template list |
+| `/templates/[id]` | Template detail: version sidebar, JSON editor, DAG viz, step palette |
+| `/templates/[id]/runs` | Template's paginated run history |
+| `/runs/[id]` | WorkflowRun detail with DAG + per-node live status |
+
+### Static `$/run` cost estimate
+
+`packages/shared/src/workflow/costEstimator.ts` — pure walker that sums each step node's `costHint.tokensIn` × input price + `costHint.tokensOut` × output price using `DEFAULT_ROLE_PRICING` (overrideable per call). Branching nodes take the **max** of both arms (pessimistic worst-case); `fanOut` multiplies the subgraph's estimate by an assumed width (`DEFAULT_FANOUT_WIDTH = 4`); cycles are guarded by a visited set so retry loops count once. The estimate renders as a chip in the editor card title (`~$X.YY/run`) with the assumption surface in the tooltip. 8 tests in `costEstimator.test.ts`.
+
+### Editable per-node config form
+
+`packages/web/src/components/workflow/NodeConfigForm.tsx` — per-`StepFieldDef.type` form input (string / number / boolean / enum / json). Edits write through to the parsed spec, re-serialize, push into `editorJson`, and auto-switch to edit mode so the existing Save flow can land the change as a new version. Falls back silently if the spec is mid-edit and unparseable (the JSON editor remains the source of truth).
+
+### Known follow-ups
+
+- **Canvas drag-edit.** The current editor is a JSON textarea + DAG viz (now with form-based config edits for the selected node). A proper drag-and-drop node editor (React Flow or equivalent) is the natural phase 5 follow-up — useful for adding/removing nodes and rewiring edges without hand-editing JSON.
+- **Recent-run cost averages.** The estimate is static (from `costHint`s). Phase 5 analytics should fold in observed token usage from `workflow_runs` so the displayed number tracks reality per template.
+- **Version diff.** Selecting a non-active version shows the spec but not a diff vs. active. A side-by-side textual diff (or DAG-level node/edge diff highlighting) would close the loop.
+- **A11y.** SVG nodes are focusable buttons, but the DAG itself has no keyboard navigation between nodes. Worth wiring an arrow-key traversal in phase 5 once the editor grows.
+
+### Files touched (recap)
+
+- `packages/shared/src/workflow/{stepRegistry.ts,stepRegistry.test.ts,index.ts}` (move from worker), `packages/shared/package.json` (exports), `vitest.config.ts` (alias), `packages/worker/src/lib/{stepRegistry.ts,stepRegistry.test.ts}` (delete)
+- `packages/shared/src/prisma/schema.prisma` + init migration (Team↔WorkflowTemplate fkey)
+- `packages/shared/src/types/api.ts` (new types)
+- `packages/gateway/src/routes/{workflowTemplates.ts,workflowTemplates.test.ts,workflowRuns.ts}` (new), `packages/gateway/src/index.ts` (mounts)
+- `packages/web/src/lib/{workflowLayout.ts,workflowLayout.test.ts}`, `packages/web/src/components/workflow/WorkflowDag.tsx`, `packages/web/src/app/templates/**`, `packages/web/src/app/runs/[id]/page.tsx`, `packages/web/src/hooks/useWorkflows.ts`, `packages/web/src/components/layout/Sidebar.tsx`
 
 ---
 

@@ -3,6 +3,12 @@ import './codemods.js';
 
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
+export type { CostEstimate, CostRole } from './costEstimator.js';
+export {
+  DEFAULT_FANOUT_WIDTH,
+  DEFAULT_ROLE_PRICING,
+  estimateSpecCost,
+} from './costEstimator.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 export type { Context } from './expr.js';
 export {
@@ -40,3 +46,9 @@ export {
   SPEC_SCHEMA_VERSION,
   WorkflowSpecSchema,
 } from './spec.js';
+export {
+  assertBuiltinStepsRegistered,
+  getStepMetadata,
+  hasStep,
+  listSteps,
+} from './stepRegistry.js';

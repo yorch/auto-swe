@@ -55,6 +55,18 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/signalSlots.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/stepRegistry',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/stepRegistry.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/costEstimator',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/costEstimator.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/testHelpers',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/testHelpers.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
       },
