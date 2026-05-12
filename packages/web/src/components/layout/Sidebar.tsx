@@ -7,7 +7,8 @@ import { useAuthStore } from '@/stores/authStore';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
-  { href: '/workflows', label: 'Workflows', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+  { href: '/workflows', label: 'Active Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+  { href: '/templates', label: 'Templates', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
   { href: '/epics', label: 'Epics', roles: ['LEAD', 'ADMIN'] },
   { href: '/teams', label: 'Teams', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
   { href: '/repositories', label: 'Repositories', roles: ['LEAD', 'ADMIN'] },

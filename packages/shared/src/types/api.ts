@@ -183,6 +183,135 @@ export interface CreateEpicResponse {
   childWorkflowIds: Record<string, string>;
 }
 
+// ── Workflow Templates / Runs (Phase 4) ──
+
+export type WorkflowTemplateStatus = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
+export type WorkflowRunStatus =
+  | 'RUNNING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'TIMED_OUT'
+  | 'CANCELLED'
+  | 'SKIPPED';
+export type WorkflowStepRecordStatus = 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
+
+/** Shape returned by GET /api/v1/workflow-templates (list) */
+export interface WorkflowTemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  status: WorkflowTemplateStatus;
+  isDefault: boolean;
+  activeVersion: number | null;
+  versionCount: number;
+  team: TeamRef | null;
+  lastRun: {
+    id: string;
+    status: WorkflowRunStatus;
+    startedAt: string;
+    endedAt: string | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowTemplateVersionSummary {
+  id: string;
+  version: number;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface WorkflowTemplateVersionDetail extends WorkflowTemplateVersionSummary {
+  spec: unknown;
+}
+
+/** Shape returned by GET /api/v1/workflow-templates/:id (detail) */
+export interface WorkflowTemplateDetail extends WorkflowTemplateSummary {
+  versions: WorkflowTemplateVersionSummary[];
+  activeVersionSpec: WorkflowTemplateVersionDetail | null;
+}
+
+export interface CreateWorkflowTemplateBody {
+  name: string;
+  description?: string;
+  teamId?: string | null;
+  spec: unknown;
+}
+
+export interface UpdateWorkflowTemplateBody {
+  name?: string;
+  description?: string;
+  isDefault?: boolean;
+  status?: WorkflowTemplateStatus;
+}
+
+export interface CreateWorkflowVersionBody {
+  spec: unknown;
+}
+
+export interface PromoteVersionBody {
+  version: number;
+}
+
+/** Shape returned by GET /api/v1/workflow-runs (list) and template runs */
+export interface WorkflowRunSummary {
+  id: string;
+  workflowId: string;
+  templateId: string;
+  templateVersion: number;
+  status: WorkflowRunStatus;
+  startedAt: string;
+  endedAt: string | null;
+  workRequest: {
+    id: string;
+    externalTicketId: string;
+    description: string;
+  } | null;
+}
+
+export interface WorkflowStepRecord {
+  id: string;
+  nodeId: string;
+  attempt: number;
+  status: WorkflowStepRecordStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  inputs: unknown;
+  outputs: unknown;
+  error: string | null;
+}
+
+/** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
+export interface WorkflowRunDetail extends WorkflowRunSummary {
+  specSnapshot: unknown;
+  contextSnapshot: unknown;
+  steps: WorkflowStepRecord[];
+  templateName: string;
+}
+
+/** Step palette catalog returned by GET /api/v1/workflow-steps/registry */
+export interface StepRegistryEntry {
+  name: string;
+  category: 'agent' | 'gate' | 'control' | 'vcs' | 'shell';
+  label: string;
+  description: string;
+  configFields: ReadonlyArray<{
+    key: string;
+    label: string;
+    type: 'string' | 'number' | 'boolean' | 'enum' | 'json';
+    enumValues?: readonly string[];
+    required?: boolean;
+    default?: unknown;
+    description?: string;
+  }>;
+  costHint?: {
+    role?: string;
+    tokensIn?: number;
+    tokensOut?: number;
+  };
+}
+
 // ── Webhooks ──
 
 export interface GitWebhookBody {

@@ -40,3 +40,9 @@ export {
   SPEC_SCHEMA_VERSION,
   WorkflowSpecSchema,
 } from './spec.js';
+export {
+  assertBuiltinStepsRegistered,
+  getStepMetadata,
+  hasStep,
+  listSteps,
+} from './stepRegistry.js';
