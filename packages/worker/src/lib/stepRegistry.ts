@@ -188,6 +188,34 @@ register({
   name: 'executeGateFixImplementation',
 });
 
+// ── Phase 3 — Decomposition + branch merging ────────────────────────────────
+
+register({
+  category: 'agent',
+  configFields: [],
+  costHint: { role: 'planner', tokensIn: 6000, tokensOut: 2000 },
+  description:
+    'Split a work request into feature-level subtasks (one subagent per subtask). Returns { subtasks: Subtask[] }.',
+  label: 'Plan decomposition',
+  name: 'planDecomposition',
+});
+
+register({
+  category: 'vcs',
+  configFields: [
+    {
+      description: 'Prefix for each auto-generated merge commit message. Default: "auto-merge".',
+      key: 'mergeMessagePrefix',
+      label: 'Merge commit prefix',
+      type: 'string',
+    },
+  ],
+  description:
+    'Merge N subtask branches into the parent feature branch. Aborts on conflict and reports which branch failed.',
+  label: 'Merge branches',
+  name: 'mergeBranches',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);

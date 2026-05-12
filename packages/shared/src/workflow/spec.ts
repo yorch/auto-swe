@@ -17,10 +17,12 @@ import { z } from 'zod';
  *   - terminate : end the run with a status
  *
  * Phase 2 extends step nodes with `onFail` modes (block / warn / retry).
- * Phase 3+ adds: fanOut, joinAll, shell.
+ * Phase 3 adds:
+ *   - fanOut    : run a subgraph once per item in an iterable, then join
+ * Phase 6+ adds: shell.
  */
 
-export const SPEC_SCHEMA_VERSION = 2 as const;
+export const SPEC_SCHEMA_VERSION = 3 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
@@ -107,12 +109,67 @@ const TerminateNodeSchema = z.object({
   type: z.literal('terminate'),
 });
 
+/**
+ * Phase 3 — fan-out / parallel subagents.
+ *
+ * `fanOut` evaluates `over` to an array and runs the subgraph (entered at the
+ * node id in `subgraph`) once per element. Each branch executes in a sealed
+ * **child context**: the parent's `request` and `workflow` are passed by
+ * reference, `context` is shallow-cloned (so the branch can read parent
+ * values but its mutations stay local), and `nodes` is reinitialized to
+ * `{}`. The element is bound at `[itemKey]` and the index at `[itemKey]Index`.
+ *
+ * A branch terminates when it reaches a `terminate` node (the branch result is
+ * captured rather than ending the whole run). After all branches finish, the
+ * parent context is updated with:
+ *
+ *   nodes.<fanOutId>.output = {
+ *     count, results: [{ status, result, exports? }, …],
+ *     failed: number, succeeded: number, plucked?: unknown[]
+ *   }
+ *
+ * and execution continues at `join`. If `exports` is set, each entry's
+ * `exports` field is populated with the listed child-context paths.
+ *
+ * Phase 3 ships sequential execution. `concurrency` is parsed but not
+ * enforced; the follow-up (3.5) wires the Promise.all-with-limit runtime.
+ */
+const FanOutNodeSchema = z.object({
+  /**
+   * Reserved for phase 3.5 — max number of branches to run concurrently.
+   * Currently parsed for forward-compat; the interpreter still runs branches
+   * sequentially regardless of value.
+   */
+  concurrency: z.number().int().min(1).max(20).optional(),
+  /** Optional dot-path exports lifted from each branch's child context. */
+  exports: z.array(z.string().min(1).max(120)).max(20).optional(),
+  /** Key under which each element is bound in the branch's child context. */
+  itemKey: z.string().min(1).max(64).default('subtask'),
+  /** NodeId to resume at once every branch has finished. */
+  join: NodeIdSchema,
+  /** When true, a single failed branch still allows the parent to continue. */
+  onBranchFail: z.enum(['block', 'continue']).default('block'),
+  /** Binding that must resolve to a JavaScript array. */
+  over: BindingSchema,
+  /**
+   * Optional path (relative to each branch result entry — e.g.
+   * `result.branch` or `exports.someKey`) projected into `output.plucked: unknown[]`.
+   * Lets downstream nodes bind directly to a flat array without a separate
+   * shaping step. Skipped entries (no match) appear as `null` in the array.
+   */
+  pluck: z.string().min(1).max(120).optional(),
+  /** Entry NodeId of the per-element subgraph. */
+  subgraph: NodeIdSchema,
+  type: z.literal('fanOut'),
+});
+
 export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
   SetNodeSchema,
   CondNodeSchema,
   SignalNodeSchema,
   TerminateNodeSchema,
+  FanOutNodeSchema,
 ]);
 export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
@@ -120,6 +177,7 @@ export type SetNode = z.infer<typeof SetNodeSchema>;
 export type CondNode = z.infer<typeof CondNodeSchema>;
 export type SignalNode = z.infer<typeof SignalNodeSchema>;
 export type TerminateNode = z.infer<typeof TerminateNodeSchema>;
+export type FanOutNode = z.infer<typeof FanOutNodeSchema>;
 
 export const WorkflowSpecSchema = z
   .object({
@@ -153,6 +211,9 @@ export const WorkflowSpecSchema = z
           refs.push(['onReceive', node.onReceive], ['onTimeout', node.onTimeout]);
           break;
         case 'terminate':
+          break;
+        case 'fanOut':
+          refs.push(['subgraph', node.subgraph], ['join', node.join]);
           break;
       }
       for (const [field, ref] of refs) {

@@ -24,7 +24,7 @@ import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/share
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
@@ -202,25 +202,6 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
     };
   } finally {
     workspace.destroy();
-  }
-}
-
-/**
- * Resolve the WorkflowRun.id for the currently executing Temporal workflow
- * so artifacts produced by this activity link back to the run. We look up by
- * workflowId because the runId is not pushed through activity inputs.
- */
-async function currentWorkflowRunId(): Promise<string | undefined> {
-  try {
-    const wid = currentWorkflowId();
-    if (!wid) return undefined;
-    const run = await prisma.workflowRun.findUnique({
-      select: { id: true },
-      where: { workflowId: wid },
-    });
-    return run?.id;
-  } catch {
-    return undefined;
   }
 }
 

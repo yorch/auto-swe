@@ -133,4 +133,78 @@ describe('parseWorkflowSpec', () => {
     });
     expect(Object.keys(spec.nodes).length).toBe(5);
   });
+
+  // ── Phase 3: fanOut node ──
+
+  it('parses a minimal fanOut spec', () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }] },
+          subgraph: 'branchDone',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    expect(spec.nodes.fan?.type).toBe('fanOut');
+  });
+
+  it('rejects fanOut.subgraph and fanOut.join when they reference unknown nodes', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'fan',
+        name: 'fanout-bad',
+        nodes: {
+          fan: {
+            join: 'nope',
+            over: { literal: [] },
+            subgraph: 'alsoNope',
+            type: 'fanOut',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow(/unknown node/);
+  });
+
+  it('rejects fanOut without required fields', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'fan',
+        name: 'fanout-missing',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fan: { join: 'done', subgraph: 'done', type: 'fanOut' }, // no `over`
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+  });
+
+  it('rejects fanOut.exports longer than the allowed max', () => {
+    const tooMany = Array.from({ length: 25 }, (_, i) => `context.k${i}`);
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'fan',
+        name: 'fanout-export-cap',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fan: {
+            exports: tooMany,
+            join: 'done',
+            over: { literal: [] },
+            subgraph: 'done',
+            type: 'fanOut',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+  });
 });

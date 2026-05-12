@@ -157,6 +157,32 @@ export interface PlannedRepo {
   dependsOn: string[];
 }
 
+// ── Decomposition (Phase 3 — configurable workflows fan-out) ──
+
+/**
+ * A feature-level subtask produced by `planDecomposition`. Each subtask is
+ * implemented in its own workspace + branch (`<BRANCH_PREFIX>/<ticket>/<id>`)
+ * and the resulting branches are merged into the work-request branch before
+ * the final PR is opened.
+ */
+export interface Subtask {
+  /**
+   * Stable slug used in branch names. Lowercase, kebab-case, max 40 chars.
+   * The decomposer is prompted to generate this; the activity validates it.
+   */
+  id: string;
+  title: string;
+  description: string;
+  /** Optional file-scope hints (relative paths or globs) for the implementer. */
+  files?: string[];
+}
+
+export interface DecompositionResult {
+  subtasks: Subtask[];
+  /** Free-form rationale from the decomposer (truncated, stored in WorkflowStep.outputs). */
+  rationale?: string;
+}
+
 // ── Budget Tiers (Cost Tracking) ──
 
 export const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;

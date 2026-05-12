@@ -369,9 +369,10 @@ function requireNumber(v: unknown, op: string): number {
   return v;
 }
 
-function describeOperand(v: unknown): string {
+export function describeOperand(v: unknown): string {
   if (v === null) return 'null';
   if (v === undefined) return 'undefined';
+  if (Array.isArray(v)) return `array(${v.length})`;
   if (typeof v === 'string') return `string '${v.slice(0, 32)}'`;
   return `${typeof v}`;
 }

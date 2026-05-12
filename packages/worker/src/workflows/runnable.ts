@@ -1,5 +1,11 @@
-import type { CodeResult, RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/workflow';
+import type {
+  CodeResult,
+  RepoWorkRequest,
+  Subtask,
+  WorkflowResult,
+} from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
+import { lookupPath } from '@auto-swe/shared/workflow/expr';
 import type { Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import { runSpec } from '@auto-swe/shared/workflow/interpreter';
 import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
@@ -45,6 +51,7 @@ const agentActivities = proxyActivities<
     | 'executeCIFixImplementation'
     | 'executeReviewFixImplementation'
     | 'executeGateFixImplementation'
+    | 'planDecomposition'
     | 'runReviewNetwork'
   >
 >({
@@ -56,6 +63,17 @@ const agentActivities = proxyActivities<
     maximumInterval: '2m',
   },
   startToCloseTimeout: '30m',
+});
+
+const mergeActivities = proxyActivities<Pick<typeof activitiesType, 'mergeBranches'>>({
+  heartbeatTimeout: '5m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '15m',
 });
 
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
@@ -206,19 +224,26 @@ async function dispatchStepImpl(
     }
     case 'validateContext':
       return await contextActivities.validateContext(request);
-    case 'executeImplementation':
-      return await agentActivities.executeImplementation(request);
+    case 'executeImplementation': {
+      // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`.
+      const subtask =
+        (inputs.subtask as Subtask | undefined) ??
+        (lookupPath(ctx, 'subtask') as Subtask | undefined);
+      return subtask
+        ? await agentActivities.executeImplementation(request, subtask)
+        : await agentActivities.executeImplementation(request);
+    }
     case 'runReviewNetwork': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
       const successCriteria =
         (inputs.successCriteria as string[] | undefined) ??
-        (lookupCtx(ctx, 'context.successCriteria') as string[] | undefined);
+        (lookupPath(ctx, 'context.successCriteria') as string[] | undefined);
       return await agentActivities.runReviewNetwork(codeResult, successCriteria);
     }
     case 'executeReviewFixImplementation': {
       const rejection =
         (inputs.rejectionSummary as string | undefined) ??
-        (lookupCtx(ctx, 'context.lastRejectionSummary') as string | undefined) ??
+        (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
       return await agentActivities.executeReviewFixImplementation(rejection, prev);
@@ -226,7 +251,7 @@ async function dispatchStepImpl(
     case 'executeCIFixImplementation': {
       const failureContext =
         (inputs.failureContext as string | undefined) ??
-        (lookupCtx(ctx, 'context.lastCILogs') as string | undefined) ??
+        (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
       return await agentActivities.executeCIFixImplementation(failureContext, prev);
@@ -257,12 +282,33 @@ async function dispatchStepImpl(
       };
       return await gateActivities[step](gateInput);
     }
+    case 'planDecomposition':
+      return await agentActivities.planDecomposition(request);
+    case 'mergeBranches': {
+      const branchPrefix = (config.branchPrefix as string | undefined) ?? 'auto';
+      const targetBranch =
+        (inputs.targetBranch as string | undefined) ??
+        (config.targetBranch as string | undefined) ??
+        `${branchPrefix}/${request.externalTicketId}`;
+      const sourceBranches = inputs.sourceBranches;
+      if (!Array.isArray(sourceBranches) || sourceBranches.some((b) => typeof b !== 'string')) {
+        throw new Error('mergeBranches: inputs.sourceBranches must be a string[]');
+      }
+      return await mergeActivities.mergeBranches({
+        ...(config.mergeMessagePrefix
+          ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
+          : {}),
+        request,
+        sourceBranches: sourceBranches as string[],
+        targetBranch,
+      });
+    }
     case 'executeGateFixImplementation': {
       const gateName =
         (inputs.gateName as string | undefined) ??
         (config.gateName as string | undefined) ??
         'unknown';
-      const gateOutput = (inputs.gateOutput ?? lookupCtx(ctx, 'context.lastGateOutput')) as
+      const gateOutput = (inputs.gateOutput ?? lookupPath(ctx, 'context.lastGateOutput')) as
         | activitiesType.GateResult
         | undefined;
       if (!gateOutput) {
@@ -285,21 +331,11 @@ async function dispatchStepImpl(
 // ── Helpers ──
 
 function pickCodeResult(provided: unknown, ctx: Context): CodeResult {
-  const v = provided ?? lookupCtx(ctx, 'context.currentCodeResult');
+  const v = provided ?? lookupPath(ctx, 'context.currentCodeResult');
   if (!v) {
     throw new Error('step requires a CodeResult but none is bound (context.currentCodeResult)');
   }
   return v as CodeResult;
-}
-
-function lookupCtx(ctx: Context, path: string): unknown {
-  const parts = path.split('.');
-  let cur: unknown = ctx;
-  for (const p of parts) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[p];
-  }
-  return cur;
 }
 
 /**

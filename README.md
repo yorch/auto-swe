@@ -27,19 +27,29 @@ Fastify Gateway ──────────────────▶ Tempor
    │  (state, memory, tokens)             ▼
    │                               Temporal Worker
    │                                 │
-   │                                 ├── validateContext      (Context Validator agent)
-   │                                 ├── executeImplementation (Implementer agent + DinD TDD loop)
-   │                                 ├── runReviewNetwork     (Security / Domain / Performance agents)
-   │                                 ├── createOrUpdatePullRequest (GitHub API)
-   │                                 ├── ciFixLoop            (self-healing on CI failures)
+   │                                 │  RunnableWorkflow  (generic interpreter over a JSON WorkflowSpec)
+   │                                 │    walks step / set / cond / signal / terminate / fanOut nodes
+   │                                 │    └── dispatches to activities below
+   │                                 │
+   │                                 ├── validateContext              (Context Validator agent)
+   │                                 ├── planDecomposition            (split work request into Subtask[])
+   │                                 ├── executeImplementation        (Implementer agent + DinD TDD loop;
+   │                                 │                                 takes optional Subtask for per-branch fan-out)
+   │                                 ├── runLint / Typecheck / Tests / Build / VulnScan / PerfBench  (quality gates)
+   │                                 ├── executeGateFixImplementation (fix-loop for failed gates)
+   │                                 ├── runReviewNetwork             (Security / Domain / Performance agents)
+   │                                 ├── executeReviewFixImplementation
+   │                                 ├── mergeBranches                (fast-forward subtask branches into the feature branch)
+   │                                 ├── createOrUpdatePullRequest    (GitHub API)
+   │                                 ├── fetchCILogs + executeCIFixImplementation  (self-healing on CI failures)
    │                                 ├── ⏳ await humanMergeSignal
-   │                                 └── commitToMemory       (pgvector lesson embedding)
+   │                                 └── commitToMemory               (pgvector lesson embedding)
    │
    └── POST /api/v1/webhooks/git    (GitHub merge webhook → humanMergeSignal)
        POST /api/v1/webhooks/ci     (CI check_run webhook → ciPipelineSignal)
 ```
 
-For multi-repo epics, an `EpicOrchestratorWorkflow` decomposes the request into per-repo child `EngineeringWorkflow`s using a Planner agent and runs them with dependency-graph scheduling.
+For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per-repo child `RunnableWorkflow`s using the Planner agent and runs them with dependency-graph scheduling. Each child runs the team's configured workflow spec (default: `default-engineering@v1`, parity with the original hardcoded loop). See [`docs/configurable-workflows.md`](./docs/configurable-workflows.md) for the spec schema, step catalog, and roadmap.
 
 ## Tech stack
 

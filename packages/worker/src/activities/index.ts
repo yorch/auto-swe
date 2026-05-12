@@ -5,6 +5,8 @@ export {
 } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
+export type { MergeBranchesInput, MergeBranchesResult } from './decomposition.js';
+export { mergeBranches, planDecomposition, subtaskBranchName } from './decomposition.js';
 export { executeImplementation } from './executeImplementation.js';
 // Phase 3
 export { planEpic } from './planEpic.js';

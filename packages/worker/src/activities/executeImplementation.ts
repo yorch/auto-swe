@@ -1,5 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
-import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/shared/types/workflow';
+import type {
+  CodeResult,
+  RepoWorkRequest,
+  Subtask,
+  TestRunResult,
+} from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
@@ -13,7 +18,21 @@ import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
-export async function executeImplementation(request: RepoWorkRequest): Promise<CodeResult> {
+/**
+ * Run the implementer agent for a work request.
+ *
+ * When `subtask` is supplied (phase-3 fan-out), the activity:
+ *   - uses a sub-branch `<BRANCH_PREFIX>/<ticket>/<subtask.id>`
+ *   - injects the subtask description into the implementer's user message
+ *     in place of the full work-request description
+ *
+ * Subtask branches are merged back into the parent feature branch by the
+ * `mergeBranches` activity before the final PR is opened.
+ */
+export async function executeImplementation(
+  request: RepoWorkRequest,
+  subtask?: Subtask
+): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
   });
@@ -21,7 +40,8 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-  const branch = `${branchPrefix}/${request.externalTicketId}`;
+  const featureBranch = `${branchPrefix}/${request.externalTicketId}`;
+  const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
   const githubToken = requireEnv('GITHUB_TOKEN');
 
   const workspace = createWorkspace(
@@ -75,10 +95,17 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
           { content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext, role: 'system' },
           {
             content: JSON.stringify({
-              description: request.description,
+              description: subtask?.description ?? request.description,
               externalTicketId: request.externalTicketId,
               iteration,
               previousTestResult: iteration > 0 ? testResult : undefined,
+              ...(subtask
+                ? {
+                    fileScope: subtask.files,
+                    subtaskId: subtask.id,
+                    subtaskTitle: subtask.title,
+                  }
+                : {}),
             }),
             role: 'user',
           },
@@ -114,8 +141,11 @@ export async function executeImplementation(request: RepoWorkRequest): Promise<C
     }
 
     // Commit and push
+    const commitSummary = subtask
+      ? `auto: ${subtask.id} — ${subtask.title} (${request.externalTicketId})`
+      : `auto: implement ${request.externalTicketId}`;
     workspace.exec('git add -A');
-    workspace.exec(`git commit -m "auto: implement ${request.externalTicketId}"`);
+    workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
     workspace.exec(`git push origin ${shellQuote(branch)}`);
 
     // Collect results

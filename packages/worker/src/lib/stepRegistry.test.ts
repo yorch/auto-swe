@@ -52,4 +52,9 @@ describe('stepRegistry', () => {
       expect(keys).toContain('timeoutMs');
     }
   });
+
+  it('phase-3 decomposition steps are registered with sensible categories', () => {
+    expect(getStepMetadata('planDecomposition').category).toBe('agent');
+    expect(getStepMetadata('mergeBranches').category).toBe('vcs');
+  });
 });

@@ -1,3 +1,4 @@
+import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
 
 /**
@@ -17,4 +18,23 @@ export function currentWorkflowId(): string {
     );
   }
   return execution.workflowId;
+}
+
+/**
+ * Look up the `WorkflowRun.id` row for the currently executing Temporal
+ * workflow so artifacts produced by an activity link back to the run. Returns
+ * undefined when no row exists yet (race against `createWorkflowRun`) or when
+ * the lookup fails — artifact persistence is best-effort.
+ */
+export async function currentWorkflowRunId(): Promise<string | undefined> {
+  try {
+    const wid = currentWorkflowId();
+    const run = await prisma.workflowRun.findUnique({
+      select: { id: true },
+      where: { workflowId: wid },
+    });
+    return run?.id;
+  } catch {
+    return undefined;
+  }
 }

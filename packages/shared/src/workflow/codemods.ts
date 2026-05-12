@@ -26,3 +26,16 @@ registerCodemod({
     return { ...s, schemaVersion: 2 };
   },
 });
+
+/**
+ * v2 → v3: Phase 3 adds the `fanOut` node type. v2 specs without any `fanOut`
+ * node are already valid under v3, so the transform only bumps the version.
+ */
+registerCodemod({
+  from: 2,
+  to: 3,
+  transform: (spec) => {
+    const s = spec as Record<string, unknown>;
+    return { ...s, schemaVersion: 3 };
+  },
+});

@@ -358,6 +358,331 @@ describe('runSpec', () => {
     expect(result.result.ok).toBe(true);
   });
 
+  // ── Phase 3: fanOut semantics ──
+
+  it('fanOut: runs the subgraph once per element and aggregates results', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'init',
+      name: 'fanout-basic',
+      nodes: {
+        branchDone: {
+          result: { branch: { from: 'context.localBranch' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        done: {
+          result: {
+            count: { from: 'nodes.fan.output.count' },
+            failed: { from: 'nodes.fan.output.failed' },
+            succeeded: { from: 'nodes.fan.output.succeeded' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          exports: ['context.localBranch'],
+          join: 'done',
+          over: { from: 'context.items' },
+          subgraph: 'recordBranch',
+          type: 'fanOut',
+        },
+        init: {
+          next: 'fan',
+          type: 'set',
+          values: {
+            'context.items': {
+              literal: [
+                { id: 'a', title: 'first' },
+                { id: 'b', title: 'second' },
+                { id: 'c', title: 'third' },
+              ],
+            },
+          },
+        },
+        recordBranch: {
+          next: 'branchDone',
+          type: 'set',
+          values: {
+            'context.localBranch': { from: 'subtask.id' },
+          },
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.count).toBe(3);
+    expect(result.result.succeeded).toBe(3);
+    expect(result.result.failed).toBe(0);
+    // Verify per-branch result + exports landed under nodes.fan.output.
+    const out = (result.finalContext.nodes as Record<string, { output?: unknown }>).fan?.output as {
+      results: Array<{ result: { branch: string }; exports?: Record<string, unknown> }>;
+    };
+    expect(out.results.map((r) => r.result.branch)).toEqual(['a', 'b', 'c']);
+    expect(out.results[0]?.exports).toEqual({ 'context.localBranch': 'a' });
+  });
+
+  it('fanOut: sealed child context — branch writes do not leak to parent', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-seal',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: { parentLeak: { from: 'context.leak' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          join: 'done',
+          over: { literal: ['x', 'y'] },
+          subgraph: 'leak',
+          type: 'fanOut',
+        },
+        leak: {
+          next: 'branchDone',
+          type: 'set',
+          values: { 'context.leak': { literal: 'mutated' } },
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    // Parent context.leak never set — the branch mutated its own sealed copy.
+    expect(result.result.parentLeak).toBeUndefined();
+  });
+
+  it('fanOut: subgraph step dispatch sees the bound itemKey via inputs', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-step',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        echo: {
+          inputs: { item: { from: 'subtask' } },
+          next: 'branchDone',
+          step: 'echo',
+          type: 'step',
+        },
+        fan: {
+          join: 'done',
+          over: { literal: ['alpha', 'beta'] },
+          subgraph: 'echo',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const calls: unknown[] = [];
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        echo: (i: Record<string, unknown>) => {
+          calls.push(i.item);
+          return { ok: true };
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls).toEqual(['alpha', 'beta']);
+    // Branch-prefixed nodeIds in records distinguish the two echo invocations.
+    const echoRecords = records.filter((r) => r.nodeId.endsWith('/echo') || r.nodeId === 'echo');
+    expect(echoRecords.length).toBeGreaterThanOrEqual(2);
+    expect(echoRecords[0]?.nodeId).toMatch(/fan\[0\]\/echo/);
+    expect(echoRecords[1]?.nodeId).toMatch(/fan\[1\]\/echo/);
+  });
+
+  it('fanOut: onBranchFail=block aborts the run on the first branch failure', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        explode: { next: 'branchDone', step: 'boom', type: 'step' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [1, 2, 3] },
+          subgraph: 'explode',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        boom: () => {
+          throw new Error('subagent crashed');
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('subagent crashed');
+  });
+
+  it('fanOut: onBranchFail=continue records failed branches and proceeds', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-continue',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: {
+            failed: { from: 'nodes.fan.output.failed' },
+            succeeded: { from: 'nodes.fan.output.succeeded' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          join: 'done',
+          onBranchFail: 'continue',
+          over: { literal: [0, 1, 2] },
+          subgraph: 'maybeFail',
+          type: 'fanOut',
+        },
+        maybeFail: { next: 'branchDone', step: 'flaky', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let n = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        flaky: () => {
+          const i = n++;
+          if (i === 1) throw new Error('odd one out');
+          return { ok: true };
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.succeeded).toBe(2);
+    expect(result.result.failed).toBe(1);
+  });
+
+  it('fanOut: throws when `over` does not resolve to an array', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-bad-over',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          over: { literal: 'not an array' },
+          subgraph: 'branchDone',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/must resolve to an array/);
+  });
+
+  it('fanOut: empty array short-circuits to the join (count=0, no branch records)', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-empty',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: { count: { from: 'nodes.fan.output.count' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        explode: { next: 'branchDone', step: 'never', type: 'step' },
+        fan: {
+          join: 'done',
+          over: { literal: [] },
+          subgraph: 'explode',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        never: () => {
+          throw new Error('should not be called');
+        },
+      },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.result.count).toBe(0);
+    expect(calls.length).toBe(0);
+  });
+
+  it('fanOut: pluck projects each branch result entry into output.plucked', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-pluck',
+      nodes: {
+        branchDone: {
+          result: { branch: { from: 'subtask.id' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        done: {
+          result: { plucked: { from: 'nodes.fan.output.plucked' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
+          pluck: 'result.branch',
+          subgraph: 'branchDone',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.result.plucked).toEqual(['a', 'b', 'c']);
+  });
+
+  it('fanOut: onBranchFail=block aborts when a branch terminates with FAILED (no throw)', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-on-terminate-failed',
+      nodes: {
+        branchFailed: { status: 'FAILED', type: 'terminate' },
+        branchOk: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1, 2] },
+          subgraph: 'pickTerminal',
+          type: 'fanOut',
+        },
+        // index 1 takes the FAILED terminate via cond.
+        pickTerminal: {
+          expr: 'subtaskIndex == 1',
+          onFalse: 'branchOk',
+          onTrue: 'branchFailed',
+          type: 'cond',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(
+      /terminated with status FAILED/
+    );
+  });
+
   it('refuses to write through __proto__ / prototype / constructor segments', async () => {
     for (const danger of [
       '__proto__.polluted',
