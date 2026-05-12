@@ -79,14 +79,20 @@ describe('diffSpecs', () => {
   });
 
   it('ignores property order in node objects', () => {
+    // Build the b spec with permuted keys at runtime so biome's source action
+    // can't statically reorder them and defeat the test.
+    const permuted = Object.fromEntries(
+      Object.entries({ next: 'done', step: 'executeImplementation', type: 'step' }).reverse()
+    );
     const a = spec();
     const b = spec({
       nodes: {
-        // Note: key order flipped inside the start node value
         done: { status: 'SUCCESS', type: 'terminate' },
-        start: { next: 'done', step: 'executeImplementation', type: 'step' },
+        start: permuted as WorkflowSpec['nodes'][string],
       },
     });
+    // Sanity check: the b literal really did land with reversed key order.
+    expect(Object.keys(b.nodes.start as object)).toEqual(['type', 'step', 'next']);
     expect(specsEqual(a, b)).toBe(true);
   });
 

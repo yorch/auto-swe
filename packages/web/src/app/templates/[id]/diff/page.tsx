@@ -36,16 +36,16 @@ export default function TemplateDiffPage({ params }: PageProps) {
   const [a, setA] = useState<number | null>(null);
   const [b, setB] = useState<number | null>(null);
 
-  // Default A to active, B to next-newest so the first diff render is meaningful.
+  // Default A to active (or newest if no active), B to a distinct neighbour so
+  // the first diff render is meaningful — fall back to A only when there's a
+  // single version, in which case the equality guard below disables the diff.
   useEffect(() => {
     if (!template || sortedVersions.length === 0) return;
-    if (a === null) setA(template.activeVersion ?? sortedVersions[0]?.version ?? null);
+    const defaultA = template.activeVersion ?? sortedVersions[0]?.version ?? null;
+    if (a === null) setA(defaultA);
     if (b === null) {
-      const fallback =
-        sortedVersions.find((v) => v.version !== template.activeVersion)?.version ??
-        sortedVersions[0]?.version ??
-        null;
-      setB(fallback);
+      const defaultB = sortedVersions.find((v) => v.version !== defaultA)?.version ?? defaultA;
+      setB(defaultB);
     }
   }, [template, sortedVersions, a, b]);
 
