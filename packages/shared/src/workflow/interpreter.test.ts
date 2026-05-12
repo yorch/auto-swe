@@ -622,6 +622,67 @@ describe('runSpec', () => {
     expect(calls.length).toBe(0);
   });
 
+  it('fanOut: pluck projects each branch result entry into output.plucked', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-pluck',
+      nodes: {
+        branchDone: {
+          result: { branch: { from: 'subtask.id' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        done: {
+          result: { plucked: { from: 'nodes.fan.output.plucked' } },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
+          pluck: 'result.branch',
+          subgraph: 'branchDone',
+          type: 'fanOut',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.result.plucked).toEqual(['a', 'b', 'c']);
+  });
+
+  it('fanOut: onBranchFail=block aborts when a branch terminates with FAILED (no throw)', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-on-terminate-failed',
+      nodes: {
+        branchFailed: { status: 'FAILED', type: 'terminate' },
+        branchOk: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1, 2] },
+          subgraph: 'pickTerminal',
+          type: 'fanOut',
+        },
+        // index 1 takes the FAILED terminate via cond.
+        pickTerminal: {
+          expr: 'subtaskIndex == 1',
+          onFalse: 'branchOk',
+          onTrue: 'branchFailed',
+          type: 'cond',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(
+      /terminated with status FAILED/
+    );
+  });
+
   it('refuses to write through __proto__ / prototype / constructor segments', async () => {
     for (const danger of [
       '__proto__.polluted',

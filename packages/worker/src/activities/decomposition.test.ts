@@ -17,12 +17,19 @@ vi.mock('../lib/artifactStore.js', () => ({
 
 vi.mock('../lib/errors.js', () => ({
   getErrorMessage: vi.fn(),
+  getExecErrorOutput: vi.fn(
+    (err: unknown) =>
+      (err as { stdout?: string; stderr?: string }).stdout ??
+      (err as { stderr?: string }).stderr ??
+      String(err)
+  ),
   getExecErrorStdout: vi.fn(),
   requireEnv: vi.fn().mockReturnValue('fake-token'),
 }));
 
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue(undefined),
+  currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@temporalio/activity', () => ({

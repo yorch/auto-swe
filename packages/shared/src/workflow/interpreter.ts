@@ -8,7 +8,7 @@
  */
 
 import type { Context } from './expr.js';
-import { evalBoolean, lookupPath, resolveBinding } from './expr.js';
+import { describeOperand, evalBoolean, lookupPath, resolveBinding } from './expr.js';
 import type {
   CondNode,
   FanOutNode,
@@ -83,7 +83,7 @@ export async function runSpec(
   if (!('context' in ctx)) ctx.context = {};
 
   const cursor: Cursor = { cap: maxTransitions, count: 0 };
-  const outcome = await walk(spec, spec.entry, ctx, dispatcher, cursor, /* topLevel */ true, '');
+  const outcome = await walk(spec, spec.entry, ctx, dispatcher, cursor, '');
 
   return {
     finalContext: ctx,
@@ -94,12 +94,11 @@ export async function runSpec(
 }
 
 /**
- * Walk the spec from `entry` until a terminate node is reached. When called
- * with `topLevel=false`, the walker treats `terminate` as the branch boundary
- * — it returns rather than ending the whole workflow.
- *
- * `nodeIdPrefix` is prepended to recordStep nodeIds inside fan-out branches
- * so each parallel execution shows up disambiguated in workflow_steps.
+ * Walk the spec from `entry` until a terminate node is reached. Nested
+ * invocations (fan-out branches) pass a non-empty `nodeIdPrefix` so the
+ * branch's step records show up disambiguated in workflow_steps; the prefix
+ * also marks the call as "branch-local," which the caller uses to distinguish
+ * a branch-terminate from a workflow-terminate by the returned status alone.
  */
 async function walk(
   spec: WorkflowSpec,
@@ -107,7 +106,6 @@ async function walk(
   ctx: Context,
   dispatcher: Dispatcher,
   cursor: Cursor,
-  topLevel: boolean,
   nodeIdPrefix: string
 ): Promise<BranchOutcome> {
   let currentNodeId: string | undefined = entry;
@@ -177,9 +175,6 @@ async function walk(
     }
   }
 
-  // Branches return their captured terminate result; the top-level run
-  // returns the same shape (callers use `topLevel` to distinguish for clarity).
-  void topLevel;
   return {
     exports: undefined,
     result: terminal?.result ?? {},
@@ -368,7 +363,7 @@ async function runFanOut(
   const raw = resolveBinding(node.over, ctx);
   if (!Array.isArray(raw)) {
     throw new Error(
-      `fanOut '${recordingId}': 'over' must resolve to an array (got ${describe(raw)})`
+      `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(raw)})`
     );
   }
 
@@ -394,15 +389,7 @@ async function runFanOut(
     const childCtx = makeChildContext(ctx, node.itemKey, item, i);
 
     try {
-      const outcome = await walk(
-        spec,
-        node.subgraph,
-        childCtx,
-        dispatcher,
-        cursor,
-        false,
-        branchPrefix
-      );
+      const outcome = await walk(spec, node.subgraph, childCtx, dispatcher, cursor, branchPrefix);
       const exports = collectExports(node.exports, childCtx);
       const entry: (typeof results)[number] = {
         ...(exports ? { exports } : {}),
@@ -410,8 +397,19 @@ async function runFanOut(
         status: outcome.status,
       };
       results.push(entry);
-      if (outcome.status === 'SUCCESS') succeeded++;
-      else failed++;
+      if (outcome.status === 'SUCCESS') {
+        succeeded++;
+      } else {
+        failed++;
+        // A branch that reaches `terminate { status: !== 'SUCCESS' }` never
+        // throws, so we need to surface the failure here for onBranchFail:'block'.
+        if (firstError === null) {
+          firstError = new Error(
+            `fanOut '${recordingId}' branch ${i} terminated with status ${outcome.status}`
+          );
+        }
+        if (node.onBranchFail === 'block') break;
+      }
     } catch (err) {
       failed++;
       const msg = err instanceof Error ? err.message : String(err);
@@ -421,12 +419,21 @@ async function runFanOut(
     }
   }
 
-  const aggregate = {
+  const aggregate: {
+    count: number;
+    failed: number;
+    plucked?: unknown[];
+    results: typeof results;
+    succeeded: number;
+  } = {
     count: raw.length,
     failed,
     results,
     succeeded,
   };
+  if (node.pluck) {
+    aggregate.plucked = results.map((r) => lookupPath(r, node.pluck as string) ?? null);
+  }
   setPath(ctx, `nodes.${nodeId}.output`, aggregate);
 
   if (firstError !== null && node.onBranchFail === 'block') {
@@ -476,13 +483,6 @@ function collectExports(
     out[p] = lookupPath(childCtx, p);
   }
   return out;
-}
-
-function describe(v: unknown): string {
-  if (v === null) return 'null';
-  if (v === undefined) return 'undefined';
-  if (Array.isArray(v)) return `array(${v.length})`;
-  return typeof v;
 }
 
 /** Don't dump giant arrays into workflow_steps.inputs; record a length-only summary. */

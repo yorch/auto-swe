@@ -21,12 +21,18 @@ describe('DECOMPOSITION_EXAMPLE_SPEC', () => {
     if (merge?.type === 'step') expect(merge.step).toBe('mergeBranches');
   });
 
-  it('fanOut exports lift currentCodeResult so mergeBranches can find the branches', () => {
+  it('fanOut projects each branch result.branch so mergeBranches can bind a string[] directly', () => {
     const fan = DECOMPOSITION_EXAMPLE_SPEC.nodes.fanOutSubtasks;
     expect(fan?.type).toBe('fanOut');
     if (fan?.type === 'fanOut') {
-      expect(fan.exports).toContain('context.currentCodeResult');
+      expect(fan.pluck).toBe('result.branch');
       expect(fan.itemKey).toBe('subtask');
+    }
+    const merge = DECOMPOSITION_EXAMPLE_SPEC.nodes.merge;
+    if (merge?.type === 'step') {
+      expect(merge.inputs?.sourceBranches).toEqual({
+        from: 'nodes.fanOutSubtasks.output.plucked',
+      });
     }
   });
 });

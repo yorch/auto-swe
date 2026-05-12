@@ -28,10 +28,8 @@ registerCodemod({
 });
 
 /**
- * v2 → v3: Phase 3 adds the `fanOut` node type. Existing specs without any
- * `fanOut` node are valid v3 specs as-is, so the migration just bumps the
- * version. Codemod runs idempotently — re-applying it to a spec that already
- * has `fanOut` nodes does not perturb them.
+ * v2 → v3: Phase 3 adds the `fanOut` node type. v2 specs without any `fanOut`
+ * node are already valid under v3, so the transform only bumps the version.
  */
 registerCodemod({
   from: 2,

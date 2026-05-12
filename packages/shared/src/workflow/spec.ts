@@ -143,6 +143,13 @@ const FanOutNodeSchema = z.object({
   onBranchFail: z.enum(['block', 'continue']).default('block'),
   /** Binding that must resolve to an array (or an iterable of plain values). */
   over: BindingSchema,
+  /**
+   * Optional path (relative to each branch result entry — e.g.
+   * `result.branch` or `exports.someKey`) projected into `output.plucked: unknown[]`.
+   * Lets downstream nodes bind directly to a flat array without a separate
+   * shaping step. Skipped entries (no match) appear as `null` in the array.
+   */
+  pluck: z.string().min(1).max(120).optional(),
   /** Entry NodeId of the per-element subgraph. */
   subgraph: NodeIdSchema,
   type: z.literal('fanOut'),
