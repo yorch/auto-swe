@@ -116,13 +116,28 @@ export function createWorkspace(
           timeout: timeoutMs,
         }
       );
-      // spawnSync sets `status` to the exit code (or null on signal/timeout),
-      // and `error` on spawn failure. We normalize to a non-throwing shape.
+      // Three failure shapes to disambiguate:
+      //   - spawn error (e.g. docker not on PATH): result.error set, status null, signal null
+      //   - timeout (Node killed the child): result.error set with ETIMEDOUT, status null, signal SIGTERM
+      //   - clean exit (including non-zero): status is a number
+      const stderr = result.stderr ?? '';
+      if (typeof result.status === 'number') {
+        return {
+          exitCode: result.status,
+          stderr,
+          stdout: result.stdout ?? '',
+          ...(result.signal ? { signal: result.signal } : {}),
+        };
+      }
+      const errMsg = result.error ? `${result.error.name}: ${result.error.message}` : '';
+      const spawnErr = errMsg ? `${stderr}\n${errMsg}`.trim() : stderr;
+      // Convention: 124 == timeout (coreutils), 127 == spawn failure (sh "command not found").
+      const isTimeout = !!result.signal || /ETIMEDOUT/.test(errMsg);
       return {
-        exitCode: typeof result.status === 'number' ? result.status : 124,
-        stderr: result.stderr ?? '',
+        exitCode: isTimeout ? 124 : 127,
+        signal: result.signal ?? (isTimeout ? 'SIGTERM' : 'SPAWN_ERROR'),
+        stderr: spawnErr,
         stdout: result.stdout ?? '',
-        ...(result.signal ? { signal: result.signal } : {}),
       };
     },
   };

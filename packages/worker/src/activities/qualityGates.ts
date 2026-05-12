@@ -76,12 +76,20 @@ const ARTIFACT_KIND: Record<GateName, string> = {
   runVulnScan: 'gate.vuln',
 };
 
-/** Truncate to N bytes with a trailing marker. Used for inline summaries. */
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  const head = s.slice(0, Math.floor(max / 2));
-  const tail = s.slice(-Math.floor(max / 2));
-  return `${head}\n…[truncated ${s.length - max} bytes]…\n${tail}`;
+/** Truncate to N bytes (UTF-8) with a marker. Used for inline summaries that
+ *  must fit the 4KB metadata cap on workflow_steps. We slice on character
+ *  boundaries (Buffer.from + decode) so we never split a multi-byte sequence
+ *  mid-codepoint.
+ */
+function truncate(s: string, maxBytes: number): string {
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.byteLength <= maxBytes) return s;
+  const half = Math.floor(maxBytes / 2);
+  // Decoding ignores invalid trailing bytes from a mid-codepoint cut, so a
+  // worst-case 3-byte loss is acceptable here.
+  const head = buf.subarray(0, half).toString('utf8');
+  const tail = buf.subarray(buf.byteLength - half).toString('utf8');
+  return `${head}\n…[truncated ${buf.byteLength - maxBytes} bytes]…\n${tail}`;
 }
 
 /**
@@ -333,6 +341,31 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       await recordLlmUsage(currentWorkflowId(), 'implementer', gateFix.usage, 'llm.gate_fix');
     }
 
+    // Re-run the failed gate against the fixed code (mirrors the system
+    // prompt's "Re-run the affected gate locally" instruction). Tests still
+    // run as a regression check so a fix that silences the gate but breaks
+    // tests is caught.
+    let gateRerunPassed: boolean | null = null;
+    if (
+      gateName !== 'unknown' &&
+      (DEFAULT_COMMANDS as Record<string, string | null>)[gateName] !== undefined
+    ) {
+      try {
+        const rerunCommand = await resolveCommand(
+          gateName as GateName,
+          { externalTicketId: '', repoId: repo.id } as RepoWorkRequest,
+          undefined
+        );
+        if (rerunCommand) {
+          heartbeat(`gate fix: re-running ${gateName}`);
+          const rerun = workspace.execCapture(rerunCommand);
+          gateRerunPassed = rerun.exitCode === 0 && !rerun.signal;
+        }
+      } catch {
+        // Re-run is informational; failure here does not abort the fix.
+      }
+    }
+
     let testResult: TestRunResult;
     try {
       const startTime = Date.now();
@@ -358,12 +391,16 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
+    const gateNote =
+      gateRerunPassed === null
+        ? `${gateName} not re-runnable (no command resolved)`
+        : `${gateName} ${gateRerunPassed ? 'passing' : 'still failing'}`;
     return {
       branch: previousCodeResult.branch,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: `Gate fix iteration for ${gateName}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: `Gate fix iteration for ${gateName}. ${gateNote}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
       testResults: testResult,
     };
   } finally {
