@@ -1,6 +1,12 @@
 import type { Prisma } from '@auto-swe/shared';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
-import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import {
+  computeAnalytics,
+  diffSpecs,
+  parseWorkflowSpec,
+  SPEC_SCHEMA_VERSION,
+  type WorkflowSpec,
+} from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -19,6 +25,8 @@ const CreateTemplateBody = z.object({
 
 const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
+  experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
+  experimentVersion: z.number().int().min(1).nullable().optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -76,6 +84,8 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     activeVersion: tpl.activeVersion,
     createdAt: tpl.createdAt,
     description: tpl.description,
+    experimentSplit: tpl.experimentSplit,
+    experimentVersion: tpl.experimentVersion,
     id: tpl.id,
     isDefault: tpl.isDefault,
     lastRun: lastRun
@@ -293,6 +303,37 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Experiment-config validation. Done at PATCH time (vs. a CHECK constraint)
+      // because the rule depends on a sibling row (the version must exist for
+      // this template) which Postgres can't express cheaply.
+      const expVersion = request.body.experimentVersion;
+      const expSplit = request.body.experimentSplit;
+      if (expVersion !== undefined && expVersion !== null) {
+        const v = await fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: existing.id, version: expVersion } },
+        });
+        if (!v) {
+          return reply.status(400).send({
+            error: {
+              code: 'EXPERIMENT_VERSION_NOT_FOUND',
+              message: `Version ${expVersion} does not exist on this template`,
+            },
+          });
+        }
+      }
+      // Enabling traffic split without a destination version is meaningless and
+      // would silently no-op in the resolver — reject it up front.
+      const nextExpVersion = expVersion !== undefined ? expVersion : existing.experimentVersion;
+      const nextExpSplit = expSplit !== undefined ? expSplit : existing.experimentSplit;
+      if (nextExpSplit !== null && nextExpSplit > 0 && nextExpVersion === null) {
+        return reply.status(400).send({
+          error: {
+            code: 'EXPERIMENT_VERSION_REQUIRED',
+            message: 'experimentSplit > 0 requires experimentVersion to be set',
+          },
+        });
+      }
+
       const updated = await fastify.prisma.workflowTemplate.update({
         data: request.body,
         include: TEMPLATE_INCLUDE,
@@ -492,6 +533,119 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: rows.map(projectRunSummary),
         meta: { limit, offset, total },
       };
+    }
+  );
+
+  // ── Spec diff between two versions ──
+  // GET /:id/diff?a=<version>&b=<version>
+  // Returns the structural diff between two versions of the same template,
+  // so the editor can paint added/removed/changed nodes in the DAG.
+  const DiffQuery = z.object({
+    a: z.coerce.number().int().min(1),
+    b: z.coerce.number().int().min(1),
+  });
+  app.get(
+    '/:id/diff',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TemplateIdParam, querystring: DiffQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+        });
+      }
+      const [verA, verB] = await Promise.all([
+        fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: tpl.id, version: request.query.a } },
+        }),
+        fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: tpl.id, version: request.query.b } },
+        }),
+      ]);
+      if (!verA || !verB) {
+        return reply.status(404).send({
+          error: { code: 'VERSION_NOT_FOUND', message: 'One or both versions not found' },
+        });
+      }
+      // `spec` is stored as parsed JSON; cast at the boundary. Both rows were
+      // validated against WorkflowSpecSchema when they landed, so the cast is safe.
+      const specA = verA.spec as unknown as WorkflowSpec;
+      const specB = verB.spec as unknown as WorkflowSpec;
+      const diff = diffSpecs(specA, specB);
+      return {
+        data: {
+          a: { spec: specA, version: verA.version },
+          b: { spec: specB, version: verB.version },
+          diff,
+        },
+      };
+    }
+  );
+
+  // ── Analytics for a template ──
+  // GET /:id/analytics?window=<days>
+  // Aggregates from workflow_runs + workflow_steps. Cost data is joined via
+  // workRequest → activeWorkflow (cost accrues on the Temporal workflow, not
+  // the per-run record).
+  const AnalyticsQuery = z.object({
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  });
+  app.get(
+    '/:id/analytics',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TemplateIdParam, querystring: AnalyticsQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
+        });
+      }
+      const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+      // Hard cap on rows pulled into memory. Templates with high run volume
+      // would otherwise OOM the gateway on a 90d window. At the cap the rollup
+      // becomes an approximation of the most recent N runs/steps in the window.
+      const ANALYTICS_ROW_CAP = 10_000;
+
+      const [runs, steps] = await Promise.all([
+        fastify.prisma.workflowRun.findMany({
+          orderBy: { startedAt: 'desc' },
+          select: {
+            endedAt: true,
+            startedAt: true,
+            status: true,
+            templateVersion: true,
+            workRequest: {
+              select: {
+                activeWorkflows: { select: { costUsdAccrued: true } },
+              },
+            },
+          },
+          take: ANALYTICS_ROW_CAP,
+          where: { startedAt: { gte: windowStart }, templateId: tpl.id },
+        }),
+        fastify.prisma.workflowStep.findMany({
+          orderBy: { startedAt: 'desc' },
+          select: { nodeId: true, status: true },
+          take: ANALYTICS_ROW_CAP,
+          where: { run: { startedAt: { gte: windowStart }, templateId: tpl.id } },
+        }),
+      ]);
+
+      return { data: computeAnalytics(runs, steps, request.query.window) };
     }
   );
 };

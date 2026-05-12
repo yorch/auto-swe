@@ -5,18 +5,15 @@ import { use } from 'react';
 import { Card } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useTemplateRuns, useWorkflowTemplate } from '@/hooks/useWorkflows';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-function durationMs(start: string, end: string | null): string {
+function runDuration(start: string, end: string | null): string {
   if (!end) return 'running';
-  const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`;
-  return `${(ms / 3600_000).toFixed(1)}h`;
+  return formatDuration(new Date(end).getTime() - new Date(start).getTime());
 }
 
 export default function TemplateRunsPage({ params }: PageProps) {
@@ -79,7 +76,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right text-xs">
-                  {durationMs(r.startedAt, r.endedAt)}
+                  {runDuration(r.startedAt, r.endedAt)}
                 </td>
               </tr>
             ))}

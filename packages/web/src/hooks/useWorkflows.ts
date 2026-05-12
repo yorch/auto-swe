@@ -3,6 +3,7 @@
 import type {
   LessonListItem,
   RepositorySummary,
+  SpecDiffResponse,
   StepRegistryEntry,
   TeamDetail,
   TeamSummary,
@@ -11,6 +12,7 @@ import type {
   WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowSummary,
+  WorkflowTemplateAnalytics,
   WorkflowTemplateDetail,
   WorkflowTemplateSummary,
   WorkflowTemplateVersionDetail,
@@ -180,6 +182,8 @@ export function useUpdateWorkflowTemplate(templateId: string) {
         description: string;
         isDefault: boolean;
         status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
+        experimentVersion: number | null;
+        experimentSplit: number | null;
       }>
     ) =>
       api.patch<{ data: WorkflowTemplateSummary }>(
@@ -190,6 +194,34 @@ export function useUpdateWorkflowTemplate(templateId: string) {
       qc.invalidateQueries({ queryKey: ['workflow-template', templateId] });
       qc.invalidateQueries({ queryKey: ['workflow-templates'] });
     },
+  });
+}
+
+export function useWorkflowSpecDiff(templateId: string, a: number | null, b: number | null) {
+  return useQuery({
+    enabled: !!templateId && a !== null && b !== null && a !== b,
+    queryFn: () =>
+      api
+        .get<{ data: SpecDiffResponse }>(
+          `/api/v1/workflow-templates/${templateId}/diff?a=${a}&b=${b}`
+        )
+        .then((r) => r.data),
+    queryKey: ['workflow-template-diff', templateId, a, b],
+    staleTime: 60_000,
+  });
+}
+
+export function useWorkflowTemplateAnalytics(templateId: string, windowDays = 30) {
+  return useQuery({
+    enabled: !!templateId,
+    queryFn: () =>
+      api
+        .get<{ data: WorkflowTemplateAnalytics }>(
+          `/api/v1/workflow-templates/${templateId}/analytics?window=${windowDays}`
+        )
+        .then((r) => r.data),
+    queryKey: ['workflow-template-analytics', templateId, windowDays],
+    refetchInterval: 30_000,
   });
 }
 

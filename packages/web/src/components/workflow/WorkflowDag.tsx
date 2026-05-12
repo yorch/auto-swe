@@ -3,6 +3,8 @@
 import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { useMemo } from 'react';
 import {
+  type DiffKind,
+  diffStrokeColor,
   type LayoutEdge,
   type LayoutNode,
   layoutSpec,
@@ -11,6 +13,8 @@ import {
   nodeCategoryColor,
   statusFill,
 } from '@/lib/workflowLayout';
+
+export type { DiffKind } from '@/lib/workflowLayout';
 
 export interface DagStatusOverlay {
   /** Latest status per nodeId (after dedup by attempt). */
@@ -21,6 +25,8 @@ interface Props {
   spec: WorkflowSpec;
   /** Optional per-node status — used by the run viewer to colour live state. */
   statuses?: DagStatusOverlay;
+  /** Optional per-node diff highlight — used by the diff viewer. */
+  diffMarkers?: Record<string, DiffKind>;
   selectedNodeId?: string | null;
   onSelect?: (id: string | null) => void;
   /** When true, the diagram fills its container; otherwise uses natural width. */
@@ -75,6 +81,7 @@ function edgePath(from: LayoutNode, to: LayoutNode): string {
 export function WorkflowDag({
   spec,
   statuses,
+  diffMarkers,
   selectedNodeId,
   onSelect,
   responsive = true,
@@ -155,8 +162,11 @@ export function WorkflowDag({
               fill={color.fill}
               height={NODE_HEIGHT}
               rx={8}
-              stroke={isSelected ? '#0f172a' : color.stroke}
-              strokeWidth={isSelected ? 2.5 : 1.5}
+              stroke={
+                isSelected ? '#0f172a' : (diffStrokeColor(diffMarkers?.[n.id]) ?? color.stroke)
+              }
+              strokeDasharray={diffMarkers?.[n.id] === 'removed' ? '4 3' : undefined}
+              strokeWidth={isSelected || diffMarkers?.[n.id] ? 2.5 : 1.5}
               width={NODE_WIDTH}
             />
             {statusColor && <rect fill={statusColor} height={NODE_HEIGHT} rx={8} width={4} />}

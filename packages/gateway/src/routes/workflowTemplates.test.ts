@@ -1,3 +1,4 @@
+import { computeAnalytics } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -12,6 +13,8 @@ interface FakeTemplate {
   status: string;
   isDefault: boolean;
   activeVersion: number | null;
+  experimentVersion: number | null;
+  experimentSplit: number | null;
   teamId: string | null;
   team: { id: string; name: string; slug: string } | null;
   createdAt: Date;
@@ -93,6 +96,8 @@ function buildApp(state: {
           activeVersion: (data.activeVersion as number | null) ?? null,
           createdAt: new Date(),
           description: (data.description as string) ?? '',
+          experimentSplit: null,
+          experimentVersion: null,
           id,
           isDefault: false,
           name: data.name as string,
@@ -309,5 +314,159 @@ describe('workflow-templates routes', () => {
       url: '/api/v1/workflow-templates/00000000-0000-0000-0000-000000000000',
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('returns a structural diff between two versions', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) throw new Error('expected template');
+    // Create a third version that adds a node to make the diff non-trivial.
+    await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        spec: {
+          description: '',
+          entry: 'start',
+          name: 'minimal',
+          nodes: {
+            done: { status: 'SUCCESS', type: 'terminate' },
+            start: { next: 'done', step: 'runLint', type: 'step' },
+          },
+          schemaVersion: 3,
+        },
+      },
+      url: `/api/v1/workflow-templates/${tpl.id}/versions`,
+    });
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/workflow-templates/${tpl.id}/diff?a=1&b=3`,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.data.a.version).toBe(1);
+    expect(body.data.b.version).toBe(3);
+    expect(body.data.diff.addedNodes).toContain('done');
+    expect(body.data.diff.changedNodes).toContain('start');
+  });
+
+  it('rejects experimentSplit > 0 without an experimentVersion', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) throw new Error('expected template');
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: { experimentSplit: 50 },
+      url: `/api/v1/workflow-templates/${tpl.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error?.code).toBe('EXPERIMENT_VERSION_REQUIRED');
+  });
+
+  it('rejects experimentVersion pointing at a missing version', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) throw new Error('expected template');
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: { experimentVersion: 99 },
+      url: `/api/v1/workflow-templates/${tpl.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error?.code).toBe('EXPERIMENT_VERSION_NOT_FOUND');
+  });
+
+  it('accepts a valid experiment config and round-trips it on detail', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) throw new Error('expected template');
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: { experimentSplit: 25, experimentVersion: 2 },
+      url: `/api/v1/workflow-templates/${tpl.id}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.data.experimentVersion).toBe(2);
+    expect(body.data.experimentSplit).toBe(25);
+  });
+});
+
+describe('computeAnalytics', () => {
+  it('returns null rates when there are no runs', () => {
+    const out = computeAnalytics([], [], 30);
+    expect(out.totalRuns).toBe(0);
+    expect(out.successRate).toBeNull();
+    expect(out.p50DurationMs).toBeNull();
+    expect(out.avgCostPerRun).toBeNull();
+  });
+
+  it('computes success rate + duration percentiles + per-version counts', () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    const minute = 60_000;
+    const out = computeAnalytics(
+      [
+        {
+          endedAt: new Date(t0.getTime() + 5 * minute),
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workRequest: {
+            activeWorkflows: [{ costUsdAccrued: 1 }],
+          },
+        },
+        {
+          endedAt: new Date(t0.getTime() + 10 * minute),
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workRequest: {
+            activeWorkflows: [{ costUsdAccrued: 3 }],
+          },
+        },
+        {
+          endedAt: new Date(t0.getTime() + 1 * minute),
+          startedAt: t0,
+          status: 'FAILED',
+          templateVersion: 2,
+          workRequest: {
+            activeWorkflows: [{ costUsdAccrued: 2 }],
+          },
+        },
+        // still running — ignored from rates + durations
+        {
+          endedAt: null,
+          startedAt: t0,
+          status: 'RUNNING',
+          templateVersion: 1,
+          workRequest: null,
+        },
+      ],
+      [
+        { nodeId: 'lint', status: 'PASSED' },
+        { nodeId: 'lint', status: 'FAILED' },
+        { nodeId: 'lint', status: 'PASSED' },
+        { nodeId: 'test', status: 'PASSED' },
+        { nodeId: 'skip-me', status: 'SKIPPED' },
+      ],
+      30
+    );
+
+    expect(out.totalRuns).toBe(4);
+    expect(out.succeeded).toBe(2);
+    expect(out.failed).toBe(1);
+    expect(out.successRate).toBeCloseTo(2 / 3);
+    expect(out.p50DurationMs).toBe(5 * minute);
+    expect(out.p95DurationMs).toBe(10 * minute);
+    expect(out.totalCost).toBe(6);
+    expect(out.avgCostPerRun).toBe(2);
+    const lint = out.perStepFailureRates.find((s) => s.nodeId === 'lint');
+    expect(lint).toMatchObject({ failed: 1, failureRate: 1 / 3, total: 3 });
+    // SKIPPED steps must not appear in the failure rollup.
+    expect(out.perStepFailureRates.find((s) => s.nodeId === 'skip-me')).toBeUndefined();
+    expect(out.perVersionCounts).toEqual([
+      { count: 3, version: 1 },
+      { count: 1, version: 2 },
+    ]);
   });
 });

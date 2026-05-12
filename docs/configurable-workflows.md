@@ -37,6 +37,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 21 | The web URLs are split: `/workflows` keeps its existing meaning (in-flight `ActiveWorkflow` rows, relabeled "Active Runs"), `/templates` owns the workflow-template editor + version history, and `/runs/[id]` is the WorkflowRun viewer. Phase 4 doc originally proposed `/workflows` for templates, but renaming a live-traffic route was riskier than introducing two new ones. |
 | 22 | Phase-4 editor ships a JSON-text spec editor + SVG DAG viewer (custom 150-line layered layout in `packages/web/src/lib/workflowLayout.ts`) instead of pulling in React Flow / dagre. Keeps the bundle small and avoids drag-and-drop scope creep; full canvas drag-edit can land in phase 5 if the JSON editor proves friction-y. |
 | 23 | The step registry lives in `packages/shared/src/workflow/stepRegistry.ts` so gateway + web can import metadata without depending on the worker package. Worker-only activity wiring still lives in `packages/worker/src/workflows/runnable.ts`. |
+| 24 | A/B experiment routing is deterministic per `externalTicketId`, salted by `templateId` (sha1 mod 100). Re-runs of the same ticket always land on the same arm, and two templates' experiments are uncorrelated. We hash in the gateway resolver rather than at workflow-start so the Temporal layer never sees the bucket — only the resolved version. |
+| 25 | Per-template `experimentVersion` + `experimentSplit` live on `WorkflowTemplate` rather than a separate `WorkflowExperiment` table. There can only be one experiment per template (no multi-arm right now), and the columns are nullable so disabled state is unambiguous. Validation (split > 0 requires version; version must exist on this template) lives in the gateway PATCH route — a CHECK constraint can't express the cross-row dependency cheaply. |
+| 26 | Analytics cost rollup joins `workflow_runs → workRequest → activeWorkflow.costUsdAccrued` and **sums** across activeWorkflows per WorkRequest. This is correct for both single-workflow runs and epic decompositions (which create multiple activeWorkflows under one WorkRequest). We deliberately don't denormalize cost onto `workflow_runs` — the join is cheap on a 30d window and avoids a write-side audit problem if the LLM-call cost path ever changes shape. |
 
 ---
 
@@ -49,7 +52,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 3. Fan-out + decomposition + branch merging | **Done** | `fanOut` node + sealed child contexts, `planDecomposition` + `mergeBranches` activities, sequential execution; per-subagent workspace via `executeImplementation(request, subtask)` |
 | 3.5 Parallel fan-out + conflict resolution | **Done** | concurrency-bounded worker pool inside `runFanOut`, `resolveMergeConflict` activity backed by the implementer agent, `mergeBranches.unmergedBranches` tail |
 | 4. Web editor + run viewer | **Done** | `/templates` list, JSON spec editor + SVG DAG viewer, version sidebar + promote, `/templates/[id]/runs` paginated history, `/runs/[id]` live DAG viewer with per-node status overlay; gateway CRUD + step-registry catalog |
-| 5. Versioning UI, A/B per team, analytics | Not started | version history page, per-team active version selector, $/run analytics |
+| 5. Versioning UI, A/B per team, analytics | **Done** | version diff viewer, A/B experiment routing (`experimentVersion` + `experimentSplit`), analytics page (success rate, p50/p95, $/run, per-step failure rates), observed-cost chip on editor |
 | 6. Custom shell steps with RBAC + audit | Not started | team-admin-only step authoring, ephemeral container, audit log |
 | 7. First-class in Slack + CLI | Not started | `/auto-swe workflow list` etc.; Slack picker on work-request create |
 
@@ -335,21 +338,34 @@ The phase-4 plan originally put templates at `/workflows`, but `/workflows` alre
 
 ---
 
-## Phase 5 — Versioning UI, A/B per team, analytics
+## Phase 5 — Versioning UI, A/B per team, analytics (Done)
 
-### Adds
+### What shipped
 
-- Version history sidebar on `/workflows/[id]/edit` showing all `WorkflowTemplateVersion` rows
-- "Promote to active" button (atomically updates `WorkflowTemplate.activeVersion`)
-- Per-team default selector (currently set by `isDefault` boolean; expose in UI)
-- Analytics page: success rate, p50/p95 wallclock, $/run, per-step failure rates — query `workflow_runs` + `workflow_steps`
-- A/B framework: `WorkflowTemplate.experimentSplit` (percent) → on work-request creation, deterministically choose between active version and experiment version
+- **Schema.** `WorkflowTemplate.experimentVersion: Int?` + `experimentSplit: Int?` (0–100, CHECK-constrained) added to the squashed init migration. Disabled state is `(NULL, NULL)`.
+- **A/B routing.** `experimentBucket(ticketId, templateId)` in `packages/gateway/src/routes/workRequests.ts` — deterministic sha1 mod 100, salted by templateId so two templates' experiments stay statistically independent. `resolveDefaultTemplate` now consults the experiment fields and returns `{ templateId, version, isExperiment }`; routing happens at gateway time so the Temporal layer never sees the bucket.
+- **Validation.** `PATCH /workflow-templates/:id` accepts `experimentVersion` + `experimentSplit`; rejects (a) a `version` that doesn't exist on this template (`EXPERIMENT_VERSION_NOT_FOUND`) and (b) `split > 0` without a `version` set (`EXPERIMENT_VERSION_REQUIRED`).
+- **Spec diff.** `packages/shared/src/workflow/specDiff.ts` — pure structural diff (`diffSpecs(before, after)`) returning `addedNodes`, `removedNodes`, `changedNodes`, `unchangedNodes`, plus top-level `metaChanges`. Canonical key-sorted JSON so property ordering doesn't show up as a spurious change.
+- **Diff route.** `GET /workflow-templates/:id/diff?a=N&b=M` returns both raw specs + the structural diff so the editor can paint added/removed/changed nodes in the DAG.
+- **Analytics route.** `GET /workflow-templates/:id/analytics?window=<days>` — `computeAnalytics()` is exported as a pure function for testing. Computes: `totalRuns`, `succeeded`, `failed`, `successRate`, `p50DurationMs`, `p95DurationMs`, `totalCost`, `avgCostPerRun`, `perStepFailureRates[]`, `perVersionCounts[]`. Cost is joined via `workflow_runs → workRequest → activeWorkflow.costUsdAccrued` and summed across activeWorkflows per WorkRequest (correct for epic decompositions). Skipped/pending step records excluded from the failure rollup.
+- **Web pages.**
+  - `/templates/[id]/diff` — version dropdowns + summary card + two side-by-side DAGs with `diffMarkers` (green added, red dashed removed, amber changed).
+  - `/templates/[id]/analytics` — 8 KPI tiles, per-version run-mix breakdown (active vs. experiment badges), per-step failure rate table sorted desc with threshold colour coding.
+  - `/templates/[id]` — added experiment-config form (version picker + split slider, with disable button); experiment badge on version sidebar; observed `$/run` chip next to the static estimate; nav links to Analytics + Compare versions + Run history.
+- **WorkflowDag.** New `diffMarkers?: Record<string, DiffKind>` prop. Stroke colour + dashed outline for `'added' | 'removed' | 'changed'`.
+- **API types.** `WorkflowTemplateAnalytics`, `SpecDiffResponse` added to `@auto-swe/shared/types/api`; `WorkflowTemplateSummary` extended with `experimentVersion` + `experimentSplit`.
 
-### Files to touch
+### Tests (300 total, +21 from phase 4)
 
-- Gateway routes for version management
-- Web pages for history + analytics
-- Probably one Prisma migration for `experimentSplit` + `experimentVersion` columns
+- `specDiff.test.ts` (shared) — identical specs, added/removed/changed nodes, in-place config changes, property-order tolerance, meta changes, deterministic sort.
+- `workRequests.test.ts` (gateway) — A/B routing happy path (split=100 → experiment arm), no-traffic split (split=0 → active arm), missing-ticketId path, and `experimentBucket` determinism + range + decorrelation across templateIds.
+- `workflowTemplates.test.ts` (gateway) — spec diff route happy path; PATCH rejects bad experiment config (missing version, version not on template); PATCH round-trips a valid experiment config. `computeAnalytics` unit test: empty input nulls, success rate + percentiles + cost rollup + per-step skipping + per-version counts.
+
+### Known follow-ups
+
+- **Run-level cost denormalization.** Analytics joins through WorkRequest → ActiveWorkflow at query time. For high-cardinality dashboards this is fine; once we have a `/workflows/global-analytics` page that aggregates across teams + templates, the join cost will grow and we should mirror `costUsdAccrued` onto `workflow_runs` (a new column written by `finalizeWorkflowRun`).
+- **Statistical-significance hint.** The analytics page shows raw counts per version; it doesn't say "you have enough samples to declare a winner." A small Bayesian conversion test (or even just a coverage warning until per-arm N ≥ 30) would let teams promote experiments confidently.
+- **Activity cancellation.** Same one as 3.5 — block-mode fan-out can't actually cancel in-flight branches.
 
 ---
 

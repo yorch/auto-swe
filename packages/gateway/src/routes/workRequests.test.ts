@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
+import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 describe('POST /api/v1/work-requests', () => {
   const app = Fastify();
@@ -119,7 +119,7 @@ describe('resolveDefaultTemplate', () => {
       prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
       'team-1'
     );
-    expect(out).toEqual({ templateId: 'team-tpl', version: 5 });
+    expect(out).toEqual({ isExperiment: false, templateId: 'team-tpl', version: 5 });
   });
 
   it('falls back to the global default when no team default exists', async () => {
@@ -131,7 +131,7 @@ describe('resolveDefaultTemplate', () => {
       prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
       'team-1'
     );
-    expect(out).toEqual({ templateId: 'global-tpl', version: 1 });
+    expect(out).toEqual({ isExperiment: false, templateId: 'global-tpl', version: 1 });
     expect(findFirst).toHaveBeenCalledTimes(2);
     const secondWhere = findFirst.mock.calls[1]?.[0]?.where as Record<string, unknown>;
     expect(secondWhere.teamId).toBeNull();
@@ -156,5 +156,89 @@ describe('resolveDefaultTemplate', () => {
       'team-1'
     );
     expect(out).toBeNull();
+  });
+
+  it('routes to the experiment version when bucket lands below the split', async () => {
+    // experimentSplit=100 → every ticket lands in the experiment arm.
+    const { prisma } = fakePrisma({
+      globalMatch: null,
+      teamMatch: {
+        activeVersion: 5,
+        experimentSplit: 100,
+        experimentVersion: 7,
+        id: 'team-tpl',
+      } as never,
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1',
+      'JIRA-1'
+    );
+    expect(out).toEqual({ isExperiment: true, templateId: 'team-tpl', version: 7 });
+  });
+
+  it('stays on the active version when bucket lands above the split', async () => {
+    // experimentSplit=0 → no traffic ever enters the experiment arm.
+    const { prisma } = fakePrisma({
+      globalMatch: null,
+      teamMatch: {
+        activeVersion: 5,
+        experimentSplit: 0,
+        experimentVersion: 7,
+        id: 'team-tpl',
+      } as never,
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1',
+      'JIRA-99'
+    );
+    expect(out).toEqual({ isExperiment: false, templateId: 'team-tpl', version: 5 });
+  });
+
+  it('ignores the experiment when externalTicketId is not provided', async () => {
+    const { prisma } = fakePrisma({
+      globalMatch: null,
+      teamMatch: {
+        activeVersion: 5,
+        experimentSplit: 100,
+        experimentVersion: 7,
+        id: 'team-tpl',
+      } as never,
+    });
+    const out = await resolveDefaultTemplate(
+      prisma as unknown as Parameters<typeof resolveDefaultTemplate>[0],
+      'team-1'
+    );
+    expect(out).toEqual({ isExperiment: false, templateId: 'team-tpl', version: 5 });
+  });
+});
+
+describe('experimentBucket', () => {
+  it('is deterministic for a given (templateId, ticketId)', () => {
+    const a = experimentBucket('JIRA-42', 'tpl-1');
+    const b = experimentBucket('JIRA-42', 'tpl-1');
+    expect(a).toBe(b);
+  });
+
+  it('returns a value in [0, 100)', () => {
+    for (const t of ['JIRA-1', 'PROJ-99', 'AAA-0', 'edge case ticket']) {
+      const b = experimentBucket(t, 'tpl-x');
+      expect(b).toBeGreaterThanOrEqual(0);
+      expect(b).toBeLessThan(100);
+    }
+  });
+
+  it('decorrelates buckets across templateIds (salt works)', () => {
+    // Same ticket, two templates → buckets should generally differ.
+    // (Not a strict invariant — birthday collisions are possible — but with
+    // sha1 + 100 buckets, picking two distinct templateIds and a fixed ticket
+    // hitting the same bucket is 1/100; we test a handful to confirm the
+    // salt is actually mixed in.)
+    const distinct = new Set<number>();
+    for (let i = 0; i < 20; i++) {
+      distinct.add(experimentBucket('JIRA-1', `tpl-${i}`));
+    }
+    expect(distinct.size).toBeGreaterThan(1);
   });
 });

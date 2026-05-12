@@ -215,6 +215,8 @@ export interface WorkflowTemplateSummary {
   status: WorkflowTemplateStatus;
   isDefault: boolean;
   activeVersion: number | null;
+  experimentVersion: number | null;
+  experimentSplit: number | null;
   versionCount: number;
   team: TeamRef | null;
   lastRun: {
@@ -256,6 +258,39 @@ export interface UpdateWorkflowTemplateBody {
   description?: string;
   isDefault?: boolean;
   status?: WorkflowTemplateStatus;
+  experimentVersion?: number | null;
+  experimentSplit?: number | null;
+}
+
+export interface WorkflowTemplateAnalytics {
+  windowDays: number;
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  p50DurationMs: number | null;
+  p95DurationMs: number | null;
+  totalCost: number;
+  avgCostPerRun: number | null;
+  perStepFailureRates: Array<{
+    nodeId: string;
+    failed: number;
+    total: number;
+    failureRate: number;
+  }>;
+  perVersionCounts: Array<{ version: number; count: number }>;
+}
+
+export interface SpecDiffResponse {
+  a: { version: number; spec: unknown };
+  b: { version: number; spec: unknown };
+  diff: {
+    addedNodes: string[];
+    removedNodes: string[];
+    changedNodes: string[];
+    unchangedNodes: string[];
+    metaChanges: Array<{ field: string; before: unknown; after: unknown }>;
+  };
 }
 
 export interface CreateWorkflowVersionBody {

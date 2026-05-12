@@ -1,6 +1,12 @@
 // Side-effect import: registers built-in codemods (v1→v2, …) at module load.
 import './codemods.js';
 
+export type {
+  AnalyticsResult,
+  AnalyticsRunRow,
+  AnalyticsStepRow,
+} from './analytics.js';
+export { computeAnalytics } from './analytics.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
 export type { CostEstimate, CostRole } from './costEstimator.js';
@@ -46,6 +52,8 @@ export {
   SPEC_SCHEMA_VERSION,
   WorkflowSpecSchema,
 } from './spec.js';
+export type { SpecDiff, SpecMetaChange } from './specDiff.js';
+export { diffSpecs, specsEqual } from './specDiff.js';
 export {
   assertBuiltinStepsRegistered,
   getStepMetadata,
