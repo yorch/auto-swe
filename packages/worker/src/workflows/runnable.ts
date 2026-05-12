@@ -2,6 +2,7 @@ import type { CodeResult, RepoWorkRequest, WorkflowResult } from '@auto-swe/shar
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import { runSpec } from '@auto-swe/shared/workflow/interpreter';
+import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
 import type { Duration } from '@temporalio/common';
 import {
   condition,
@@ -116,15 +117,15 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const runId = runInfo.runId;
 
   // 2. Register signal handlers for every signal name referenced in the spec.
-  // Slots use undefined to mean "no signal received yet" so subsequent waits
-  // on the same name don't fire on stale payloads.
-  const signalSlots = new Map<string, unknown>();
+  // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
+  // a thin wrapper (see packages/shared/src/workflow/signalSlots.ts).
+  const slots = new SignalSlots();
   for (const node of Object.values(spec.nodes)) {
-    if (node.type === 'signal' && !signalSlots.has(node.name)) {
-      signalSlots.set(node.name, undefined);
+    if (node.type === 'signal' && !slots.isRegistered(node.name)) {
+      slots.register(node.name);
       const def = defineSignal<[unknown]>(node.name);
       setHandler(def, (payload: unknown) => {
-        signalSlots.set(node.name, payload ?? null);
+        slots.deliver(node.name, payload);
       });
     }
   }
@@ -138,16 +139,12 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       await stateActivities.recordWorkflowStep({ ...args, runId });
     },
     async waitSignal(name, timeout) {
-      // Reset stale payloads so we never satisfy a wait with a previous send.
-      if (signalSlots.get(name) !== undefined) signalSlots.set(name, undefined);
-      const received = await condition(
-        () => signalSlots.get(name) !== undefined,
-        timeout as Duration
-      );
-      if (!received) return undefined;
-      const payload = signalSlots.get(name);
-      signalSlots.set(name, undefined);
-      return payload;
+      // Clear any stale payload so we never satisfy this wait with a previous
+      // send (mirrors the `ciResult = null` reset at the top of the engineering
+      // workflow's CI loop).
+      slots.clear(name);
+      const received = await condition(() => slots.hasPending(name), timeout as Duration);
+      return received ? slots.take(name) : undefined;
     },
   };
 

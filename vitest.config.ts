@@ -51,6 +51,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/interpreter.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/signalSlots',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/signalSlots.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
       },

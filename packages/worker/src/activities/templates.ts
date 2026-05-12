@@ -113,3 +113,34 @@ export async function finalizeWorkflowRun(
     where: { id: runId },
   });
 }
+
+/**
+ * Resolve which workflow template a repo's work should run against. Prefers
+ * the repo's team default; falls back to the global (teamId IS NULL) default.
+ * Used by the epic orchestrator to start child workflows per repo. Throws if
+ * no template is configured — workflows can't run without one.
+ */
+export async function resolveTemplateForRepo(
+  repoId: string
+): Promise<{ templateId: string; templateVersion: number }> {
+  const repo = await prisma.repository.findUniqueOrThrow({
+    select: { teamId: true },
+    where: { id: repoId },
+  });
+
+  const teamTpl = await prisma.workflowTemplate.findFirst({
+    where: { isDefault: true, status: 'ACTIVE', teamId: repo.teamId },
+  });
+  const tpl =
+    teamTpl ??
+    (await prisma.workflowTemplate.findFirst({
+      where: { isDefault: true, status: 'ACTIVE', teamId: null },
+    }));
+
+  if (!tpl?.activeVersion) {
+    throw new Error(
+      `no active default workflow template for repo ${repoId} (team ${repo.teamId}). Run \`yarn db:seed\`.`
+    );
+  }
+  return { templateId: tpl.id, templateVersion: tpl.activeVersion };
+}

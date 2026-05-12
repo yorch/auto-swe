@@ -16,5 +16,6 @@ export {
   finalizeWorkflowRun,
   loadTemplateSpec,
   recordWorkflowStep,
+  resolveTemplateForRepo,
 } from './templates.js';
 export { validateContext } from './validateContext.js';

@@ -17,6 +17,7 @@ export type {
   StepMetadata,
 } from './registry-types.js';
 export { BUILTIN_STEPS } from './registry-types.js';
+export { SignalSlots } from './signalSlots.js';
 export type {
   Binding,
   CondNode,

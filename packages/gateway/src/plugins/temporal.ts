@@ -6,7 +6,6 @@ import fp from 'fastify-plugin';
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
-      startWorkflow: (workflowId: string, request: RepoWorkRequest) => Promise<void>;
       startRunnableWorkflow: (
         workflowId: string,
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -51,13 +50,6 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     ): Promise<void> {
       await client.workflow.start('RunnableWorkflow', {
         args: [input],
-        taskQueue: 'engineering-workflow',
-        workflowId,
-      });
-    },
-    async startWorkflow(workflowId: string, request: RepoWorkRequest): Promise<void> {
-      await client.workflow.start('EngineeringWorkflow', {
-        args: [request],
         taskQueue: 'engineering-workflow',
         workflowId,
       });

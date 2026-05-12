@@ -17,7 +17,8 @@
     "./workflow/registry-types": "./dist/workflow/registry-types.js",
     "./workflow/codemod": "./dist/workflow/codemod.js",
     "./workflow/defaultEngineeringSpec": "./dist/workflow/defaultEngineeringSpec.js",
-    "./workflow/interpreter": "./dist/workflow/interpreter.js"
+    "./workflow/interpreter": "./dist/workflow/interpreter.js",
+    "./workflow/signalSlots": "./dist/workflow/signalSlots.js"
   },
   "scripts": {
     "build": "tsc",
