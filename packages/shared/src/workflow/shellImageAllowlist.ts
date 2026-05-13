@@ -20,6 +20,13 @@ export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
   'alpine:latest',
 ]);
 
+/**
+ * Regex for validating Docker image references (`registry/org/name:tag@sha256:digest`).
+ * Used by allowlist input validation in the gateway and as a defense-in-depth
+ * guard against argv smuggling in the worker. Exact character set; no whitespace.
+ */
+export const DOCKER_IMAGE_REF_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
+
 export class ShellImageNotAllowedError extends Error {
   readonly image: string;
   readonly allowed: readonly string[];

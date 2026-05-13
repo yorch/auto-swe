@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -165,7 +166,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           .min(1)
           .max(256)
           .regex(
-            /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/,
+            DOCKER_IMAGE_REF_RE,
             'image must look like registry/org/name:tag — no whitespace or shell metacharacters'
           )
       )

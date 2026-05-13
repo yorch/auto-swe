@@ -30,6 +30,8 @@ import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { requireEnv } from '../lib/errors.js';
+import { EXEC_OPTS } from '../lib/execUtils.js';
+import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
 
 export interface ShellStepInput {
@@ -58,19 +60,10 @@ export interface ShellStepResult {
   filesChanged: string[];
 }
 
-// Helper image used by the prep + finalize phases. Tiny (~5MB), git built-in.
+// Tiny (~5MB) helper image with git built-in, used by the prep + finalize phases.
 const GIT_HELPER_IMAGE = 'alpine/git:latest';
 
-const EXEC_OPTS = {
-  encoding: 'utf-8' as const,
-  maxBuffer: 10 * 1024 * 1024,
-  timeout: 120_000,
-};
-
 function runDocker(args: string[]): string {
-  // Use spawnSync via execSync wrapper. Each arg is shell-quoted because we
-  // build a string command (execSync prefers strings); inputs to this helper
-  // are either hard-coded literals or already-validated identifiers.
   const quoted = args.map(shellQuote).join(' ');
   return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
 }
@@ -81,15 +74,6 @@ function safeRunDocker(args: string[]): void {
   } catch {
     /* best-effort */
   }
-}
-
-function truncate(s: string, maxBytes: number): string {
-  const buf = Buffer.from(s, 'utf8');
-  if (buf.byteLength <= maxBytes) return s;
-  const half = Math.floor(maxBytes / 2);
-  const head = buf.subarray(0, half).toString('utf8');
-  const tail = buf.subarray(buf.byteLength - half).toString('utf8');
-  return `${head}\n…[truncated ${buf.byteLength - maxBytes} bytes]…\n${tail}`;
 }
 
 interface RepoMeta {
@@ -119,36 +103,27 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
 }
 
 /**
- * Clone the branch into a fresh Docker volume. Returns the volume name. The
- * caller owns the volume lifecycle and must `docker volume rm` it after use.
+ * Clone the branch into the given volume. Falls back to the default branch if
+ * the work-request branch doesn't exist remotely yet (e.g. shell step runs
+ * before the implementer's first push). Caller owns volume lifecycle.
  */
-function prepWorkspaceVolume(meta: RepoMeta, branch: string): string {
-  const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
-  runDocker(['volume', 'create', volumeName]);
+function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): void {
+  const tryClone = (refspec: string): string =>
+    runDocker([
+      'run',
+      '--rm',
+      '-v',
+      `${volumeName}:/workspace:rw`,
+      '--entrypoint',
+      'sh',
+      GIT_HELPER_IMAGE,
+      '-c',
+      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+    ]);
   try {
-    // Try the work-request branch first; if it doesn't exist remotely yet
-    // (gate runs before any push), fall back to the default branch.
-    const tryClone = (refspec: string): string =>
-      runDocker([
-        'run',
-        '--rm',
-        '-v',
-        `${volumeName}:/workspace:rw`,
-        '--entrypoint',
-        'sh',
-        GIT_HELPER_IMAGE,
-        '-c',
-        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
-      ]);
-    try {
-      tryClone(branch);
-    } catch {
-      tryClone(meta.defaultBranch);
-    }
-    return volumeName;
-  } catch (err) {
-    safeRunDocker(['volume', 'rm', '-f', volumeName]);
-    throw err;
+    tryClone(branch);
+  } catch {
+    tryClone(meta.defaultBranch);
   }
 }
 
@@ -233,10 +208,12 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
 
-  heartbeat('shell-step: preparing workspace volume');
-  const volumeName = prepWorkspaceVolume(meta, branch);
-
+  const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
+  runDocker(['volume', 'create', volumeName]);
   try {
+    heartbeat('shell-step: cloning branch into workspace volume');
+    cloneIntoVolume(volumeName, meta, branch);
+
     heartbeat('shell-step: running command');
     const result = runEphemeralContainer({
       command: input.command,

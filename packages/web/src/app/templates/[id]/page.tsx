@@ -1,6 +1,6 @@
 'use client';
 
-import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import type { ShellNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
@@ -72,15 +72,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
   // Phase-6 danger-zone surface. Shell nodes carry elevated privileges
   // (ephemeral container, user-authored command), so the editor calls them
   // out and prompts before save. RBAC is still enforced server-side.
-  const shellNodes = useMemo(() => {
-    if (!spec) return [] as Array<{ id: string; image: string; command: string }>;
-    return Object.entries(spec.nodes)
-      .filter(([, n]) => n.type === 'shell')
-      .map(([id, n]) => ({
-        command: (n as { command: string }).command,
-        id,
-        image: (n as { image: string }).image,
-      }));
+  const shellNodes = useMemo<Array<{ id: string; node: ShellNode }>>(() => {
+    if (!spec) return [];
+    const out: Array<{ id: string; node: ShellNode }> = [];
+    for (const [id, node] of Object.entries(spec.nodes)) {
+      if (node.type === 'shell') out.push({ id, node });
+    }
+    return out;
   }, [spec]);
 
   if (isLoading || !template) {
@@ -92,10 +90,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
       setSaveError(parsed?.error ?? 'JSON not parsed');
       return;
     }
-    const shellCount = Object.values(parsed.spec.nodes).filter((n) => n.type === 'shell').length;
-    if (shellCount > 0) {
+    if (shellNodes.length > 0) {
       const ok = window.confirm(
-        `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
+        `This version contains ${shellNodes.length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
       );
       if (!ok) return;
     }
@@ -271,11 +268,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   authoring required
                 </div>
                 <ul className="list-disc list-inside space-y-0.5">
-                  {shellNodes.slice(0, 5).map((n) => (
-                    <li key={n.id}>
-                      <code>{n.id}</code> · {n.image} ·{' '}
+                  {shellNodes.slice(0, 5).map(({ id, node }) => (
+                    <li key={id}>
+                      <code>{id}</code> · {node.image} ·{' '}
                       <code className="text-rose-700">
-                        {n.command.length > 80 ? `${n.command.slice(0, 80)}…` : n.command}
+                        {node.command.length > 80 ? `${node.command.slice(0, 80)}…` : node.command}
                       </code>
                     </li>
                   ))}

@@ -1,13 +1,9 @@
-import { type ExecSyncOptions, execSync, spawnSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { type CapturedResult, EXEC_OPTS, parseSpawnSyncResult } from '../lib/execUtils.js';
 
-export interface CapturedExec {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  /** Set when the command did not exit cleanly (timeout, signal, spawn error). */
-  signal?: string;
-}
+export type CapturedExec = CapturedResult;
 
 export interface Workspace {
   containerId: string;
@@ -21,16 +17,6 @@ export interface Workspace {
   destroy: () => void;
 }
 
-const EXEC_OPTS: ExecSyncOptions = {
-  encoding: 'utf-8' as BufferEncoding,
-  maxBuffer: 10 * 1024 * 1024, // 10MB
-  timeout: 120_000, // 2 minutes per command
-};
-
-// Validate Docker image names to prevent shell injection.
-// Allows standard image refs: registry/org/name:tag@sha256:digest
-const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
-
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
@@ -42,7 +28,7 @@ export function createWorkspace(
   githubToken: string,
   image: string = 'node:24-alpine'
 ): Workspace {
-  if (!DOCKER_IMAGE_RE.test(image)) {
+  if (!DOCKER_IMAGE_REF_RE.test(image)) {
     throw new Error(`Invalid Docker image name: ${image}`);
   }
 
@@ -106,39 +92,13 @@ export function createWorkspace(
       ) as string;
     },
     execCapture: (command: string, options) => {
-      const timeoutMs = options?.timeoutMs ?? 600_000; // 10 min default for gate runs
+      const timeoutMs = options?.timeoutMs ?? 600_000;
       const result = spawnSync(
         'docker',
         ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
-        {
-          encoding: 'utf-8',
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: timeoutMs,
-        }
+        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs }
       );
-      // Three failure shapes to disambiguate:
-      //   - spawn error (e.g. docker not on PATH): result.error set, status null, signal null
-      //   - timeout (Node killed the child): result.error set with ETIMEDOUT, status null, signal SIGTERM
-      //   - clean exit (including non-zero): status is a number
-      const stderr = result.stderr ?? '';
-      if (typeof result.status === 'number') {
-        return {
-          exitCode: result.status,
-          stderr,
-          stdout: result.stdout ?? '',
-          ...(result.signal ? { signal: result.signal } : {}),
-        };
-      }
-      const errMsg = result.error ? `${result.error.name}: ${result.error.message}` : '';
-      const spawnErr = errMsg ? `${stderr}\n${errMsg}`.trim() : stderr;
-      // Convention: 124 == timeout (coreutils), 127 == spawn failure (sh "command not found").
-      const isTimeout = !!result.signal || /ETIMEDOUT/.test(errMsg);
-      return {
-        exitCode: isTimeout ? 124 : 127,
-        signal: result.signal ?? (isTimeout ? 'SIGTERM' : 'SPAWN_ERROR'),
-        stderr: spawnErr,
-        stdout: result.stdout ?? '',
-      };
+      return parseSpawnSyncResult(result);
     },
   };
 }

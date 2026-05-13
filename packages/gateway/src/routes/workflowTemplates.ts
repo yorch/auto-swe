@@ -317,9 +317,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       const parsedSpec = parsed as WorkflowSpec;
       const shellNodes = collectShellNodes(parsedSpec);
-      const rbac = await assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
+      ]);
       if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      const imgGate = await assertShellImagesAllowed(fastify, teamId ?? null, shellNodes);
       if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
 
       try {
@@ -542,9 +544,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       const parsedSpec = parsed as WorkflowSpec;
       const shellNodes = collectShellNodes(parsedSpec);
-      const rbac = await assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes),
+        assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
+      ]);
       if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      const imgGate = await assertShellImagesAllowed(fastify, tpl.teamId, shellNodes);
       if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
 
       // SELECT max(version)+1 / INSERT is racy under concurrent saves — two

@@ -16,15 +16,12 @@
  * `Workspace.execCapture` so callers can reuse the same downstream handling.
  */
 
-import { type ExecSyncOptions, execSync, spawnSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { type CapturedResult, EXEC_OPTS, parseSpawnSyncResult } from './execUtils.js';
 
-export interface EphemeralRunResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  signal?: string;
-}
+export type EphemeralRunResult = CapturedResult;
 
 export interface EphemeralRunInput {
   /** Docker image to run. Caller is expected to have already enforced the allowlist. */
@@ -50,12 +47,6 @@ export interface EphemeralRunInput {
   workdir?: string;
 }
 
-// Reuse the validation regex from workspace.ts. Image names are also checked
-// against the allowlist at workflow start; this is a defense-in-depth shell
-// injection guard so even an attacker who slips past the allowlist (or the
-// allowlist contains a hostile entry) can't smuggle docker flags through the
-// image arg.
-const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/;
 const MEMORY_RE = /^\d+[bkmg]?$/i;
 // Docker volume names: [a-zA-Z0-9][a-zA-Z0-9_.-]+. Host absolute paths start
 // with `/`. Either is fine here; the regex rejects anything that could be
@@ -63,18 +54,12 @@ const MEMORY_RE = /^\d+[bkmg]?$/i;
 // `-v src:/workspace:rw` argv slot.
 const MOUNT_SOURCE_RE = /^(\/[^:]+|[a-zA-Z0-9][a-zA-Z0-9_.-]+)$/;
 
-const EXEC_OPTS: ExecSyncOptions = {
-  encoding: 'utf-8' as BufferEncoding,
-  maxBuffer: 10 * 1024 * 1024,
-  timeout: 120_000,
-};
-
 /**
  * Build the argv passed to `docker run`. Exposed for testing — the
  * pure-function shape lets us assert flag ordering without invoking docker.
  */
 export function buildDockerArgs(input: EphemeralRunInput, containerName: string): string[] {
-  if (!DOCKER_IMAGE_RE.test(input.image)) {
+  if (!DOCKER_IMAGE_REF_RE.test(input.image)) {
     throw new Error(`Invalid Docker image name: ${input.image}`);
   }
   if (!MOUNT_SOURCE_RE.test(input.workspaceMount)) {
@@ -134,29 +119,13 @@ export function runEphemeralContainer(input: EphemeralRunInput): EphemeralRunRes
   const timeoutMs = input.timeoutMs ?? 600_000;
 
   try {
-    const result = spawnSync('docker', args, {
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: timeoutMs,
-    });
-    const stderr = result.stderr ?? '';
-    if (typeof result.status === 'number') {
-      return {
-        exitCode: result.status,
-        stderr,
-        stdout: result.stdout ?? '',
-        ...(result.signal ? { signal: result.signal } : {}),
-      };
-    }
-    const errMsg = result.error ? `${result.error.name}: ${result.error.message}` : '';
-    const spawnErr = errMsg ? `${stderr}\n${errMsg}`.trim() : stderr;
-    const isTimeout = !!result.signal || /ETIMEDOUT/.test(errMsg);
-    return {
-      exitCode: isTimeout ? 124 : 127,
-      signal: result.signal ?? (isTimeout ? 'SIGTERM' : 'SPAWN_ERROR'),
-      stderr: spawnErr,
-      stdout: result.stdout ?? '',
-    };
+    return parseSpawnSyncResult(
+      spawnSync('docker', args, {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: timeoutMs,
+      })
+    );
   } finally {
     // Defensive cleanup — docker run --rm already removes the container on
     // exit, but if the host process was killed mid-spawn the container may
