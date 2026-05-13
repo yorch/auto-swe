@@ -64,6 +64,11 @@ export interface ShellStepResult {
 const GIT_HELPER_IMAGE = 'alpine/git:latest';
 
 function runDocker(args: string[]): string {
+  // execSync prefers a string command, so we shell-quote each arg before
+  // joining. The inputs to this helper are either hard-coded literals or
+  // identifiers that have already been validated upstream (volume names,
+  // images checked against DOCKER_IMAGE_REF_RE, branch names quoted by the
+  // caller) — never raw user input from a spec.
   const quoted = args.map(shellQuote).join(' ');
   return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
 }
