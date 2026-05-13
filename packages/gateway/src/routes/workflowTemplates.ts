@@ -109,15 +109,22 @@ async function assertShellImagesAllowed(
   return null;
 }
 
+/**
+ * Insert the audit rows. Accepts either the singleton prisma client or a
+ * transaction client so the caller can wrap the version write + audit in a
+ * single atomic step — without that, a failed audit insert leaves the version
+ * row in place and the API reports an error, an inconsistency that's hard
+ * to reconcile later.
+ */
 async function recordShellAudit(
-  fastify: FastifyInstance,
+  tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>,
   templateVersionId: string,
   teamId: string | null,
   authorUserId: string,
   shellNodes: ShellNodeWithId[]
 ): Promise<void> {
   if (shellNodes.length === 0) return;
-  await fastify.prisma.workflowShellAudit.createMany({
+  await tx.workflowShellAudit.createMany({
     data: shellNodes.map(({ id, node }) => ({
       authorUserId,
       command: node.command,
@@ -325,25 +332,29 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
 
       try {
-        // Single create — `activeVersion: 1` + `status: 'ACTIVE'` are set inline
-        // so a failure can't leave a half-promoted template behind.
-        const tpl = await fastify.prisma.workflowTemplate.create({
-          data: {
-            activeVersion: 1,
-            description: description ?? '',
-            name,
-            status: 'ACTIVE',
-            teamId: teamId ?? null,
-            versions: {
-              create: { createdBy: user.sub, spec: parsed as object, version: 1 },
+        // Wrap the template + initial version + shell-audit insert in one
+        // transaction so a failed audit insert rolls back the template row,
+        // keeping API success/failure aligned with persisted state.
+        const tpl = await fastify.prisma.$transaction(async (tx) => {
+          const created = await tx.workflowTemplate.create({
+            data: {
+              activeVersion: 1,
+              description: description ?? '',
+              name,
+              status: 'ACTIVE',
+              teamId: teamId ?? null,
+              versions: {
+                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
+              },
             },
-          },
-          include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+          });
+          const initialVersion = created.versions[0];
+          if (initialVersion) {
+            await recordShellAudit(tx, initialVersion.id, teamId ?? null, user.sub, shellNodes);
+          }
+          return created;
         });
-        const initialVersion = tpl.versions[0];
-        if (initialVersion) {
-          await recordShellAudit(fastify, initialVersion.id, teamId ?? null, user.sub, shellNodes);
-        }
         return reply.status(201).send({ data: projectTemplate(tpl, undefined) });
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
@@ -555,6 +566,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // simultaneous POSTs would pick the same `next`, and Prisma's unique
       // (templateId, version) constraint would 500 the loser. Retry on
       // P2002 with a fresh max; bounded so a runaway loop can't spin forever.
+      // Each attempt's version-create + audit-insert run in one transaction
+      // so a failed audit rolls the version back too.
       const MAX_RETRIES = 5;
       let created: Awaited<
         ReturnType<typeof fastify.prisma.workflowTemplateVersion.create>
@@ -567,13 +580,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
         const next = (last?.version ?? 0) + 1;
         try {
-          created = await fastify.prisma.workflowTemplateVersion.create({
-            data: {
-              createdBy: user.sub,
-              spec: parsed as object,
-              templateId: tpl.id,
-              version: next,
-            },
+          created = await fastify.prisma.$transaction(async (tx) => {
+            const row = await tx.workflowTemplateVersion.create({
+              data: {
+                createdBy: user.sub,
+                spec: parsed as object,
+                templateId: tpl.id,
+                version: next,
+              },
+            });
+            await recordShellAudit(tx, row.id, tpl.teamId, user.sub, shellNodes);
+            return row;
           });
           break;
         } catch (err: unknown) {
@@ -586,7 +603,6 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
         });
       }
-      await recordShellAudit(fastify, created.id, tpl.teamId, user.sub, shellNodes);
       return reply.status(201).send({
         data: {
           createdAt: created.createdAt,

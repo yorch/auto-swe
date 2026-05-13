@@ -63,6 +63,20 @@ export interface ShellStepResult {
 // Tiny (~5MB) helper image with git built-in, used by the prep + finalize phases.
 const GIT_HELPER_IMAGE = 'alpine/git:latest';
 
+/**
+ * Redact the GitHub token from any string. `runDocker` invokes `git clone`
+ * with the token embedded in the URL (see `loadRepoMeta`), and `execSync`
+ * throws with the full command in `error.message` + may also carry it in
+ * `error.stdout` / `error.stderr`. Without this, a failed clone would leak
+ * the token into the Temporal workflow history.
+ */
+function redactToken(s: unknown): string {
+  if (typeof s !== 'string') return String(s);
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return s;
+  return s.split(token).join('***');
+}
+
 function runDocker(args: string[]): string {
   // execSync prefers a string command, so we shell-quote each arg before
   // joining. The inputs to this helper are either hard-coded literals or
@@ -70,7 +84,15 @@ function runDocker(args: string[]): string {
   // images checked against DOCKER_IMAGE_REF_RE, branch names quoted by the
   // caller) — never raw user input from a spec.
   const quoted = args.map(shellQuote).join(' ');
-  return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
+  try {
+    return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
+  } catch (err) {
+    if (err instanceof Error) err.message = redactToken(err.message);
+    const e = err as { stdout?: unknown; stderr?: unknown };
+    if (typeof e.stdout === 'string') e.stdout = redactToken(e.stdout);
+    if (typeof e.stderr === 'string') e.stderr = redactToken(e.stderr);
+    throw err;
+  }
 }
 
 function safeRunDocker(args: string[]): void {
@@ -108,9 +130,11 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
 }
 
 /**
- * Clone the branch into the given volume. Falls back to the default branch if
- * the work-request branch doesn't exist remotely yet (e.g. shell step runs
- * before the implementer's first push). Caller owns volume lifecycle.
+ * Clone the branch into the given volume. Falls back to the default branch
+ * *only* when git reports the branch doesn't exist remotely (e.g. shell step
+ * runs before the implementer's first push). Auth / network / docker
+ * failures are surfaced unchanged so they're not masked by a confusing
+ * default-branch retry. Caller owns volume lifecycle.
  */
 function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): void {
   const tryClone = (refspec: string): string =>
@@ -127,9 +151,28 @@ function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): vo
     ]);
   try {
     tryClone(branch);
-  } catch {
+  } catch (err) {
+    if (!isBranchNotFoundError(err)) throw err;
     tryClone(meta.defaultBranch);
   }
+}
+
+/**
+ * Recognize git's "branch doesn't exist" stderr. git uses different phrasings
+ * across versions: "Remote branch X not found in upstream origin",
+ * "fatal: couldn't find remote ref refs/heads/X", and "warning: Could not
+ * find remote branch X to clone".
+ */
+function isBranchNotFoundError(err: unknown): boolean {
+  const e = err as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const haystack = [e.stderr, e.stdout, e.message]
+    .filter((s): s is string => typeof s === 'string')
+    .join('\n');
+  return (
+    /Remote branch .* not found/i.test(haystack) ||
+    /couldn't find remote ref/i.test(haystack) ||
+    /Could not find remote branch/i.test(haystack)
+  );
 }
 
 interface FinalizeResult {
@@ -243,17 +286,28 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     const passed = result.exitCode === 0 && !result.signal;
 
     let finalize: FinalizeResult = { filesChanged: [] };
+    let pushError: string | undefined;
     if (passed) {
       heartbeat('shell-step: finalizing workspace');
       try {
         finalize = finalizeWorkspaceVolume(volumeName, branch, input.command.slice(0, 80));
-      } catch {
-        // Push failure shouldn't mask a successful command run; surface it in
-        // the summary instead of failing the step.
+      } catch (err) {
+        // A push failure shouldn't mask a successful command run, but the
+        // caller needs to know changes weren't persisted. Surface the
+        // (token-redacted) error in the summary alongside passed=true.
+        const e = err as { stderr?: unknown; message?: unknown };
+        const raw =
+          (typeof e.stderr === 'string' && e.stderr) ||
+          (typeof e.message === 'string' && e.message) ||
+          String(err);
+        pushError = redactToken(raw).slice(0, 500);
       }
     }
 
     const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
+    const passSummary = pushError
+      ? `shell step ran (exit 0) but git push failed — changes NOT persisted: ${pushError}`
+      : `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`;
     return {
       artifactId: artifact?.id,
       exitCode: result.exitCode,
@@ -262,7 +316,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
       summary: passed
-        ? `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`
+        ? passSummary
         : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
     };
   } finally {
