@@ -160,6 +160,10 @@ model Team {
   /// always allowed; entries here grant additional `image:tag` strings.
   /// Managed by team admins via the gateway.
   shellImageAllowlist String[] @default([]) @map("shell_image_allowlist")
+  /// Phase-7 optional Slack channel ID (e.g. `C0123456`) for per-step failure
+  /// notifications. When set + SLACK_BOT_TOKEN is configured, the worker posts
+  /// a message on FAILED step records that aren't expected to retry. Null disables.
+  slackNotifyChannel String? @map("slack_notify_channel")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -208,6 +212,10 @@ model WorkRequest {
   description        String           @default("")
   requestPayload     String           @map("request_payload")
   slackMessageTs     String?          @map("slack_message_ts")
+  /// Channel that originated the request (paired with slackMessageTs to thread
+  /// per-step failure notifications back to the source conversation). Populated
+  /// when the work request was created via the Slack slash command.
+  slackChannelId     String?          @map("slack_channel_id")
   isCrossRepo        Boolean          @default(false) @map("is_cross_repo")
   /// Optional template override; null → use team default. Snapshotted into
   /// WorkflowRun at start so live edits to templates don't affect in-flight runs.

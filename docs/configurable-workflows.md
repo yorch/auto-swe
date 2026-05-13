@@ -44,6 +44,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 28 | Phase-6 image policy: built-in allowlist of `node:24-alpine`, `python:3.13-alpine`, `alpine:latest` is always permitted. Per-team additions live on `Team.shellImageAllowlist` (managed by team admins via `PUT /api/v1/teams/:id/shell-image-allowlist`). Matching is **exact string** on `image:tag` — no prefix matching, so a typo in the allowlist can't accidentally grant a similar image. The check runs at template-save time AND at workflow-runtime (defense in depth: a stored spec that pre-dates a tightened allowlist gets rejected before the container launches). |
 | 29 | Phase-6 RBAC: authoring a spec with any shell node requires **team-role ADMIN** in the template's owning team (platform ADMIN bypasses, as elsewhere). Global templates (`teamId === null`) require platform ADMIN — there's no team to grant elevated authoring against. The gateway returns `SHELL_AUTHOR_FORBIDDEN` on rejection. Every saved shell node writes one `WorkflowShellAudit` row capturing `(templateVersionId, nodeId, image, command, network, authorUserId)`. |
 | 30 | Per-step network mode is `none` (default) or `egress`. We map `egress` to Docker's `bridge` network rather than implementing destination filtering — egress filtering would require iptables management on the docker host, which we'd rather keep out-of-band. `none` strips the network namespace entirely. There is no opt-in to inbound traffic at any level. |
+| 31 | Phase-7 per-step Slack failure notifications use a two-tier channel resolver: the originating Slack channel on `WorkRequest.slackChannelId` (set when the run was kicked off via `/auto-swe run`) wins so failures thread back to the source conversation, with `Team.slackNotifyChannel` as a fallback for runs created via the REST API or webhook. We notify only on the **first** FAILED record per `(runId, nodeId)` to avoid spamming the channel during `onFail.retry` storms. |
+| 32 | Phase-7 CLI lives in a new `packages/cli/` workspace (binary name `auto-swe`). It auth's against the existing `/api/v1/auth/login` endpoint via `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD`, falling back to a raw `AUTO_SWE_TOKEN` bearer for CI; no token caching on disk. Subcommand layout mirrors the gateway routes (`workflows list/show/export/import`) so the CLI is a thin transport adapter rather than a parallel codepath. |
+| 33 | Phase-7 Slack `/auto-swe` slash command authentication: requests are gated by HMAC signature (`SLACK_SIGNING_SECRET`) plus a User.slackId linkage check. Unknown Slack users get an ephemeral hint to visit `/api/v1/auth/slack/connect`, never a 403 — the slash command is meant to be discovery-friendly. The `run` subcommand opens a Block Kit modal (workflow + repo picker) so we don't have to chain interactive Slack flows through ephemeral messages. |
 
 ---
 
@@ -58,7 +61,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 4. Web editor + run viewer | **Done** | `/templates` list, JSON spec editor + SVG DAG viewer, version sidebar + promote, `/templates/[id]/runs` paginated history, `/runs/[id]` live DAG viewer with per-node status overlay; gateway CRUD + step-registry catalog |
 | 5. Versioning UI, A/B per team, analytics | **Done** | version diff viewer, A/B experiment routing (`experimentVersion` + `experimentSplit`), analytics page (success rate, p50/p95, $/run, per-step failure rates), observed-cost chip on editor |
 | 6. Custom shell steps with RBAC + audit | **Done** | team-admin-only step authoring, ephemeral container, image allowlist, audit log |
-| 7. First-class in Slack + CLI | Not started | `/auto-swe workflow list` etc.; Slack picker on work-request create |
+| 7. First-class in Slack + CLI | **Done** | `/auto-swe` slash command (workflows list/show + run modal), per-step Slack failure notifications, new `packages/cli/` workspace |
 
 ---
 
@@ -427,25 +430,57 @@ Phase 6 additions:
 
 ---
 
-## Phase 7 — First-class in Slack + CLI
+## Phase 7 — First-class in Slack + CLI (Done)
 
-### Adds
+### What shipped
 
-**Slack**:
-- New slash command: `/auto-swe workflows list`
-- When creating a work request via Slack, show a workflow picker (team's templates) before submission
-- Optional Slack mentions on per-step failures: `[implement-feature-x]: runTests failed in step 12/18`
+**Slack — slash command + modal**:
+- `POST /api/v1/auth/slack/commands` — HMAC-verified slash command endpoint (signature shared with `/interactive` via `gateway/src/lib/slack.ts`). Scoped form-urlencoded content-type parser registered inside the slack plugin so both `/commands` and `/interactive` see `request.body` as an object while `fastify-raw-body` still sees the bytes for signature verification.
+- Subcommands: `workflows list`, `workflows show <name>`, `run [description]`, `help`. Unknown Slack users get an ephemeral hint to link via `/api/v1/auth/slack/connect`; unknown subcommands get the help text.
+- `/auto-swe run` opens a Block Kit modal (`callback_id: auto_swe_run_modal`) with ticket / description / repo / workflow pickers. The repo picker is filtered to repos on the user's team; the workflow picker offers all visible templates plus a `(team default)` sentinel. Submission validates inputs, starts a Temporal `RunnableWorkflow` via the existing `resolveDefaultTemplate` helper (so A/B routing is honoured), and writes `WorkRequest.slackChannelId` so step failures can thread back to the originating conversation.
 
-**CLI**:
-- `auto-swe workflows list`
-- `auto-swe workflows show <name>` — dumps the spec
-- `auto-swe workflows export <name> > my-workflow.json`
-- `auto-swe workflows import my-workflow.json` — validates against `WorkflowSpecSchema`, creates a new version
+**Slack — per-step failure notifications**:
+- `WorkRequest.slackChannelId` (new field, paired with the pre-existing `slackMessageTs`) captures the channel the work request was kicked off from.
+- `Team.slackNotifyChannel` (new field, managed by team admins out-of-band for now) is the fallback channel.
+- `packages/worker/src/lib/slackNotify.ts` — `notifySlackStepFailure()` is called from `recordWorkflowStep` whenever a step lands in `FAILED`. Two-tier channel resolution (workRequest → team), best-effort posting (try/catch around the fetch), no-op when `SLACK_BOT_TOKEN` is unset. Throttled to **first attempt only** so `onFail.retry` doesn't spam the channel; the final-failure surface is the workflow_runs FAILED row.
 
-### Files to touch
+**CLI — new `packages/cli/` workspace**:
+- New `@auto-swe/cli` workspace with `bin.auto-swe`. Builds via `tsc`, ships ESM, `@types/node` + DOM lib pulled in for `fetch`.
+- `packages/cli/src/lib/env.ts` — auth resolution: `AUTO_SWE_TOKEN` wins, else `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD` against `/api/v1/auth/login`. No on-disk token cache.
+- `packages/cli/src/lib/api.ts` — thin fetch wrapper that unwraps `{ data, error }` and surfaces non-2xx as a typed `GatewayError` with `statusCode` + `code`.
+- `packages/cli/src/commands/workflows.ts` — subcommands:
+  - `auto-swe workflows list` — tabular `(name, team, version, default, status)` view.
+  - `auto-swe workflows show <name> [--version=N]` — prints the active (or specified) spec JSON.
+  - `auto-swe workflows export <name> [-o <path>] [--version=N]` — same payload as `show`, but writes to a file when `-o` is set.
+  - `auto-swe workflows import <path> [--name=NAME] [--team=<slug>]` — POSTs a new template, or `POST /:id/versions` when a template with that name already exists (idempotency for repeated CI imports). Team slugs are resolved via `GET /api/v1/teams`.
+- Shared `parseFlags()` (exported for unit tests) handles `--key=val`, `--key val`, and `-x val` shapes plus boolean fall-through.
 
-- `packages/gateway/src/routes/slack.ts` — extend `app_mention` + slash command handlers
-- New `packages/cli/` workspace (does not exist yet — phase 7 also bootstraps it). Or fold into an existing tooling location.
+### Schema
+
+- `teams.slack_notify_channel TEXT NULL` — best-effort channel for step failures.
+- `work_requests.slack_channel_id TEXT NULL` — paired with `slack_message_ts`; populated by the `/auto-swe run` flow.
+- Both folded into the squashed init migration (`20260510000000_init/migration.sql`) per the repo convention.
+
+### Tests (+22, currently 341 total)
+
+- `gateway/src/lib/slack.test.ts` — 6 tests: signature verification happy path, tamper, wrong secret, stale timestamp, malformed timestamp, mismatched signature length.
+- `gateway/src/routes/slack.test.ts` — 7 tests for the slash command: missing signature → 401, bad signature → 401, unlinked Slack user → ephemeral hint, `workflows list` returns templates, unknown subcommand → help text, `workflows show <name>` returns the active spec, unknown template name → friendly message.
+- `worker/src/lib/slackNotify.test.ts` — 6 tests: no-op without `SLACK_BOT_TOKEN`, throttled past attempt 1, posts to originating channel, falls back to team channel, silent skip when no channel resolves, swallows DB errors.
+- `cli/src/commands/workflows.test.ts` — 7 tests on `parseFlags()`: positional-only, `--foo=bar`, `--foo bar`, short `-o`, boolean flag, follow-flag non-consumption, mixed positionals + flags.
+
+### Known follow-ups
+
+- **App-Manifest export.** The Slack app manifest (slash command registration + scopes + interactive endpoint URL) lives outside this repo. A `docs/slack-app-manifest.json` would let teams self-serve setup.
+- **Slack mentions on success / merge / approval.** We only notify on step failures right now. A symmetric "ready for review" or "merged" message would close the loop with the originating channel.
+- **CLI `auto-swe runs` subcommand.** Listing in-flight runs and tailing step status from a terminal is the natural next CLI surface — same query shape as the web's `/runs/[id]` page, just JSON-Lined to stdout.
+- **CLI auth via PAT.** Long-lived JWTs are awkward for CI; once the gateway gains personal-access-token issuance, the CLI should consume those instead.
+
+### Files touched (recap)
+
+- **shared**: `prisma/schema.prisma`, `prisma/migrations/20260510000000_init/migration.sql` (Team.slackNotifyChannel + WorkRequest.slackChannelId)
+- **gateway**: `lib/slack.ts` (new), `routes/slack.ts` (slash command + modal handler), `routes/slack.test.ts` (new), `lib/slack.test.ts` (new)
+- **worker**: `lib/slackNotify.ts` (new), `lib/slackNotify.test.ts` (new), `activities/templates.ts` (recordWorkflowStep notifies on FAILED)
+- **cli**: new workspace `packages/cli/` with `package.json`, `tsconfig.json`, `src/index.ts`, `src/lib/env.ts`, `src/lib/api.ts`, `src/commands/workflows.ts`, `src/commands/workflows.test.ts`
 
 ---
 

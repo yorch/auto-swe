@@ -60,6 +60,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
+| `packages/cli`     | `auto-swe` CLI (workflows list/show/export/import)   | ESM Node 24+; auth via `AUTO_SWE_TOKEN` or `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD`; thin fetch wrapper over the gateway REST API                                                              |
 
 Top-level files that matter:
 

@@ -1,6 +1,16 @@
 import crypto from 'node:crypto';
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
-import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
+import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { openSlackView, verifySlackSignature } from '../lib/slack.js';
+import {
+  getErrorName,
+  hasRole,
+  type JwtPayload,
+  requireAuth,
+  requireUser,
+} from '../plugins/auth.js';
+import { resolveDefaultTemplate } from './workRequests.js';
 
 interface SlackOAuthResponse {
   ok: boolean;
@@ -14,38 +24,48 @@ interface SlackIdentityResponse {
 }
 
 interface SlackInteractivePayload {
+  type?: string;
   actions?: Array<{ action_id: string; value: string }>;
   user?: { id: string };
-}
-
-const SLACK_TIMESTAMP_MAX_AGE = 5 * 60; // 5 minutes (replay protection)
-
-/**
- * Verify Slack request signature using signing secret.
- */
-function verifySlackSignature(
-  body: string,
-  timestamp: string,
-  signature: string,
-  signingSecret: string
-): boolean {
-  // Replay protection
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - parseInt(timestamp, 10)) > SLACK_TIMESTAMP_MAX_AGE) {
-    return false;
-  }
-
-  const baseString = `v0:${timestamp}:${body}`;
-  const expected = `v0=${crypto.createHmac('sha256', signingSecret).update(baseString).digest('hex')}`;
-
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  } catch {
-    return false;
-  }
+  trigger_id?: string;
+  view?: {
+    callback_id?: string;
+    state?: {
+      values?: Record<
+        string,
+        Record<string, { selected_option?: { value: string }; value?: string }>
+      >;
+    };
+    private_metadata?: string;
+  };
 }
 
 export const slackRoutes: FastifyPluginAsync = async (fastify) => {
+  // Slack delivers slash commands + interactive payloads as
+  // application/x-www-form-urlencoded — register a scoped parser so the routes
+  // below see `request.body` as an object. fastify-raw-body has already captured
+  // the bytes for signature verification (`runFirst: true` in the plugin config).
+  // `try/catch` because plugin-scope contentTypeParser registration can throw on
+  // duplicate registration; safe to ignore in that case.
+  try {
+    fastify.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_req, body, done) => {
+        try {
+          const params = new URLSearchParams(body as string);
+          const out: Record<string, string> = {};
+          for (const [k, v] of params) out[k] = v;
+          done(null, out);
+        } catch (err) {
+          done(err as Error, undefined);
+        }
+      }
+    );
+  } catch {
+    /* parser already registered at a parent scope */
+  }
+
   // GET /api/v1/auth/slack/connect — Initiate Slack OAuth (authenticated users only)
   fastify.get(
     '/connect',
@@ -198,10 +218,9 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       // Parse the interactive payload
       const body = request.body as { payload?: string };
       const payload: SlackInteractivePayload = JSON.parse(body.payload ?? '{}');
-      const actionId = payload.actions?.[0]?.action_id;
       const slackUserId = payload.user?.id;
 
-      if (!slackUserId || !actionId) {
+      if (!slackUserId) {
         return { data: { ignored: true } };
       }
 
@@ -214,6 +233,19 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send({
           error: { code: 'USER_NOT_FOUND', message: 'No user linked to this Slack account' },
         });
+      }
+
+      // View-submission: the workflow picker modal closing with "Run".
+      if (
+        payload.type === 'view_submission' &&
+        payload.view?.callback_id === 'auto_swe_run_modal'
+      ) {
+        return handleRunModalSubmission(fastify, user, payload);
+      }
+
+      const actionId = payload.actions?.[0]?.action_id;
+      if (!actionId) {
+        return { data: { ignored: true } };
       }
 
       // Handle known actions
@@ -255,4 +287,435 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: { ignored: true, reason: 'Unknown action' } };
     }
   );
+
+  // POST /api/v1/auth/slack/commands — Handle Slack slash commands
+  // The slash command is `/auto-swe` (configured in the Slack app manifest). It
+  // dispatches on `text` to subcommands:
+  //   /auto-swe workflows list            → list visible workflow templates
+  //   /auto-swe workflows show <name>     → show one template's spec
+  //   /auto-swe run                       → open the work-request modal (workflow picker)
+  // The slash-command handler must reply within 3s so we keep the handlers thin
+  // (no Temporal start here — modal submit handles that).
+  fastify.post(
+    '/commands',
+    {
+      config: { rawBody: true },
+    },
+    async (request, reply) => {
+      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      if (!signingSecret) {
+        return reply.status(503).send({
+          error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack signing secret not configured' },
+        });
+      }
+      const timestamp = request.headers['x-slack-request-timestamp'] as string | undefined;
+      const signature = request.headers['x-slack-signature'] as string | undefined;
+      const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+      if (
+        !timestamp ||
+        !signature ||
+        !rawBody ||
+        !verifySlackSignature(rawBody.toString(), timestamp, signature, signingSecret)
+      ) {
+        return reply.status(401).send({
+          error: { code: 'SLACK_AUTH_FAILED', message: 'Invalid Slack signature' },
+        });
+      }
+
+      // Slack sends slash commands as application/x-www-form-urlencoded
+      const body = request.body as Record<string, string | undefined>;
+      const slackUserId = body.user_id ?? '';
+      const text = (body.text ?? '').trim();
+      const triggerId = body.trigger_id ?? '';
+      const channelId = body.channel_id ?? '';
+
+      const user = slackUserId
+        ? await fastify.prisma.user.findFirst({ where: { slackId: slackUserId } })
+        : null;
+      if (!user) {
+        // Ephemeral reply — only visible to the invoking user
+        return ephemeral(
+          'Your Slack account is not linked to auto-swe. Visit /api/v1/auth/slack/connect to link it.'
+        );
+      }
+
+      const [head, ...rest] = text.split(/\s+/).filter(Boolean);
+      const sub = head ?? '';
+      const arg = rest.join(' ').trim();
+
+      try {
+        if (sub === 'workflows' && (rest[0] ?? '') === 'list') {
+          const tpls = await listVisibleTemplates(fastify, user);
+          return ephemeral(formatTemplateList(tpls));
+        }
+        if (sub === 'workflows' && (rest[0] ?? '') === 'show') {
+          const name = rest.slice(1).join(' ').trim();
+          if (!name) {
+            return ephemeral('Usage: `/auto-swe workflows show <name>`');
+          }
+          const tpl = await findTemplateByName(fastify, user, name);
+          if (!tpl) return ephemeral(`No workflow template named "${name}" is visible to you.`);
+          return ephemeral(formatTemplateShow(tpl));
+        }
+        if (sub === 'run') {
+          if (!triggerId) {
+            return ephemeral('Slack did not provide a trigger_id — please try again.');
+          }
+          const built = await buildRunModalView(fastify, user, channelId, arg);
+          if (!built.ok) {
+            return ephemeral(built.error);
+          }
+          const opened = await openSlackView({ triggerId, view: built.view });
+          if (!opened.ok) {
+            return ephemeral(`Could not open modal: ${opened.error ?? 'unknown error'}`);
+          }
+          return reply.send(''); // empty 200 ack
+        }
+        if (sub === 'help' || sub === '' || sub === undefined) {
+          return ephemeral(slashHelpText());
+        }
+        return ephemeral(`Unknown subcommand "${sub}".\n\n${slashHelpText()}`);
+      } catch (err) {
+        request.log.error({ err }, 'slack slash command failed');
+        return ephemeral(
+          `Command failed: ${err instanceof Error ? err.message : 'internal error'}`
+        );
+      }
+    }
+  );
 };
+
+// ── Slash-command helpers ───────────────────────────────────────────────────
+
+function ephemeral(text: string): { response_type: 'ephemeral'; text: string } {
+  return { response_type: 'ephemeral', text };
+}
+
+function slashHelpText(): string {
+  return [
+    '*auto-swe slash commands*',
+    '• `/auto-swe workflows list` — list workflow templates visible to you',
+    '• `/auto-swe workflows show <name>` — show one template (active version)',
+    '• `/auto-swe run [description]` — open a work-request modal (workflow picker)',
+    '• `/auto-swe help` — this message',
+  ].join('\n');
+}
+
+interface SimpleTemplateRow {
+  id: string;
+  name: string;
+  description: string;
+  isDefault: boolean;
+  activeVersion: number | null;
+  team: { id: string; slug: string; name: string } | null;
+}
+
+async function listVisibleTemplates(
+  fastify: FastifyInstance,
+  user: { id: string; role: string }
+): Promise<SimpleTemplateRow[]> {
+  const where =
+    user.role === 'ADMIN'
+      ? {}
+      : {
+          OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }],
+        };
+  const rows = await fastify.prisma.workflowTemplate.findMany({
+    include: { team: { select: { id: true, name: true, slug: true } } },
+    orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+    where,
+  });
+  return rows.map((r) => ({
+    activeVersion: r.activeVersion,
+    description: r.description,
+    id: r.id,
+    isDefault: r.isDefault,
+    name: r.name,
+    team: r.team ? { id: r.team.id, name: r.team.name, slug: r.team.slug } : null,
+  }));
+}
+
+async function findTemplateByName(
+  fastify: FastifyInstance,
+  user: { id: string; role: string },
+  name: string
+): Promise<
+  | (SimpleTemplateRow & {
+      spec: unknown | null;
+      activeVersionRow: { version: number } | null;
+    })
+  | null
+> {
+  const tpls = await listVisibleTemplates(fastify, user);
+  const tpl = tpls.find((t) => t.name === name);
+  if (!tpl) return null;
+  const v = tpl.activeVersion
+    ? await fastify.prisma.workflowTemplateVersion.findUnique({
+        where: { templateId_version: { templateId: tpl.id, version: tpl.activeVersion } },
+      })
+    : null;
+  return {
+    ...tpl,
+    activeVersionRow: v ? { version: v.version } : null,
+    spec: v ? v.spec : null,
+  };
+}
+
+function formatTemplateList(rows: SimpleTemplateRow[]): string {
+  if (rows.length === 0) return 'No workflow templates visible to you.';
+  const lines = rows.map((r) => {
+    const teamLabel = r.team ? r.team.slug : 'global';
+    const defaultLabel = r.isDefault ? ' *(default)*' : '';
+    const versionLabel = r.activeVersion ? ` v${r.activeVersion}` : ' (no active version)';
+    return `• \`${r.name}\` — ${teamLabel}${versionLabel}${defaultLabel}`;
+  });
+  return ['*Workflow templates*', ...lines].join('\n');
+}
+
+function formatTemplateShow(
+  tpl: SimpleTemplateRow & { spec: unknown | null; activeVersionRow: { version: number } | null }
+): string {
+  const teamLabel = tpl.team ? tpl.team.slug : 'global';
+  const versionLabel = tpl.activeVersionRow
+    ? `v${tpl.activeVersionRow.version}`
+    : 'no active version';
+  const header = `*${tpl.name}* — ${teamLabel} (${versionLabel})${tpl.isDefault ? ' — default' : ''}`;
+  const desc = tpl.description ? `\n${tpl.description}` : '';
+  if (!tpl.spec) return `${header}${desc}`;
+  // Truncate to fit within Slack's 3000-char text limit for an ephemeral message.
+  const json = JSON.stringify(tpl.spec, null, 2);
+  const max = 2600;
+  const trimmed = json.length > max ? `${json.slice(0, max)}\n…[truncated]` : json;
+  return `${header}${desc}\n\`\`\`${trimmed}\`\`\``;
+}
+
+// ── Modal: work-request picker ──────────────────────────────────────────────
+
+interface RunModalMetadata {
+  channelId: string;
+  initialDescription: string;
+}
+
+async function buildRunModalView(
+  fastify: FastifyInstance,
+  user: { id: string; role: string },
+  channelId: string,
+  initialDescription: string
+): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
+  const tpls = await listVisibleTemplates(fastify, user);
+  const repos = await fastify.prisma.repository.findMany({
+    select: {
+      id: true,
+      organizationName: true,
+      repoName: true,
+      team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
+    },
+    where: { isActive: true },
+  });
+  const accessibleRepos =
+    user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
+  // The submission handler binds the repo via `selected_option.value` on a
+  // `static_select` element — rendering a free-text fallback would silently
+  // skip submission validation, so we short-circuit when there's nothing to
+  // pick. Caller surfaces this as an ephemeral message.
+  if (accessibleRepos.length === 0) {
+    return {
+      error: 'You do not have access to any active repositories. Ask a team admin to add you.',
+      ok: false,
+    };
+  }
+
+  const repoOptions = accessibleRepos.slice(0, 100).map((r) => ({
+    text: { text: `${r.organizationName}/${r.repoName}`, type: 'plain_text' as const },
+    value: r.id,
+  }));
+  const tplOptions = [
+    { text: { text: '(team default)', type: 'plain_text' as const }, value: '' },
+    ...tpls.slice(0, 100).map((t) => ({
+      text: {
+        text: `${t.name}${t.isDefault ? ' (default)' : ''}`,
+        type: 'plain_text' as const,
+      },
+      value: t.id,
+    })),
+  ];
+
+  const metadata: RunModalMetadata = { channelId, initialDescription };
+
+  const view = {
+    blocks: [
+      {
+        block_id: 'ticket_block',
+        element: {
+          action_id: 'ticket_input',
+          placeholder: { text: 'e.g. JIRA-1234', type: 'plain_text' },
+          type: 'plain_text_input',
+        },
+        label: { text: 'Ticket ID', type: 'plain_text' },
+        type: 'input',
+      },
+      {
+        block_id: 'description_block',
+        element: {
+          action_id: 'description_input',
+          ...(initialDescription ? { initial_value: initialDescription } : {}),
+          multiline: true,
+          placeholder: { text: 'What should the agent build?', type: 'plain_text' },
+          type: 'plain_text_input',
+        },
+        label: { text: 'Description', type: 'plain_text' },
+        type: 'input',
+      },
+      {
+        block_id: 'repo_block',
+        element: {
+          action_id: 'repo_select',
+          options: repoOptions,
+          placeholder: { text: 'Select a repository', type: 'plain_text' },
+          type: 'static_select',
+        },
+        label: { text: 'Repository', type: 'plain_text' },
+        type: 'input',
+      },
+      {
+        block_id: 'template_block',
+        element: {
+          action_id: 'template_select',
+          initial_option: tplOptions[0],
+          options: tplOptions,
+          type: 'static_select',
+        },
+        label: { text: 'Workflow', type: 'plain_text' },
+        optional: true,
+        type: 'input',
+      },
+    ],
+    callback_id: 'auto_swe_run_modal',
+    close: { text: 'Cancel', type: 'plain_text' },
+    private_metadata: JSON.stringify(metadata),
+    submit: { text: 'Run', type: 'plain_text' },
+    title: { text: 'Run a workflow', type: 'plain_text' },
+    type: 'modal',
+  };
+  return { ok: true, view };
+}
+
+async function handleRunModalSubmission(
+  fastify: FastifyInstance,
+  user: { id: string; role: string },
+  payload: SlackInteractivePayload
+): Promise<unknown> {
+  const values = payload.view?.state?.values ?? {};
+  const ticket = (values.ticket_block?.ticket_input?.value ?? '').trim();
+  const description = (values.description_block?.description_input?.value ?? '').trim();
+  const repoId = values.repo_block?.repo_select?.selected_option?.value ?? '';
+  const templateId = values.template_block?.template_select?.selected_option?.value ?? '';
+
+  const errors: Record<string, string> = {};
+  if (!ticket) errors.ticket_block = 'Ticket ID is required';
+  if (!description) errors.description_block = 'Description is required';
+  if (!repoId) errors.repo_block = 'Repository is required';
+  if (Object.keys(errors).length > 0) {
+    return { errors, response_action: 'errors' };
+  }
+
+  let metadata: RunModalMetadata = { channelId: '', initialDescription: '' };
+  try {
+    metadata = JSON.parse(payload.view?.private_metadata ?? '{}') as RunModalMetadata;
+  } catch {
+    /* keep defaults */
+  }
+
+  const repo = await fastify.prisma.repository.findUnique({
+    include: { team: { select: { memberships: { where: { userId: user.id } } } } },
+    where: { id: repoId },
+  });
+  if (!repo?.isActive) {
+    return {
+      errors: { repo_block: 'Repository not found or inactive' },
+      response_action: 'errors',
+    };
+  }
+  if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
+    return {
+      errors: { repo_block: 'You do not have access to this repository' },
+      response_action: 'errors',
+    };
+  }
+
+  // Resolve workflow template — explicit choice wins, else default resolver.
+  let resolvedTemplate: { templateId: string; version: number } | null = null;
+  if (templateId) {
+    const tpl = await fastify.prisma.workflowTemplate.findUnique({ where: { id: templateId } });
+    if (!tpl?.activeVersion) {
+      return {
+        errors: { template_block: 'Selected workflow has no active version' },
+        response_action: 'errors',
+      };
+    }
+    resolvedTemplate = { templateId: tpl.id, version: tpl.activeVersion };
+  } else {
+    const def = await resolveDefaultTemplate(fastify.prisma, repo.teamId, ticket);
+    if (!def) {
+      return {
+        errors: { template_block: 'No default workflow template configured for this team' },
+        response_action: 'errors',
+      };
+    }
+    resolvedTemplate = { templateId: def.templateId, version: def.version };
+  }
+
+  const temporalWorkflowId = generateWorkflowId(ticket, repo.organizationName, repo.repoName);
+  const branch = generateBranchName(ticket);
+  const workRequestId = crypto.randomUUID();
+  const repoWorkRequest: RepoWorkRequest = {
+    budgetTier: 'STANDARD',
+    description,
+    externalTicketId: ticket,
+    repoId: repo.id,
+    requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
+    workRequestId,
+  };
+
+  try {
+    await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+      request: repoWorkRequest,
+      templateId: resolvedTemplate.templateId,
+      templateVersion: resolvedTemplate.version,
+    });
+  } catch (err) {
+    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+      return {
+        errors: { ticket_block: `Workflow already running for ${ticket}` },
+        response_action: 'errors',
+      };
+    }
+    throw err;
+  }
+
+  await fastify.prisma.workRequest.create({
+    data: {
+      description,
+      externalTicketId: ticket,
+      id: workRequestId,
+      requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
+      slackChannelId: metadata.channelId || null,
+      templateId: resolvedTemplate.templateId,
+      templateVersion: resolvedTemplate.version,
+    },
+  });
+
+  await fastify.prisma.activeWorkflow.create({
+    data: {
+      assignedBranch: branch,
+      budgetTier: 'STANDARD',
+      currentStatus: 'IMPLEMENTING',
+      repoId: repo.id,
+      temporalWorkflowId,
+      workRequestId,
+    },
+  });
+
+  // Closing the modal with no `response_action` dismisses it cleanly.
+  return { response_action: 'clear' };
+}

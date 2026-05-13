@@ -51,6 +51,7 @@ CREATE TABLE "teams" (
     "description" TEXT NOT NULL DEFAULT '',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "shell_image_allowlist" TEXT[] NOT NULL DEFAULT '{}',
+    "slack_notify_channel" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -94,6 +95,7 @@ CREATE TABLE "work_requests" (
     "description" TEXT NOT NULL DEFAULT '',
     "request_payload" TEXT NOT NULL,
     "slack_message_ts" TEXT,
+    "slack_channel_id" TEXT,
     "is_cross_repo" BOOLEAN NOT NULL DEFAULT false,
     "template_id" UUID,
     "template_version" INTEGER,
