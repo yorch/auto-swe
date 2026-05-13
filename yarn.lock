@@ -202,7 +202,6 @@ __metadata:
     "@types/node": "npm:25.3.0"
     tsx: "npm:4.21.0"
     typescript: "npm:6.0.3"
-    zod: "npm:4.4.3"
   bin:
     auto-swe: dist/index.js
   languageName: unknown

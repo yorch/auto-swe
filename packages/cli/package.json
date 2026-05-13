@@ -14,8 +14,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@auto-swe/shared": "*",
-    "zod": "4.4.3"
+    "@auto-swe/shared": "*"
   },
   "devDependencies": {
     "@types/node": "25.3.0",

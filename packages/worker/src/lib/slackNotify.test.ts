@@ -49,6 +49,7 @@ describe('notifySlackStepFailure', () => {
   it('posts to the originating Slack channel when set on WorkRequest', async () => {
     findRun.mockResolvedValue({
       template: { name: 'default-engineering' },
+      workflowId: 'eng-acme-x-JIRA-7',
       workRequest: {
         activeWorkflows: [],
         externalTicketId: 'JIRA-7',
@@ -74,8 +75,11 @@ describe('notifySlackStepFailure', () => {
   it('falls back to team.slackNotifyChannel when no originating channel', async () => {
     findRun.mockResolvedValue({
       template: { name: 'default-engineering' },
+      workflowId: 'eng-acme-x-JIRA-8',
       workRequest: {
-        activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+        activeWorkflows: [
+          { repository: { teamId: 'team-1' }, temporalWorkflowId: 'eng-acme-x-JIRA-8' },
+        ],
         externalTicketId: 'JIRA-8',
         slackChannelId: null,
         slackMessageTs: null,
@@ -89,11 +93,37 @@ describe('notifySlackStepFailure', () => {
     expect(body.thread_ts).toBeUndefined();
   });
 
+  it('routes to the correct team for cross-repo epics with multiple activeWorkflows', async () => {
+    // Two activeWorkflows under one WorkRequest (epic decomposition). The
+    // notifier must match the run's workflowId to pick the right team — not
+    // arbitrary first row.
+    findRun.mockResolvedValue({
+      template: { name: 'default-engineering' },
+      workflowId: 'eng-acme-y-JIRA-9',
+      workRequest: {
+        activeWorkflows: [
+          { repository: { teamId: 'team-other' }, temporalWorkflowId: 'eng-acme-x-JIRA-9' },
+          { repository: { teamId: 'team-target' }, temporalWorkflowId: 'eng-acme-y-JIRA-9' },
+        ],
+        externalTicketId: 'JIRA-9',
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: 'C-target' } as never);
+    await notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' });
+    expect(findTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'team-target' } })
+    );
+    expect(fetchCalls).toHaveLength(1);
+  });
+
   it('silently skips when no channel is resolvable', async () => {
     findRun.mockResolvedValue({
       template: { name: 'x' },
+      workflowId: 'wf-zzz',
       workRequest: {
-        activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-zzz' }],
         externalTicketId: 'JIRA-9',
         slackChannelId: null,
         slackMessageTs: null,

@@ -72,7 +72,11 @@ async function cmdShow(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: workflows show <name> [--version=N]\n');
     return 1;
   }
-  const explicit = flags.version ? Number.parseInt(flags.version, 10) : undefined;
+  const explicit = parseVersionFlag(flags.version);
+  if (explicit === 'invalid') {
+    process.stderr.write('--version must be a positive integer\n');
+    return 1;
+  }
   const { spec } = await fetchSpec(env, name, explicit);
   process.stdout.write(`${JSON.stringify(spec, null, 2)}\n`);
   return 0;
@@ -82,12 +86,24 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
   const { positional, flags } = parseFlags(args);
   const name = positional[0];
   if (!name) {
-    process.stderr.write('Usage: workflows export <name> [-o <path>]\n');
+    process.stderr.write('Usage: workflows export <name> [-o <path>] [--version=N]\n');
     return 1;
   }
-  const explicit = flags.version ? Number.parseInt(flags.version, 10) : undefined;
+  const explicit = parseVersionFlag(flags.version);
+  if (explicit === 'invalid') {
+    process.stderr.write('--version must be a positive integer\n');
+    return 1;
+  }
+  // parseFlags assigns the sentinel 'true' to a flag declared without a value
+  // (e.g. `-o` with nothing after it). Reject that explicitly so we don't
+  // create a file literally named `true`.
+  const rawOutput = flags.o ?? flags.output;
+  if (rawOutput === 'true') {
+    process.stderr.write('-o/--output requires a file path\n');
+    return 1;
+  }
+  const output = rawOutput;
   const { spec, template, version } = await fetchSpec(env, name, explicit);
-  const output = flags.o ?? flags.output;
   const payload = `${JSON.stringify(spec, null, 2)}\n`;
   if (output) {
     await fs.writeFile(output, payload);
@@ -96,6 +112,20 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
     process.stdout.write(payload);
   }
   return 0;
+}
+
+/**
+ * Returns the parsed version, undefined if no flag, or 'invalid' if it can't
+ * be coerced to a positive integer. Callers print a usage message + exit 1
+ * on 'invalid'.
+ */
+function parseVersionFlag(raw: string | undefined): number | undefined | 'invalid' {
+  if (raw === undefined) return undefined;
+  // parseFlags assigns 'true' when the flag is declared without a value.
+  if (raw === 'true') return 'invalid';
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) return 'invalid';
+  return n;
 }
 
 async function cmdImport(args: string[], env: CliEnv): Promise<number> {

@@ -361,8 +361,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
           if (!triggerId) {
             return ephemeral('Slack did not provide a trigger_id — please try again.');
           }
-          const view = await buildRunModalView(fastify, user, channelId, arg);
-          const opened = await openSlackView({ triggerId, view });
+          const built = await buildRunModalView(fastify, user, channelId, arg);
+          if (!built.ok) {
+            return ephemeral(built.error);
+          }
+          const opened = await openSlackView({ triggerId, view: built.view });
           if (!opened.ok) {
             return ephemeral(`Could not open modal: ${opened.error ?? 'unknown error'}`);
           }
@@ -498,7 +501,7 @@ async function buildRunModalView(
   user: { id: string; role: string },
   channelId: string,
   initialDescription: string
-): Promise<unknown> {
+): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
   const tpls = await listVisibleTemplates(fastify, user);
   const repos = await fastify.prisma.repository.findMany({
     select: {
@@ -511,6 +514,16 @@ async function buildRunModalView(
   });
   const accessibleRepos =
     user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
+  // The submission handler binds the repo via `selected_option.value` on a
+  // `static_select` element — rendering a free-text fallback would silently
+  // skip submission validation, so we short-circuit when there's nothing to
+  // pick. Caller surfaces this as an ephemeral message.
+  if (accessibleRepos.length === 0) {
+    return {
+      error: 'You do not have access to any active repositories. Ask a team admin to add you.',
+      ok: false,
+    };
+  }
 
   const repoOptions = accessibleRepos.slice(0, 100).map((r) => ({
     text: { text: `${r.organizationName}/${r.repoName}`, type: 'plain_text' as const },
@@ -529,7 +542,7 @@ async function buildRunModalView(
 
   const metadata: RunModalMetadata = { channelId, initialDescription };
 
-  return {
+  const view = {
     blocks: [
       {
         block_id: 'ticket_block',
@@ -555,15 +568,12 @@ async function buildRunModalView(
       },
       {
         block_id: 'repo_block',
-        element:
-          repoOptions.length > 0
-            ? {
-                action_id: 'repo_select',
-                options: repoOptions,
-                placeholder: { text: 'Select a repository', type: 'plain_text' },
-                type: 'static_select',
-              }
-            : { action_id: 'repo_select', type: 'plain_text_input' },
+        element: {
+          action_id: 'repo_select',
+          options: repoOptions,
+          placeholder: { text: 'Select a repository', type: 'plain_text' },
+          type: 'static_select',
+        },
         label: { text: 'Repository', type: 'plain_text' },
         type: 'input',
       },
@@ -587,6 +597,7 @@ async function buildRunModalView(
     title: { text: 'Run a workflow', type: 'plain_text' },
     type: 'modal',
   };
+  return { ok: true, view };
 }
 
 async function handleRunModalSubmission(

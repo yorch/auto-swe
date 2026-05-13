@@ -5,14 +5,30 @@ import { prisma } from '@auto-swe/shared/db';
  *
  * Resolution order for the target channel:
  *   1. The originating Slack channel on `WorkRequest.slackChannelId` (paired with
- *      `slackMessageTs` for thread continuity) — set when the work request was
- *      created via `/auto-swe run`.
- *   2. The team's configured `Team.slackNotifyChannel` — set via the team admin UI.
+ *      `slackMessageTs` for thread continuity if set — the modal-submit flow
+ *      doesn't currently post an initial message, so `slackMessageTs` is null
+ *      for those runs and the failure posts unthreaded into the originating
+ *      channel; webhook-created work requests can pre-populate it for threading).
+ *   2. The team's configured `Team.slackNotifyChannel`. Resolved by matching the
+ *      current `WorkflowRun.workflowId` against `ActiveWorkflow.temporalWorkflowId`
+ *      so cross-repo epics (multiple activeWorkflows under one WorkRequest)
+ *      route to the correct team — not an arbitrary `take: 1` row.
  *
  * Silently no-ops when `SLACK_BOT_TOKEN` is unset, no channel is resolvable,
- * or the API call fails. We never want a transient Slack outage to block the
- * `recordWorkflowStep` activity that drives every workflow run.
+ * the fetch times out, or Slack returns `{ok: false}`. We never want a Slack
+ * outage to block the `recordWorkflowStep` activity that drives every run.
  */
+
+// Hard upper bound on the wall-clock cost of this best-effort path. Kept short
+// because `recordWorkflowStep` awaits us; we'd rather miss a notification than
+// slow every workflow's step recording during a Slack outage.
+const SLACK_POST_TIMEOUT_MS = 2_000;
+
+interface SlackChatPostMessageResponse {
+  ok: boolean;
+  error?: string;
+}
+
 export async function notifySlackStepFailure(input: {
   runId: string;
   nodeId: string;
@@ -36,7 +52,6 @@ export async function notifySlackStepFailure(input: {
           include: {
             activeWorkflows: {
               include: { repository: { select: { teamId: true } } },
-              take: 1,
             },
           },
         },
@@ -49,7 +64,16 @@ export async function notifySlackStepFailure(input: {
     let channel = run.workRequest?.slackChannelId ?? null;
     let threadTs = run.workRequest?.slackMessageTs ?? null;
     if (!channel) {
-      const teamId = run.workRequest?.activeWorkflows[0]?.repository?.teamId;
+      // Match the specific ActiveWorkflow corresponding to THIS run rather than
+      // an arbitrary first row — epic decompositions have multiple
+      // activeWorkflows under one WorkRequest, each with its own repo + team.
+      const ownActive = run.workRequest?.activeWorkflows.find(
+        (aw) => aw.temporalWorkflowId === run.workflowId
+      );
+      const teamId =
+        ownActive?.repository?.teamId ??
+        run.workRequest?.activeWorkflows[0]?.repository?.teamId ??
+        null;
       if (teamId) {
         const team = await prisma.team.findUnique({
           select: { slackNotifyChannel: true },
@@ -69,14 +93,30 @@ export async function notifySlackStepFailure(input: {
     const body: Record<string, unknown> = { channel, text };
     if (threadTs) body.thread_ts = threadTs;
 
-    await fetch('https://slack.com/api/chat.postMessage', {
-      body: JSON.stringify(body),
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      method: 'POST',
-    });
+    // AbortController guards against a hung connection holding up the activity.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+    try {
+      const res = await fetch('https://slack.com/api/chat.postMessage', {
+        body: JSON.stringify(body),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        method: 'POST',
+        signal: controller.signal,
+      });
+      // Slack returns 200 with `{ok: false, error: '...'}` on logical failures
+      // (bad channel, missing scope, etc.). Surface those onto the activity log
+      // by reading `ok` — we still don't throw, since the activity must succeed.
+      const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+      if (!data.ok) {
+        // eslint-disable-next-line no-console
+        console.warn(`slackNotify: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     // Best-effort. Never let a Slack failure surface as a workflow failure.
   }
