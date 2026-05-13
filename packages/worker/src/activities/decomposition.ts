@@ -23,6 +23,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
+import { recordLessonDirectly } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
@@ -234,6 +235,22 @@ export async function resolveMergeConflict(
     const summary = passed
       ? `resolved + merged ${merged.length}/${sourceBranches.length} branches into ${targetBranch}`
       : `conflict resolution failed at ${conflicts[0]?.branch}: ${conflicts[0]?.output.slice(0, 400)}`;
+
+    // Phase-8 memory hook: a successful resolver run is exactly the kind of
+    // outcome `commitToMemory` should capture. We bypass the LLM summarizer
+    // (the resolver already knows what happened) and write a direct lesson
+    // pointing at the resolved branches. Failures aren't recorded — the
+    // run's FAILED row already tells that story.
+    if (passed && merged.length > 0) {
+      await recordLessonDirectly({
+        failureType: 'MERGE_CONFLICT',
+        lessonSummary: `Auto-resolved merge conflicts when merging ${merged.length} branch(es) into ${targetBranch}: ${merged.join(', ')}`,
+        metadata: { mergedBranches: merged, targetBranch },
+        rationale: `Implementer agent rewrote conflict markers and the resolution passed git diff --check + diff-filter=U.`,
+        repoId: request.repoId,
+        temporalWorkflowId: currentWorkflowId(),
+      });
+    }
 
     return {
       ...(artifact ? { artifactId: artifact.id } : {}),

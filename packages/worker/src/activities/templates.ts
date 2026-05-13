@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
-import { notifySlackStepFailure } from '../lib/slackNotify.js';
+import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
 
 /**
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
@@ -100,14 +100,34 @@ export async function finalizeWorkflowRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   contextSnapshot?: unknown
 ): Promise<void> {
+  // Phase-8: denormalize the run's cost onto workflow_runs at finalize time.
+  // Reads through workRequest → activeWorkflows (the same join the analytics
+  // route used to do every request) and writes the sum to the run row. Skips
+  // the join if the run has no work-request attached.
+  const run = await prisma.workflowRun.findUnique({
+    select: {
+      workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
+    },
+    where: { id: runId },
+  });
+  const costUsdAccrued = (run?.workRequest?.activeWorkflows ?? []).reduce(
+    (sum, aw) => sum + aw.costUsdAccrued,
+    0
+  );
+
   await prisma.workflowRun.update({
     data: {
       contextSnapshot: contextSnapshot as object | undefined,
+      costUsdAccrued,
       endedAt: new Date(),
       status,
     },
     where: { id: runId },
   });
+
+  // Best-effort terminal notification. Team must have opted in via
+  // `Team.slackNotifySuccess`; otherwise this is a silent no-op.
+  await notifySlackRunComplete({ runId, status });
 }
 
 /**

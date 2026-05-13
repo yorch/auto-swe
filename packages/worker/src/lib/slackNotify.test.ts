@@ -8,7 +8,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { notifySlackStepFailure } from './slackNotify.js';
+import { notifySlackRunComplete, notifySlackStepFailure } from './slackNotify.js';
 
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
 const findTeam = vi.mocked(prisma.team.findUnique);
@@ -139,6 +139,78 @@ describe('notifySlackStepFailure', () => {
     await expect(
       notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' })
     ).resolves.toBeUndefined();
+    expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe('notifySlackRunComplete (phase 8)', () => {
+  it('skips when team has not opted in (slackNotifySuccess=false)', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default' },
+      workflowId: 'wf-1',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-1' }],
+        externalTicketId: 'JIRA-100',
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({
+      slackNotifyChannel: 'C-team',
+      slackNotifySuccess: false,
+    } as never);
+    await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('posts to the originating channel when opt-in is true', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default' },
+      workflowId: 'wf-2',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-2' }],
+        externalTicketId: 'JIRA-200',
+        slackChannelId: 'C-origin',
+        slackMessageTs: '1700.5',
+      },
+    } as never);
+    findTeam.mockResolvedValue({
+      slackNotifyChannel: null,
+      slackNotifySuccess: true,
+    } as never);
+    await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts?: string; text: string };
+    expect(body.channel).toBe('C-origin');
+    expect(body.text).toContain('SUCCESS');
+    expect(body.text).toContain('JIRA-200');
+  });
+
+  it('falls back to team channel when no originating channel + opt-in is true', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default' },
+      workflowId: 'wf-3',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-3' }],
+        externalTicketId: 'JIRA-300',
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({
+      slackNotifyChannel: 'C-fallback',
+      slackNotifySuccess: true,
+    } as never);
+    await notifySlackRunComplete({ runId: 'r1', status: 'FAILED' });
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; text: string };
+    expect(body.channel).toBe('C-fallback');
+    expect(body.text).toContain('FAILED');
+  });
+
+  it('no-ops without SLACK_BOT_TOKEN', async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
     expect(fetchCalls).toHaveLength(0);
   });
 });

@@ -279,6 +279,34 @@ export interface WorkflowTemplateAnalytics {
     failureRate: number;
   }>;
   perVersionCounts: Array<{ version: number; count: number }>;
+  significanceHint: {
+    versionA: number;
+    versionB: number;
+    nA: number;
+    nB: number;
+    successRateA: number;
+    successRateB: number;
+    zScore: number;
+    pValue: number;
+    isSignificant: boolean;
+  } | null;
+}
+
+/** Phase-8 cross-template rollup returned by GET /workflow-templates/analytics. */
+export interface GlobalAnalyticsResponse {
+  windowDays: number;
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  successRate: number | null;
+  totalCost: number;
+  perTemplate: Array<{
+    templateId: string;
+    templateName: string;
+    totalRuns: number;
+    successRate: number | null;
+    totalCost: number;
+  }>;
 }
 
 export interface SpecDiffResponse {

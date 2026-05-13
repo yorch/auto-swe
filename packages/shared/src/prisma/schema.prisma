@@ -122,6 +122,28 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+/// Phase-8 long-lived API token for CI / CLI use. The plaintext token is
+/// returned exactly once on create (`ats_<random>` format); only the sha-256
+/// hash is stored. `lastUsedAt` is updated best-effort on each successful
+/// auth so admins can prune stale tokens.
+model PersonalAccessToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  tokenHash   String    @unique @map("token_hash")
+  /// The first 8 chars of the plaintext token (no secret entropy) so the
+  /// admin UI can disambiguate listed tokens without re-issuing them.
+  prefix      String
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("personal_access_tokens")
+}
+
 model Repository {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationName String           @map("organization_name")
@@ -164,6 +186,12 @@ model Team {
   /// notifications. When set + SLACK_BOT_TOKEN is configured, the worker posts
   /// a message on FAILED step records that aren't expected to retry. Null disables.
   slackNotifyChannel String? @map("slack_notify_channel")
+  /// Phase-8 opt-in for terminal-run notifications. When true and a notify
+  /// channel is resolvable (originating channel on the WorkRequest, or
+  /// `slackNotifyChannel`), the worker also posts on SUCCESS / final FAILED
+  /// from `finalizeWorkflowRun`. Default false so existing teams don't get
+  /// a sudden notification firehose.
+  slackNotifySuccess Boolean @default(false) @map("slack_notify_success")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -202,6 +230,7 @@ model User {
 
   refreshTokens  RefreshToken[]
   memberships    TeamMembership[]
+  accessTokens   PersonalAccessToken[]
 
   @@map("users")
 }
@@ -268,6 +297,11 @@ model WorkflowRun {
   status          WorkflowRunStatus  @default(RUNNING)
   startedAt       DateTime           @default(now()) @map("started_at") @db.Timestamptz
   endedAt         DateTime?          @map("ended_at") @db.Timestamptz
+  /// Phase-8 cost denormalization. Populated by `finalizeWorkflowRun` from
+  /// `WorkRequest → ActiveWorkflow.costUsdAccrued` so analytics queries don't
+  /// have to re-join through the work-request graph (also keeps numbers stable
+  /// if `ActiveWorkflow.costUsdAccrued` is later re-shaped).
+  costUsdAccrued  Float              @default(0) @map("cost_usd_accrued")
 
   steps           WorkflowStep[]
   artifacts       WorkflowArtifact[]

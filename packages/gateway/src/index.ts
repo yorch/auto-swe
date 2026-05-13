@@ -18,6 +18,7 @@ import { lessonRoutes } from './routes/lessons.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { slackRoutes } from './routes/slack.js';
 import { teamRoutes } from './routes/teams.js';
+import { tokenRoutes } from './routes/tokens.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { stepRegistryRoutes, workflowRunRoutes } from './routes/workflowRuns.js';
@@ -68,6 +69,9 @@ async function start() {
 
   // ── Public routes (no auth) ──
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
+
+  // ── Personal access tokens (auth required, but self-service for engineers+) ──
+  await app.register(tokenRoutes, { prefix: '/api/v1/auth/tokens' });
 
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });

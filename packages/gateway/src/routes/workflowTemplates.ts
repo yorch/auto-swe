@@ -3,6 +3,7 @@ import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import {
   assertShellImageAllowed,
   computeAnalytics,
+  computeGlobalAnalytics,
   diffSpecs,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
@@ -256,6 +257,57 @@ function parseSpecOrThrow(input: unknown): unknown {
 
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // ── Cross-template analytics (phase 8) ──
+  // GET /analytics?window=<days>
+  // Aggregates run counts + cost across every template visible to the caller.
+  // Must come BEFORE the `/:id`-style routes so 'analytics' doesn't get matched
+  // as a UUID parameter by Fastify's prefix tree.
+  const GlobalAnalyticsQuery = z.object({
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  });
+  app.get(
+    '/analytics',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: GlobalAnalyticsQuery },
+    },
+    async (request) => {
+      const user = requireUser(request);
+      const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+      const ANALYTICS_ROW_CAP = 10_000;
+      const rows = await fastify.prisma.workflowRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        select: {
+          costUsdAccrued: true,
+          endedAt: true,
+          startedAt: true,
+          status: true,
+          template: { select: { id: true, name: true } },
+          templateId: true,
+        },
+        take: ANALYTICS_ROW_CAP,
+        where: {
+          startedAt: { gte: windowStart },
+          // Visibility: piggy-back on the same per-template filter to scope
+          // the global rollup to what this user is allowed to see.
+          template: teamMembershipFilter(user),
+        },
+      });
+      const analytics = computeGlobalAnalytics(
+        rows.map((r) => ({
+          costUsdAccrued: r.costUsdAccrued,
+          endedAt: r.endedAt,
+          startedAt: r.startedAt,
+          status: r.status,
+          templateId: r.template.id,
+          templateName: r.template.name,
+        })),
+        request.query.window
+      );
+      return { data: analytics };
+    }
+  );
 
   // ── List templates ──
   app.get(
@@ -780,10 +832,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.findMany({
           orderBy: { startedAt: 'desc' },
           select: {
+            costUsdAccrued: true,
             endedAt: true,
             startedAt: true,
             status: true,
             templateVersion: true,
+            // Kept for back-compat with rows that pre-date the phase-8
+            // denormalization write (analytics.ts falls back to summing this
+            // when costUsdAccrued is zero). Cheap because RUNNING runs are
+            // bounded.
             workRequest: {
               select: {
                 activeWorkflows: { select: { costUsdAccrued: true } },

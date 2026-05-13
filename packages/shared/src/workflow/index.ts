@@ -5,8 +5,15 @@ export type {
   AnalyticsResult,
   AnalyticsRunRow,
   AnalyticsStepRow,
+  GlobalAnalyticsResult,
+  GlobalAnalyticsTemplateRow,
+  SignificanceHint,
 } from './analytics.js';
-export { computeAnalytics } from './analytics.js';
+export {
+  computeAnalytics,
+  computeGlobalAnalytics,
+  MIN_SAMPLES_FOR_SIGNIFICANCE,
+} from './analytics.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
 export type { CostEstimate, CostRole } from './costEstimator.js';

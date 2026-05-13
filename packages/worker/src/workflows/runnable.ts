@@ -6,13 +6,16 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import { lookupPath } from '@auto-swe/shared/workflow/expr';
-import type { Dispatcher } from '@auto-swe/shared/workflow/interpreter';
+import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import { runSpec } from '@auto-swe/shared/workflow/interpreter';
 import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
 import type { Duration } from '@temporalio/common';
+import { CancelledFailure } from '@temporalio/common';
 import {
+  CancellationScope,
   condition,
   defineSignal,
+  isCancellation,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -196,25 +199,32 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   }
 
   // 3. Build the Temporal-backed dispatcher.
+  //
+  // Phase-8: when the interpreter passes a `cancellation` sink (every dispatch
+  // inside a fan-out branch), we wrap the activity await in a per-call
+  // `CancellationScope` and install a token that maps to the scope's cancel
+  // handle. fan-out's block-mode then calls `token.cancel()` on every sibling
+  // when one branch fails, which aborts the underlying Temporal activity
+  // instead of letting it drain.
   const dispatcher: Dispatcher = {
-    async dispatchShell({ node, inputs }) {
-      // Inputs override config; image/command come straight off the typed
-      // node fields (required at the schema level). Override bindings must
-      // resolve to strings — anything else falls through to the node default
-      // rather than flowing a wrong-shape value into the activity.
-      return await shellActivities.runShellStep({
-        ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
-        ...(node.memory ? { memory: node.memory } : {}),
-        ...(node.network ? { network: node.network } : {}),
-        ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
-        ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
-        command: typeof inputs.command === 'string' ? inputs.command : node.command,
-        image: typeof inputs.image === 'string' ? inputs.image : node.image,
-        request: input.request,
-      });
+    async dispatchShell({ node, inputs, cancellation }) {
+      return runWithCancellation(cancellation, () =>
+        shellActivities.runShellStep({
+          ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
+          ...(node.memory ? { memory: node.memory } : {}),
+          ...(node.network ? { network: node.network } : {}),
+          ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
+          ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
+          command: typeof inputs.command === 'string' ? inputs.command : node.command,
+          image: typeof inputs.image === 'string' ? inputs.image : node.image,
+          request: input.request,
+        })
+      );
     },
-    async dispatchStep({ step, ctx, inputs, config }) {
-      return dispatchStepImpl(step, ctx, input.request, config, inputs);
+    async dispatchStep({ step, ctx, inputs, config, cancellation }) {
+      return runWithCancellation(cancellation, () =>
+        dispatchStepImpl(step, ctx, input.request, config, inputs)
+      );
     },
     async recordStep(args) {
       await stateActivities.recordWorkflowStep({ ...args, runId });
@@ -411,6 +421,39 @@ function resolveMergeBindings(
     throw new Error(`${step}: inputs.sourceBranches must be a string[]`);
   }
   return { sourceBranches: raw as string[], targetBranch };
+}
+
+/**
+ * Phase-8 cancellation bridge. When the interpreter passes a `cancellation`
+ * sink, wrap the activity call in a fresh `CancellationScope` and write a
+ * `cancel()` callback into the sink so fan-out's block-mode can abort the
+ * activity. Without a sink we fall through to the bare callback so existing
+ * call sites (no cancellation support) behave exactly like before.
+ *
+ * A `CancellationScope` cancellation surfaces as a `CancelledFailure` on the
+ * awaited activity. We translate it back into a normal Error here so the
+ * interpreter's onFail policy + the fan-out aggregate report it as a
+ * branch failure rather than crashing the workflow with an unhandled
+ * cancellation.
+ */
+async function runWithCancellation<T>(
+  cancellation: { token?: CancellationToken } | undefined,
+  body: () => Promise<T>
+): Promise<T> {
+  if (!cancellation) return body();
+  const scope = new CancellationScope({ cancellable: true });
+  cancellation.token = { cancel: () => scope.cancel() };
+  try {
+    return await scope.run(body);
+  } catch (err) {
+    if (isCancellation(err) || err instanceof CancelledFailure) {
+      // Translate Temporal's cancellation envelope into a normal Error so the
+      // interpreter's onFail / fan-out aggregate paths see a regular branch
+      // failure instead of crashing the workflow with the raw envelope.
+      throw new Error('fan-out branch cancelled by sibling failure (block-mode)');
+    }
+    throw err;
+  }
 }
 
 /**

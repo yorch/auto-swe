@@ -135,6 +135,12 @@ export interface RBACOptions {
  * the user's membership in that team and checks their team role. Platform ADMINs
  * bypass team checks.
  */
+/** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
+ * 32 bytes of base64url entropy (~43 chars). Anything starting with this
+ * prefix bypasses JWT verification and hashes through PersonalAccessToken
+ * instead. JWTs continue to round-trip the existing RS256/HS256 path. */
+const PAT_PREFIX = 'ats_';
+
 export function requireAuth(options: RBACOptions = {}) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
@@ -147,7 +153,41 @@ export function requireAuth(options: RBACOptions = {}) {
     const token = authHeader.slice(7);
     let payload: JwtPayload;
     try {
-      payload = request.server.auth.verifyAccessToken(token);
+      if (token.startsWith(PAT_PREFIX)) {
+        // PAT path: hash the plaintext, look up by hash, then synthesize a
+        // JwtPayload using the owning user's current role + slackId so
+        // downstream RBAC behaves identically to JWT auth.
+        const hash = request.server.auth.hashToken(token);
+        const pat = await request.server.prisma.personalAccessToken.findUnique({
+          include: { user: true },
+          where: { tokenHash: hash },
+        });
+        if (!pat || pat.revokedAt || !pat.user.isActive) {
+          return reply.status(401).send({
+            error: { code: 'TOKEN_INVALID', message: 'Invalid or revoked access token' },
+          });
+        }
+        if (pat.expiresAt && pat.expiresAt < new Date()) {
+          return reply.status(401).send({
+            error: { code: 'TOKEN_EXPIRED', message: 'Access token expired' },
+          });
+        }
+        // Fire-and-forget `lastUsedAt` update. We deliberately don't await so
+        // a slow write can't add latency to every authenticated request;
+        // best-effort accuracy is fine for staleness pruning.
+        request.server.prisma.personalAccessToken
+          .update({ data: { lastUsedAt: new Date() }, where: { id: pat.id } })
+          .catch(() => {});
+        payload = {
+          exp: Math.floor(Date.now() / 1000) + 60,
+          iat: Math.floor(Date.now() / 1000),
+          role: pat.user.role,
+          ...(pat.user.slackId ? { slackId: pat.user.slackId } : {}),
+          sub: pat.user.id,
+        };
+      } else {
+        payload = request.server.auth.verifyAccessToken(token);
+      }
       request.user = payload;
     } catch (err: unknown) {
       return reply.status(401).send({

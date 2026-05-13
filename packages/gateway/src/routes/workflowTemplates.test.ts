@@ -1,4 +1,8 @@
-import { computeAnalytics } from '@auto-swe/shared/workflow';
+import {
+  computeAnalytics,
+  computeGlobalAnalytics,
+  MIN_SAMPLES_FOR_SIGNIFICANCE,
+} from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -666,5 +670,151 @@ describe('computeAnalytics', () => {
       { count: 3, version: 1 },
       { count: 1, version: 2 },
     ]);
+    // Phase-8: not enough runs per arm for a significance hint.
+    expect(out.significanceHint).toBeNull();
+  });
+
+  it('phase 8: prefers denormalized costUsdAccrued column over workRequest join', () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    const out = computeAnalytics(
+      [
+        // Denormalized column wins when present (>0).
+        {
+          costUsdAccrued: 42,
+          endedAt: new Date(t0.getTime() + 1),
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workRequest: { activeWorkflows: [{ costUsdAccrued: 999 }] },
+        },
+        // Falls back to workRequest sum when costUsdAccrued is 0.
+        {
+          costUsdAccrued: 0,
+          endedAt: new Date(t0.getTime() + 1),
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workRequest: { activeWorkflows: [{ costUsdAccrued: 8 }] },
+        },
+      ],
+      [],
+      30
+    );
+    expect(out.totalCost).toBe(50);
+  });
+
+  it('phase 8: emits significanceHint when both arms cross the sample threshold', () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    // 40 SUCCESS on v1, 40 mixed on v2 → clear gap, plenty of samples.
+    const runs = [
+      ...Array.from({ length: 40 }, () => ({
+        endedAt: new Date(t0.getTime() + 1),
+        startedAt: t0,
+        status: 'SUCCESS',
+        templateVersion: 1,
+      })),
+      ...Array.from({ length: 30 }, () => ({
+        endedAt: new Date(t0.getTime() + 1),
+        startedAt: t0,
+        status: 'SUCCESS',
+        templateVersion: 2,
+      })),
+      ...Array.from({ length: 10 }, () => ({
+        endedAt: new Date(t0.getTime() + 1),
+        startedAt: t0,
+        status: 'FAILED',
+        templateVersion: 2,
+      })),
+    ];
+    const out = computeAnalytics(runs, [], 30);
+    expect(out.significanceHint).not.toBeNull();
+    expect(out.significanceHint?.versionA).toBe(1);
+    expect(out.significanceHint?.successRateA).toBeCloseTo(1);
+    expect(out.significanceHint?.successRateB).toBeCloseTo(0.75);
+    expect(out.significanceHint?.nA).toBeGreaterThanOrEqual(MIN_SAMPLES_FOR_SIGNIFICANCE);
+    expect(out.significanceHint?.nB).toBeGreaterThanOrEqual(MIN_SAMPLES_FOR_SIGNIFICANCE);
+    expect(out.significanceHint?.isSignificant).toBe(true);
+  });
+
+  it('phase 8: significanceHint stays null when one arm is too small', () => {
+    const t0 = new Date();
+    const runs = [
+      ...Array.from({ length: 40 }, () => ({
+        endedAt: t0,
+        startedAt: t0,
+        status: 'SUCCESS',
+        templateVersion: 1,
+      })),
+      // Only 5 runs on v2 — under MIN_SAMPLES_FOR_SIGNIFICANCE.
+      ...Array.from({ length: 5 }, () => ({
+        endedAt: t0,
+        startedAt: t0,
+        status: 'SUCCESS',
+        templateVersion: 2,
+      })),
+    ];
+    const out = computeAnalytics(runs, [], 30);
+    expect(out.significanceHint).toBeNull();
+  });
+});
+
+describe('computeGlobalAnalytics', () => {
+  it('rolls up runs across templates + ranks by traffic', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 1,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 4,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'FAILED',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 2,
+          endedAt: t0,
+          startedAt: t0,
+          status: 'SUCCESS',
+          templateId: 'tplB',
+          templateName: 'B',
+        },
+      ],
+      30
+    );
+    expect(out.totalRuns).toBe(3);
+    expect(out.succeeded).toBe(2);
+    expect(out.failed).toBe(1);
+    expect(out.totalCost).toBe(7);
+    expect(out.perTemplate).toHaveLength(2);
+    expect(out.perTemplate[0]).toMatchObject({ templateId: 'tplA', totalCost: 5, totalRuns: 2 });
+    expect(out.perTemplate[1]).toMatchObject({ templateId: 'tplB', totalCost: 2, totalRuns: 1 });
+  });
+
+  it('returns null successRate when nothing has finished', () => {
+    const t0 = new Date();
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          startedAt: t0,
+          status: 'RUNNING',
+          templateId: 'tplA',
+          templateName: 'A',
+        },
+      ],
+      30
+    );
+    expect(out.totalRuns).toBe(1);
+    expect(out.successRate).toBeNull();
   });
 });
