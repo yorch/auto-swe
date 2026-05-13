@@ -39,3 +39,16 @@ registerCodemod({
     return { ...s, schemaVersion: 3 };
   },
 });
+
+/**
+ * v3 → v4: Phase 6 adds the `shell` node type. v3 specs without any `shell`
+ * node remain valid under v4, so the transform only bumps the version.
+ */
+registerCodemod({
+  from: 3,
+  to: 4,
+  transform: (spec) => {
+    const s = spec as Record<string, unknown>;
+    return { ...s, schemaVersion: 4 };
+  },
+});

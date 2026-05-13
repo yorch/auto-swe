@@ -69,6 +69,20 @@ export default function TemplateDetailPage({ params }: PageProps) {
     return estimateSpecCost(spec, { stepLookup: (name) => stepRegistryByName.get(name) });
   }, [spec, stepRegistryByName]);
 
+  // Phase-6 danger-zone surface. Shell nodes carry elevated privileges
+  // (ephemeral container, user-authored command), so the editor calls them
+  // out and prompts before save. RBAC is still enforced server-side.
+  const shellNodes = useMemo(() => {
+    if (!spec) return [] as Array<{ id: string; image: string; command: string }>;
+    return Object.entries(spec.nodes)
+      .filter(([, n]) => n.type === 'shell')
+      .map(([id, n]) => ({
+        command: (n as { command: string }).command,
+        id,
+        image: (n as { image: string }).image,
+      }));
+  }, [spec]);
+
   if (isLoading || !template) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
   }
@@ -77,6 +91,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (!parsed?.ok) {
       setSaveError(parsed?.error ?? 'JSON not parsed');
       return;
+    }
+    const shellCount = Object.values(parsed.spec.nodes).filter((n) => n.type === 'shell').length;
+    if (shellCount > 0) {
+      const ok = window.confirm(
+        `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
+      );
+      if (!ok) return;
     }
     try {
       const result = await createVersion.mutateAsync(parsed.spec);
@@ -242,6 +263,30 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 </div>
               </div>
             </CardHeader>
+
+            {shellNodes.length > 0 && (
+              <div className="mb-4 text-xs text-rose-900 bg-rose-50 border border-rose-300 rounded px-3 py-2">
+                <div className="font-semibold mb-1">
+                  ⚠ {shellNodes.length} shell step{shellNodes.length === 1 ? '' : 's'} — team-admin
+                  authoring required
+                </div>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {shellNodes.slice(0, 5).map((n) => (
+                    <li key={n.id}>
+                      <code>{n.id}</code> · {n.image} ·{' '}
+                      <code className="text-rose-700">
+                        {n.command.length > 80 ? `${n.command.slice(0, 80)}…` : n.command}
+                      </code>
+                    </li>
+                  ))}
+                  {shellNodes.length > 5 && <li>… and {shellNodes.length - 5} more</li>}
+                </ul>
+                <div className="mt-1 text-rose-800">
+                  Shell steps run user-authored commands in an ephemeral container. Saving will be
+                  rejected unless you are a team admin and every image is on this team's allowlist.
+                </div>
+              </div>
+            )}
 
             {saveError && (
               <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">

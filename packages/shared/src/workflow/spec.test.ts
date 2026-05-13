@@ -207,4 +207,138 @@ describe('parseWorkflowSpec', () => {
       })
     ).toThrow();
   });
+
+  // ── Phase 6: shell node ──
+
+  it('parses a minimal shell spec', () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-min',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'echo hello',
+          image: 'alpine:latest',
+          next: 'done',
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    expect(spec.nodes.sh?.type).toBe('shell');
+  });
+
+  it('parses a shell node with all optional fields', () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-full',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'npm audit --json | uploader',
+          cpus: 2,
+          image: 'node:24-alpine',
+          memory: '1g',
+          network: 'egress',
+          next: 'done',
+          onFail: 'warn',
+          timeoutMs: 60_000,
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const sh = spec.nodes.sh as {
+      type: 'shell';
+      cpus?: number;
+      memory?: string;
+      network?: string;
+      timeoutMs?: number;
+    };
+    expect(sh.cpus).toBe(2);
+    expect(sh.memory).toBe('1g');
+    expect(sh.network).toBe('egress');
+    expect(sh.timeoutMs).toBe(60_000);
+  });
+
+  it('rejects a shell node missing command or image', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'sh',
+        name: 'shell-bad',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: { command: 'x', next: 'done', type: 'shell' },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'sh',
+        name: 'shell-bad',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: { image: 'alpine:latest', next: 'done', type: 'shell' },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+  });
+
+  it('rejects a shell node with bad memory or network literal', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'sh',
+        name: 'shell-mem',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: {
+            command: 'true',
+            image: 'alpine:latest',
+            memory: 'not-a-size',
+            next: 'done',
+            type: 'shell',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'sh',
+        name: 'shell-net',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: {
+            command: 'true',
+            image: 'alpine:latest',
+            network: 'host',
+            next: 'done',
+            type: 'shell',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+  });
+
+  it('detects dangling shell.next', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'sh',
+        name: 'shell-dangle',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: {
+            command: 'true',
+            image: 'alpine:latest',
+            next: 'nope',
+            type: 'shell',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow(/unknown node/);
+  });
 });

@@ -89,6 +89,22 @@ const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveM
   startToCloseTimeout: '30m',
 });
 
+// Phase 6: user-authored shell steps. Bounded similarly to gates (long
+// timeout, retry policy gated by the spec's onFail mode rather than at the
+// Temporal layer). Heartbeat is short because the activity has a built-in
+// wall-clock cap and we don't want a hung container to drag the workflow
+// state machine.
+const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellStep'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '60m',
+});
+
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
 // kept low — workflow-level retry/warn/block comes from the spec's onFail
 // policy (handled by the interpreter), not the activity proxy.
@@ -183,6 +199,20 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
 
   // 3. Build the Temporal-backed dispatcher.
   const dispatcher: Dispatcher = {
+    async dispatchShell({ node, inputs }) {
+      // Inputs override config; image/command come straight off the typed
+      // node fields (they're required at the schema level).
+      return await shellActivities.runShellStep({
+        ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
+        ...(node.memory ? { memory: node.memory } : {}),
+        ...(node.network ? { network: node.network } : {}),
+        ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
+        ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
+        command: (inputs.command as string | undefined) ?? node.command,
+        image: (inputs.image as string | undefined) ?? node.image,
+        request: input.request,
+      });
+    },
     async dispatchStep({ step, ctx, inputs, config }) {
       return dispatchStepImpl(step, ctx, input.request, config, inputs);
     },

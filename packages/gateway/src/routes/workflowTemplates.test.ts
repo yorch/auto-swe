@@ -27,7 +27,7 @@ const VALID_SPEC = {
   entry: 'start',
   name: 'minimal',
   nodes: { start: { status: 'SUCCESS', type: 'terminate' } },
-  schemaVersion: 3,
+  schemaVersion: 4,
 };
 
 function buildApp(state: {
@@ -41,6 +41,8 @@ function buildApp(state: {
     endedAt: Date | null;
   }>;
   userRole?: string;
+  teamRole?: string;
+  teamAllowlist?: string[];
 }): FastifyInstance {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -62,9 +64,39 @@ function buildApp(state: {
         (where.teamId === undefined || t.teamId === where.teamId)
     );
 
+  const shellAudits: Array<{
+    templateVersionId: string;
+    teamId: string | null;
+    authorUserId: string;
+    nodeId: string;
+    image: string;
+    command: string;
+    network: string;
+  }> = [];
+  // exposed via state for assertions
+  (state as unknown as { shellAudits: typeof shellAudits }).shellAudits = shellAudits;
+
   app.decorate('prisma', {
+    team: {
+      findUnique: async ({ where }: { where: Mutable }) => {
+        // For the shell allowlist check; tests can override via state.teamAllowlist
+        return where.id
+          ? {
+              id: where.id as string,
+              shellImageAllowlist: (state as { teamAllowlist?: string[] }).teamAllowlist ?? [],
+            }
+          : null;
+      },
+    },
     teamMembership: {
       findFirst: async () => ({ teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567', userId: 'user-1' }),
+      findUnique: async ({ where }: { where: Mutable }) => {
+        const composite = where.userId_teamId as { userId: string; teamId: string };
+        const teamRole = (state as { teamRole?: string }).teamRole ?? 'LEAD';
+        return composite
+          ? { role: teamRole, teamId: composite.teamId, userId: composite.userId }
+          : null;
+      },
     },
     workflowRun: {
       count: async ({ where }: { where?: Mutable }) =>
@@ -82,6 +114,22 @@ function buildApp(state: {
           seen.add(r.templateId);
           return true;
         });
+      },
+    },
+    workflowShellAudit: {
+      createMany: async ({ data }: { data: Array<Mutable> }) => {
+        for (const row of data) {
+          shellAudits.push({
+            authorUserId: row.authorUserId as string,
+            command: row.command as string,
+            image: row.image as string,
+            network: (row.network as string) ?? 'none',
+            nodeId: row.nodeId as string,
+            teamId: row.teamId as string | null,
+            templateVersionId: row.templateVersionId as string,
+          });
+        }
+        return { count: data.length };
       },
     },
     workflowTemplate: {
@@ -332,7 +380,7 @@ describe('workflow-templates routes', () => {
             done: { status: 'SUCCESS', type: 'terminate' },
             start: { next: 'done', step: 'runLint', type: 'step' },
           },
-          schemaVersion: 3,
+          schemaVersion: 4,
         },
       },
       url: `/api/v1/workflow-templates/${tpl.id}/versions`,
@@ -389,6 +437,143 @@ describe('workflow-templates routes', () => {
     const body = res.json();
     expect(body.data.experimentVersion).toBe(2);
     expect(body.data.experimentSplit).toBe(25);
+  });
+});
+
+// ── Phase 6: shell-step authoring RBAC + image allowlist ──
+
+describe('workflow-templates shell-step RBAC', () => {
+  const SHELL_SPEC = {
+    description: '',
+    entry: 'sh',
+    name: 'sh-spec',
+    nodes: {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      sh: {
+        command: 'echo hi',
+        image: 'alpine:latest',
+        next: 'done',
+        type: 'shell',
+      },
+    },
+    schemaVersion: 4,
+  };
+  const TEAM_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
+
+  it('rejects shell-node POST when the author is not a team ADMIN', async () => {
+    const state = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl', spec: SHELL_SPEC, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+    await app.close();
+  });
+
+  it('rejects shell-node POST on a global template for non-platform-admin users', async () => {
+    const state = {
+      runs: [],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-global', spec: SHELL_SPEC, teamId: null },
+      url: '/api/v1/workflow-templates',
+    });
+    // Global creation also requires platform ADMIN — this short-circuits
+    // before our shell check fires, returning the existing FORBIDDEN error.
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('accepts shell-node POST from a team ADMIN with an allowlisted image and writes audit rows', async () => {
+    const state: Parameters<typeof buildApp>[0] & { shellAudits?: unknown[] } = {
+      runs: [],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl', spec: SHELL_SPEC, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    expect((state.shellAudits as Array<{ nodeId: string; command: string }>).length).toBe(1);
+    expect((state.shellAudits as Array<{ nodeId: string }>)[0]?.nodeId).toBe('sh');
+    await app.close();
+  });
+
+  it('rejects shell-node POST whose image is not allowlisted for the team', async () => {
+    const state = {
+      runs: [],
+      teamAllowlist: [], // only built-ins
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const exoticSpec = {
+      ...SHELL_SPEC,
+      nodes: {
+        ...SHELL_SPEC.nodes,
+        sh: { ...SHELL_SPEC.nodes.sh, image: 'rust:1.78-alpine' },
+      },
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl-bad', spec: exoticSpec, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error?.code).toBe('SHELL_IMAGE_NOT_ALLOWED');
+    await app.close();
+  });
+
+  it('accepts a shell-node image that is on the team-extended allowlist', async () => {
+    const state = {
+      runs: [],
+      teamAllowlist: ['rust:1.78-alpine'],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const exoticSpec = {
+      ...SHELL_SPEC,
+      nodes: {
+        ...SHELL_SPEC.nodes,
+        sh: { ...SHELL_SPEC.nodes.sh, image: 'rust:1.78-alpine' },
+      },
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl-ext', spec: exoticSpec, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    await app.close();
   });
 });
 

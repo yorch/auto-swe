@@ -53,6 +53,7 @@ function collectEdges(node: Node, id: string): LayoutEdge[] {
   switch (node.type) {
     case 'step':
     case 'set':
+    case 'shell':
       if (node.next) edges.push({ from: id, kind: 'next', to: node.next });
       break;
     case 'cond':
@@ -164,6 +165,9 @@ export function nodeCategoryColor(node: Node): { fill: string; stroke: string; t
       return { fill: '#cffafe', stroke: '#0891b2', text: '#155e75' };
     case 'fanOut':
       return { fill: '#dcfce7', stroke: '#16a34a', text: '#14532d' };
+    case 'shell':
+      // Distinct red-orange to signal the elevated-permissions step type at a glance.
+      return { fill: '#ffe4e6', stroke: '#e11d48', text: '#881337' };
     case 'terminate':
       return { fill: '#fee2e2', stroke: '#dc2626', text: '#7f1d1d' };
   }

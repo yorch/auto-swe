@@ -19,10 +19,13 @@ import { z } from 'zod';
  * Phase 2 extends step nodes with `onFail` modes (block / warn / retry).
  * Phase 3 adds:
  *   - fanOut    : run a subgraph once per item in an iterable, then join
- * Phase 6+ adds: shell.
+ * Phase 6 adds:
+ *   - shell     : run a user-authored command in an ephemeral container
+ *                 (separate from the long-lived workspace; gated by RBAC +
+ *                 image allowlist; per-step network mode).
  */
 
-export const SPEC_SCHEMA_VERSION = 3 as const;
+export const SPEC_SCHEMA_VERSION = 4 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
@@ -163,6 +166,66 @@ const FanOutNodeSchema = z.object({
   type: z.literal('fanOut'),
 });
 
+/**
+ * Phase 6 — `shell`: run a user-authored command in an ephemeral, locked-down
+ * container (separate from the long-lived workspace used by agents + gates).
+ *
+ * Authoring requires the `workflow:write:shell` permission (team admin only;
+ * enforced by the gateway when a template version containing a shell node is
+ * saved). Every save is recorded in `WorkflowShellAudit`.
+ *
+ * Runtime guarantees (see packages/worker/src/lib/ephemeralContainer.ts):
+ *   - Image is checked against the built-in allowlist + the team's
+ *     `Team.shellImageAllowlist` additions.
+ *   - `--network=none` by default; `network: 'egress'` opts the step into
+ *     outbound traffic for SBOM uploads or similar.
+ *   - `--read-only --tmpfs /tmp --pids-limit 256` + memory/cpu caps
+ *   - Workspace bind-mounted at `/workspace` (only writable path)
+ *   - No Docker socket mount, no caps, no host network
+ *
+ * Like step nodes, shell nodes honor `onFail` for workflow-level retry/warn
+ * policy. The activity returns `{ passed, summary, exitCode, artifactId? }`
+ * so the interpreter's gate-failure branch ("passed === false") fires the
+ * configured failure mode without throwing.
+ */
+const ShellNodeSchema = z.object({
+  /** Shell command run inside the container. Required; no defaults. */
+  command: z.string().min(1).max(8000),
+  /**
+   * Optional config block. Currently used by the editor to surface the same
+   * fields under `node.config` for the form-based inspector; the runtime
+   * reads the typed fields below.
+   */
+  config: z.record(z.string(), z.unknown()).optional(),
+  /** CPU cap in fractional units (Docker `--cpus`). Default 1.0. */
+  cpus: z.number().min(0.1).max(8).optional(),
+  /**
+   * Docker image to run the command in. Must be on the team's effective
+   * allowlist (built-in defaults + per-team additions) at workflow-start.
+   */
+  image: z.string().min(1).max(256),
+  inputs: InputMapSchema.optional(),
+  /** Memory cap (Docker `--memory`, e.g. "512m"). Default "512m". */
+  memory: z
+    .string()
+    .regex(/^\d+[bkmg]?$/i, 'memory must be a Docker size literal like "512m" or "1g"')
+    .optional(),
+  /**
+   * Network mode. `'none'` (default) blocks all traffic; `'egress'` lets the
+   * step reach outbound hosts (still no inbound). Both modes drop Docker
+   * socket access; there is no way to escape the container.
+   */
+  network: z.enum(['none', 'egress']).optional(),
+  next: NodeIdSchema.optional(),
+  onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
+  retry: RetryPolicySchema,
+  startToCloseTimeout: z.string().optional(),
+  /** Wall-clock cap inside the container (ms). Default 600_000. */
+  timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
+  type: z.literal('shell'),
+});
+
 export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
   SetNodeSchema,
@@ -170,6 +233,7 @@ export const NodeSchema = z.discriminatedUnion('type', [
   SignalNodeSchema,
   TerminateNodeSchema,
   FanOutNodeSchema,
+  ShellNodeSchema,
 ]);
 export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
@@ -178,6 +242,7 @@ export type CondNode = z.infer<typeof CondNodeSchema>;
 export type SignalNode = z.infer<typeof SignalNodeSchema>;
 export type TerminateNode = z.infer<typeof TerminateNodeSchema>;
 export type FanOutNode = z.infer<typeof FanOutNodeSchema>;
+export type ShellNode = z.infer<typeof ShellNodeSchema>;
 
 export const WorkflowSpecSchema = z
   .object({
@@ -202,6 +267,7 @@ export const WorkflowSpecSchema = z
       switch (node.type) {
         case 'step':
         case 'set':
+        case 'shell':
           refs.push(['next', node.next]);
           break;
         case 'cond':

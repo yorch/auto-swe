@@ -1,17 +1,134 @@
 import type { Prisma } from '@auto-swe/shared';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import {
+  assertShellImageAllowed,
   computeAnalytics,
   diffSpecs,
   parseWorkflowSpec,
+  ShellImageNotAllowedError,
+  type ShellNode,
   SPEC_SCHEMA_VERSION,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+
+interface ShellNodeWithId {
+  id: string;
+  node: ShellNode;
+}
+
+function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
+  const out: ShellNodeWithId[] = [];
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.type === 'shell') out.push({ id, node });
+  }
+  return out;
+}
+
+/**
+ * Phase-6 RBAC: authoring a spec with any shell node requires the
+ * `workflow:write:shell` permission. We map it to:
+ *   - platform ADMIN, OR
+ *   - team-role ADMIN in the template's owning team (templates with
+ *     teamId === null are global → only platform ADMINs may save shell
+ *     nodes there).
+ * Returns a Fastify reply on failure, or null on success.
+ */
+async function assertShellAuthoringAllowed(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string | null,
+  shellNodes: ShellNodeWithId[]
+): Promise<{ statusCode: number; body: unknown } | null> {
+  if (shellNodes.length === 0) return null;
+  if (user.role === 'ADMIN') return null;
+  if (teamId === null) {
+    return {
+      body: {
+        error: {
+          code: 'SHELL_AUTHOR_FORBIDDEN',
+          message: 'Only platform admins may author shell steps on global templates',
+        },
+      },
+      statusCode: 403,
+    };
+  }
+  const membership = await fastify.prisma.teamMembership.findUnique({
+    where: { userId_teamId: { teamId, userId: user.sub } },
+  });
+  if (!membership || membership.role !== 'ADMIN') {
+    return {
+      body: {
+        error: {
+          code: 'SHELL_AUTHOR_FORBIDDEN',
+          message: 'Authoring shell steps requires team-admin role',
+        },
+      },
+      statusCode: 403,
+    };
+  }
+  return null;
+}
+
+async function assertShellImagesAllowed(
+  fastify: FastifyInstance,
+  teamId: string | null,
+  shellNodes: ShellNodeWithId[]
+): Promise<{ statusCode: number; body: unknown } | null> {
+  if (shellNodes.length === 0) return null;
+  const teamAllowlist = teamId
+    ? ((
+        await fastify.prisma.team.findUnique({
+          select: { shellImageAllowlist: true },
+          where: { id: teamId },
+        })
+      )?.shellImageAllowlist ?? [])
+    : [];
+  for (const { id, node } of shellNodes) {
+    try {
+      assertShellImageAllowed(node.image, teamAllowlist);
+    } catch (err) {
+      if (err instanceof ShellImageNotAllowedError) {
+        return {
+          body: {
+            error: {
+              code: 'SHELL_IMAGE_NOT_ALLOWED',
+              message: `Node '${id}': ${err.message}`,
+            },
+          },
+          statusCode: 400,
+        };
+      }
+      throw err;
+    }
+  }
+  return null;
+}
+
+async function recordShellAudit(
+  fastify: FastifyInstance,
+  templateVersionId: string,
+  teamId: string | null,
+  authorUserId: string,
+  shellNodes: ShellNodeWithId[]
+): Promise<void> {
+  if (shellNodes.length === 0) return;
+  await fastify.prisma.workflowShellAudit.createMany({
+    data: shellNodes.map(({ id, node }) => ({
+      authorUserId,
+      command: node.command,
+      image: node.image,
+      network: node.network ?? 'none',
+      nodeId: id,
+      teamId,
+      templateVersionId,
+    })),
+  });
+}
 
 const TemplateIdParam = z.object({ id: z.string().uuid() });
 const VersionParam = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) });
@@ -198,6 +315,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const parsedSpec = parsed as WorkflowSpec;
+      const shellNodes = collectShellNodes(parsedSpec);
+      const rbac = await assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes);
+      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
+      const imgGate = await assertShellImagesAllowed(fastify, teamId ?? null, shellNodes);
+      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+
       try {
         // Single create — `activeVersion: 1` + `status: 'ACTIVE'` are set inline
         // so a failure can't leave a half-promoted template behind.
@@ -212,8 +336,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               create: { createdBy: user.sub, spec: parsed as object, version: 1 },
             },
           },
-          include: TEMPLATE_INCLUDE,
+          include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
         });
+        const initialVersion = tpl.versions[0];
+        if (initialVersion) {
+          await recordShellAudit(fastify, initialVersion.id, teamId ?? null, user.sub, shellNodes);
+        }
         return reply.status(201).send({ data: projectTemplate(tpl, undefined) });
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
@@ -412,6 +540,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INVALID_SPEC', message: e.message } });
       }
 
+      const parsedSpec = parsed as WorkflowSpec;
+      const shellNodes = collectShellNodes(parsedSpec);
+      const rbac = await assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes);
+      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
+      const imgGate = await assertShellImagesAllowed(fastify, tpl.teamId, shellNodes);
+      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+
       // SELECT max(version)+1 / INSERT is racy under concurrent saves — two
       // simultaneous POSTs would pick the same `next`, and Prisma's unique
       // (templateId, version) constraint would 500 the loser. Retry on
@@ -447,6 +582,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
         });
       }
+      await recordShellAudit(fastify, created.id, tpl.teamId, user.sub, shellNodes);
       return reply.status(201).send({
         data: {
           createdAt: created.createdAt,

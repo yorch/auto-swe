@@ -40,6 +40,10 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 24 | A/B experiment routing is deterministic per `externalTicketId`, salted by `templateId` (sha1 mod 100). Re-runs of the same ticket always land on the same arm, and two templates' experiments are uncorrelated. We hash in the gateway resolver rather than at workflow-start so the Temporal layer never sees the bucket — only the resolved version. |
 | 25 | Per-template `experimentVersion` + `experimentSplit` live on `WorkflowTemplate` rather than a separate `WorkflowExperiment` table. There can only be one experiment per template (no multi-arm right now), and the columns are nullable so disabled state is unambiguous. Validation (split > 0 requires version; version must exist on this template) lives in the gateway PATCH route — a CHECK constraint can't express the cross-row dependency cheaply. |
 | 26 | Analytics cost rollup joins `workflow_runs → workRequest → activeWorkflow.costUsdAccrued` and **sums** across activeWorkflows per WorkRequest. This is correct for both single-workflow runs and epic decompositions (which create multiple activeWorkflows under one WorkRequest). We deliberately don't denormalize cost onto `workflow_runs` — the join is cheap on a 30d window and avoids a write-side audit problem if the LLM-call cost path ever changes shape. |
+| 27 | Phase-6 shell steps run in a **fresh ephemeral container per step** (not the long-lived agent workspace) with `--rm --read-only --tmpfs /tmp:size=64m --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=256 --memory=512m --cpus=1`. Workspace is exposed via a **Docker named volume** (not a host bind-mount) so the path works under DinD; the activity prepares the volume by cloning the work-request branch inside a throwaway `alpine/git` container, then runs the user command, then commits + pushes any working-tree changes in a second throwaway container before deleting the volume. |
+| 28 | Phase-6 image policy: built-in allowlist of `node:24-alpine`, `python:3.13-alpine`, `alpine:latest` is always permitted. Per-team additions live on `Team.shellImageAllowlist` (managed by team admins via `PUT /api/v1/teams/:id/shell-image-allowlist`). Matching is **exact string** on `image:tag` — no prefix matching, so a typo in the allowlist can't accidentally grant a similar image. The check runs at template-save time AND at workflow-runtime (defense in depth: a stored spec that pre-dates a tightened allowlist gets rejected before the container launches). |
+| 29 | Phase-6 RBAC: authoring a spec with any shell node requires **team-role ADMIN** in the template's owning team (platform ADMIN bypasses, as elsewhere). Global templates (`teamId === null`) require platform ADMIN — there's no team to grant elevated authoring against. The gateway returns `SHELL_AUTHOR_FORBIDDEN` on rejection. Every saved shell node writes one `WorkflowShellAudit` row capturing `(templateVersionId, nodeId, image, command, network, authorUserId)`. |
+| 30 | Per-step network mode is `none` (default) or `egress`. We map `egress` to Docker's `bridge` network rather than implementing destination filtering — egress filtering would require iptables management on the docker host, which we'd rather keep out-of-band. `none` strips the network namespace entirely. There is no opt-in to inbound traffic at any level. |
 
 ---
 
@@ -53,7 +57,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 3.5 Parallel fan-out + conflict resolution | **Done** | concurrency-bounded worker pool inside `runFanOut`, `resolveMergeConflict` activity backed by the implementer agent, `mergeBranches.unmergedBranches` tail |
 | 4. Web editor + run viewer | **Done** | `/templates` list, JSON spec editor + SVG DAG viewer, version sidebar + promote, `/templates/[id]/runs` paginated history, `/runs/[id]` live DAG viewer with per-node status overlay; gateway CRUD + step-registry catalog |
 | 5. Versioning UI, A/B per team, analytics | **Done** | version diff viewer, A/B experiment routing (`experimentVersion` + `experimentSplit`), analytics page (success rate, p50/p95, $/run, per-step failure rates), observed-cost chip on editor |
-| 6. Custom shell steps with RBAC + audit | Not started | team-admin-only step authoring, ephemeral container, audit log |
+| 6. Custom shell steps with RBAC + audit | **Done** | team-admin-only step authoring, ephemeral container, image allowlist, audit log |
 | 7. First-class in Slack + CLI | Not started | `/auto-swe workflow list` etc.; Slack picker on work-request create |
 
 ---
@@ -369,30 +373,57 @@ The phase-4 plan originally put templates at `/workflows`, but `/workflows` alre
 
 ---
 
-## Phase 6 — Custom shell steps (RBAC + audit)
+## Phase 6 — Custom shell steps (RBAC + audit) (Done)
 
-### Adds
+### What shipped
 
-- `shell` node type already in the schema; phase 6 wires the runtime
-- Per-step ephemeral container (not the long-lived workspace):
-  - `docker run --rm --network=none --memory <cap> --cpus <cap> --pids-limit 256 --read-only --tmpfs /tmp <image> <command>`
-  - Workspace bind-mounted at `/workspace` as the only writable path
-  - No Docker socket mount
-- New permission: `workflow:write:shell` (team admin only)
-- New table: `WorkflowShellAudit { templateVersionId, nodeId, command, authorUserId, createdAt }` — every shell-step authoring event logged
-- Editor UI shows a danger-zone warning + diff preview when saving a version with shell steps
+- **Schema.** `shell` node type added to `WorkflowSpecSchema`:
+  - `{ type: 'shell', image, command, network?: 'none'|'egress', memory?, cpus?, timeoutMs?, next, onFail?, inputs? }`
+  - `SPEC_SCHEMA_VERSION` bumped to 4. v3 → v4 codemod is bump-only (existing specs without shell nodes upgrade silently).
+  - Shell nodes share the step-node failure contract (`{passed, summary, exitCode, ...}`), so `onFail: 'block'|'warn'|{retry:N}` works uniformly across step and shell. The interpreter's retry helper is now shared (`runRetryable`) between `runStep` and `runShell`.
+- **Interpreter.** `Dispatcher.dispatchShell` is the new optional hook; the walker calls it for `type === 'shell'` and throws `no dispatchShell handler` for dispatchers that don't implement it (keeps the legacy testHelpers and pre-phase-6 dispatchers from silently swallowing shell nodes).
+- **Image allowlist.** `packages/shared/src/workflow/shellImageAllowlist.ts` — built-in defaults (`node:24-alpine`, `python:3.13-alpine`, `alpine:latest`) + per-team additions on `Team.shellImageAllowlist`. Lives in `shared` so the gateway can validate at save-time without depending on `worker`. Exact-string match only.
+- **Ephemeral container wrapper.** `packages/worker/src/lib/ephemeralContainer.ts` — `buildDockerArgs()` returns the locked-down argv (`--rm --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=256 --tmpfs=/tmp:size=64m,mode=1777 --memory=512m --cpus=1`), plus `runEphemeralContainer()` which spawns it with a wall-clock cap and a defensive `docker rm -f` in the finally. `egress` flips network from `none` to `bridge`. Image + mount-source regex guards block argv smuggling.
+- **Shell-step activity.** `packages/worker/src/activities/shellStep.ts` — full lifecycle:
+  1. Load repo + team metadata; re-validate the image against the team's current allowlist (defense in depth — a stale spec from before a tightened allowlist gets rejected here too).
+  2. Create a Docker named volume, clone the work-request branch into it via a throwaway `alpine/git` container (falls back to the default branch if the work-request branch isn't pushed yet).
+  3. Run the user command in the ephemeral container with the volume mounted at `/workspace` and `workdir=/workspace/repo`.
+  4. On success, run a second throwaway `alpine/git` container to `git add -A && git commit && git push origin HEAD:<branch>` — only if the working tree changed. Surfaces `committedSha` + `filesChanged` in the result.
+  5. Store the full `$cmd / stdout / stderr` log as a `WorkflowArtifact` (`kind: shell.step`).
+  6. `docker volume rm -f` the volume on the way out.
+- **Audit.** `WorkflowShellAudit` table (squashed into the init migration). Every saved shell node writes one row per `(templateVersionId, nodeId, image, command, network, authorUserId)`. Indexed on `templateVersionId` + `teamId`.
+- **Gateway RBAC.** `assertShellAuthoringAllowed()` runs on POST `/workflow-templates` and POST `/workflow-templates/:id/versions`:
+  - Platform ADMIN: always allowed.
+  - Other users on a team template: must be `TeamMembership.role === 'ADMIN'` in that team.
+  - Other users on a global template: rejected (already short-circuited by the global-template ADMIN check; we still cover it explicitly for clarity).
+  - Returns `SHELL_AUTHOR_FORBIDDEN` (403) when rejected.
+- **Gateway image-allowlist endpoint.** `GET /api/v1/teams/:id/shell-image-allowlist` (team-ENGINEER) + `PUT /api/v1/teams/:id/shell-image-allowlist` (team-ADMIN). The PUT body validates each entry against the same image regex used at runtime (`[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*`) so a stored allowlist can't smuggle docker flags.
+- **Editor UI.** `packages/web/src/app/templates/[id]/page.tsx` shows a danger-zone banner whenever the editor JSON contains shell nodes — lists up to five `(nodeId, image, command)` rows and prompts a `window.confirm()` on Save with the count. The DAG node colour for `shell` is a rose/red-orange so they're visible at a glance. (RBAC is still server-enforced; the UI surface is informational, not a security boundary.)
+- **Worker wiring.** `RunnableWorkflow` registers a `shellActivities` proxy (60m STC, 2m heartbeat) and a `dispatchShell` handler that pulls `image`/`command` straight off the typed node fields with `inputs.*` overrides for late binding.
 
-### Files to touch
+### Tests (+19, currently 315 total)
 
-- `packages/worker/src/activities/shellStep.ts` (new)
-- `packages/worker/src/lib/ephemeralContainer.ts` (new) — wraps `docker run` with the strict flags
-- `packages/gateway/src/routes/workflows.ts` — RBAC check on `shell`-containing specs
-- Prisma migration for audit table
+Phase 6 additions:
+- `spec.test.ts` — 5 new tests: minimal shell parse, full-options parse, missing-command / missing-image rejection, bad memory / network literal rejection, dangling `next` detection.
+- `interpreter.test.ts` — 5 new tests: dispatch + record-PASSED happy path, `onFail: 'warn'` continues past `passed: false`, `onFail: 'block'` throws on `passed: false`, `onFail: { retry: N }` re-invokes until success, "no dispatchShell handler" error path.
+- `codemods.test.ts` — chain expanded to v1→v4; new v3→v4 preservation test.
+- `shellImageAllowlist.test.ts` — 8 tests covering built-in always-allowed, team extensions, prefix non-matching, malformed entries, blank rejection, `assertShellImageAllowed` typed error.
+- `ephemeralContainer.test.ts` — 8 tests covering the locked-down flag set, `--` separator, network mode toggle, custom memory/cpu, image / mount-source / memory / cpu rejection regexes, custom workdir.
+- `workflowTemplates.test.ts` — 5 new RBAC tests: non-admin POST rejected, non-platform-admin global rejected, team-admin POST with allowlisted image succeeds + writes audit, non-allowlisted image rejected, team-extended image accepted.
+- `examples/shellStep.spec.test.ts` — 3 tests covering the new example spec: it parses, uses a built-in-allowlist image, and uses `onFail: 'warn'`.
 
-### Open questions
+### Files touched (recap)
 
-1. **Network access opt-in.** Some shell steps will need outbound (e.g., upload an SBOM somewhere). Add a per-step `network: 'none' | 'egress'` config field; default `'none'`.
-2. **Image allowlist.** Allow any image (admin-trusted) vs. an allowlist (`packages/worker/src/lib/shellImageAllowlist.ts`)? Phase-6 default: allowlist with `node:24-alpine`, `python:3.13-alpine`, `alpine:latest`, plus admin-editable additions per team.
+- **shared**: `workflow/spec.ts`, `workflow/codemods.ts`, `workflow/interpreter.ts`, `workflow/index.ts`, `workflow/costEstimator.ts`, `workflow/shellImageAllowlist.ts` (new), `prisma/schema.prisma`, `prisma/migrations/20260510000000_init/migration.sql`
+- **worker**: `lib/ephemeralContainer.ts` (new), `activities/shellStep.ts` (new), `activities/index.ts`, `workflows/runnable.ts`
+- **gateway**: `routes/workflowTemplates.ts`, `routes/teams.ts`
+- **web**: `app/templates/[id]/page.tsx`, `components/workflow/WorkflowDag.tsx`, `lib/workflowLayout.ts`
+
+### Known follow-ups
+
+- **Egress filtering.** `network: 'egress'` opens the full default bridge; we don't filter by destination. If a team needs SBOM uploads to one specific host, that's an iptables/proxy-shim concern outside the spec runtime.
+- **Audit retention.** `WorkflowShellAudit` grows monotonically and the table has no TTL. A 90d-window cleanup job (or partition-by-month) is a candidate once production usage clarifies retention needs.
+- **Shell-step memory.** Successful shell-step outcomes (especially ones that fix a gate) are the kind of thing `commitToMemory` could capture, but the activity doesn't yet hook into the memory pipeline. Same shape as the phase-3.5 resolver-memory follow-up.
 
 ---
 

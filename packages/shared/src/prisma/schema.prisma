@@ -155,12 +155,18 @@ model Team {
   slug        String   @unique
   description String   @default("")
   isActive    Boolean  @default(true) @map("is_active")
+  /// Per-team additions to the phase-6 shell-step image allowlist. The built-in
+  /// images (BUILTIN_SHELL_IMAGES in shared/workflow/shellImageAllowlist.ts) are
+  /// always allowed; entries here grant additional `image:tag` strings.
+  /// Managed by team admins via the gateway.
+  shellImageAllowlist String[] @default([]) @map("shell_image_allowlist")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships       TeamMembership[]
   repositories      Repository[]
   workflowTemplates WorkflowTemplate[]
+  shellAudits       WorkflowShellAudit[]
 
   @@map("teams")
 }
@@ -320,6 +326,29 @@ model WorkflowTemplateVersion {
   createdBy    String?          @map("created_by") @db.Uuid
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
+  shellAudits  WorkflowShellAudit[]
+
   @@unique([templateId, version])
   @@map("workflow_template_versions")
+}
+
+/// Phase-6 audit log: one row per shell node authored in a saved template
+/// version. Lets a team admin reconstruct who introduced what command in which
+/// version, and supports the editor's "danger zone" diff preview.
+model WorkflowShellAudit {
+  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateVersionId String                  @map("template_version_id") @db.Uuid
+  templateVersion   WorkflowTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+  teamId            String?                 @map("team_id") @db.Uuid
+  team              Team?                   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  nodeId            String                  @map("node_id")
+  image             String
+  command           String
+  network           String                  @default("none")
+  authorUserId      String?                 @map("author_user_id") @db.Uuid
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([templateVersionId])
+  @@index([teamId])
+  @@map("workflow_shell_audit")
 }

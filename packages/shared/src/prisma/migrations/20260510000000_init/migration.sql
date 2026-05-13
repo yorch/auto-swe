@@ -50,6 +50,7 @@ CREATE TABLE "teams" (
     "slug" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "shell_image_allowlist" TEXT[] NOT NULL DEFAULT '{}',
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -356,6 +357,36 @@ ALTER TABLE "workflow_template_versions" ADD CONSTRAINT "workflow_template_versi
 
 -- AddForeignKey
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- Phase 6: shell-step audit trail. One row per shell node authored in a
+-- template version, captured at save time so a team admin can answer "who
+-- added this command in version N?" without scanning JSON specs.
+-- CreateTable
+CREATE TABLE "workflow_shell_audit" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "template_version_id" UUID NOT NULL,
+    "team_id" UUID,
+    "node_id" TEXT NOT NULL,
+    "image" TEXT NOT NULL,
+    "command" TEXT NOT NULL,
+    "network" TEXT NOT NULL DEFAULT 'none',
+    "author_user_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "workflow_shell_audit_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "workflow_shell_audit_template_version_id_idx" ON "workflow_shell_audit"("template_version_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_shell_audit_team_id_idx" ON "workflow_shell_audit"("team_id");
+
+-- AddForeignKey
+ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template_version_id_fkey" FOREIGN KEY ("template_version_id") REFERENCES "workflow_template_versions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
