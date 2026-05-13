@@ -5,6 +5,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { pad, parsePositiveInt } from '../lib/format.js';
 import { parseFlags } from './workflows.js';
 
 /**
@@ -140,23 +141,9 @@ function stepSignature(d: WorkflowRunDetail): string {
   return `${d.status}|${d.steps.length}|${last?.nodeId ?? ''}|${last?.status ?? ''}`;
 }
 
-function parsePositiveInt(raw: string | undefined, fallback: number): number | 'invalid' {
-  if (raw === undefined) return fallback;
-  if (raw === 'true') return 'invalid';
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) return 'invalid';
-  return n;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function pad(s: string, w: number): string {
-  if (s.length >= w) return `${s.slice(0, w - 1)} `;
-  return s + ' '.repeat(w - s.length);
-}
-
-// Re-export for type discovery in callers (unused at runtime but keeps the
-// import surface small for tests).
+// Re-export for type discovery in callers (unused at runtime).
 export type { WorkflowStepRecord };

@@ -1,34 +1,144 @@
 import { prisma } from '@auto-swe/shared/db';
 
 /**
- * Phase-7 per-step failure notification. Best-effort, never throws.
+ * Slack notifications. Two surfaces:
+ *   - {@link notifySlackStepFailure} — per-step failure (phase 7)
+ *   - {@link notifySlackRunComplete} — terminal-run summary (phase 8, opt-in)
  *
- * Resolution order for the target channel:
- *   1. The originating Slack channel on `WorkRequest.slackChannelId` (paired with
- *      `slackMessageTs` for thread continuity if set — the modal-submit flow
- *      doesn't currently post an initial message, so `slackMessageTs` is null
- *      for those runs and the failure posts unthreaded into the originating
- *      channel; webhook-created work requests can pre-populate it for threading).
- *   2. The team's configured `Team.slackNotifyChannel`. Resolved by matching the
- *      current `WorkflowRun.workflowId` against `ActiveWorkflow.temporalWorkflowId`
- *      so cross-repo epics (multiple activeWorkflows under one WorkRequest)
- *      route to the correct team — not an arbitrary `take: 1` row.
+ * Channel resolution is shared via {@link resolveSlackChannel}: prefer the
+ * originating `WorkRequest.slackChannelId` (thread back to source); fall back
+ * to `Team.slackNotifyChannel`. Cross-repo epics have multiple activeWorkflows
+ * under one WorkRequest, so we match the run's `workflowId` against
+ * `temporalWorkflowId` to pick the correct team (not an arbitrary first row).
  *
- * Silently no-ops when `SLACK_BOT_TOKEN` is unset, no channel is resolvable,
- * the fetch times out, or Slack returns `{ok: false}`. We never want a Slack
- * outage to block the `recordWorkflowStep` activity that drives every run.
+ * Both functions are best-effort. They silently no-op when `SLACK_BOT_TOKEN`
+ * is unset, no channel resolves, the fetch times out, or Slack returns
+ * `{ok: false}` — never let a Slack outage block the calling activity.
  */
 
 // Hard upper bound on the wall-clock cost of this best-effort path. Kept short
-// because `recordWorkflowStep` awaits us; we'd rather miss a notification than
-// slow every workflow's step recording during a Slack outage.
+// because the caller awaits us; we'd rather miss a notification than slow
+// every workflow during a Slack outage.
 const SLACK_POST_TIMEOUT_MS = 2_000;
+const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
 
 interface SlackChatPostMessageResponse {
   ok: boolean;
   error?: string;
 }
 
+interface ResolvedChannel {
+  channel: string;
+  threadTs: string | null;
+  ticket: string;
+  templateName: string;
+  /** Loaded only when we need to consult the team opt-in (`requireOptIn=true`). */
+  teamSlackNotifySuccess: boolean;
+}
+
+/**
+ * Look up the destination channel for a run. Returns `null` when the run has
+ * no workspace context, no resolvable channel, or — for the run-complete path
+ * — the team hasn't opted in (`requireOptIn=true`).
+ */
+async function resolveSlackChannel(
+  runId: string,
+  requireOptIn: boolean
+): Promise<ResolvedChannel | null> {
+  const run = await prisma.workflowRun.findUnique({
+    include: {
+      template: { select: { name: true } },
+      workRequest: {
+        include: {
+          activeWorkflows: {
+            include: { repository: { select: { teamId: true } } },
+          },
+        },
+      },
+    },
+    where: { id: runId },
+  });
+  if (!run) return null;
+
+  const ticket = run.workRequest?.externalTicketId ?? '(no ticket)';
+  const templateName = run.template?.name ?? '(template)';
+
+  let channel = run.workRequest?.slackChannelId ?? null;
+  let threadTs = run.workRequest?.slackMessageTs ?? null;
+
+  // The team row is needed by the run-complete path (opt-in gate) and by the
+  // failure-fallback path (`slackNotifyChannel`). Load it once.
+  const ownActive = run.workRequest?.activeWorkflows.find(
+    (aw) => aw.temporalWorkflowId === run.workflowId
+  );
+  const teamId =
+    ownActive?.repository?.teamId ??
+    run.workRequest?.activeWorkflows[0]?.repository?.teamId ??
+    null;
+  const team = teamId
+    ? await prisma.team.findUnique({
+        select: { slackNotifyChannel: true, slackNotifySuccess: true },
+        where: { id: teamId },
+      })
+    : null;
+
+  if (requireOptIn && !team?.slackNotifySuccess) return null;
+
+  if (!channel) {
+    channel = team?.slackNotifyChannel ?? null;
+    threadTs = null;
+  }
+  if (!channel) return null;
+
+  return {
+    channel,
+    teamSlackNotifySuccess: team?.slackNotifySuccess ?? false,
+    templateName,
+    threadTs,
+    ticket,
+  };
+}
+
+async function postToSlack(
+  token: string,
+  channel: string,
+  threadTs: string | null,
+  text: string,
+  logLabel: string
+): Promise<void> {
+  const body: Record<string, unknown> = { channel, text };
+  if (threadTs) body.thread_ts = threadTs;
+
+  // AbortController guards against a hung connection holding up the activity.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(SLACK_POST_URL, {
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+    // Slack returns 200 with `{ok: false, error: '...'}` on logical failures
+    // (bad channel, missing scope, etc.). Surface those onto the activity log.
+    const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      // eslint-disable-next-line no-console
+      console.warn(`${logLabel}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max)}…`;
+}
+
+/** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */
 export async function notifySlackStepFailure(input: {
   runId: string;
   nodeId: string;
@@ -37,106 +147,25 @@ export async function notifySlackStepFailure(input: {
 }): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return;
-
   // Notify only on the FIRST failure for a given (runId, nodeId). Retries that
-  // keep failing would otherwise spam the channel. The final-failure surface is
-  // the FAILED workflow_runs row (caller can post once on finalizeWorkflowRun
-  // in a follow-up).
+  // keep failing would otherwise spam the channel.
   if (input.attempt > 1) return;
 
   try {
-    const run = await prisma.workflowRun.findUnique({
-      include: {
-        template: { select: { name: true } },
-        workRequest: {
-          include: {
-            activeWorkflows: {
-              include: { repository: { select: { teamId: true } } },
-            },
-          },
-        },
-      },
-      where: { id: input.runId },
-    });
-    if (!run) return;
-
-    // Prefer the originating channel; fall back to team notify channel.
-    let channel = run.workRequest?.slackChannelId ?? null;
-    let threadTs = run.workRequest?.slackMessageTs ?? null;
-    if (!channel) {
-      // Match the specific ActiveWorkflow corresponding to THIS run rather than
-      // an arbitrary first row — epic decompositions have multiple
-      // activeWorkflows under one WorkRequest, each with its own repo + team.
-      const ownActive = run.workRequest?.activeWorkflows.find(
-        (aw) => aw.temporalWorkflowId === run.workflowId
-      );
-      const teamId =
-        ownActive?.repository?.teamId ??
-        run.workRequest?.activeWorkflows[0]?.repository?.teamId ??
-        null;
-      if (teamId) {
-        const team = await prisma.team.findUnique({
-          select: { slackNotifyChannel: true },
-          where: { id: teamId },
-        });
-        channel = team?.slackNotifyChannel ?? null;
-        threadTs = null;
-      }
-    }
-    if (!channel) return;
-
-    const ticket = run.workRequest?.externalTicketId ?? '(no ticket)';
-    const tpl = run.template?.name ?? '(template)';
+    const resolved = await resolveSlackChannel(input.runId, false);
+    if (!resolved) return;
     const errLine = input.error ? `: ${truncate(input.error, 400)}` : '';
-    const text = `*[${ticket}]* \`${tpl}\` → step \`${input.nodeId}\` failed (attempt ${input.attempt})${errLine}`;
-
-    const body: Record<string, unknown> = { channel, text };
-    if (threadTs) body.thread_ts = threadTs;
-
-    // AbortController guards against a hung connection holding up the activity.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
-    try {
-      const res = await fetch('https://slack.com/api/chat.postMessage', {
-        body: JSON.stringify(body),
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        method: 'POST',
-        signal: controller.signal,
-      });
-      // Slack returns 200 with `{ok: false, error: '...'}` on logical failures
-      // (bad channel, missing scope, etc.). Surface those onto the activity log
-      // by reading `ok` — we still don't throw, since the activity must succeed.
-      const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
-      if (!data.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(`slackNotify: chat.postMessage failed: ${data.error ?? 'unknown'}`);
-      }
-    } finally {
-      clearTimeout(timer);
-    }
+    const text = `*[${resolved.ticket}]* \`${resolved.templateName}\` → step \`${input.nodeId}\` failed (attempt ${input.attempt})${errLine}`;
+    await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify');
   } catch {
-    // Best-effort. Never let a Slack failure surface as a workflow failure.
+    /* best-effort */
   }
 }
 
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : `${s.slice(0, max)}…`;
-}
-
 /**
- * Phase-8: terminal-state notification. Posts SUCCESS / final FAILED for a
- * run when the team opts in via `Team.slackNotifySuccess = true`. Failure
- * notifications still go via {@link notifySlackStepFailure} for live retry
- * visibility — this is the closing message that says "the run is done."
- *
- * Channel resolution mirrors `notifySlackStepFailure`: prefer the originating
- * `WorkRequest.slackChannelId` (thread back to source), fall back to
- * `Team.slackNotifyChannel`.
- *
- * Best-effort: never throws.
+ * Terminal-state notification (phase 8). Posts SUCCESS / final FAILED when the
+ * team opts in via `Team.slackNotifySuccess = true`. Per-step failures still
+ * fire via {@link notifySlackStepFailure} regardless of the opt-in.
  */
 export async function notifySlackRunComplete(input: {
   runId: string;
@@ -146,82 +175,16 @@ export async function notifySlackRunComplete(input: {
   if (!token) return;
 
   try {
-    const run = await prisma.workflowRun.findUnique({
-      include: {
-        template: { select: { name: true } },
-        workRequest: {
-          include: {
-            activeWorkflows: {
-              include: { repository: { select: { teamId: true } } },
-            },
-          },
-        },
-      },
-      where: { id: input.runId },
-    });
-    if (!run) return;
-
-    let channel = run.workRequest?.slackChannelId ?? null;
-    let threadTs = run.workRequest?.slackMessageTs ?? null;
-
-    // The team opt-in must be true before we post anything. Two routes:
-    //   - Originating channel on the WorkRequest → check the team owning the
-    //     run's repo.
-    //   - Team-notify channel fallback → discover that team here too.
-    // In both paths we end up loading the same Team row, so we always go
-    // through it before deciding whether to post.
-    const ownActive = run.workRequest?.activeWorkflows.find(
-      (aw) => aw.temporalWorkflowId === run.workflowId
-    );
-    const teamId =
-      ownActive?.repository?.teamId ??
-      run.workRequest?.activeWorkflows[0]?.repository?.teamId ??
-      null;
-    if (!teamId) return;
-    const team = await prisma.team.findUnique({
-      select: { slackNotifyChannel: true, slackNotifySuccess: true },
-      where: { id: teamId },
-    });
-    if (!team?.slackNotifySuccess) return;
-    if (!channel) {
-      channel = team.slackNotifyChannel ?? null;
-      threadTs = null;
-    }
-    if (!channel) return;
-
-    const ticket = run.workRequest?.externalTicketId ?? '(no ticket)';
-    const tpl = run.template?.name ?? '(template)';
+    const resolved = await resolveSlackChannel(input.runId, true);
+    if (!resolved) return;
     const emoji =
       input.status === 'SUCCESS'
         ? ':white_check_mark:'
         : input.status === 'CANCELLED'
           ? ':octagonal_sign:'
           : ':rotating_light:';
-    const text = `${emoji} *[${ticket}]* \`${tpl}\` run finished: *${input.status}*`;
-
-    const body: Record<string, unknown> = { channel, text };
-    if (threadTs) body.thread_ts = threadTs;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
-    try {
-      const res = await fetch('https://slack.com/api/chat.postMessage', {
-        body: JSON.stringify(body),
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        method: 'POST',
-        signal: controller.signal,
-      });
-      const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
-      if (!data.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(`slackNotify (complete): chat.postMessage failed: ${data.error ?? 'unknown'}`);
-      }
-    } finally {
-      clearTimeout(timer);
-    }
+    const text = `${emoji} *[${resolved.ticket}]* \`${resolved.templateName}\` run finished: *${input.status}*`;
+    await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify (complete)');
   } catch {
     /* best-effort */
   }

@@ -164,7 +164,6 @@ function computeSignificanceHint(runs: AnalyticsRunRow[]): SignificanceHint | nu
   const finished = runs.filter((r) => r.status !== 'RUNNING');
   if (finished.length === 0) return null;
 
-  // Bucket finished runs by version.
   const byVersion = new Map<number, { total: number; succeeded: number }>();
   for (const r of finished) {
     const cell = byVersion.get(r.templateVersion) ?? { succeeded: 0, total: 0 };
@@ -172,8 +171,7 @@ function computeSignificanceHint(runs: AnalyticsRunRow[]): SignificanceHint | nu
     if (r.status === 'SUCCESS') cell.succeeded += 1;
     byVersion.set(r.templateVersion, cell);
   }
-  // Take the two arms with the most runs (most-trafficked → most reliable
-  // comparison). Tie-break by version number for determinism.
+  // Most-trafficked two arms; tie-break by version number for determinism.
   const arms = Array.from(byVersion.entries())
     .map(([version, { total, succeeded }]) => ({ succeeded, total, version }))
     .sort((a, b) => b.total - a.total || a.version - b.version);

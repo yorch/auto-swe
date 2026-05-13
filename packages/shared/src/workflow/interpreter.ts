@@ -527,15 +527,13 @@ async function runFanOut(
   // of completion order. Holes (un-scheduled branches when block fires) are
   // filtered out at the end.
   const slots: Array<Entry | undefined> = new Array(raw.length);
-  // Phase-8: each in-flight branch gets its own cancellation sink so we can
-  // ask the dispatcher to abort sibling activities when block-mode fires.
-  // Dispatchers that don't support cancellation leave `token` undefined, in
-  // which case `cancelAllExcept` is a no-op (the pre-phase-8 drain behavior).
+  // Phase-8: each in-flight branch gets a cancellation sink. Dispatchers that
+  // don't support cancellation leave `token` undefined, in which case
+  // `cancelAllExcept` is a no-op (pre-phase-8 drain behavior).
   const branchSinks = new Map<number, { token?: CancellationToken }>();
   let firstError: unknown = null;
   let nextIndex = 0;
   let stop = false;
-  let cancelled = 0;
 
   function cancelAllExcept(exceptIndex: number): void {
     for (const [idx, sink] of branchSinks.entries()) {
@@ -543,7 +541,6 @@ async function runFanOut(
       if (sink.token) {
         try {
           sink.token.cancel();
-          cancelled += 1;
         } catch {
           // Cancellation is best-effort; a cancel-throw shouldn't fail
           // the whole fan-out beyond the original block trigger.
@@ -605,10 +602,6 @@ async function runFanOut(
 
   const workerCount = Math.min(concurrency, raw.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  // Suppress unused-var warning under noUnusedLocals — `cancelled` is
-  // surfaced in the aggregate only when we wire cross-dispatch telemetry
-  // through; for now it's a sanity counter retained for debug printf.
-  void cancelled;
 
   // Drop holes (branches that block-mode skipped) but preserve index order
   // for everything that did run.

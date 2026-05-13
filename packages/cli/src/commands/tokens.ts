@@ -1,5 +1,6 @@
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { pad } from '../lib/format.js';
 import { parseFlags } from './workflows.js';
 
 /**
@@ -118,9 +119,4 @@ async function cmdRevoke(args: string[], env: CliEnv): Promise<number> {
 function isExpired(expiresAt: string | null): boolean {
   if (!expiresAt) return false;
   return new Date(expiresAt) < new Date();
-}
-
-function pad(s: string, w: number): string {
-  if (s.length >= w) return `${s.slice(0, w - 1)} `;
-  return s + ' '.repeat(w - s.length);
 }

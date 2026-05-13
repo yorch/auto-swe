@@ -14,6 +14,38 @@ const LessonOutputSchema = z.object({
   rationale: z.string(),
 });
 
+type FailureType = z.infer<typeof LessonOutputSchema>['failureType'];
+
+/**
+ * Insert one agent_lessons row + its vector embedding. Shared by the
+ * LLM-summarized path (`commitToMemory`) and the phase-8 direct recorder
+ * (`recordLessonDirectly`). Prisma doesn't support pgvector natively, hence
+ * the raw SQL.
+ */
+async function writeAgentLessonRow(input: {
+  workflowId: string;
+  repoId: string;
+  rationale: string;
+  lessonSummary: string;
+  failureType: FailureType;
+  metadata: Record<string, unknown> | null;
+}): Promise<string> {
+  const embedding = await generateEmbedding(input.lessonSummary);
+  const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
+    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
+     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, now())
+     RETURNING id`,
+    input.workflowId,
+    input.repoId,
+    input.rationale,
+    input.lessonSummary,
+    JSON.stringify(embedding),
+    input.failureType,
+    JSON.stringify(input.metadata ?? {})
+  );
+  return rows[0]?.id ?? '';
+}
+
 /**
  * Summarizes a completed workflow into a reusable lesson and persists it
  * with a vector embedding for future semantic search.
@@ -31,7 +63,6 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
     throw new Error(`Workflow not found: ${temporalWorkflowId}`);
   }
 
-  // Use Memory Agent to summarize the workflow
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
     instructions: MEMORY_SUMMARIZER_PROMPT,
@@ -65,43 +96,29 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
   }
   const lesson = result.object as z.infer<typeof LessonOutputSchema>;
 
-  // Generate embedding for the lesson summary
-  const embedding = await generateEmbedding(lesson.lessonSummary);
-
-  // Persist with embedding via raw SQL (Prisma doesn't support vector type natively)
-  const lessonRows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
-     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, now())
-     RETURNING id`,
-    workflow.id,
+  return writeAgentLessonRow({
+    failureType: lesson.failureType,
+    lessonSummary: lesson.lessonSummary,
+    metadata: lesson.metadata,
+    rationale: lesson.rationale,
     repoId,
-    lesson.rationale,
-    lesson.lessonSummary,
-    JSON.stringify(embedding),
-    lesson.failureType,
-    JSON.stringify(lesson.metadata ?? {})
-  );
-
-  return lessonRows[0]?.id ?? '';
+    workflowId: workflow.id,
+  });
 }
 
 /**
- * Phase-8 direct lesson recorder. Bypasses the LLM summarizer for cases where
- * the calling activity already knows exactly what happened (e.g. a merge
- * conflict resolver that succeeded, or a shell step that fixed a regression).
- * Generates the embedding for the supplied `lessonSummary` and writes one
- * `agent_lessons` row keyed to the current ActiveWorkflow.
- *
- * Returns the lesson id, or `null` if the linked `ActiveWorkflow` row can't
- * be resolved (best-effort path — the caller never fails its own work over a
- * memory hiccup).
+ * Phase-8 direct lesson recorder. Bypasses the LLM summarizer for callers
+ * that already know exactly what happened (the merge-conflict resolver and
+ * shell-step activity). Returns the lesson id, or `null` if the linked
+ * `ActiveWorkflow` can't be resolved or the insert throws — best-effort, so
+ * the caller never fails its own work over a memory hiccup.
  */
 export async function recordLessonDirectly(input: {
   temporalWorkflowId: string;
   repoId: string;
   rationale: string;
   lessonSummary: string;
-  failureType?: 'CI_FAILURE' | 'REVIEW_REJECTION' | 'SECURITY_VIOLATION' | 'MERGE_CONFLICT' | null;
+  failureType?: FailureType;
   metadata?: Record<string, unknown>;
 }): Promise<string | null> {
   try {
@@ -109,24 +126,18 @@ export async function recordLessonDirectly(input: {
       where: { temporalWorkflowId: input.temporalWorkflowId },
     });
     if (!workflow) return null;
-
-    const embedding = await generateEmbedding(input.lessonSummary);
-    const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-      `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
-       VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, now())
-       RETURNING id`,
-      workflow.id,
-      input.repoId,
-      input.rationale,
-      input.lessonSummary,
-      JSON.stringify(embedding),
-      input.failureType ?? null,
-      JSON.stringify(input.metadata ?? {})
-    );
-    return rows[0]?.id ?? null;
-  } catch {
-    // Memory writes must never break the calling activity. The structured
-    // lesson is nice-to-have; the actual code change is what matters.
+    return await writeAgentLessonRow({
+      failureType: input.failureType ?? null,
+      lessonSummary: input.lessonSummary,
+      metadata: input.metadata ?? null,
+      rationale: input.rationale,
+      repoId: input.repoId,
+      workflowId: workflow.id,
+    });
+  } catch (err) {
+    // Log so silent failures stay observable, but never propagate.
+    // eslint-disable-next-line no-console
+    console.warn(`recordLessonDirectly: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }

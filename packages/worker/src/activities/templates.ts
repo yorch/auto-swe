@@ -100,10 +100,8 @@ export async function finalizeWorkflowRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   contextSnapshot?: unknown
 ): Promise<void> {
-  // Phase-8: denormalize the run's cost onto workflow_runs at finalize time.
-  // Reads through workRequest → activeWorkflows (the same join the analytics
-  // route used to do every request) and writes the sum to the run row. Skips
-  // the join if the run has no work-request attached.
+  // Phase-8 denormalize the run's cost onto workflow_runs at finalize time.
+  // Read the workRequest → activeWorkflows join once, sum, then write it back.
   const run = await prisma.workflowRun.findUnique({
     select: {
       workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
@@ -125,8 +123,7 @@ export async function finalizeWorkflowRun(
     where: { id: runId },
   });
 
-  // Best-effort terminal notification. Team must have opted in via
-  // `Team.slackNotifySuccess`; otherwise this is a silent no-op.
+  // Team must have opted in via `Team.slackNotifySuccess`; otherwise no-op.
   await notifySlackRunComplete({ runId, status });
 }
 
