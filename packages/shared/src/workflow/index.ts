@@ -32,6 +32,13 @@ export type {
   StepMetadata,
 } from './registry-types.js';
 export { BUILTIN_STEPS } from './registry-types.js';
+export {
+  assertShellImageAllowed,
+  BUILTIN_SHELL_IMAGES,
+  DOCKER_IMAGE_REF_RE,
+  isShellImageAllowed,
+  ShellImageNotAllowedError,
+} from './shellImageAllowlist.js';
 export { SignalSlots } from './signalSlots.js';
 export type {
   Binding,
@@ -40,6 +47,7 @@ export type {
   Node,
   OnFailMode,
   SetNode,
+  ShellNode,
   SignalNode,
   StepNode,
   TerminateNode,

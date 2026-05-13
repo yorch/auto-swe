@@ -1,17 +1,141 @@
 import type { Prisma } from '@auto-swe/shared';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import {
+  assertShellImageAllowed,
   computeAnalytics,
   diffSpecs,
   parseWorkflowSpec,
+  ShellImageNotAllowedError,
+  type ShellNode,
   SPEC_SCHEMA_VERSION,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+
+interface ShellNodeWithId {
+  id: string;
+  node: ShellNode;
+}
+
+function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
+  const out: ShellNodeWithId[] = [];
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.type === 'shell') out.push({ id, node });
+  }
+  return out;
+}
+
+/**
+ * Phase-6 RBAC: authoring a spec with any shell node requires the
+ * `workflow:write:shell` permission. We map it to:
+ *   - platform ADMIN, OR
+ *   - team-role ADMIN in the template's owning team (templates with
+ *     teamId === null are global → only platform ADMINs may save shell
+ *     nodes there).
+ * Returns a Fastify reply on failure, or null on success.
+ */
+async function assertShellAuthoringAllowed(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string | null,
+  shellNodes: ShellNodeWithId[]
+): Promise<{ statusCode: number; body: unknown } | null> {
+  if (shellNodes.length === 0) return null;
+  if (user.role === 'ADMIN') return null;
+  if (teamId === null) {
+    return {
+      body: {
+        error: {
+          code: 'SHELL_AUTHOR_FORBIDDEN',
+          message: 'Only platform admins may author shell steps on global templates',
+        },
+      },
+      statusCode: 403,
+    };
+  }
+  const membership = await fastify.prisma.teamMembership.findUnique({
+    where: { userId_teamId: { teamId, userId: user.sub } },
+  });
+  if (!membership || membership.role !== 'ADMIN') {
+    return {
+      body: {
+        error: {
+          code: 'SHELL_AUTHOR_FORBIDDEN',
+          message: 'Authoring shell steps requires team-admin role',
+        },
+      },
+      statusCode: 403,
+    };
+  }
+  return null;
+}
+
+async function assertShellImagesAllowed(
+  fastify: FastifyInstance,
+  teamId: string | null,
+  shellNodes: ShellNodeWithId[]
+): Promise<{ statusCode: number; body: unknown } | null> {
+  if (shellNodes.length === 0) return null;
+  const teamAllowlist = teamId
+    ? ((
+        await fastify.prisma.team.findUnique({
+          select: { shellImageAllowlist: true },
+          where: { id: teamId },
+        })
+      )?.shellImageAllowlist ?? [])
+    : [];
+  for (const { id, node } of shellNodes) {
+    try {
+      assertShellImageAllowed(node.image, teamAllowlist);
+    } catch (err) {
+      if (err instanceof ShellImageNotAllowedError) {
+        return {
+          body: {
+            error: {
+              code: 'SHELL_IMAGE_NOT_ALLOWED',
+              message: `Node '${id}': ${err.message}`,
+            },
+          },
+          statusCode: 400,
+        };
+      }
+      throw err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Insert the audit rows. Accepts either the singleton prisma client or a
+ * transaction client so the caller can wrap the version write + audit in a
+ * single atomic step — without that, a failed audit insert leaves the version
+ * row in place and the API reports an error, an inconsistency that's hard
+ * to reconcile later.
+ */
+async function recordShellAudit(
+  tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>,
+  templateVersionId: string,
+  teamId: string | null,
+  authorUserId: string,
+  shellNodes: ShellNodeWithId[]
+): Promise<void> {
+  if (shellNodes.length === 0) return;
+  await tx.workflowShellAudit.createMany({
+    data: shellNodes.map(({ id, node }) => ({
+      authorUserId,
+      command: node.command,
+      image: node.image,
+      network: node.network ?? 'none',
+      nodeId: id,
+      teamId,
+      templateVersionId,
+    })),
+  });
+}
 
 const TemplateIdParam = z.object({ id: z.string().uuid() });
 const VersionParam = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) });
@@ -198,21 +322,38 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const parsedSpec = parsed as WorkflowSpec;
+      const shellNodes = collectShellNodes(parsedSpec);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
+      ]);
+      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
+      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+
       try {
-        // Single create — `activeVersion: 1` + `status: 'ACTIVE'` are set inline
-        // so a failure can't leave a half-promoted template behind.
-        const tpl = await fastify.prisma.workflowTemplate.create({
-          data: {
-            activeVersion: 1,
-            description: description ?? '',
-            name,
-            status: 'ACTIVE',
-            teamId: teamId ?? null,
-            versions: {
-              create: { createdBy: user.sub, spec: parsed as object, version: 1 },
+        // Wrap the template + initial version + shell-audit insert in one
+        // transaction so a failed audit insert rolls back the template row,
+        // keeping API success/failure aligned with persisted state.
+        const tpl = await fastify.prisma.$transaction(async (tx) => {
+          const created = await tx.workflowTemplate.create({
+            data: {
+              activeVersion: 1,
+              description: description ?? '',
+              name,
+              status: 'ACTIVE',
+              teamId: teamId ?? null,
+              versions: {
+                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
+              },
             },
-          },
-          include: TEMPLATE_INCLUDE,
+            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+          });
+          const initialVersion = created.versions[0];
+          if (initialVersion) {
+            await recordShellAudit(tx, initialVersion.id, teamId ?? null, user.sub, shellNodes);
+          }
+          return created;
         });
         return reply.status(201).send({ data: projectTemplate(tpl, undefined) });
       } catch (err: unknown) {
@@ -412,10 +553,21 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INVALID_SPEC', message: e.message } });
       }
 
+      const parsedSpec = parsed as WorkflowSpec;
+      const shellNodes = collectShellNodes(parsedSpec);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes),
+        assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
+      ]);
+      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
+      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+
       // SELECT max(version)+1 / INSERT is racy under concurrent saves — two
       // simultaneous POSTs would pick the same `next`, and Prisma's unique
       // (templateId, version) constraint would 500 the loser. Retry on
       // P2002 with a fresh max; bounded so a runaway loop can't spin forever.
+      // Each attempt's version-create + audit-insert run in one transaction
+      // so a failed audit rolls the version back too.
       const MAX_RETRIES = 5;
       let created: Awaited<
         ReturnType<typeof fastify.prisma.workflowTemplateVersion.create>
@@ -428,13 +580,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
         const next = (last?.version ?? 0) + 1;
         try {
-          created = await fastify.prisma.workflowTemplateVersion.create({
-            data: {
-              createdBy: user.sub,
-              spec: parsed as object,
-              templateId: tpl.id,
-              version: next,
-            },
+          created = await fastify.prisma.$transaction(async (tx) => {
+            const row = await tx.workflowTemplateVersion.create({
+              data: {
+                createdBy: user.sub,
+                spec: parsed as object,
+                templateId: tpl.id,
+                version: next,
+              },
+            });
+            await recordShellAudit(tx, row.id, tpl.teamId, user.sub, shellNodes);
+            return row;
           });
           break;
         } catch (err: unknown) {

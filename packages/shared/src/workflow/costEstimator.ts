@@ -93,6 +93,10 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         return Math.max(walk(node.onReceive), walk(node.onTimeout));
       case 'fanOut':
         return walk(node.subgraph) * fanOutWidth + walk(node.join);
+      case 'shell':
+        // Shell steps don't have a token-based cost. They incur container
+        // runtime cost instead, which we don't model here.
+        return walk(node.next);
       case 'terminate':
         return 0;
     }

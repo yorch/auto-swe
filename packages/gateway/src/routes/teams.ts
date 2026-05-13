@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -150,6 +151,78 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       return { data: updated };
+    }
+  );
+
+  // ── Phase 6: shell-step image allowlist ─────────────────────────────────
+  // Restricted to team ADMINs (role hierarchy treats platform ADMIN as ≥ team
+  // ADMIN, so platform admins can also edit). Built-in images are always
+  // allowed; this list only adds to them.
+  const ShellAllowlistBody = z.object({
+    shellImageAllowlist: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(256)
+          .regex(
+            DOCKER_IMAGE_REF_RE,
+            'image must look like registry/org/name:tag — no whitespace or shell metacharacters'
+          )
+      )
+      .max(50),
+  });
+
+  app.get(
+    '/:id/shell-image-allowlist',
+    {
+      onRequest: requireAuth({
+        requiredRole: 'ENGINEER',
+        requiredTeamRole: 'ENGINEER',
+        teamIdParam: 'id',
+      }),
+      schema: { params: TeamParamsSchema },
+    },
+    async (request, reply) => {
+      const team = await fastify.prisma.team.findUnique({
+        select: { shellImageAllowlist: true },
+        where: { id: request.params.id },
+      });
+      if (!team) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+      }
+      return { data: { shellImageAllowlist: team.shellImageAllowlist } };
+    }
+  );
+
+  app.put(
+    '/:id/shell-image-allowlist',
+    {
+      onRequest: requireAuth({
+        requiredRole: 'ADMIN',
+        requiredTeamRole: 'ADMIN',
+        teamIdParam: 'id',
+      }),
+      schema: { body: ShellAllowlistBody, params: TeamParamsSchema },
+    },
+    async (request, reply) => {
+      const exists = await fastify.prisma.team.findUnique({
+        select: { id: true },
+        where: { id: request.params.id },
+      });
+      if (!exists) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+      }
+      const updated = await fastify.prisma.team.update({
+        data: { shellImageAllowlist: request.body.shellImageAllowlist },
+        select: { shellImageAllowlist: true },
+        where: { id: request.params.id },
+      });
+      return { data: { shellImageAllowlist: updated.shellImageAllowlist } };
     }
   );
 

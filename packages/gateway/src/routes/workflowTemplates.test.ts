@@ -27,7 +27,7 @@ const VALID_SPEC = {
   entry: 'start',
   name: 'minimal',
   nodes: { start: { status: 'SUCCESS', type: 'terminate' } },
-  schemaVersion: 3,
+  schemaVersion: 4,
 };
 
 function buildApp(state: {
@@ -41,6 +41,8 @@ function buildApp(state: {
     endedAt: Date | null;
   }>;
   userRole?: string;
+  teamRole?: string;
+  teamAllowlist?: string[];
 }): FastifyInstance {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -62,134 +64,193 @@ function buildApp(state: {
         (where.teamId === undefined || t.teamId === where.teamId)
     );
 
-  app.decorate('prisma', {
-    teamMembership: {
-      findFirst: async () => ({ teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567', userId: 'user-1' }),
-    },
-    workflowRun: {
-      count: async ({ where }: { where?: Mutable }) =>
-        state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
-      findMany: async ({ where, distinct }: { where?: Mutable; distinct?: string[] }) => {
-        const filtered = state.runs.filter((r) => {
-          if (!where?.templateId) return true;
-          const ids = (where.templateId as { in?: string[] }).in;
-          return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
-        });
-        if (!distinct) return filtered;
-        const seen = new Set<string>();
-        return filtered.filter((r) => {
-          if (seen.has(r.templateId)) return false;
-          seen.add(r.templateId);
-          return true;
-        });
+  const shellAudits: Array<{
+    templateVersionId: string;
+    teamId: string | null;
+    authorUserId: string;
+    nodeId: string;
+    image: string;
+    command: string;
+    network: string;
+  }> = [];
+  // exposed via state for assertions
+  (state as unknown as { shellAudits: typeof shellAudits }).shellAudits = shellAudits;
+
+  type PrismaMock = Record<string, unknown> & {
+    $transaction?: (fn: (tx: PrismaMock) => Promise<unknown>) => Promise<unknown>;
+  };
+  const prismaMock: PrismaMock = {
+    $transaction: async (fn: (tx: PrismaMock) => Promise<unknown>) => fn(prismaMock),
+  };
+
+  app.decorate(
+    'prisma',
+    Object.assign(prismaMock, {
+      team: {
+        findUnique: async ({ where }: { where: Mutable }) => {
+          // For the shell allowlist check; tests can override via state.teamAllowlist
+          return where.id
+            ? {
+                id: where.id as string,
+                shellImageAllowlist: (state as { teamAllowlist?: string[] }).teamAllowlist ?? [],
+              }
+            : null;
+        },
       },
-    },
-    workflowTemplate: {
-      create: async ({
-        data,
-      }: {
-        data: Mutable & { versions?: { create: { spec: unknown; version: number } } };
-      }) => {
-        const idx = state.templates.length + 1;
-        const id = `00000000-0000-4000-8000-00000000000${idx}`;
-        const tpl: FakeTemplate = {
-          activeVersion: (data.activeVersion as number | null) ?? null,
-          createdAt: new Date(),
-          description: (data.description as string) ?? '',
-          experimentSplit: null,
-          experimentVersion: null,
-          id,
-          isDefault: false,
-          name: data.name as string,
-          status: (data.status as string) ?? 'DRAFT',
-          team: null,
-          teamId: (data.teamId as string | null) ?? null,
-          updatedAt: new Date(),
-          versions: [],
-        };
-        if (data.versions?.create) {
-          const versionId = `v-${id}-1`;
+      teamMembership: {
+        findFirst: async () => ({
+          teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+          userId: 'user-1',
+        }),
+        findUnique: async ({ where }: { where: Mutable }) => {
+          const composite = where.userId_teamId as { userId: string; teamId: string };
+          const teamRole = (state as { teamRole?: string }).teamRole ?? 'LEAD';
+          return composite
+            ? { role: teamRole, teamId: composite.teamId, userId: composite.userId }
+            : null;
+        },
+      },
+      workflowRun: {
+        count: async ({ where }: { where?: Mutable }) =>
+          state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
+        findMany: async ({ where, distinct }: { where?: Mutable; distinct?: string[] }) => {
+          const filtered = state.runs.filter((r) => {
+            if (!where?.templateId) return true;
+            const ids = (where.templateId as { in?: string[] }).in;
+            return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
+          });
+          if (!distinct) return filtered;
+          const seen = new Set<string>();
+          return filtered.filter((r) => {
+            if (seen.has(r.templateId)) return false;
+            seen.add(r.templateId);
+            return true;
+          });
+        },
+      },
+      workflowShellAudit: {
+        createMany: async ({ data }: { data: Array<Mutable> }) => {
+          for (const row of data) {
+            shellAudits.push({
+              authorUserId: row.authorUserId as string,
+              command: row.command as string,
+              image: row.image as string,
+              network: (row.network as string) ?? 'none',
+              nodeId: row.nodeId as string,
+              teamId: row.teamId as string | null,
+              templateVersionId: row.templateVersionId as string,
+            });
+          }
+          return { count: data.length };
+        },
+      },
+      workflowTemplate: {
+        create: async ({
+          data,
+        }: {
+          data: Mutable & { versions?: { create: { spec: unknown; version: number } } };
+        }) => {
+          const idx = state.templates.length + 1;
+          const id = `00000000-0000-4000-8000-00000000000${idx}`;
+          const tpl: FakeTemplate = {
+            activeVersion: (data.activeVersion as number | null) ?? null,
+            createdAt: new Date(),
+            description: (data.description as string) ?? '',
+            experimentSplit: null,
+            experimentVersion: null,
+            id,
+            isDefault: false,
+            name: data.name as string,
+            status: (data.status as string) ?? 'DRAFT',
+            team: null,
+            teamId: (data.teamId as string | null) ?? null,
+            updatedAt: new Date(),
+            versions: [],
+          };
+          if (data.versions?.create) {
+            const versionId = `v-${id}-1`;
+            tpl.versions.push({
+              createdAt: new Date(),
+              createdBy: 'user-1',
+              id: versionId,
+              version: data.versions.create.version,
+            });
+            state.versions.set(`${id}:${data.versions.create.version}`, {
+              createdAt: new Date(),
+              createdBy: 'user-1',
+              spec: data.versions.create.spec,
+            });
+          }
+          state.templates.push(tpl);
+          return { ...tpl, _count: { versions: tpl.versions.length } };
+        },
+        findFirst: async ({ where }: { where?: Mutable }) => {
+          const tpl = findTemplate(where ?? {});
+          return tpl ? { ...tpl, _count: { versions: tpl.versions.length } } : null;
+        },
+        findMany: async ({ where }: { where?: Mutable }) => {
+          const filtered = state.templates.filter((t) => {
+            if (where?.teamId && t.teamId !== where.teamId) return false;
+            return true;
+          });
+          return filtered.map((t) => ({ ...t, _count: { versions: t.versions.length } }));
+        },
+        update: async ({ data, where }: { data: Mutable; where: Mutable }) => {
+          const tpl = findTemplate(where);
+          if (!tpl) throw new Error('not found');
+          Object.assign(tpl, data);
+          tpl.updatedAt = new Date();
+          return { ...tpl, _count: { versions: tpl.versions.length } };
+        },
+        updateMany: async ({ data, where }: { data: Mutable; where: Mutable }) => {
+          let count = 0;
+          for (const t of state.templates) {
+            if (where.teamId !== undefined && t.teamId !== where.teamId) continue;
+            if (where.id && (where.id as { not?: string }).not === t.id) continue;
+            Object.assign(t, data);
+            count++;
+          }
+          return { count };
+        },
+      },
+      workflowTemplateVersion: {
+        create: async ({ data }: { data: Mutable }) => {
+          const id = `v-${data.templateId}-${data.version}`;
+          const tpl = findTemplate({ id: data.templateId });
+          if (!tpl) throw new Error('template not found');
           tpl.versions.push({
             createdAt: new Date(),
             createdBy: 'user-1',
-            id: versionId,
-            version: data.versions.create.version,
+            id,
+            version: data.version as number,
           });
-          state.versions.set(`${id}:${data.versions.create.version}`, {
+          state.versions.set(`${data.templateId}:${data.version}`, {
             createdAt: new Date(),
             createdBy: 'user-1',
-            spec: data.versions.create.spec,
+            spec: data.spec,
           });
-        }
-        state.templates.push(tpl);
-        return { ...tpl, _count: { versions: tpl.versions.length } };
+          return {
+            ...(state.versions.get(`${data.templateId}:${data.version}`) as Mutable),
+            id,
+            templateId: data.templateId,
+            version: data.version,
+          };
+        },
+        findFirst: async ({ where, orderBy: _ }: { where?: Mutable; orderBy?: Mutable }) => {
+          const tpl = findTemplate({ id: where?.templateId });
+          if (!tpl) return null;
+          const sorted = [...tpl.versions].sort((a, b) => b.version - a.version);
+          return sorted[0] ?? null;
+        },
+        findUnique: async ({ where }: { where: Mutable }) => {
+          const composite = where.templateId_version as { templateId: string; version: number };
+          const v = state.versions.get(`${composite.templateId}:${composite.version}`);
+          if (!v) return null;
+          return { ...v, templateId: composite.templateId, version: composite.version };
+        },
       },
-      findFirst: async ({ where }: { where?: Mutable }) => {
-        const tpl = findTemplate(where ?? {});
-        return tpl ? { ...tpl, _count: { versions: tpl.versions.length } } : null;
-      },
-      findMany: async ({ where }: { where?: Mutable }) => {
-        const filtered = state.templates.filter((t) => {
-          if (where?.teamId && t.teamId !== where.teamId) return false;
-          return true;
-        });
-        return filtered.map((t) => ({ ...t, _count: { versions: t.versions.length } }));
-      },
-      update: async ({ data, where }: { data: Mutable; where: Mutable }) => {
-        const tpl = findTemplate(where);
-        if (!tpl) throw new Error('not found');
-        Object.assign(tpl, data);
-        tpl.updatedAt = new Date();
-        return { ...tpl, _count: { versions: tpl.versions.length } };
-      },
-      updateMany: async ({ data, where }: { data: Mutable; where: Mutable }) => {
-        let count = 0;
-        for (const t of state.templates) {
-          if (where.teamId !== undefined && t.teamId !== where.teamId) continue;
-          if (where.id && (where.id as { not?: string }).not === t.id) continue;
-          Object.assign(t, data);
-          count++;
-        }
-        return { count };
-      },
-    },
-    workflowTemplateVersion: {
-      create: async ({ data }: { data: Mutable }) => {
-        const id = `v-${data.templateId}-${data.version}`;
-        const tpl = findTemplate({ id: data.templateId });
-        if (!tpl) throw new Error('template not found');
-        tpl.versions.push({
-          createdAt: new Date(),
-          createdBy: 'user-1',
-          id,
-          version: data.version as number,
-        });
-        state.versions.set(`${data.templateId}:${data.version}`, {
-          createdAt: new Date(),
-          createdBy: 'user-1',
-          spec: data.spec,
-        });
-        return {
-          ...(state.versions.get(`${data.templateId}:${data.version}`) as Mutable),
-          id,
-          templateId: data.templateId,
-          version: data.version,
-        };
-      },
-      findFirst: async ({ where, orderBy: _ }: { where?: Mutable; orderBy?: Mutable }) => {
-        const tpl = findTemplate({ id: where?.templateId });
-        if (!tpl) return null;
-        const sorted = [...tpl.versions].sort((a, b) => b.version - a.version);
-        return sorted[0] ?? null;
-      },
-      findUnique: async ({ where }: { where: Mutable }) => {
-        const composite = where.templateId_version as { templateId: string; version: number };
-        const v = state.versions.get(`${composite.templateId}:${composite.version}`);
-        if (!v) return null;
-        return { ...v, templateId: composite.templateId, version: composite.version };
-      },
-    },
-  } as unknown as never);
+    }) as unknown as never
+  );
 
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   return app;
@@ -332,7 +393,7 @@ describe('workflow-templates routes', () => {
             done: { status: 'SUCCESS', type: 'terminate' },
             start: { next: 'done', step: 'runLint', type: 'step' },
           },
-          schemaVersion: 3,
+          schemaVersion: 4,
         },
       },
       url: `/api/v1/workflow-templates/${tpl.id}/versions`,
@@ -389,6 +450,143 @@ describe('workflow-templates routes', () => {
     const body = res.json();
     expect(body.data.experimentVersion).toBe(2);
     expect(body.data.experimentSplit).toBe(25);
+  });
+});
+
+// ── Phase 6: shell-step authoring RBAC + image allowlist ──
+
+describe('workflow-templates shell-step RBAC', () => {
+  const SHELL_SPEC = {
+    description: '',
+    entry: 'sh',
+    name: 'sh-spec',
+    nodes: {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      sh: {
+        command: 'echo hi',
+        image: 'alpine:latest',
+        next: 'done',
+        type: 'shell',
+      },
+    },
+    schemaVersion: 4,
+  };
+  const TEAM_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
+
+  it('rejects shell-node POST when the author is not a team ADMIN', async () => {
+    const state = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl', spec: SHELL_SPEC, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+    await app.close();
+  });
+
+  it('rejects shell-node POST on a global template for non-platform-admin users', async () => {
+    const state = {
+      runs: [],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-global', spec: SHELL_SPEC, teamId: null },
+      url: '/api/v1/workflow-templates',
+    });
+    // Global creation also requires platform ADMIN — this short-circuits
+    // before our shell check fires, returning the existing FORBIDDEN error.
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('accepts shell-node POST from a team ADMIN with an allowlisted image and writes audit rows', async () => {
+    const state: Parameters<typeof buildApp>[0] & { shellAudits?: unknown[] } = {
+      runs: [],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl', spec: SHELL_SPEC, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    expect((state.shellAudits as Array<{ nodeId: string; command: string }>).length).toBe(1);
+    expect((state.shellAudits as Array<{ nodeId: string }>)[0]?.nodeId).toBe('sh');
+    await app.close();
+  });
+
+  it('rejects shell-node POST whose image is not allowlisted for the team', async () => {
+    const state = {
+      runs: [],
+      teamAllowlist: [], // only built-ins
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const exoticSpec = {
+      ...SHELL_SPEC,
+      nodes: {
+        ...SHELL_SPEC.nodes,
+        sh: { ...SHELL_SPEC.nodes.sh, image: 'rust:1.78-alpine' },
+      },
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl-bad', spec: exoticSpec, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error?.code).toBe('SHELL_IMAGE_NOT_ALLOWED');
+    await app.close();
+  });
+
+  it('accepts a shell-node image that is on the team-extended allowlist', async () => {
+    const state = {
+      runs: [],
+      teamAllowlist: ['rust:1.78-alpine'],
+      teamRole: 'ADMIN',
+      templates: [],
+      userRole: 'LEAD',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const exoticSpec = {
+      ...SHELL_SPEC,
+      nodes: {
+        ...SHELL_SPEC.nodes,
+        sh: { ...SHELL_SPEC.nodes.sh, image: 'rust:1.78-alpine' },
+      },
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { name: 'sh-tpl-ext', spec: exoticSpec, teamId: TEAM_ID },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    await app.close();
   });
 });
 

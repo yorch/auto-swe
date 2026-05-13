@@ -14,6 +14,7 @@ import type {
   FanOutNode,
   Node,
   SetNode,
+  ShellNode,
   SignalNode,
   StepNode,
   TerminateNode,
@@ -26,6 +27,23 @@ export interface Dispatcher {
     nodeId: string;
     step: string;
     config: Record<string, unknown>;
+    inputs: Record<string, unknown>;
+    ctx: Context;
+  }): Promise<unknown>;
+
+  /**
+   * Run a user-authored shell node in an ephemeral container. Returns the
+   * activity output (a `{passed, summary, exitCode, ...}` shape compatible
+   * with the gate-failure branch in {@link runStep}) or throws on a runtime
+   * failure (image-not-allowed, container-spawn-error, etc.).
+   *
+   * Optional — interpreters that don't support phase-6 shell nodes may throw
+   * "shell node type is not supported by this dispatcher" if they encounter
+   * one.
+   */
+  dispatchShell?(args: {
+    nodeId: string;
+    node: ShellNode;
     inputs: Record<string, unknown>;
     ctx: Context;
   }): Promise<unknown>;
@@ -167,11 +185,15 @@ async function walk(
           );
           break;
         }
+        case 'shell': {
+          currentNodeId = await runShell(recordingId, node, ctx, dispatcher);
+          break;
+        }
       }
     } catch (err) {
-      // Step nodes already record their own per-attempt FAILED rows (so the
-      // workflow_steps table reflects each retry). Don't double-record here.
-      if (node.type !== 'step') {
+      // step + shell nodes already record their own per-attempt FAILED rows
+      // (so workflow_steps table reflects each retry). Don't double-record.
+      if (node.type !== 'step' && node.type !== 'shell') {
         await safeRecord(dispatcher, {
           error: err instanceof Error ? err.message : String(err),
           nodeId: recordingId,
@@ -196,14 +218,74 @@ async function runStep(
   dispatcher: Dispatcher
 ): Promise<string | undefined> {
   const config = node.config ?? {};
-  const inputs: Record<string, unknown> = {};
-  if (node.inputs) {
-    for (const [k, b] of Object.entries(node.inputs)) {
-      inputs[k] = resolveBinding(b, ctx);
-    }
-  }
+  const inputs = resolveInputs(node.inputs, ctx);
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () => dispatcher.dispatchStep({ config, ctx, inputs, nodeId, step: node.step }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
 
-  // A quality-gate step may also return { passed: false, ... } to signal a
+async function runShell(
+  nodeId: string,
+  node: ShellNode,
+  ctx: Context,
+  dispatcher: Dispatcher
+): Promise<string | undefined> {
+  if (!dispatcher.dispatchShell) {
+    throw new Error(
+      `shell node '${nodeId}' encountered but this dispatcher has no dispatchShell handler`
+    );
+  }
+  const inputs = resolveInputs(node.inputs, ctx);
+  const dispatchShell = dispatcher.dispatchShell.bind(dispatcher);
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () => dispatchShell({ ctx, inputs, node, nodeId }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
+
+function resolveInputs(
+  map: Record<string, import('./spec.js').Binding> | undefined,
+  ctx: Context
+): Record<string, unknown> {
+  const inputs: Record<string, unknown> = {};
+  if (!map) return inputs;
+  for (const [k, b] of Object.entries(map)) {
+    inputs[k] = resolveBinding(b, ctx);
+  }
+  return inputs;
+}
+
+/**
+ * Shared retry + onFail policy for step and shell nodes. Both accept the same
+ * gate-style failure contract (`{ passed: false, summary }` on the output) and
+ * react to thrown errors the same way; only the activity-invocation differs.
+ */
+async function runRetryable(args: {
+  nodeId: string;
+  inputs: Record<string, unknown>;
+  ctx: Context;
+  invoke: () => Promise<unknown>;
+  next: string | undefined;
+  onFail: StepNode['onFail'];
+  onError: StepNode['onError'];
+  dispatcher: Dispatcher;
+}): Promise<string | undefined> {
+  const { nodeId, inputs, ctx, invoke, next, onFail, onError, dispatcher } = args;
+
+  // A quality-gate / shell-step may return { passed: false, ... } to signal a
   // logical failure without throwing. Treat that the same as a thrown error
   // under the configured onFail policy.
   const isGateFailure = (out: unknown): boolean =>
@@ -213,9 +295,7 @@ async function runStep(
   // back to terminal (block) semantics. Attempts are passed to recordStep so
   // each iteration shows up as its own row in workflow_steps.
   const maxAttempts =
-    node.onFail && typeof node.onFail === 'object' && 'retry' in node.onFail
-      ? node.onFail.retry + 1
-      : 1;
+    onFail && typeof onFail === 'object' && 'retry' in onFail ? onFail.retry + 1 : 1;
 
   let lastError: unknown = null;
   let lastOutput: unknown = null;
@@ -223,13 +303,7 @@ async function runStep(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const output = await dispatcher.dispatchStep({
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        step: node.step,
-      });
+      const output = await invoke();
 
       if (isGateFailure(output)) {
         lastOutput = output;
@@ -254,12 +328,12 @@ async function runStep(
         outputs: output,
         status: 'PASSED',
       });
-      return node.next;
+      return next;
     } catch (err) {
       lastError = err;
       lastFailedAsGate = false;
       // Legacy onError: 'continue' wins — record SKIPPED and proceed.
-      if (node.onError === 'continue') {
+      if (onError === 'continue') {
         await safeRecord(dispatcher, {
           attempt,
           error: err instanceof Error ? err.message : String(err),
@@ -268,7 +342,7 @@ async function runStep(
         });
         setPath(ctx, `nodes.${nodeId}.output`, null);
         setPath(ctx, `nodes.${nodeId}.error`, String(err));
-        return node.next;
+        return next;
       }
       // Record the failed attempt; retry if budget remains.
       await safeRecord(dispatcher, {
@@ -283,14 +357,14 @@ async function runStep(
   }
 
   // All attempts exhausted. Decide terminal mode from onFail (default block).
-  const mode = node.onFail ?? 'block';
+  const mode = onFail ?? 'block';
   const terminalBlock = mode === 'block' || (typeof mode === 'object' && 'retry' in mode);
 
   if (!terminalBlock) {
     // warn: surface the failure in context but continue.
     setPath(ctx, `nodes.${nodeId}.output`, lastOutput ?? null);
     if (lastError) setPath(ctx, `nodes.${nodeId}.error`, String(lastError));
-    return node.next;
+    return next;
   }
 
   if (lastFailedAsGate) {

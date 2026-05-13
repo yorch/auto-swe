@@ -89,6 +89,20 @@ const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveM
   startToCloseTimeout: '30m',
 });
 
+// Phase 6: user-authored shell steps. `runShellStep` shells out synchronously
+// via `spawnSync`, so it can't emit heartbeats while the user command runs.
+// We rely on `startToCloseTimeout` (the activity's built-in wall-clock cap is
+// `timeoutMs`, set on the shell node) and skip heartbeat enforcement.
+const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellStep'>>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '60m',
+});
+
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
 // kept low — workflow-level retry/warn/block comes from the spec's onFail
 // policy (handled by the interpreter), not the activity proxy.
@@ -183,6 +197,22 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
 
   // 3. Build the Temporal-backed dispatcher.
   const dispatcher: Dispatcher = {
+    async dispatchShell({ node, inputs }) {
+      // Inputs override config; image/command come straight off the typed
+      // node fields (required at the schema level). Override bindings must
+      // resolve to strings — anything else falls through to the node default
+      // rather than flowing a wrong-shape value into the activity.
+      return await shellActivities.runShellStep({
+        ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
+        ...(node.memory ? { memory: node.memory } : {}),
+        ...(node.network ? { network: node.network } : {}),
+        ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
+        ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
+        command: typeof inputs.command === 'string' ? inputs.command : node.command,
+        image: typeof inputs.image === 'string' ? inputs.image : node.image,
+        request: input.request,
+      });
+    },
     async dispatchStep({ step, ctx, inputs, config }) {
       return dispatchStepImpl(step, ctx, input.request, config, inputs);
     },

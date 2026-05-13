@@ -66,6 +66,8 @@ function nodeSubLabel(node: Node): string | null {
       return Object.keys(node.values ?? {})
         .slice(0, 3)
         .join(', ');
+    case 'shell':
+      return `shell · ${node.image}`;
   }
 }
 

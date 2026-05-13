@@ -885,6 +885,178 @@ describe('runSpec', () => {
       expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     }
   });
+
+  // ── Phase 6: shell node ──
+
+  it('dispatches a shell node via dispatchShell and records PASSED', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-happy',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'echo hi',
+          image: 'alpine:latest',
+          next: 'done',
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let invoked = 0;
+    const records: Array<{ nodeId: string; status: string }> = [];
+    const dispatcher: Dispatcher = {
+      async dispatchShell({ node }) {
+        invoked++;
+        return { command: node.command, exitCode: 0, passed: true, summary: 'ok' };
+      },
+      async dispatchStep() {
+        throw new Error('shell node should not call dispatchStep');
+      },
+      async recordStep({ nodeId, status }) {
+        records.push({ nodeId, status });
+      },
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(invoked).toBe(1);
+    expect(result.status).toBe('SUCCESS');
+    expect(records.find((r) => r.nodeId === 'sh')?.status).toBe('PASSED');
+  });
+
+  it('shell node onFail:warn continues past a passed:false result', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-warn',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'false',
+          image: 'alpine:latest',
+          next: 'done',
+          onFail: 'warn',
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const records: Array<{ nodeId: string; status: string }> = [];
+    const dispatcher: Dispatcher = {
+      async dispatchShell() {
+        return { exitCode: 1, passed: false, summary: 'nope' };
+      },
+      async dispatchStep() {
+        throw new Error('unused');
+      },
+      async recordStep({ nodeId, status }) {
+        records.push({ nodeId, status });
+      },
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(records.filter((r) => r.nodeId === 'sh').map((r) => r.status)).toEqual(['FAILED']);
+  });
+
+  it('shell node onFail:block throws on passed:false', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-block',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'false',
+          image: 'alpine:latest',
+          next: 'done',
+          onFail: 'block',
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const dispatcher: Dispatcher = {
+      async dispatchShell() {
+        return { exitCode: 1, passed: false, summary: 'denied' };
+      },
+      async dispatchStep() {
+        throw new Error('unused');
+      },
+      async recordStep() {},
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/denied/);
+  });
+
+  it('shell node retries up to N times under onFail:{retry}', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-retry',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: {
+          command: 'echo',
+          image: 'alpine:latest',
+          next: 'done',
+          onFail: { retry: 2 },
+          type: 'shell',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    let calls = 0;
+    const records: Array<{ nodeId: string; status: string; attempt?: number }> = [];
+    const dispatcher: Dispatcher = {
+      async dispatchShell() {
+        calls++;
+        // Pass on the 3rd attempt (= 1 + retry:2)
+        return calls === 3
+          ? { exitCode: 0, passed: true, summary: 'ok' }
+          : { exitCode: 1, passed: false, summary: 'fail' };
+      },
+      async dispatchStep() {
+        throw new Error('unused');
+      },
+      async recordStep({ nodeId, status, attempt }) {
+        records.push({ attempt, nodeId, status });
+      },
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls).toBe(3);
+    const shRecords = records.filter((r) => r.nodeId === 'sh');
+    expect(shRecords.map((r) => r.status)).toEqual(['FAILED', 'FAILED', 'PASSED']);
+  });
+
+  it('shell node throws when the dispatcher has no dispatchShell handler', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'shell-no-dispatch',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: { command: 'true', image: 'alpine:latest', next: 'done', type: 'shell' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const dispatcher: Dispatcher = {
+      async dispatchStep() {
+        throw new Error('unused');
+      },
+      async recordStep() {},
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/no dispatchShell/);
+  });
 });
 
 // ── Parity tests against DEFAULT_ENGINEERING_SPEC ──

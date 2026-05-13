@@ -51,8 +51,8 @@ describe('built-in codemods', () => {
 
   it('throws when asked to migrate beyond the registered chain', async () => {
     const { migrateSpec } = await loadFresh();
-    // Built-in chain currently ends at v3.
-    expect(() => migrateSpec({ schemaVersion: 3 }, 99)).toThrow(/no codemod registered/);
+    // Built-in chain currently ends at v4.
+    expect(() => migrateSpec({ schemaVersion: 4 }, 99)).toThrow(/no codemod registered/);
   });
 
   it('does not mutate the original spec object', async () => {
@@ -63,7 +63,7 @@ describe('built-in codemods', () => {
     expect(out.schemaVersion).toBe(2);
   });
 
-  it('chains v1 → v2 → v3 in a single migrateSpec call', async () => {
+  it('chains v1 → v2 → v3 → v4 in a single migrateSpec call', async () => {
     const { migrateSpec } = await loadFresh();
     const input = {
       description: 'desc',
@@ -72,8 +72,8 @@ describe('built-in codemods', () => {
       nodes: { a: { status: 'SUCCESS', type: 'terminate' } },
       schemaVersion: 1,
     };
-    const out = migrateSpec(input, 3) as Record<string, unknown>;
-    expect(out.schemaVersion).toBe(3);
+    const out = migrateSpec(input, 4) as Record<string, unknown>;
+    expect(out.schemaVersion).toBe(4);
     expect(out.name).toBe('chain');
     expect(out.nodes).toEqual(input.nodes);
   });
@@ -96,6 +96,22 @@ describe('built-in codemods', () => {
     };
     const out = migrateSpec(input, 3) as Record<string, unknown>;
     expect(out.schemaVersion).toBe(3);
+    expect(out.nodes).toEqual(input.nodes);
+  });
+
+  it('v3 → v4 preserves all node types verbatim (no shell auto-injection)', async () => {
+    const { migrateSpec } = await loadFresh();
+    const input = {
+      entry: 'a',
+      name: 'preserve-v3',
+      nodes: {
+        a: { next: 'b', step: 'x', type: 'step' },
+        b: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: 3,
+    };
+    const out = migrateSpec(input, 4) as Record<string, unknown>;
+    expect(out.schemaVersion).toBe(4);
     expect(out.nodes).toEqual(input.nodes);
   });
 });
