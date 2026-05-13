@@ -194,6 +194,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@auto-swe/cli@workspace:packages/cli":
+  version: 0.0.0-use.local
+  resolution: "@auto-swe/cli@workspace:packages/cli"
+  dependencies:
+    "@auto-swe/shared": "npm:*"
+    "@types/node": "npm:25.3.0"
+    tsx: "npm:4.21.0"
+    typescript: "npm:6.0.3"
+    zod: "npm:4.4.3"
+  bin:
+    auto-swe: dist/index.js
+  languageName: unknown
+  linkType: soft
+
 "@auto-swe/gateway@workspace:packages/gateway":
   version: 0.0.0-use.local
   resolution: "@auto-swe/gateway@workspace:packages/gateway"
@@ -3358,7 +3372,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*, @types/node@npm:>=13.7.0":
+"@types/node@npm:*, @types/node@npm:25.3.0, @types/node@npm:>=13.7.0":
   version: 25.3.0
   resolution: "@types/node@npm:25.3.0"
   dependencies:

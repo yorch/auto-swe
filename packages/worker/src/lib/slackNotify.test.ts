@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    team: { findUnique: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
+  },
+}));
+
+import { prisma } from '@auto-swe/shared/db';
+import { notifySlackStepFailure } from './slackNotify.js';
+
+const findRun = vi.mocked(prisma.workflowRun.findUnique);
+const findTeam = vi.mocked(prisma.team.findUnique);
+
+const originalFetch = globalThis.fetch;
+let fetchCalls: Array<{ url: string; body: unknown }>;
+
+beforeEach(() => {
+  process.env.SLACK_BOT_TOKEN = 'xoxb-test';
+  fetchCalls = [];
+  globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+    fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url });
+    return { json: async () => ({ ok: true, ts: '1.0' }) } as unknown as Response;
+  }) as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  delete process.env.SLACK_BOT_TOKEN;
+  findRun.mockReset();
+  findTeam.mockReset();
+});
+
+describe('notifySlackStepFailure', () => {
+  it('no-ops when SLACK_BOT_TOKEN is unset', async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    await notifySlackStepFailure({ attempt: 1, nodeId: 'lint', runId: 'r1' });
+    expect(fetchCalls).toHaveLength(0);
+    expect(findRun).not.toHaveBeenCalled();
+  });
+
+  it('throttles to first attempt only', async () => {
+    await notifySlackStepFailure({ attempt: 2, nodeId: 'lint', runId: 'r1' });
+    expect(fetchCalls).toHaveLength(0);
+    expect(findRun).not.toHaveBeenCalled();
+  });
+
+  it('posts to the originating Slack channel when set on WorkRequest', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default-engineering' },
+      workRequest: {
+        activeWorkflows: [],
+        externalTicketId: 'JIRA-7',
+        slackChannelId: 'C123',
+        slackMessageTs: '1700.5',
+      },
+    } as never);
+    await notifySlackStepFailure({
+      attempt: 1,
+      error: 'lint failed',
+      nodeId: 'runLint',
+      runId: 'r1',
+    });
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts?: string; text: string };
+    expect(body.channel).toBe('C123');
+    expect(body.thread_ts).toBe('1700.5');
+    expect(body.text).toContain('JIRA-7');
+    expect(body.text).toContain('runLint');
+    expect(body.text).toContain('default-engineering');
+  });
+
+  it('falls back to team.slackNotifyChannel when no originating channel', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default-engineering' },
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+        externalTicketId: 'JIRA-8',
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: 'C999' } as never);
+    await notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' });
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts?: string };
+    expect(body.channel).toBe('C999');
+    expect(body.thread_ts).toBeUndefined();
+  });
+
+  it('silently skips when no channel is resolvable', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'x' },
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+        externalTicketId: 'JIRA-9',
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: null } as never);
+    await notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('swallows DB errors without throwing', async () => {
+    findRun.mockRejectedValue(new Error('db down'));
+    await expect(
+      notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' })
+    ).resolves.toBeUndefined();
+    expect(fetchCalls).toHaveLength(0);
+  });
+});

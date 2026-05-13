@@ -1,0 +1,25 @@
+{
+  "name": "@auto-swe/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "auto-swe": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx --env-file=../../.env src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@auto-swe/shared": "*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.3.0",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3"
+  }
+}

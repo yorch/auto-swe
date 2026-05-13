@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { notifySlackStepFailure } from '../lib/slackNotify.js';
 
 /**
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
@@ -79,6 +80,19 @@ export async function recordWorkflowStep(input: RecordStepInput): Promise<void> 
       status: input.status,
     },
   });
+
+  // Phase-7: best-effort Slack notification on terminal FAILED records. The
+  // interpreter records the FAILED row only after onFail retry budget is
+  // exhausted (or for warn-mode it records and continues), so we won't spam
+  // the channel on every mid-retry attempt.
+  if (input.status === 'FAILED') {
+    await notifySlackStepFailure({
+      attempt: input.attempt ?? 1,
+      error: input.error,
+      nodeId: input.nodeId,
+      runId: input.runId,
+    });
+  }
 }
 
 export async function finalizeWorkflowRun(
