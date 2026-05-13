@@ -12,6 +12,7 @@ COPY packages/shared/package.json packages/shared/
 RUN corepack enable && yarn install --immutable
 
 COPY packages/web packages/web
+COPY docs docs
 
 RUN yarn workspace @auto-swe/web build
 
