@@ -14,6 +14,8 @@ export type Doc = DocMeta & {
 
 const DOCS_DIR = path.resolve(process.cwd(), '../../docs');
 
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
+
 const TITLE_OVERRIDES: Record<string, { title: string; description: string }> = {
   'configurable-workflows': {
     description: 'Roadmap for the configurable-workflow engine',
@@ -62,8 +64,9 @@ export const listDocs = cache(async (): Promise<DocMeta[]> => {
   const docs = await Promise.all(
     entries
       .filter((name) => name.endsWith('.md'))
-      .map(async (name) => {
-        const slug = name.replace(/\.md$/, '');
+      .map((name) => ({ name, slug: name.replace(/\.md$/, '') }))
+      .filter(({ slug }) => SLUG_RE.test(slug))
+      .map(async ({ name, slug }) => {
         const override = TITLE_OVERRIDES[slug];
         if (override) return { slug, ...override };
         const raw = await readFile(path.join(DOCS_DIR, name), 'utf8');
@@ -74,7 +77,7 @@ export const listDocs = cache(async (): Promise<DocMeta[]> => {
 });
 
 export const getDoc = cache(async (slug: string): Promise<Doc | null> => {
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(slug)) return null;
+  if (!SLUG_RE.test(slug)) return null;
   try {
     const content = await readFile(path.join(DOCS_DIR, `${slug}.md`), 'utf8');
     return { ...deriveMeta(slug, content), content };

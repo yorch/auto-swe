@@ -6,6 +6,9 @@ import { getDoc, listDocs } from '@/lib/docs';
 
 type Params = { slug: string };
 
+export const dynamic = 'force-static';
+export const dynamicParams = false;
+
 export async function generateStaticParams(): Promise<Params[]> {
   const docs = await listDocs();
   return docs.map((d) => ({ slug: d.slug }));

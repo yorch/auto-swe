@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { listDocs } from '@/lib/docs';
 
+export const dynamic = 'force-static';
+
 export const metadata = {
   title: 'Docs | auto-swe',
 };
