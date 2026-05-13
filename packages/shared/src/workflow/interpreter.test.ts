@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 import type { Context } from './expr.js';
-import { type Dispatcher, runSpec } from './interpreter.js';
+import { BranchCancelledError, type Dispatcher, runSpec } from './interpreter.js';
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
 
 interface Call {
@@ -42,10 +42,12 @@ function makeDispatcher(opts: {
       const raw =
         typeof out === 'function' ? (out as (i: Record<string, unknown>) => unknown)(merged) : out;
       if (!opts.supportsCancellation || !cancellation) return raw;
-      // Mock: race the canned output against the cancellation token.
+      // Mock: race the canned output against the cancellation token. Mirrors
+      // the Temporal dispatcher's contract — it rethrows CancelledFailure
+      // as a BranchCancelledError so the interpreter can bypass onFail.
       return new Promise((resolve, reject) => {
         cancellation.token = {
-          cancel: () => reject(new Error('cancelled')),
+          cancel: () => reject(new BranchCancelledError()),
         };
         Promise.resolve(raw).then(resolve, reject);
       });
@@ -992,6 +994,57 @@ describe('runSpec', () => {
     });
     // No cancellation support: in-flight branches drain (phase 3.5 behavior).
     await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+  });
+
+  it('BranchCancelledError bypasses onFail: warn at the step level (phase 8)', async () => {
+    // If a step throws BranchCancelledError, the interpreter must NOT apply
+    // onFail: 'warn' (which would swallow it and let the cancelled branch
+    // continue). The check is a defensive carve-out for fan-out block-mode.
+    const spec = parseWorkflowSpec({
+      entry: 'work',
+      name: 'cancel-bypass-onfail',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        // onFail: 'warn' would normally swallow a regular Error and continue.
+        work: { next: 'done', onFail: 'warn', step: 'cancelMe', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        cancelMe: () => {
+          throw new BranchCancelledError();
+        },
+      },
+    });
+    // The cancellation propagates instead of being warned past.
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(BranchCancelledError);
+  });
+
+  it('BranchCancelledError bypasses onFail: retry at the step level (phase 8)', async () => {
+    let attempts = 0;
+    const spec = parseWorkflowSpec({
+      entry: 'work',
+      name: 'cancel-bypass-retry',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        work: { next: 'done', onFail: { retry: 5 }, step: 'cancelMe', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        cancelMe: () => {
+          attempts++;
+          throw new BranchCancelledError();
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(BranchCancelledError);
+    // Cancellation must NOT be retried — the worker pool already accounted for it.
+    expect(attempts).toBe(1);
   });
 
   // ── Phase 6: shell node ──

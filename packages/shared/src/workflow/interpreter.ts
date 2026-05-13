@@ -34,6 +34,33 @@ export interface CancellationToken {
   cancel(): void;
 }
 
+/**
+ * Thrown by a dispatcher when its activity was cancelled via the
+ * {@link CancellationToken} the interpreter handed it. The interpreter
+ * recognizes this class in `runRetryable` and rethrows immediately, bypassing
+ * `onError` / `onFail` retry+warn policies — otherwise a sibling branch could
+ * `onFail: 'warn'`-swallow a cancellation that block-mode raised on it and
+ * keep running after another branch had already failed.
+ */
+export class BranchCancelledError extends Error {
+  // Tag for cross-realm instanceof safety (Temporal workflows run in V8
+  // isolates so the imported class identity can drift).
+  readonly __branchCancelled = true as const;
+  constructor(message = 'fan-out branch cancelled by sibling failure (block-mode)') {
+    super(message);
+    this.name = 'BranchCancelledError';
+  }
+}
+
+function isBranchCancelled(err: unknown): boolean {
+  return (
+    err instanceof BranchCancelledError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { __branchCancelled?: unknown }).__branchCancelled === true)
+  );
+}
+
 export interface DispatchArgs {
   nodeId: string;
   step?: string;
@@ -378,6 +405,18 @@ async function runRetryable(args: {
       });
       return next;
     } catch (err) {
+      // Cancellation bypasses onError + onFail entirely — block-mode fan-out
+      // raised it on this branch and the worker pool already recorded the
+      // originating failure.
+      if (isBranchCancelled(err)) {
+        await safeRecord(dispatcher, {
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+          nodeId,
+          status: 'FAILED',
+        });
+        throw err;
+      }
       lastError = err;
       lastFailedAsGate = false;
       // Legacy onError: 'continue' wins — record SKIPPED and proceed.

@@ -285,6 +285,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           status: true,
           template: { select: { id: true, name: true } },
           templateId: true,
+          // Same back-compat fallback the per-template route uses: legacy +
+          // RUNNING rows have `costUsdAccrued = 0` and we read through
+          // workRequest → activeWorkflows so the global rollup doesn't
+          // under-report cost for them.
+          workRequest: {
+            select: {
+              activeWorkflows: { select: { costUsdAccrued: true } },
+            },
+          },
         },
         take: ANALYTICS_ROW_CAP,
         where: {
@@ -296,7 +305,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const analytics = computeGlobalAnalytics(
         rows.map((r) => ({
-          costUsdAccrued: r.costUsdAccrued,
+          costUsdAccrued:
+            r.costUsdAccrued > 0
+              ? r.costUsdAccrued
+              : (r.workRequest?.activeWorkflows ?? []).reduce(
+                  (sum, aw) => sum + aw.costUsdAccrued,
+                  0
+                ),
           endedAt: r.endedAt,
           startedAt: r.startedAt,
           status: r.status,

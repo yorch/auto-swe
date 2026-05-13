@@ -31,7 +31,7 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { requireEnv } from '../lib/errors.js';
 import { EXEC_OPTS } from '../lib/execUtils.js';
-import { recordLessonDirectly } from './commitToMemory.js';
+import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
 
@@ -314,7 +314,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     // is worth remembering — usually a codemod or auto-fix the team will want
     // future runs to know about. Fire-and-forget; never fails the step.
     if (passed && !pushError && finalize.filesChanged.length > 0) {
-      await recordLessonDirectly({
+      // 5-second cap so a slow embedding provider can't extend the shell-step
+      // activity past its timeout after the real work has already succeeded.
+      await recordLessonBackground({
         lessonSummary: `Shell step modified ${finalize.filesChanged.length} file(s) on branch ${branch}: ${input.command.slice(0, 200)}`,
         metadata: {
           branch,

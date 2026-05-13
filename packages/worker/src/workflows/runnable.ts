@@ -7,7 +7,7 @@ import type {
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import { lookupPath } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
-import { runSpec } from '@auto-swe/shared/workflow/interpreter';
+import { BranchCancelledError, runSpec } from '@auto-swe/shared/workflow/interpreter';
 import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
 import type { Duration } from '@temporalio/common';
 import { CancelledFailure } from '@temporalio/common';
@@ -247,17 +247,34 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     workflow: { id: workflowId },
   };
 
-  const outcome = await runSpec(spec, initialCtx, dispatcher);
-  await stateActivities.finalizeWorkflowRun(
-    runId,
-    outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
-    summarizeContext(outcome.finalContext)
-  );
+  // Phase-8: wrap runSpec so an `onFail: 'block'` throw doesn't skip the
+  // finalize step. Without this, FAILED runs leave `workflow_runs.status =
+  // 'RUNNING'` forever, the cost denorm never lands, and Slack
+  // run-complete notifications never fire for the common failure path.
+  let outcome: Awaited<ReturnType<typeof runSpec>> | null = null;
+  let runError: unknown = null;
+  try {
+    outcome = await runSpec(spec, initialCtx, dispatcher);
+  } catch (err) {
+    runError = err;
+  }
+
+  const finalStatus: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED' = outcome
+    ? (outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED')
+    : 'FAILED';
+  const finalContext = outcome
+    ? summarizeContext(outcome.finalContext)
+    : { error: String(runError) };
+  await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
+
+  if (runError) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
 
   // Spread result FIRST so a `status` key inside the terminate node's result
-  // cannot overwrite the workflow's actual outcome status. `status` always
-  // tracks `outcome.status`.
-  return { ...outcome.result, status: outcome.status as WorkflowResult['status'] };
+  // cannot overwrite the workflow's actual outcome status.
+  const result = outcome?.result ?? {};
+  return { ...result, status: finalStatus as WorkflowResult['status'] };
 }
 
 // ── Step dispatch ──
@@ -327,7 +344,14 @@ async function dispatchStepImpl(
     case 'runBuild':
     case 'runVulnScan':
     case 'runPerfBench': {
+      // Per-branch fan-out can override `branch` to point gates at the
+      // subtask branch instead of the parent ticket branch (phase 8).
+      const branchOverride =
+        (inputs.branch as string | undefined) ??
+        (config.branch as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
       const gateInput = {
+        ...(branchOverride ? { branch: branchOverride } : {}),
         command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
         request,
         timeoutMs:
@@ -425,16 +449,16 @@ function resolveMergeBindings(
 
 /**
  * Phase-8 cancellation bridge. When the interpreter passes a `cancellation`
- * sink, wrap the activity call in a fresh `CancellationScope` and write a
+ * sink, wrap the activity call in a `CancellationScope` and write a
  * `cancel()` callback into the sink so fan-out's block-mode can abort the
- * activity. Without a sink we fall through to the bare callback so existing
- * call sites (no cancellation support) behave exactly like before.
+ * activity. Without a sink we fall through to the bare callback (the
+ * pre-phase-8 drain behavior).
  *
- * A `CancellationScope` cancellation surfaces as a `CancelledFailure` on the
- * awaited activity. We translate it back into a normal Error here so the
- * interpreter's onFail policy + the fan-out aggregate report it as a
- * branch failure rather than crashing the workflow with an unhandled
- * cancellation.
+ * Cancellation surfaces as a Temporal `CancelledFailure`. We rethrow as a
+ * {@link BranchCancelledError} so the interpreter's `runRetryable` recognises
+ * it and bypasses `onError` / `onFail` policies — otherwise a sibling branch
+ * could `onFail: 'warn'`-swallow a cancellation that block-mode raised on it
+ * and keep running after another branch had already failed.
  */
 async function runWithCancellation<T>(
   cancellation: { token?: CancellationToken } | undefined,
@@ -447,10 +471,7 @@ async function runWithCancellation<T>(
     return await scope.run(body);
   } catch (err) {
     if (isCancellation(err) || err instanceof CancelledFailure) {
-      // Translate Temporal's cancellation envelope into a normal Error so the
-      // interpreter's onFail / fan-out aggregate paths see a regular branch
-      // failure instead of crashing the workflow with the raw envelope.
-      throw new Error('fan-out branch cancelled by sibling failure (block-mode)');
+      throw new BranchCancelledError();
     }
     throw err;
   }

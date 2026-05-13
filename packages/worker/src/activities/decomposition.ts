@@ -23,7 +23,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
-import { recordLessonDirectly } from './commitToMemory.js';
+import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
@@ -242,7 +242,10 @@ export async function resolveMergeConflict(
     // pointing at the resolved branches. Failures aren't recorded — the
     // run's FAILED row already tells that story.
     if (passed && merged.length > 0) {
-      await recordLessonDirectly({
+      // recordLessonBackground caps wall-clock at 5s so a slow embedding
+      // provider can't drag the resolver activity past its timeout once the
+      // real work (merge + push) has already succeeded.
+      await recordLessonBackground({
         failureType: 'MERGE_CONFLICT',
         lessonSummary: `Auto-resolved merge conflicts when merging ${merged.length} branch(es) into ${targetBranch}: ${merged.join(', ')}`,
         metadata: { mergedBranches: merged, targetBranch },

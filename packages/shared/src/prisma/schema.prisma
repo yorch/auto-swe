@@ -132,8 +132,9 @@ model PersonalAccessToken {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name        String
   tokenHash   String    @unique @map("token_hash")
-  /// The first 8 chars of the plaintext token (no secret entropy) so the
-  /// admin UI can disambiguate listed tokens without re-issuing them.
+  /// The first 12 chars of the plaintext token (`ats_` + 8 random chars).
+  /// Non-secret — exists so the admin UI can disambiguate listed tokens
+  /// without re-issuing them.
   prefix      String
   expiresAt   DateTime? @map("expires_at") @db.Timestamptz
   lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz

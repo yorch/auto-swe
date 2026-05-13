@@ -1,6 +1,6 @@
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
-import { pad } from '../lib/format.js';
+import { pad, parseOptionalPositiveInt } from '../lib/format.js';
 import { parseFlags } from './workflows.js';
 
 /**
@@ -83,15 +83,13 @@ async function cmdCreate(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: tokens create <name> [--expires-in-days=N]\n');
     return 1;
   }
-  let expiresInDays: number | undefined;
-  if (flags['expires-in-days']) {
-    const raw = flags['expires-in-days'];
-    const n = Number.parseInt(raw, 10);
-    if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) {
-      process.stderr.write('--expires-in-days must be a positive integer\n');
-      return 1;
-    }
-    expiresInDays = n;
+  // parseOptionalPositiveInt rejects '' (from `--expires-in-days=`) and 'true'
+  // (from `--expires-in-days` with no value) — both used to silently create a
+  // non-expiring token under the old truthy check.
+  const expiresInDays = parseOptionalPositiveInt(flags['expires-in-days']);
+  if (expiresInDays === 'invalid') {
+    process.stderr.write('--expires-in-days must be a positive integer\n');
+    return 1;
   }
   const body: { name: string; expiresInDays?: number } = { name };
   if (expiresInDays !== undefined) body.expiresInDays = expiresInDays;

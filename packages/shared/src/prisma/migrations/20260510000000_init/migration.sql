@@ -46,7 +46,8 @@ CREATE TABLE "refresh_tokens" (
 -- CreateTable
 -- Phase 8: long-lived API tokens for CI / CLI. Hashed at rest; the plaintext
 -- `ats_<random>` form is returned exactly once on issue. `prefix` keeps the
--- first 8 chars so the admin UI can disambiguate listed tokens.
+-- first 12 chars (`ats_` + 8 random chars) so the admin UI can disambiguate
+-- listed tokens without re-issuing them.
 CREATE TABLE "personal_access_tokens" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID NOT NULL,

@@ -1,11 +1,4 @@
 {
-  "_comments": [
-    "Self-serve Slack app manifest for auto-swe. Import via",
-    "https://api.slack.com/apps → Create New App → From an app manifest.",
-    "Replace the two `request_url` and `slash_command.url` placeholders with",
-    "your gateway's externally reachable host. Phase-7 endpoints land under",
-    "/api/v1/auth/slack (slash command, interactivity, OAuth callback)."
-  ],
   "_metadata": {
     "major_version": 1,
     "minor_version": 1

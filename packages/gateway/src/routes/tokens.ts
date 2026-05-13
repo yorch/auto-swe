@@ -8,8 +8,8 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * Phase-8 personal access tokens.
  *
  * Tokens are `ats_<base64url-32B>` strings. We never store the plaintext;
- * the sha-256 hash + a non-secret `prefix` (first 8 chars) are persisted so
- * the admin UI can disambiguate without re-issuing.
+ * the sha-256 hash + a non-secret 12-char `prefix` (`ats_` + 8 chars) are
+ * persisted so the admin UI can disambiguate without re-issuing.
  *
  * Lifecycle:
  *   POST   /api/v1/auth/tokens         — issue (returns plaintext exactly once)

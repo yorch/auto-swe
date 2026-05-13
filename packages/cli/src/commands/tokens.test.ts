@@ -72,6 +72,12 @@ describe('runTokensCommand', () => {
     expect(stderrWrites.join('')).toContain('positive integer');
   });
 
+  it('rejects --expires-in-days= (empty value silently created a non-expiring token before)', async () => {
+    const code = await runTokensCommand(['create', 'ci', '--expires-in-days='], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('positive integer');
+  });
+
   it('list shows column headers + status when token has a revokedAt', async () => {
     globalThis.fetch = vi.fn(async () => {
       return {

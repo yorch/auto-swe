@@ -30,8 +30,13 @@ export {
   lookupPath,
   resolveBinding,
 } from './expr.js';
-export type { Dispatcher, InterpreterResult } from './interpreter.js';
-export { DEFAULT_FANOUT_CONCURRENCY, DEFAULT_MAX_TRANSITIONS, runSpec } from './interpreter.js';
+export type { CancellationToken, Dispatcher, InterpreterResult } from './interpreter.js';
+export {
+  BranchCancelledError,
+  DEFAULT_FANOUT_CONCURRENCY,
+  DEFAULT_MAX_TRANSITIONS,
+  runSpec,
+} from './interpreter.js';
 export type {
   BuiltinStepName,
   StepCategory,

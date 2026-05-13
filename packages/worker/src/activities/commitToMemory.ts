@@ -141,3 +141,28 @@ export async function recordLessonDirectly(input: {
     return null;
   }
 }
+
+/**
+ * Hard cap on best-effort memory writes from inside long-running activities
+ * (resolver, shell-step). The embedding call goes to an external provider; a
+ * slow/hung response shouldn't extend the parent activity past its timeout
+ * once the actual work has succeeded.
+ */
+const MEMORY_HOOK_TIMEOUT_MS = 5_000;
+
+/**
+ * Fire-and-forget wrapper around {@link recordLessonDirectly} for callers
+ * that don't want to wait on the embedding round-trip. Returns a promise the
+ * caller can await with a guaranteed {@link MEMORY_HOOK_TIMEOUT_MS} ceiling;
+ * the underlying write keeps running in the background even if we time out.
+ * Use this from activities whose primary work has already succeeded.
+ */
+export async function recordLessonBackground(
+  input: Parameters<typeof recordLessonDirectly>[0]
+): Promise<void> {
+  const write = recordLessonDirectly(input).catch(() => null);
+  await Promise.race([
+    write,
+    new Promise<void>((resolve) => setTimeout(resolve, MEMORY_HOOK_TIMEOUT_MS)),
+  ]);
+}
