@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { cache } from 'react';
 
 export type DocMeta = {
   slug: string;
@@ -49,33 +50,30 @@ function deriveMeta(slug: string, raw: string): DocMeta {
   const override = TITLE_OVERRIDES[slug];
   if (override) return { slug, ...override };
 
-  const headingMatch = raw.match(/^#\s+(.+)$/m);
-  const title = headingMatch?.[1]?.trim() ?? slug;
-
-  const firstPara = raw
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l.length > 0 && !l.startsWith('#') && !l.startsWith('>'));
-  const description = firstPara ? firstPara.replace(/[*_`]/g, '').slice(0, 140) : '';
+  const title = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
+  const firstPara = raw.match(/^(?!#|>|\s*$).+$/m)?.[0]?.trim() ?? '';
+  const description = firstPara.replace(/[*_`]/g, '').slice(0, 140);
 
   return { description, slug, title };
 }
 
-export async function listDocs(): Promise<DocMeta[]> {
+export const listDocs = cache(async (): Promise<DocMeta[]> => {
   const entries = await readdir(DOCS_DIR);
   const docs = await Promise.all(
     entries
       .filter((name) => name.endsWith('.md'))
       .map(async (name) => {
         const slug = name.replace(/\.md$/, '');
+        const override = TITLE_OVERRIDES[slug];
+        if (override) return { slug, ...override };
         const raw = await readFile(path.join(DOCS_DIR, name), 'utf8');
         return deriveMeta(slug, raw);
       })
   );
   return docs.sort((a, b) => a.title.localeCompare(b.title));
-}
+});
 
-export async function getDoc(slug: string): Promise<Doc | null> {
+export const getDoc = cache(async (slug: string): Promise<Doc | null> => {
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(slug)) return null;
   try {
     const content = await readFile(path.join(DOCS_DIR, `${slug}.md`), 'utf8');
@@ -83,4 +81,4 @@ export async function getDoc(slug: string): Promise<Doc | null> {
   } catch {
     return null;
   }
-}
+});

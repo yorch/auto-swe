@@ -1,10 +1,11 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { cn } from '@/lib/utils';
 
-export function Markdown({ children }: { children: string }) {
+export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div
-      className={[
+      className={cn(
         'max-w-none text-sm leading-relaxed text-[var(--foreground)]',
         '[&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-6',
         '[&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-[var(--border)] [&_h2]:pb-2',
@@ -25,7 +26,8 @@ export function Markdown({ children }: { children: string }) {
         '[&_hr]:my-6 [&_hr]:border-[var(--border)]',
         '[&_img]:max-w-full [&_img]:rounded-md [&_img]:my-4',
         '[&_strong]:font-semibold',
-      ].join(' ')}
+        className
+      )}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
     </div>

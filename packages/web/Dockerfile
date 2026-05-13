@@ -12,9 +12,6 @@ COPY packages/shared/package.json packages/shared/
 RUN corepack enable && yarn install --immutable
 
 COPY packages/web packages/web
-
-# Design docs are read at build time by app/docs/* server components
-# to pre-render static pages, so they must be present during `next build`.
 COPY docs docs
 
 RUN yarn workspace @auto-swe/web build
