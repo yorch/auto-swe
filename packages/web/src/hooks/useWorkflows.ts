@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  GlobalAnalyticsResponse,
   LessonListItem,
   RepositorySummary,
   SpecDiffResponse,
@@ -222,6 +223,30 @@ export function useWorkflowTemplateAnalytics(templateId: string, windowDays = 30
         .then((r) => r.data),
     queryKey: ['workflow-template-analytics', templateId, windowDays],
     refetchInterval: 30_000,
+  });
+}
+
+export function useGlobalAnalytics(windowDays = 30) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: GlobalAnalyticsResponse }>(
+          `/api/v1/workflow-templates/analytics?window=${windowDays}`
+        )
+        .then((r) => r.data),
+    queryKey: ['global-analytics', windowDays],
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCancelWorkflowRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`/api/v1/workflow-runs/${runId}/cancel`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
+      qc.invalidateQueries({ queryKey: ['workflows'] });
+    },
   });
 }
 

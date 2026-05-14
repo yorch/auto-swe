@@ -69,6 +69,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 6. Custom shell steps with RBAC + audit | **Done** | team-admin-only step authoring, ephemeral container, image allowlist, audit log |
 | 7. First-class in Slack + CLI | **Done** | `/auto-swe` slash command (workflows list/show + run modal), per-step Slack failure notifications, new `packages/cli/` workspace |
 | 8. Ergonomics + memory + cost denorm + cancellation | **Done** | PATs, CLI `runs` + `tokens`, Slack success path, app manifest, shell/resolver → `commitToMemory`, per-branch gates example, denorm cost on `workflow_runs`, A/B significance hint, global analytics, fan-out activity cancellation |
+| 9. Analytics UI + CLI run + cancel run | **Done** | `/analytics` global page, A/B winner badge on template analytics, `auto-swe run` CLI subcommand, cancel-run API + web UI button |
 
 ---
 
@@ -546,6 +547,67 @@ All folded into the squashed init migration per the repo convention.
 - **worker**: `lib/slackNotify.ts` (`notifySlackRunComplete`), `activities/templates.ts` (denorm write + terminal notify in `finalizeWorkflowRun`), `activities/commitToMemory.ts` (`recordLessonDirectly`), `activities/decomposition.ts` (resolver memory hook), `activities/shellStep.ts` (shell memory hook), `workflows/runnable.ts` (`runWithCancellation`).
 - **cli**: `src/commands/runs.ts` + `tokens.ts` (new), `src/lib/env.ts` (PAT note), `src/index.ts` (HELP + dispatch).
 - **docs**: `slack-app-manifest.json` (new), `configurable-workflows.md` (this section).
+
+---
+
+---
+
+## Phase 9 — Analytics UI + CLI run + Cancel run (Done)
+
+### What shipped
+
+**Cancel-run API + web button**:
+- `fastify.temporal.cancelWorkflow(workflowId)` added to the temporal plugin — calls Temporal's `handle.cancel()`, which delivers a `CancelledFailure` to the running workflow via its built-in cancellation-scope handling.
+- `POST /api/v1/workflow-runs/:id/cancel` — requires ENGINEER role, visibility-scoped identically to the GET route. Returns `409 RUN_NOT_RUNNING` if the run is already in a terminal state. Fires both the Temporal cancel request and an optimistic DB status write (`CANCELLED`) in parallel so the UI reflects the change instantly even when the worker is momentarily unavailable. The worker's own `finalizeWorkflowRun` call reconciles on actual completion.
+- `/runs/[id]` web page — "Cancel run" button appears only when `run.status === 'RUNNING'`. Prompts a `window.confirm` ("Cancel this run? In-flight steps will be aborted.") before firing `useCancelWorkflowRun`. Disabled + shows "Cancelling…" while the mutation is in flight. Invalidates `['workflow-run', id]` and `['workflows']` on success so the DAG and the active-runs list both update.
+
+**Global `/analytics` page**:
+- `GET /api/v1/workflow-templates/analytics?window=<days>` was already wired in Phase 8; this phase surfaces it in the UI.
+- `packages/web/src/app/analytics/page.tsx` — platform-wide overview: four KPI tiles (total runs, success rate, succeeded, total cost) + a per-template table sorted by traffic showing success rate (colour-coded: ≥80% green, ≥50% amber, <50% red), total cost, and avg cost/run. Window selector (7d / 30d / 90d) at the top right. Each template name links to its `/templates/[id]` detail page.
+- "Analytics" nav item added to the sidebar (visible to all roles: ENGINEER, LEAD, ADMIN).
+- `useGlobalAnalytics(windowDays)` TanStack Query hook wired to a 30-second refetch interval.
+
+**A/B winner badge on template analytics**:
+- The `significanceHint` field (computed since Phase 8) is now rendered at the top of the per-version section in `/templates/[id]/analytics`.
+- Shows "Winner detected (p=0.xxx)" in green when `isSignificant: true`, or "Not yet significant (p=0.xxx)" in amber otherwise. Only renders when `significanceHint !== null` (both arms ≥ 30 runs).
+- Side-by-side success-rate + N display for version A vs B; arm labels carry "active" and "experiment" badges so the team immediately knows which direction to promote.
+
+**CLI `auto-swe run` subcommand**:
+- `packages/cli/src/commands/workRequests.ts` — `runWorkRequestsCommand()`:
+  - Resolves `--repo=<org/name>` by calling `GET /api/v1/repositories` and matching `organizationName` + `repoName` (case-insensitive). Errors with a helpful message when the repo isn't found.
+  - Optionally resolves `--workflow=<name>` by calling `GET /api/v1/workflow-templates` (uses team default when omitted).
+  - POSTs to `/api/v1/work-requests` with `{ externalTicketId, description, repoIds, budgetTier }`. Supports `--budget=STANDARD|LARGE|EPIC` (default STANDARD).
+  - Prints the submitted work-request ID and a hint to use `auto-swe runs tail <runId>` for live status.
+- Dispatched from `index.ts` via `if (cmd === 'run')`.
+- Help text updated in the top-level HELP constant.
+- Decision 40 (see below): the `run` command resolves repos by name rather than asking for a UUID — following the same UX convention as `workflows show <name>`.
+
+### Decisions
+
+| # | Decision |
+|---|---|
+| 40 | `auto-swe run` resolves the repo ID by `GET /api/v1/repositories` + case-insensitive `org/name` match. A future `--repo-id=<uuid>` flag can bypass this for scripts that already have the ID. |
+| 41 | Cancel writes `CANCELLED` optimistically to the DB in addition to signalling Temporal. This trades a brief window where the Temporal workflow still thinks it's running for an instant UI update that doesn't require the worker to be up. `finalizeWorkflowRun` in the worker writes the authoritative status on completion. |
+| 42 | The global analytics page (`/analytics`) uses the same `window` parameter as the per-template route and mirrors the 30s refetch interval. It does not paginate `perTemplate` entries — the cap of 10 000 rows the gateway reads before aggregating makes the per-template list self-bounding for any realistic number of templates. |
+
+### Tests (+8)
+
+- `cli/src/commands/workRequests.test.ts` — 7 tests: help flag, missing `--ticket`, missing `--description`, missing `--repo`, bad `--repo` format (no slash), repo not found in gateway, successful happy-path (mocks repos + teams + work-requests endpoints, asserts exit 0 + prints ID).
+- `gateway/src/routes/workflowRuns.test.ts` — 1 new test: `POST /:id/cancel` on a non-RUNNING run returns 409 `RUN_NOT_RUNNING`.
+
+### Files touched (recap)
+
+- **gateway**: `plugins/temporal.ts` (`cancelWorkflow` method + type), `routes/workflowRuns.ts` (`POST /:id/cancel` route)
+- **web**: `app/analytics/page.tsx` (new global analytics page), `app/templates/[id]/analytics/page.tsx` (significance badge), `app/runs/[id]/page.tsx` (cancel button), `components/layout/Sidebar.tsx` (Analytics nav item), `hooks/useWorkflows.ts` (`useGlobalAnalytics` + `useCancelWorkflowRun`)
+- **cli**: `src/commands/workRequests.ts` (new), `src/commands/workRequests.test.ts` (new), `src/index.ts` (dispatch `run`)
+
+### Known follow-ups
+
+- **PAT admin view.** Platform admins still can't inspect other users' tokens. A `/api/v1/admin/access-tokens` route would let admins prune stale or compromised tokens without involving the owning user.
+- **Canvas drag-edit.** The JSON spec editor is still the primary authoring surface. A drag-and-drop node canvas (React Flow or similar) is the natural next frontend investment.
+- **A11y.** The DAG SVG nodes are focusable buttons but keyboard traversal between nodes (arrow keys) is not yet wired.
+- **Global analytics pagination.** The per-template table in `/analytics` lists every visible template without pagination. For organizations with many templates a client-side sort + filter bar would help; server-side pagination is overkill until the list exceeds ~50 rows.
+- **Egress filtering for shell steps.** `network: 'egress'` opens the full default Docker bridge; destination filtering would require iptables management on the Docker host, which is an ops concern outside the spec runtime.
 
 ---
 

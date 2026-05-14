@@ -73,6 +73,43 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Cancel a running workflow ──
+  app.post(
+    '/:id/cancel',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RunIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        where: { id: request.params.id, ...runVisibilityFilter(user) },
+      });
+      if (!run) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' } });
+      }
+      if (run.status !== 'RUNNING') {
+        return reply.status(409).send({
+          error: { code: 'RUN_NOT_RUNNING', message: 'Only RUNNING runs can be cancelled' },
+        });
+      }
+      // Request Temporal cancellation; the workflow surfaces CancelledFailure,
+      // which RunnableWorkflow catches to mark the run CANCELLED in the DB.
+      // We also write CANCELLED here optimistically so the UI updates instantly
+      // even if the worker is briefly unreachable.
+      await Promise.allSettled([
+        fastify.temporal.cancelWorkflow(run.workflowId),
+        fastify.prisma.workflowRun.update({
+          data: { endedAt: new Date(), status: 'CANCELLED' },
+          where: { id: run.id },
+        }),
+      ]);
+      return { data: { id: run.id, status: 'CANCELLED' } };
+    }
+  );
+
   // ── Get run detail (with steps + spec snapshot) ──
   app.get(
     '/:id',

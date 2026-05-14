@@ -60,6 +60,63 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <KpiCard label="Failed" value={String(stats.failed)} />
           </div>
 
+          {stats.significanceHint && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>A/B significance</CardTitle>
+                  {stats.significanceHint.isSignificant ? (
+                    <span className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded-full font-medium">
+                      Winner detected (p={stats.significanceHint.pValue.toFixed(3)})
+                    </span>
+                  ) : (
+                    <span className="text-xs px-2 py-1 bg-amber-100 text-amber-800 rounded-full font-medium">
+                      Not yet significant (p={stats.significanceHint.pValue.toFixed(3)})
+                    </span>
+                  )}
+                </div>
+              </CardHeader>
+              <p className="text-xs text-[var(--muted-foreground)] mb-3">
+                Two-proportion z-test on success rate between the two most-trafficked versions. This
+                is a hint, not a verdict — apply your own judgement before promoting.
+              </p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="space-y-1">
+                  <p className="font-mono text-xs text-[var(--muted-foreground)]">
+                    v{stats.significanceHint.versionA}
+                    {stats.significanceHint.versionA === template?.activeVersion && (
+                      <span className="ml-1 px-1 py-0.5 bg-green-100 text-green-800 rounded">
+                        active
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xl font-bold">
+                    {(stats.significanceHint.successRateA * 100).toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    {stats.significanceHint.nA} runs
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-mono text-xs text-[var(--muted-foreground)]">
+                    v{stats.significanceHint.versionB}
+                    {stats.significanceHint.versionB === template?.experimentVersion && (
+                      <span className="ml-1 px-1 py-0.5 bg-purple-100 text-purple-800 rounded">
+                        experiment
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xl font-bold">
+                    {(stats.significanceHint.successRateB * 100).toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    {stats.significanceHint.nB} runs
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {stats.perVersionCounts.length > 1 && (
             <Card>
               <CardHeader>

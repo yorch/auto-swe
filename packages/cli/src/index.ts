@@ -2,6 +2,7 @@
 import { runRunsCommand } from './commands/runs.js';
 import { runTokensCommand } from './commands/tokens.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
+import { runWorkRequestsCommand } from './commands/workRequests.js';
 import { type CliEnv, loadCliEnv } from './lib/env.js';
 
 const HELP = `auto-swe — CLI for the auto-swe agentic SWE platform
@@ -10,6 +11,9 @@ USAGE
   auto-swe <command> [subcommand] [args]
 
 COMMANDS
+  run --ticket=<id> --description=<text> --repo=<org/name> [--workflow=<name>]
+                                       Submit a work request and start a run
+
   workflows list                       List workflow templates visible to you
   workflows show <name>                Print one template's active spec (JSON)
   workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
@@ -51,6 +55,7 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
+  if (cmd === 'run') return await runWorkRequestsCommand(rest, env);
   if (cmd === 'workflows') return await runWorkflowsCommand(rest, env);
   if (cmd === 'runs') return await runRunsCommand(rest, env);
   if (cmd === 'tokens') return await runTokensCommand(rest, env);
