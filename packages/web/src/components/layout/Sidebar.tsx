@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/teams', label: 'Teams', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
   { href: '/repositories', label: 'Repositories', roles: ['LEAD', 'ADMIN'] },
   { href: '/users', label: 'Users', roles: ['ADMIN'] },
+  { href: '/admin/access-tokens', label: 'PAT Admin', roles: ['ADMIN'] },
   { href: '/lessons', label: 'Lessons', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
   { href: '/docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
   { href: '/settings', label: 'Settings', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },

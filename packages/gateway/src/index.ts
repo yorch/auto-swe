@@ -12,6 +12,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import authPlugin from './plugins/auth.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
+import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { epicRoutes } from './routes/epics.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -86,6 +87,7 @@ async function start() {
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
+  await app.register(adminRoutes, { prefix: '/api/v1/admin' });
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ host: '0.0.0.0', port });

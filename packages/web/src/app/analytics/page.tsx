@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useGlobalAnalytics } from '@/hooks/useWorkflows';
 
@@ -10,6 +10,8 @@ const WINDOWS = [
   { days: 30, label: '30d' },
   { days: 90, label: '90d' },
 ];
+
+type SortKey = 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 
 function fmt(n: number | null, digits = 1): string {
   if (n === null) return '—';
@@ -42,9 +44,72 @@ function KpiTile({
   );
 }
 
+function SortHeader({
+  label,
+  col,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  col: SortKey;
+  sortKey: SortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (k: SortKey) => void;
+}) {
+  const active = sortKey === col;
+  return (
+    <th className="px-4 py-2 font-medium text-right">
+      <button
+        className={`hover:underline ${active ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}`}
+        onClick={() => onSort(col)}
+        type="button"
+      >
+        {label} {active ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+      </button>
+    </th>
+  );
+}
+
 export default function GlobalAnalyticsPage() {
   const [windowDays, setWindowDays] = useState(30);
+  const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('runs');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { data, isLoading } = useGlobalAnalytics(windowDays);
+
+  const handleSort = (k: SortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    else {
+      setSortKey(k);
+      setSortDir('desc');
+    }
+  };
+
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const filtered = filter
+      ? data.perTemplate.filter((r) => r.templateName.toLowerCase().includes(filter.toLowerCase()))
+      : data.perTemplate;
+    return [...filtered].sort((a, b) => {
+      let av: number;
+      let bv: number;
+      if (sortKey === 'runs') {
+        av = a.totalRuns;
+        bv = b.totalRuns;
+      } else if (sortKey === 'successRate') {
+        av = a.successRate ?? -1;
+        bv = b.successRate ?? -1;
+      } else if (sortKey === 'totalCost') {
+        av = a.totalCost;
+        bv = b.totalCost;
+      } else {
+        av = a.totalRuns > 0 ? a.totalCost / a.totalRuns : -1;
+        bv = b.totalRuns > 0 ? b.totalCost / b.totalRuns : -1;
+      }
+      return sortDir === 'desc' ? bv - av : av - bv;
+    });
+  }, [data, filter, sortKey, sortDir]);
 
   return (
     <div className="space-y-6">
@@ -81,11 +146,22 @@ export default function GlobalAnalyticsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Templates — ranked by traffic</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Templates — ranked by traffic</CardTitle>
+                <input
+                  className="text-sm border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] w-48"
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter templates…"
+                  type="text"
+                  value={filter}
+                />
+              </div>
             </CardHeader>
-            {data.perTemplate.length === 0 ? (
+            {rows.length === 0 ? (
               <p className="px-4 pb-4 text-sm text-[var(--muted-foreground)]">
-                No runs in the last {windowDays} days.
+                {filter
+                  ? 'No templates match your filter.'
+                  : `No runs in the last ${windowDays} days.`}
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -93,14 +169,38 @@ export default function GlobalAnalyticsPage() {
                   <thead>
                     <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted-foreground)]">
                       <th className="px-4 py-2 font-medium">Template</th>
-                      <th className="px-4 py-2 font-medium text-right">Runs</th>
-                      <th className="px-4 py-2 font-medium text-right">Success rate</th>
-                      <th className="px-4 py-2 font-medium text-right">Total cost</th>
-                      <th className="px-4 py-2 font-medium text-right">Avg cost/run</th>
+                      <SortHeader
+                        col="runs"
+                        label="Runs"
+                        onSort={handleSort}
+                        sortDir={sortDir}
+                        sortKey={sortKey}
+                      />
+                      <SortHeader
+                        col="successRate"
+                        label="Success rate"
+                        onSort={handleSort}
+                        sortDir={sortDir}
+                        sortKey={sortKey}
+                      />
+                      <SortHeader
+                        col="totalCost"
+                        label="Total cost"
+                        onSort={handleSort}
+                        sortDir={sortDir}
+                        sortKey={sortKey}
+                      />
+                      <SortHeader
+                        col="avgCost"
+                        label="Avg cost/run"
+                        onSort={handleSort}
+                        sortDir={sortDir}
+                        sortKey={sortKey}
+                      />
                     </tr>
                   </thead>
                   <tbody>
-                    {data.perTemplate.map((row) => {
+                    {rows.map((row) => {
                       const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
                       const srPct = row.successRate !== null ? row.successRate * 100 : null;
                       return (

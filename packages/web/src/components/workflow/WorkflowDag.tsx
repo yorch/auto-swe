@@ -1,7 +1,7 @@
 'use client';
 
 import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import {
   type DiffKind,
   diffStrokeColor,
@@ -90,6 +90,11 @@ export function WorkflowDag({
 }: Props) {
   const layout = useMemo(() => layoutSpec(spec), [spec]);
   const nodeIndex = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout.nodes]);
+  const sortedNodes = useMemo(
+    () => layout.nodes.slice().sort((a, b) => a.x - b.x || a.y - b.y),
+    [layout.nodes]
+  );
+  const nodeRefs = useRef<Map<string, SVGGElement>>(new Map());
   const padding = 24;
   const viewBox = `${-padding} ${-padding} ${layout.width + padding * 2} ${layout.height + padding * 2}`;
 
@@ -151,10 +156,31 @@ export function WorkflowDag({
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       onSelect(n.id === selectedNodeId ? null : n.id);
+                      return;
+                    }
+                    const dir =
+                      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+                        ? 1
+                        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+                          ? -1
+                          : 0;
+                    if (dir !== 0) {
+                      event.preventDefault();
+                      const idx = sortedNodes.findIndex((sn) => sn.id === n.id);
+                      const nextIdx = idx + dir;
+                      if (nextIdx >= 0 && nextIdx < sortedNodes.length) {
+                        const nextId = sortedNodes[nextIdx].id;
+                        onSelect(nextId);
+                        nodeRefs.current.get(nextId)?.focus();
+                      }
                     }
                   }
                 : undefined
             }
+            ref={(el) => {
+              if (el) nodeRefs.current.set(n.id, el);
+              else nodeRefs.current.delete(n.id);
+            }}
             role={onSelect ? 'button' : undefined}
             style={{ cursor: onSelect ? 'pointer' : 'default' }}
             tabIndex={onSelect ? 0 : undefined}

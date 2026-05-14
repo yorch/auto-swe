@@ -387,6 +387,20 @@ export interface StepRegistryEntry {
   };
 }
 
+// ── Admin ──
+
+/** Shape returned by GET /api/v1/admin/access-tokens (platform ADMIN only) */
+export interface AdminTokenSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  user: { id: string; email: string };
+}
+
 // ── Webhooks ──
 
 export interface GitWebhookBody {
