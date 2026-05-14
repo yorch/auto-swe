@@ -44,6 +44,25 @@ CREATE TABLE "refresh_tokens" (
 );
 
 -- CreateTable
+-- Phase 8: long-lived API tokens for CI / CLI. Hashed at rest; the plaintext
+-- `ats_<random>` form is returned exactly once on issue. `prefix` keeps the
+-- first 12 chars (`ats_` + 8 random chars) so the admin UI can disambiguate
+-- listed tokens without re-issuing them.
+CREATE TABLE "personal_access_tokens" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "token_hash" TEXT NOT NULL,
+    "prefix" TEXT NOT NULL,
+    "expires_at" TIMESTAMPTZ,
+    "last_used_at" TIMESTAMPTZ,
+    "revoked_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "personal_access_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "teams" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
@@ -52,6 +71,7 @@ CREATE TABLE "teams" (
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "shell_image_allowlist" TEXT[] NOT NULL DEFAULT '{}',
     "slack_notify_channel" TEXT,
+    "slack_notify_success" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -205,6 +225,7 @@ CREATE TABLE "workflow_runs" (
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
+    "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
 
     CONSTRAINT "workflow_runs_pkey" PRIMARY KEY ("id")
 );
@@ -255,6 +276,12 @@ CREATE INDEX "refresh_tokens_user_id_idx" ON "refresh_tokens"("user_id");
 
 -- CreateIndex
 CREATE INDEX "refresh_tokens_family_idx" ON "refresh_tokens"("family");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_tokens"("token_hash");
+
+-- CreateIndex
+CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("user_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
@@ -320,6 +347,9 @@ CREATE INDEX "workflow_artifacts_run_id_idx" ON "workflow_artifacts"("run_id");
 
 -- AddForeignKey
 ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

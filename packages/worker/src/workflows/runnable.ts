@@ -6,13 +6,16 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import { lookupPath } from '@auto-swe/shared/workflow/expr';
-import type { Dispatcher } from '@auto-swe/shared/workflow/interpreter';
-import { runSpec } from '@auto-swe/shared/workflow/interpreter';
+import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
+import { BranchCancelledError, runSpec } from '@auto-swe/shared/workflow/interpreter';
 import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
 import type { Duration } from '@temporalio/common';
+import { CancelledFailure } from '@temporalio/common';
 import {
+  CancellationScope,
   condition,
   defineSignal,
+  isCancellation,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -196,25 +199,32 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   }
 
   // 3. Build the Temporal-backed dispatcher.
+  //
+  // Phase-8: when the interpreter passes a `cancellation` sink (every dispatch
+  // inside a fan-out branch), we wrap the activity await in a per-call
+  // `CancellationScope` and install a token that maps to the scope's cancel
+  // handle. fan-out's block-mode then calls `token.cancel()` on every sibling
+  // when one branch fails, which aborts the underlying Temporal activity
+  // instead of letting it drain.
   const dispatcher: Dispatcher = {
-    async dispatchShell({ node, inputs }) {
-      // Inputs override config; image/command come straight off the typed
-      // node fields (required at the schema level). Override bindings must
-      // resolve to strings — anything else falls through to the node default
-      // rather than flowing a wrong-shape value into the activity.
-      return await shellActivities.runShellStep({
-        ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
-        ...(node.memory ? { memory: node.memory } : {}),
-        ...(node.network ? { network: node.network } : {}),
-        ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
-        ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
-        command: typeof inputs.command === 'string' ? inputs.command : node.command,
-        image: typeof inputs.image === 'string' ? inputs.image : node.image,
-        request: input.request,
-      });
+    async dispatchShell({ node, inputs, cancellation }) {
+      return runWithCancellation(cancellation, () =>
+        shellActivities.runShellStep({
+          ...(typeof node.cpus === 'number' ? { cpus: node.cpus } : {}),
+          ...(node.memory ? { memory: node.memory } : {}),
+          ...(node.network ? { network: node.network } : {}),
+          ...(typeof node.timeoutMs === 'number' ? { timeoutMs: node.timeoutMs } : {}),
+          ...(typeof inputs.branch === 'string' ? { branch: inputs.branch } : {}),
+          command: typeof inputs.command === 'string' ? inputs.command : node.command,
+          image: typeof inputs.image === 'string' ? inputs.image : node.image,
+          request: input.request,
+        })
+      );
     },
-    async dispatchStep({ step, ctx, inputs, config }) {
-      return dispatchStepImpl(step, ctx, input.request, config, inputs);
+    async dispatchStep({ step, ctx, inputs, config, cancellation }) {
+      return runWithCancellation(cancellation, () =>
+        dispatchStepImpl(step, ctx, input.request, config, inputs)
+      );
     },
     async recordStep(args) {
       await stateActivities.recordWorkflowStep({ ...args, runId });
@@ -237,17 +247,34 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     workflow: { id: workflowId },
   };
 
-  const outcome = await runSpec(spec, initialCtx, dispatcher);
-  await stateActivities.finalizeWorkflowRun(
-    runId,
-    outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
-    summarizeContext(outcome.finalContext)
-  );
+  // Phase-8: wrap runSpec so an `onFail: 'block'` throw doesn't skip the
+  // finalize step. Without this, FAILED runs leave `workflow_runs.status =
+  // 'RUNNING'` forever, the cost denorm never lands, and Slack
+  // run-complete notifications never fire for the common failure path.
+  let outcome: Awaited<ReturnType<typeof runSpec>> | null = null;
+  let runError: unknown = null;
+  try {
+    outcome = await runSpec(spec, initialCtx, dispatcher);
+  } catch (err) {
+    runError = err;
+  }
+
+  const finalStatus: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED' = outcome
+    ? (outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED')
+    : 'FAILED';
+  const finalContext = outcome
+    ? summarizeContext(outcome.finalContext)
+    : { error: String(runError) };
+  await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
+
+  if (runError) {
+    throw runError instanceof Error ? runError : new Error(String(runError));
+  }
 
   // Spread result FIRST so a `status` key inside the terminate node's result
-  // cannot overwrite the workflow's actual outcome status. `status` always
-  // tracks `outcome.status`.
-  return { ...outcome.result, status: outcome.status as WorkflowResult['status'] };
+  // cannot overwrite the workflow's actual outcome status.
+  const result = outcome?.result ?? {};
+  return { ...result, status: finalStatus as WorkflowResult['status'] };
 }
 
 // ── Step dispatch ──
@@ -317,7 +344,14 @@ async function dispatchStepImpl(
     case 'runBuild':
     case 'runVulnScan':
     case 'runPerfBench': {
+      // Per-branch fan-out can override `branch` to point gates at the
+      // subtask branch instead of the parent ticket branch (phase 8).
+      const branchOverride =
+        (inputs.branch as string | undefined) ??
+        (config.branch as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
       const gateInput = {
+        ...(branchOverride ? { branch: branchOverride } : {}),
         command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
         request,
         timeoutMs:
@@ -411,6 +445,36 @@ function resolveMergeBindings(
     throw new Error(`${step}: inputs.sourceBranches must be a string[]`);
   }
   return { sourceBranches: raw as string[], targetBranch };
+}
+
+/**
+ * Phase-8 cancellation bridge. When the interpreter passes a `cancellation`
+ * sink, wrap the activity call in a `CancellationScope` and write a
+ * `cancel()` callback into the sink so fan-out's block-mode can abort the
+ * activity. Without a sink we fall through to the bare callback (the
+ * pre-phase-8 drain behavior).
+ *
+ * Cancellation surfaces as a Temporal `CancelledFailure`. We rethrow as a
+ * {@link BranchCancelledError} so the interpreter's `runRetryable` recognises
+ * it and bypasses `onError` / `onFail` policies — otherwise a sibling branch
+ * could `onFail: 'warn'`-swallow a cancellation that block-mode raised on it
+ * and keep running after another branch had already failed.
+ */
+async function runWithCancellation<T>(
+  cancellation: { token?: CancellationToken } | undefined,
+  body: () => Promise<T>
+): Promise<T> {
+  if (!cancellation) return body();
+  const scope = new CancellationScope({ cancellable: true });
+  cancellation.token = { cancel: () => scope.cancel() };
+  try {
+    return await scope.run(body);
+  } catch (err) {
+    if (isCancellation(err) || err instanceof CancelledFailure) {
+      throw new BranchCancelledError();
+    }
+    throw err;
+  }
 }
 
 /**

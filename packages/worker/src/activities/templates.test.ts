@@ -6,7 +6,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     repository: {
       findUniqueOrThrow: vi.fn(),
     },
+    team: { findUnique: vi.fn() },
     workflowRun: {
+      findUnique: vi.fn(),
       update: vi.fn(),
       upsert: vi.fn(),
     },
@@ -135,7 +137,13 @@ describe('recordWorkflowStep', () => {
 });
 
 describe('finalizeWorkflowRun', () => {
-  it('writes status + endedAt to the run row', async () => {
+  it('writes status + endedAt + denormalized cost to the run row', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    findRun.mockResolvedValue({
+      workRequest: {
+        activeWorkflows: [{ costUsdAccrued: 1.5 }, { costUsdAccrued: 0.5 }],
+      },
+    } as never);
     updateRun.mockResolvedValue({} as never);
     await finalizeWorkflowRun('run-1', 'SUCCESS', { foo: 'bar' });
     const args = updateRun.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -144,6 +152,20 @@ describe('finalizeWorkflowRun', () => {
     expect(data.status).toBe('SUCCESS');
     expect(data.endedAt).toBeInstanceOf(Date);
     expect(data.contextSnapshot).toEqual({ foo: 'bar' });
+    // Phase 8 denorm: sums across activeWorkflows for the WorkRequest.
+    expect(data.costUsdAccrued).toBe(2);
+    findRun.mockReset();
+  });
+
+  it('writes zero cost when there is no work request attached', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    findRun.mockResolvedValue({ workRequest: null } as never);
+    updateRun.mockResolvedValue({} as never);
+    await finalizeWorkflowRun('run-2', 'FAILED');
+    const args = updateRun.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const data = args.data as Record<string, unknown>;
+    expect(data.costUsdAccrued).toBe(0);
+    findRun.mockReset();
   });
 });
 

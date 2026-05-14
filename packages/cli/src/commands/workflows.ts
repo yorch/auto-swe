@@ -6,6 +6,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { pad, parseOptionalPositiveInt } from '../lib/format.js';
 
 const SUB_HELP = `auto-swe workflows — manage workflow templates
 
@@ -114,19 +115,7 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
   return 0;
 }
 
-/**
- * Returns the parsed version, undefined if no flag, or 'invalid' if it can't
- * be coerced to a positive integer. Callers print a usage message + exit 1
- * on 'invalid'.
- */
-function parseVersionFlag(raw: string | undefined): number | undefined | 'invalid' {
-  if (raw === undefined) return undefined;
-  // parseFlags assigns 'true' when the flag is declared without a value.
-  if (raw === 'true') return 'invalid';
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) return 'invalid';
-  return n;
-}
+const parseVersionFlag = parseOptionalPositiveInt;
 
 async function cmdImport(args: string[], env: CliEnv): Promise<number> {
   const { positional, flags } = parseFlags(args);
@@ -241,11 +230,6 @@ async function resolveTeamIdBySlug(env: CliEnv, slug: string): Promise<string | 
 function deriveNameFromPath(p: string): string {
   const base = p.split('/').pop() ?? p;
   return base.replace(/\.json$/i, '').replace(/[^a-zA-Z0-9_\- ]/g, '-');
-}
-
-function pad(s: string, w: number): string {
-  if (s.length >= w) return `${s.slice(0, w - 1)} `;
-  return s + ' '.repeat(w - s.length);
 }
 
 interface ParsedFlags {

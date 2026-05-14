@@ -47,6 +47,12 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 31 | Phase-7 per-step Slack failure notifications use a two-tier channel resolver: the originating Slack channel on `WorkRequest.slackChannelId` (set when the run was kicked off via `/auto-swe run`) wins so failures thread back to the source conversation, with `Team.slackNotifyChannel` as a fallback for runs created via the REST API or webhook. We notify only on the **first** FAILED record per `(runId, nodeId)` to avoid spamming the channel during `onFail.retry` storms. |
 | 32 | Phase-7 CLI lives in a new `packages/cli/` workspace (binary name `auto-swe`). It auth's against the existing `/api/v1/auth/login` endpoint via `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD`, falling back to a raw `AUTO_SWE_TOKEN` bearer for CI; no token caching on disk. Subcommand layout mirrors the gateway routes (`workflows list/show/export/import`) so the CLI is a thin transport adapter rather than a parallel codepath. |
 | 33 | Phase-7 Slack `/auto-swe` slash command authentication: requests are gated by HMAC signature (`SLACK_SIGNING_SECRET`) plus a User.slackId linkage check. Unknown Slack users get an ephemeral hint to visit `/api/v1/auth/slack/connect`, never a 403 — the slash command is meant to be discovery-friendly. The `run` subcommand opens a Block Kit modal (workflow + repo picker) so we don't have to chain interactive Slack flows through ephemeral messages. |
+| 34 | Phase-8 personal access tokens (`ats_<base64url-32B>`): the `requireAuth` middleware sniffs the bearer-token prefix — anything starting with `ats_` skips JWT verification and hashes through the `PersonalAccessToken` table instead. JWTs are still RS256/HS256 round-tripped on the existing path. The plaintext is returned exactly once on issue; only the sha-256 hash + a non-secret 12-char prefix (`ats_` + 8 chars) are persisted. `lastUsedAt` is updated fire-and-forget on each successful auth so admins can prune stale tokens without making auth latency-sensitive. |
+| 35 | Phase-8 `WorkflowRun.costUsdAccrued` denormalization: cost is captured at finalize time by reading the join through `workRequest → activeWorkflows.costUsdAccrued`, summing across multi-active-workflow epics, and writing one number on the run row. Analytics reads the column directly; legacy rows (still RUNNING, or pre-phase-8) fall back to summing the live join — the back-compat path keeps the same shape so cross-window comparisons remain meaningful while older data ages out. |
+| 36 | Phase-8 fan-out activity cancellation: each in-flight branch gets a per-call `CancellationScope` on the Temporal side; the dispatcher writes a `cancel()` token back into a sink the interpreter passes down. When `onBranchFail: 'block'` fires, the interpreter calls `cancel()` on every sibling sink, which abort-cancels their activity awaits. Dispatchers that omit the cancellation field fall back to the phase-3.5 "drain in-flight branches" behavior — no contract change for callers that didn't opt in. Cancelled activities surface as a normal Error (`'fan-out branch cancelled by sibling failure (block-mode)'`) so the aggregate reports them as branch failures rather than crashing the workflow. |
+| 37 | Phase-8 significance hint: a frequentist two-proportion z-test on success rate between the two most-trafficked versions in the analytics window. Only emitted when both arms cross `MIN_SAMPLES_FOR_SIGNIFICANCE` (30) — under that and the UI shows raw counts only, never a false-confidence "significant" badge. We deliberately keep this as a hint (not a verdict) because a 30-run threshold is small for low-base-rate failure modes; teams still need to apply judgement. |
+| 38 | Phase-8 Slack success notifications gate behind a per-team `slackNotifySuccess: Boolean` opt-in. The default is `false` because adding a success notification to every team's existing channel would be a notification firehose; the existing per-step failure path keeps working unchanged. Channel resolution mirrors the failure path (originating channel on WorkRequest → team-fallback). Fired once per run from `finalizeWorkflowRun` regardless of terminal status — we want closure even on FAILED so the team sees the run actually stopped. |
+| 39 | Phase-8 memory hooks: the resolver activity and shell-step activity bypass the LLM-summarizer path (`commitToMemory`'s agent) and write `agent_lessons` rows directly via `recordLessonDirectly`. The summarizer earns its keep on free-form workflow outcomes; the resolver and shell step already know exactly what changed, so we'd be paying for an extra LLM call to re-derive structured fields we already have. The direct writer still generates the embedding so semantic search continues to find these lessons. |
 
 ---
 
@@ -62,6 +68,7 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 | 5. Versioning UI, A/B per team, analytics | **Done** | version diff viewer, A/B experiment routing (`experimentVersion` + `experimentSplit`), analytics page (success rate, p50/p95, $/run, per-step failure rates), observed-cost chip on editor |
 | 6. Custom shell steps with RBAC + audit | **Done** | team-admin-only step authoring, ephemeral container, image allowlist, audit log |
 | 7. First-class in Slack + CLI | **Done** | `/auto-swe` slash command (workflows list/show + run modal), per-step Slack failure notifications, new `packages/cli/` workspace |
+| 8. Ergonomics + memory + cost denorm + cancellation | **Done** | PATs, CLI `runs` + `tokens`, Slack success path, app manifest, shell/resolver → `commitToMemory`, per-branch gates example, denorm cost on `workflow_runs`, A/B significance hint, global analytics, fan-out activity cancellation |
 
 ---
 
@@ -481,6 +488,64 @@ Phase 6 additions:
 - **gateway**: `lib/slack.ts` (new), `routes/slack.ts` (slash command + modal handler), `routes/slack.test.ts` (new), `lib/slack.test.ts` (new)
 - **worker**: `lib/slackNotify.ts` (new), `lib/slackNotify.test.ts` (new), `activities/templates.ts` (recordWorkflowStep notifies on FAILED)
 - **cli**: new workspace `packages/cli/` with `package.json`, `tsconfig.json`, `src/index.ts`, `src/lib/env.ts`, `src/lib/api.ts`, `src/commands/workflows.ts`, `src/commands/workflows.test.ts`
+
+---
+
+## Phase 8 — Ergonomics + memory + cost denormalization + cancellation (Done)
+
+### What shipped
+
+**Operational ergonomics (8a)**:
+- `PersonalAccessToken` table + `POST/GET/DELETE /api/v1/auth/tokens` routes. Plaintext is `ats_<base64url-32B>` and only appears on the create response — the row stores sha-256(hash) + 12-char non-secret prefix + `lastUsedAt` for staleness pruning. The `requireAuth` middleware sniffs the `ats_` prefix and skips JWT verification, looking the token up by hash instead. JWT auth continues unchanged.
+- CLI `auto-swe runs` subcommand (`list`, `show <id>`, `tail <id>`) and `auto-swe tokens` subcommand (`list`, `create <name>`, `revoke <id>`). `tokens create` prints the plaintext on stdout and the one-shot warning on stderr so `> token.txt` pipes only capture the secret. `runs tail` polls `/workflow-runs/:id` and exits 0 on SUCCESS / 2 on terminal failure / 1 if it gives up.
+- `Team.slackNotifySuccess: Boolean` (default false) opt-in for terminal-run notifications. `notifySlackRunComplete` fires from `finalizeWorkflowRun` for every terminal status when set; channel resolution mirrors the failure path (originating WorkRequest channel → team fallback). Per-step failure notifications continue to fire whether or not the team opts in.
+- `docs/slack-app-manifest.json` — copy-paste manifest with placeholder hostnames so teams can self-serve the Slack app setup without reading the slash-command + interactivity docs cold.
+
+**Memory + per-branch gates (8b)**:
+- `recordLessonDirectly()` in `commitToMemory.ts` — bypasses the LLM summarizer and writes one `agent_lessons` row with a generated embedding. Resolver + shell-step activities call it on success; failures aren't recorded (the FAILED workflow_run row already tells that story).
+- `examples/perBranchGates.spec.ts` — decompose → fan-out implementer + per-branch lint/typecheck/tests (all `onFail: 'block'`) → merge → review. Pluck stays at `result.branch` so the merge step's `sourceBranches` binding works identically to the unmodified decomposition example.
+
+**Cost denormalization + analytics maturity (8c)**:
+- `WorkflowRun.costUsdAccrued: Float` column. `finalizeWorkflowRun` reads through `workRequest → activeWorkflows` (the same join the analytics route used to do every request), sums across multi-active-workflow epics, and writes the result. Analytics reads the column directly; legacy rows fall back to the live join so cross-window comparisons stay meaningful while older data ages out.
+- `computeAnalytics` now returns `significanceHint: SignificanceHint | null` — a two-proportion z-test on success rate between the two most-trafficked versions in the window. Returns `null` until both arms cross `MIN_SAMPLES_FOR_SIGNIFICANCE` (30) so the UI never shows false-confidence verdicts.
+- `GET /api/v1/workflow-templates/analytics?window=<days>` — cross-template rollup ranked by traffic, with per-template success rate + cost. Visibility filter piggy-backs on the existing per-template `teamMembershipFilter` so engineers see only what they could already drill into.
+
+**Activity cancellation (8d)**:
+- `Dispatcher.dispatchStep` / `dispatchShell` accept an optional `cancellation: { token?: CancellationToken }` sink. The interpreter passes the sink down for every dispatch inside a fan-out branch; the dispatcher writes back a `cancel()` handle (or leaves it undefined when cancellation isn't supported).
+- `runFanOut` maintains a `Map<branchIndex, sink>` of in-flight branches. When `onBranchFail: 'block'` fires, the walker calls `cancel()` on every sibling sink before bubbling the failure. Dispatchers that don't support cancellation degrade to the phase-3.5 drain behavior.
+- Temporal dispatcher: each cancellable call goes through `runWithCancellation()` which spins up a `CancellationScope` and writes its `cancel()` into the sink. A cancelled activity surfaces as a normal Error (`fan-out branch cancelled by sibling failure (block-mode)`) so the aggregate reports it as a branch failure instead of crashing the workflow with the raw `CancelledFailure` envelope.
+
+### Schema
+
+- `personal_access_tokens (id, user_id, name, token_hash UNIQUE, prefix, expires_at, last_used_at, revoked_at, created_at)` — indexed on `user_id`.
+- `teams.slack_notify_success BOOLEAN NOT NULL DEFAULT false`.
+- `workflow_runs.cost_usd_accrued DOUBLE PRECISION NOT NULL DEFAULT 0`.
+
+All folded into the squashed init migration per the repo convention.
+
+### Tests (+~32)
+
+- `gateway/src/routes/tokens.test.ts` — 6 tests covering create + hash-only persistence, list scoping to requester, 404 on cross-user revoke, idempotent re-revoke, expiresInDays.
+- `gateway/src/routes/workflowTemplates.test.ts` — `computeAnalytics` phase-8 additions: denormalized cost column wins over the workRequest fallback, significance hint emits + suppresses correctly. Plus a `computeGlobalAnalytics` describe block.
+- `worker/src/lib/slackNotify.test.ts` — `notifySlackRunComplete` opt-in gate + originating-channel preference + team fallback + no-op without token (4 new tests).
+- `shared/src/workflow/interpreter.test.ts` — 2 new tests: block-mode cancels siblings when the dispatcher supports it; block-mode without cancellation support still drains (regression check on the legacy path).
+- `cli/src/commands/runs.test.ts` + `tokens.test.ts` — 11 tests covering help / arg validation / flag parsing / SUCCESS+FAILED tail exit codes / plaintext-on-stdout invariant for token issuance.
+- `shared/src/workflow/examples/perBranchGates.spec.test.ts` — 4 tests: parses, all branch gates blocking, subDone projects branch from currentCodeResult, fan-out blocks on first failure.
+
+### Known follow-ups
+
+- **Web UI for the new analytics surfaces.** The phase-8 gateway endpoints (`/workflow-templates/analytics` global rollup, `significanceHint` on per-template analytics) are wired but `/templates/[id]/analytics` only renders the per-template view today. A `/analytics` page and a "winner detected" badge on the template detail page are the natural next slice.
+- **CLI `run` subcommand.** Kicking off a work request from the terminal would close the loop with the Slack `/auto-swe run` modal. Same shape as the workflow-templates pickers — just JSON-Lined to stdout.
+- **PAT admin view.** Platform admins can't currently see other users' tokens. A future `/api/v1/admin/access-tokens` would let an admin prune compromised or stale tokens for a team without involving the owning user.
+- **Cancellation surface area.** Phase 8d wires cancellation into fan-out block-mode. A natural follow-up: workflow-level "cancel run" from the web UI uses the same plumbing to abort an in-flight run end-to-end.
+
+### Files touched (recap)
+
+- **shared**: `prisma/schema.prisma` + migration (`personal_access_tokens`, `teams.slack_notify_success`, `workflow_runs.cost_usd_accrued`), `workflow/interpreter.ts` (cancellation hooks), `workflow/analytics.ts` (denorm cost path + significance + global), `workflow/index.ts` (exports), `workflow/examples/perBranchGates.spec.ts` (new), `types/api.ts` (analytics + global types).
+- **gateway**: `plugins/auth.ts` (PAT bearer-token sniff), `routes/tokens.ts` (new), `routes/workflowTemplates.ts` (`/analytics` global route + denorm cost in per-template), `index.ts` (mount).
+- **worker**: `lib/slackNotify.ts` (`notifySlackRunComplete`), `activities/templates.ts` (denorm write + terminal notify in `finalizeWorkflowRun`), `activities/commitToMemory.ts` (`recordLessonDirectly`), `activities/decomposition.ts` (resolver memory hook), `activities/shellStep.ts` (shell memory hook), `workflows/runnable.ts` (`runWithCancellation`).
+- **cli**: `src/commands/runs.ts` + `tokens.ts` (new), `src/lib/env.ts` (PAT note), `src/index.ts` (HELP + dispatch).
+- **docs**: `slack-app-manifest.json` (new), `configurable-workflows.md` (this section).
 
 ---
 

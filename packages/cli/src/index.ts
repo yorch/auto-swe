@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { runRunsCommand } from './commands/runs.js';
+import { runTokensCommand } from './commands/tokens.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
 import { type CliEnv, loadCliEnv } from './lib/env.js';
 
@@ -13,11 +15,21 @@ COMMANDS
   workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
   workflows import <path> [--name=N] [--team=<slug>]
                                        Create a template (or new version if --name matches an existing template)
+
+  runs list [--status=S] [--template-id=ID] [--limit=N]
+                                       List recent workflow runs
+  runs show <runId>                    Print one run (with steps) as JSON
+  runs tail <runId> [--interval=SEC]   Poll until terminal status
+
+  tokens list                          List your personal access tokens
+  tokens create <name>                 Issue a long-lived API token (printed once)
+  tokens revoke <id>                   Revoke a token
+
   help                                 Show this message
 
 ENVIRONMENT
   AUTO_SWE_API_URL   Base URL of the gateway (default: http://localhost:8080)
-  AUTO_SWE_TOKEN     Bearer token (JWT) for the gateway
+  AUTO_SWE_TOKEN     Bearer token: JWT or phase-8 \`ats_*\` personal access token
                      Falls back to AUTO_SWE_USERNAME + AUTO_SWE_PASSWORD for /auth/login
 
 EXIT CODES
@@ -39,9 +51,9 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
-  if (cmd === 'workflows') {
-    return await runWorkflowsCommand(rest, env);
-  }
+  if (cmd === 'workflows') return await runWorkflowsCommand(rest, env);
+  if (cmd === 'runs') return await runRunsCommand(rest, env);
+  if (cmd === 'tokens') return await runTokensCommand(rest, env);
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;
 }

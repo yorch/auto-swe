@@ -135,6 +135,51 @@ export interface RBACOptions {
  * the user's membership in that team and checks their team role. Platform ADMINs
  * bypass team checks.
  */
+/** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
+ * 32 bytes of base64url entropy (~43 chars). Anything starting with this
+ * prefix bypasses JWT verification and hashes through PersonalAccessToken
+ * instead. JWTs continue to round-trip the existing RS256/HS256 path. */
+const PAT_PREFIX = 'ats_';
+
+class PatAuthError extends Error {
+  readonly code: 'TOKEN_INVALID' | 'TOKEN_EXPIRED';
+  constructor(code: 'TOKEN_INVALID' | 'TOKEN_EXPIRED', message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
+ * Resolve a `ats_*` personal access token into a synthesized `JwtPayload`
+ * so downstream RBAC behaves identically to JWT auth. Throws {@link PatAuthError}
+ * with a typed code on rejection; the caller maps it to a 401 response.
+ */
+async function verifyPatPayload(request: FastifyRequest, token: string): Promise<JwtPayload> {
+  const hash = request.server.auth.hashToken(token);
+  const pat = await request.server.prisma.personalAccessToken.findUnique({
+    include: { user: true },
+    where: { tokenHash: hash },
+  });
+  if (!pat || pat.revokedAt || !pat.user.isActive) {
+    throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
+  }
+  if (pat.expiresAt && pat.expiresAt < new Date()) {
+    throw new PatAuthError('TOKEN_EXPIRED', 'Access token expired');
+  }
+  // Fire-and-forget `lastUsedAt` update so a slow write can't add latency.
+  request.server.prisma.personalAccessToken
+    .update({ data: { lastUsedAt: new Date() }, where: { id: pat.id } })
+    .catch(() => {});
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    exp: now + 60,
+    iat: now,
+    role: pat.user.role,
+    ...(pat.user.slackId ? { slackId: pat.user.slackId } : {}),
+    sub: pat.user.id,
+  };
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
@@ -147,9 +192,14 @@ export function requireAuth(options: RBACOptions = {}) {
     const token = authHeader.slice(7);
     let payload: JwtPayload;
     try {
-      payload = request.server.auth.verifyAccessToken(token);
+      payload = token.startsWith(PAT_PREFIX)
+        ? await verifyPatPayload(request, token)
+        : request.server.auth.verifyAccessToken(token);
       request.user = payload;
     } catch (err: unknown) {
+      if (err instanceof PatAuthError) {
+        return reply.status(401).send({ error: { code: err.code, message: err.message } });
+      }
       return reply.status(401).send({
         error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
       });

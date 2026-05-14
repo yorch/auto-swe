@@ -2,11 +2,14 @@
  * CLI environment + auth resolution.
  *
  * Resolution order for the bearer token:
- *   1. `AUTO_SWE_TOKEN` (raw JWT)
+ *   1. `AUTO_SWE_TOKEN` (raw JWT or phase-8 `ats_*` personal access token —
+ *      the gateway accepts both formats transparently)
  *   2. `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD` (POST /auth/login)
  *
- * The login fallback exists so a CI cron can authenticate without copy-pasting
- * a token. Tokens are NOT cached on disk — re-derived per process.
+ * PATs are the recommended path for long-running CI integrations — they
+ * survive the JWT's 1h TTL without re-logging in. The login fallback exists
+ * so a CI cron can authenticate without copy-pasting a token. Tokens are NOT
+ * cached on disk — re-derived per process.
  */
 
 export interface CliEnv {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 import type { Context } from './expr.js';
-import { type Dispatcher, runSpec } from './interpreter.js';
+import { BranchCancelledError, type Dispatcher, runSpec } from './interpreter.js';
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
 
 interface Call {
@@ -20,18 +20,37 @@ interface Call {
 function makeDispatcher(opts: {
   stepOutputs: Record<string, unknown | ((inputs: Record<string, unknown>) => unknown)>;
   signalQueue: Record<string, unknown[]>;
-}): { dispatcher: Dispatcher; calls: Call[]; records: Array<{ nodeId: string; status: string }> } {
+  /**
+   * If set, mocks Temporal-style cancellation. The dispatcher honors the
+   * `cancellation` sink the interpreter passes in: it installs a token that
+   * rejects the in-flight promise with `Error('cancelled')` when called.
+   */
+  supportsCancellation?: boolean;
+}): {
+  dispatcher: Dispatcher;
+  calls: Call[];
+  records: Array<{ nodeId: string; status: string }>;
+} {
   const calls: Call[] = [];
   const records: Array<{ nodeId: string; status: string }> = [];
   const dispatcher: Dispatcher = {
-    async dispatchStep({ step, inputs, config }) {
+    async dispatchStep({ step, inputs, config, cancellation }) {
       const merged = { ...config, ...inputs };
       calls.push({ config: { ...config }, inputs: merged, step });
       const out = opts.stepOutputs[step];
       if (out === undefined) throw new Error(`no canned output for step ${step}`);
-      return typeof out === 'function'
-        ? (out as (i: Record<string, unknown>) => unknown)(merged)
-        : out;
+      const raw =
+        typeof out === 'function' ? (out as (i: Record<string, unknown>) => unknown)(merged) : out;
+      if (!opts.supportsCancellation || !cancellation) return raw;
+      // Mock: race the canned output against the cancellation token. Mirrors
+      // the Temporal dispatcher's contract — it rethrows CancelledFailure
+      // as a BranchCancelledError so the interpreter can bypass onFail.
+      return new Promise((resolve, reject) => {
+        cancellation.token = {
+          cancel: () => reject(new BranchCancelledError()),
+        };
+        Promise.resolve(raw).then(resolve, reject);
+      });
     },
     async recordStep({ nodeId, status }) {
       records.push({ nodeId, status });
@@ -884,6 +903,148 @@ describe('runSpec', () => {
       // Verify the prototype was not actually polluted by the failed attempt
       expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     }
+  });
+
+  // ── Phase 8: activity cancellation in fan-out block-mode ──
+
+  it('fanOut block-mode cancels sibling branches when one fails (phase 8)', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-cancel',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: {
+          result: {
+            count: { from: 'nodes.fan.output.count' },
+            failed: { from: 'nodes.fan.output.failed' },
+            skipped: { from: 'nodes.fan.output.skipped' },
+          },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+        fan: {
+          concurrency: 3,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1, 2] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'maybeCancel', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+    let n = 0;
+    const slowResolvers: Array<(v: unknown) => void> = [];
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        // Branch 0 fails fast; branches 1+2 park on `slowResolvers` so the
+        // mock cancellation token has time to fire. Without cancellation
+        // those branches would resolve successfully and the block-mode
+        // surface would just be "we let them drain" — exactly what phase 8
+        // fixes.
+        maybeCancel: () => {
+          const i = n++;
+          if (i === 0) return Promise.reject(new Error('branch 0 boom'));
+          return new Promise((resolve) => {
+            slowResolvers.push(resolve);
+          });
+        },
+      },
+      supportsCancellation: true,
+    });
+
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('branch 0 boom');
+    // No one resolved them — they were cancelled by the token plumbing.
+    expect(slowResolvers.length).toBeGreaterThan(0);
+  });
+
+  it('fanOut block-mode without dispatcher cancellation support still drains in-flight work', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fanout-block-drain',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 3,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1, 2] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'mixed', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+    let n = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        mixed: () => {
+          const i = n++;
+          if (i === 0) throw new Error('boom');
+          return { ok: true };
+        },
+      },
+    });
+    // No cancellation support: in-flight branches drain (phase 3.5 behavior).
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+  });
+
+  it('BranchCancelledError bypasses onFail: warn at the step level (phase 8)', async () => {
+    // If a step throws BranchCancelledError, the interpreter must NOT apply
+    // onFail: 'warn' (which would swallow it and let the cancelled branch
+    // continue). The check is a defensive carve-out for fan-out block-mode.
+    const spec = parseWorkflowSpec({
+      entry: 'work',
+      name: 'cancel-bypass-onfail',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        // onFail: 'warn' would normally swallow a regular Error and continue.
+        work: { next: 'done', onFail: 'warn', step: 'cancelMe', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        cancelMe: () => {
+          throw new BranchCancelledError();
+        },
+      },
+    });
+    // The cancellation propagates instead of being warned past.
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(BranchCancelledError);
+  });
+
+  it('BranchCancelledError bypasses onFail: retry at the step level (phase 8)', async () => {
+    let attempts = 0;
+    const spec = parseWorkflowSpec({
+      entry: 'work',
+      name: 'cancel-bypass-retry',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        work: { next: 'done', onFail: { retry: 5 }, step: 'cancelMe', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        cancelMe: () => {
+          attempts++;
+          throw new BranchCancelledError();
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(BranchCancelledError);
+    // Cancellation must NOT be retried — the worker pool already accounted for it.
+    expect(attempts).toBe(1);
   });
 
   // ── Phase 6: shell node ──

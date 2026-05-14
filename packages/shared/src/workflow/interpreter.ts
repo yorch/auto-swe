@@ -21,6 +21,61 @@ import type {
   WorkflowSpec,
 } from './spec.js';
 
+/**
+ * A cancellation scope passed into `dispatchStep` / `dispatchShell`. Workflow
+ * runtimes that support cooperative cancellation (Temporal) wrap each activity
+ * call in a scope and expose `cancel()` here; the fan-out walker calls it on
+ * sibling branches when `onBranchFail: 'block'` fires.
+ *
+ * Dispatchers that don't support cancellation can omit the field — the
+ * interpreter falls back to "let in-flight work drain" (the pre-phase-8 behavior).
+ */
+export interface CancellationToken {
+  cancel(): void;
+}
+
+/**
+ * Thrown by a dispatcher when its activity was cancelled via the
+ * {@link CancellationToken} the interpreter handed it. The interpreter
+ * recognizes this class in `runRetryable` and rethrows immediately, bypassing
+ * `onError` / `onFail` retry+warn policies — otherwise a sibling branch could
+ * `onFail: 'warn'`-swallow a cancellation that block-mode raised on it and
+ * keep running after another branch had already failed.
+ */
+export class BranchCancelledError extends Error {
+  // Tag for cross-realm instanceof safety (Temporal workflows run in V8
+  // isolates so the imported class identity can drift).
+  readonly __branchCancelled = true as const;
+  constructor(message = 'fan-out branch cancelled by sibling failure (block-mode)') {
+    super(message);
+    this.name = 'BranchCancelledError';
+  }
+}
+
+function isBranchCancelled(err: unknown): boolean {
+  return (
+    err instanceof BranchCancelledError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { __branchCancelled?: unknown }).__branchCancelled === true)
+  );
+}
+
+export interface DispatchArgs {
+  nodeId: string;
+  step?: string;
+  config: Record<string, unknown>;
+  inputs: Record<string, unknown>;
+  ctx: Context;
+  /**
+   * Set when the dispatch happens inside a fan-out branch. The interpreter
+   * registers a {@link CancellationToken} into this object before awaiting
+   * the dispatch promise; the dispatcher should write back a cancel handle
+   * (or leave it undefined when cancellation isn't supported).
+   */
+  cancellation?: { token?: CancellationToken };
+}
+
 export interface Dispatcher {
   /** Invoke a step's activity. Returns the activity output, or throws on failure. */
   dispatchStep(args: {
@@ -29,6 +84,7 @@ export interface Dispatcher {
     config: Record<string, unknown>;
     inputs: Record<string, unknown>;
     ctx: Context;
+    cancellation?: { token?: CancellationToken };
   }): Promise<unknown>;
 
   /**
@@ -46,6 +102,7 @@ export interface Dispatcher {
     node: ShellNode;
     inputs: Record<string, unknown>;
     ctx: Context;
+    cancellation?: { token?: CancellationToken };
   }): Promise<unknown>;
 
   /**
@@ -131,7 +188,8 @@ async function walk(
   ctx: Context,
   dispatcher: Dispatcher,
   cursor: Cursor,
-  nodeIdPrefix: string
+  nodeIdPrefix: string,
+  cancellationSink?: { token?: CancellationToken }
 ): Promise<BranchOutcome> {
   let currentNodeId: string | undefined = entry;
   let terminal: { status: string; result: Record<string, unknown> } | null = null;
@@ -152,7 +210,7 @@ async function walk(
     try {
       switch (node.type) {
         case 'step': {
-          currentNodeId = await runStep(recordingId, node, ctx, dispatcher);
+          currentNodeId = await runStep(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
         case 'set': {
@@ -186,7 +244,7 @@ async function walk(
           break;
         }
         case 'shell': {
-          currentNodeId = await runShell(recordingId, node, ctx, dispatcher);
+          currentNodeId = await runShell(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
       }
@@ -215,7 +273,8 @@ async function runStep(
   nodeId: string,
   node: StepNode,
   ctx: Context,
-  dispatcher: Dispatcher
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
 ): Promise<string | undefined> {
   const config = node.config ?? {};
   const inputs = resolveInputs(node.inputs, ctx);
@@ -223,7 +282,15 @@ async function runStep(
     ctx,
     dispatcher,
     inputs,
-    invoke: () => dispatcher.dispatchStep({ config, ctx, inputs, nodeId, step: node.step }),
+    invoke: () =>
+      dispatcher.dispatchStep({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: node.step,
+      }),
     next: node.next,
     nodeId,
     onError: node.onError,
@@ -235,7 +302,8 @@ async function runShell(
   nodeId: string,
   node: ShellNode,
   ctx: Context,
-  dispatcher: Dispatcher
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
 ): Promise<string | undefined> {
   if (!dispatcher.dispatchShell) {
     throw new Error(
@@ -248,7 +316,14 @@ async function runShell(
     ctx,
     dispatcher,
     inputs,
-    invoke: () => dispatchShell({ ctx, inputs, node, nodeId }),
+    invoke: () =>
+      dispatchShell({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        ctx,
+        inputs,
+        node,
+        nodeId,
+      }),
     next: node.next,
     nodeId,
     onError: node.onError,
@@ -330,6 +405,18 @@ async function runRetryable(args: {
       });
       return next;
     } catch (err) {
+      // Cancellation bypasses onError + onFail entirely — block-mode fan-out
+      // raised it on this branch and the worker pool already recorded the
+      // originating failure.
+      if (isBranchCancelled(err)) {
+        await safeRecord(dispatcher, {
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+          nodeId,
+          status: 'FAILED',
+        });
+        throw err;
+      }
       lastError = err;
       lastFailedAsGate = false;
       // Legacy onError: 'continue' wins — record SKIPPED and proceed.
@@ -479,9 +566,27 @@ async function runFanOut(
   // of completion order. Holes (un-scheduled branches when block fires) are
   // filtered out at the end.
   const slots: Array<Entry | undefined> = new Array(raw.length);
+  // Phase-8: each in-flight branch gets a cancellation sink. Dispatchers that
+  // don't support cancellation leave `token` undefined, in which case
+  // `cancelAllExcept` is a no-op (pre-phase-8 drain behavior).
+  const branchSinks = new Map<number, { token?: CancellationToken }>();
   let firstError: unknown = null;
   let nextIndex = 0;
   let stop = false;
+
+  function cancelAllExcept(exceptIndex: number): void {
+    for (const [idx, sink] of branchSinks.entries()) {
+      if (idx === exceptIndex) continue;
+      if (sink.token) {
+        try {
+          sink.token.cancel();
+        } catch {
+          // Cancellation is best-effort; a cancel-throw shouldn't fail
+          // the whole fan-out beyond the original block trigger.
+        }
+      }
+    }
+  }
 
   async function worker(): Promise<void> {
     while (!stop) {
@@ -490,9 +595,19 @@ async function runFanOut(
       const item = raw[i];
       const branchPrefix = `${parentPrefix}${nodeId}[${i}]/`;
       const childCtx = makeChildContext(ctx, node.itemKey, item, i);
+      const sink: { token?: CancellationToken } = {};
+      branchSinks.set(i, sink);
 
       try {
-        const outcome = await walk(spec, node.subgraph, childCtx, dispatcher, cursor, branchPrefix);
+        const outcome = await walk(
+          spec,
+          node.subgraph,
+          childCtx,
+          dispatcher,
+          cursor,
+          branchPrefix,
+          sink
+        );
         const exports = collectExports(node.exports, childCtx);
         slots[i] = {
           ...(exports ? { exports } : {}),
@@ -505,13 +620,21 @@ async function runFanOut(
           firstError ??= new Error(
             `fanOut '${recordingId}' branch ${i} terminated with status ${outcome.status}`
           );
-          if (node.onBranchFail === 'block') stop = true;
+          if (node.onBranchFail === 'block') {
+            stop = true;
+            cancelAllExcept(i);
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         slots[i] = { error: msg, result: {}, status: 'FAILED' };
         firstError ??= err;
-        if (node.onBranchFail === 'block') stop = true;
+        if (node.onBranchFail === 'block') {
+          stop = true;
+          cancelAllExcept(i);
+        }
+      } finally {
+        branchSinks.delete(i);
       }
     }
   }

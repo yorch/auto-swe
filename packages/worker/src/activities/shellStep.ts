@@ -26,11 +26,12 @@ import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
-import { currentWorkflowRunId } from '../lib/activityContext.js';
+import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { requireEnv } from '../lib/errors.js';
 import { EXEC_OPTS } from '../lib/execUtils.js';
+import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
 
@@ -308,6 +309,27 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     const passSummary = pushError
       ? `shell step ran (exit 0) but git push failed — changes NOT persisted: ${pushError}`
       : `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`;
+
+    // Phase-8 memory hook: a shell step that actually changed files + pushed
+    // is worth remembering — usually a codemod or auto-fix the team will want
+    // future runs to know about. Fire-and-forget; never fails the step.
+    if (passed && !pushError && finalize.filesChanged.length > 0) {
+      // 5-second cap so a slow embedding provider can't extend the shell-step
+      // activity past its timeout after the real work has already succeeded.
+      await recordLessonBackground({
+        lessonSummary: `Shell step modified ${finalize.filesChanged.length} file(s) on branch ${branch}: ${input.command.slice(0, 200)}`,
+        metadata: {
+          branch,
+          ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
+          filesChanged: finalize.filesChanged.slice(0, 50),
+          image: input.image,
+        },
+        rationale: `Shell step succeeded (exit 0) and committed working-tree changes.`,
+        repoId: input.request.repoId,
+        temporalWorkflowId: currentWorkflowId(),
+      });
+    }
+
     return {
       artifactId: artifact?.id,
       exitCode: result.exitCode,

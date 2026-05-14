@@ -45,6 +45,13 @@ export interface GateInput {
   command?: string;
   /** Max wall-clock for the gate run in milliseconds (default 10 min). */
   timeoutMs?: number;
+  /**
+   * Phase-8: optional branch override. Default is `<BRANCH_PREFIX>/<ticketId>`.
+   * Per-branch fan-out specs bind this to the subtask branch so each gate
+   * runs against the implementer's per-branch tree, not the parent feature
+   * branch.
+   */
+  branch?: string;
 }
 
 export interface GateResult {
@@ -123,7 +130,8 @@ export async function resolveCommand(
  */
 function provisionGateWorkspace(
   request: RepoWorkRequest,
-  gate: GateName
+  gate: GateName,
+  branchOverride?: string
 ): Promise<{
   workspace: Workspace;
   branch: string;
@@ -132,7 +140,7 @@ function provisionGateWorkspace(
     const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
     const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
     const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-    const branch = `${branchPrefix}/${request.externalTicketId}`;
+    const branch = branchOverride ?? `${branchPrefix}/${request.externalTicketId}`;
     const githubToken = requireEnv('GITHUB_TOKEN');
 
     const workspace = createWorkspace(
@@ -174,7 +182,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
     };
   }
 
-  const { workspace } = await provisionGateWorkspace(input.request, gate);
+  const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);
   try {
     heartbeat(`gate ${gate}: running command`);
     const result = workspace.execCapture(command, { timeoutMs: input.timeoutMs });
