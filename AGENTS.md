@@ -17,7 +17,6 @@ For deeper context on architecture and design rationale, refer to:
 | Document                          | Covers                                               |
 | --------------------------------- | ---------------------------------------------------- |
 | `docs/mvp-architecture.md`        | Core architecture, component design, data flow       |
-| `docs/mvp-implementation.md`      | Build guide with project structure and build order   |
 | `docs/gateway-and-auth.md`        | JWT auth, RBAC, Team API, Slack OAuth, full API spec |
 | `docs/data-and-infra.md`          | Embedding pipeline, executor images, security review |
 | `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |

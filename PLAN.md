@@ -183,20 +183,12 @@ The architecture strictly enforces the separation of concerns by bifurcating the
 | Implementer Agent     | `claude-opus-4-6`    | 200K (1M beta) | Surgical Coding & TDD: 80.8% SWE-Bench, 128K output token limit (writes substantial patches + full test suites in one generation). Best-in-class MCP JSON schema adherence and tool call accuracy. Self-corrects during multi-turn TDD loops.                                               | `gpt-5`                     |
 | Security Auditor      | `claude-opus-4-6`    | 200K           | Adversarial Simulation: Autonomously discovered 500+ validated high-severity vulnerabilities across major OSS libraries with zero hallucinated CVEs. MRCR v2 score of 76% for multi-file diff analysis. Lowest hallucination rate on code review tasks.                                     | `gpt-5`                     |
 | Domain Logic Reviewer | `claude-opus-4-6`    | 200K           | Deep QA & Edge Cases: MRCR v2 leader for nuanced multi-file reasoning. Adaptive thinking mode enables extended deliberation on ambiguous business logic edge cases. Acts as QA lead.                                                                                                        | `gemini-2.5-pro`            |
-| Performance Reviewer  | `gpt-5.2` ¹          | 400K           | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs.                                                        | `claude-opus-4-6`           |
-| Interaction Gateway   | `gemini-2.5-flash` ² | 1M tokens      | Low Latency Classification: 0.32s time-to-first-token, ~250 tokens/sec, $0.30/M input. 1M context window handles full CI/CD log dumps without truncation. Includes thinking capabilities for ambiguous intent classification.                                                               | `gpt-5-mini`                |
+| Performance Reviewer  | `gpt-5.2` (placeholder) | 400K        | Algorithmic Specialization: 100% on AIME 2025 — strongest mathematical/algorithmic reasoning benchmark. Deep AST parsing, Big-O analysis, and loop bound correctness. 400K context comfortably holds full file ASTs alongside diffs. **Note: actual model is config-driven via `REVIEWER_MODEL`.** | `claude-opus-4-6` |
+| Interaction Gateway   | `gemini-2.5-flash` (not built) | 1M tokens | Low Latency Classification: planned but never implemented — the gateway has no classification layer. | `gpt-5-mini` |
 
-> **¹ `gpt-5.2` is a placeholder** — This model ID has not been verified against the OpenAI API. When implementing the Performance Reviewer (Phase 2), check the latest available OpenAI model and substitute accordingly. The fallback (`claude-opus-4-6`) is known-good.
->
-> **² Gateway Classifier is Phase 3+** — The `gemini-2.5-flash` classifier is not part of the MVP. The MVP gateway has no classification layer.
+### 4.2 Cost Management
 
-### 4.2 Cost Management & Rate-Limit Strategy
-
-Running multiple LLM providers per workflow requires explicit cost controls and rate-limit handling.
-
-#### Per-Workflow Token Budget
-
-Every workflow is assigned a token budget at creation time. The budget is tracked in the `ActiveWorkflow` metadata and decremented after each LLM call.
+Every workflow is assigned a token budget at creation time (tracked in `ActiveWorkflow.costUsdAccrued`). When the budget is exhausted the activity fails with `BUDGET_EXCEEDED` and the workflow transitions to `FAILED`.
 
 | Budget Tier | Max Input Tokens | Max Output Tokens | Typical Use Case                               |
 | ----------- | ---------------- | ----------------- | ---------------------------------------------- |
@@ -204,60 +196,7 @@ Every workflow is assigned a token budget at creation time. The budget is tracke
 | LARGE       | 8M               | 2M                | Multi-file refactor or cross-repo epic child   |
 | EPIC        | 20M              | 5M                | Parent epic orchestrator (sum of all children) |
 
-**Enforcement:** Each activity that makes an LLM call reads the remaining budget from the workflow metadata before calling the provider API. If the estimated call would exceed the remaining budget, the activity:
-
-1. Logs a warning with the current spend breakdown
-2. Attempts the call with a reduced `max_tokens` output cap
-3. If the budget is fully exhausted, fails the activity with `BUDGET_EXCEEDED` error → workflow transitions to `FAILED` with Slack notification
-
-#### Cost Estimation Per Workflow
-
-Based on current provider pricing (February 2026):
-
-| Agent                            | Model                    | Avg Input/Call | Avg Output/Call | Calls/Workflow | Est. Cost/Workflow |
-| -------------------------------- | ------------------------ | -------------- | --------------- | -------------- | ------------------ |
-| Gateway Classifier               | `gemini-2.5-flash`       | 5K tokens      | 500 tokens      | 1              | $0.002             |
-| Context Validator                | `gemini-2.5-pro`         | 200K tokens    | 20K tokens      | 1              | $0.45              |
-| Planner                          | `claude-opus-4-6`        | 50K tokens     | 10K tokens      | 1              | $0.50              |
-| Implementer (per TDD iter.)      | `claude-opus-4-6`        | 80K tokens     | 30K tokens      | 3 avg          | $2.65              |
-| Security Auditor                 | `claude-opus-4-6`        | 40K tokens     | 5K tokens       | 1              | $0.33              |
-| Domain Reviewer                  | `claude-opus-4-6`        | 40K tokens     | 5K tokens       | 1              | $0.33              |
-| Performance Reviewer             | `gpt-5.2`                | 40K tokens     | 5K tokens       | 1              | $0.14              |
-| Memory Summarizer                | `claude-opus-4-6`        | 20K tokens     | 3K tokens       | 1              | $0.18              |
-| Embedding Generation             | `text-embedding-3-large` | 2K tokens      | —               | 2              | $0.001             |
-| **Total (STANDARD, happy path)** |                          |                |                 | **~11 calls**  | **~$4.60**         |
-
-**With CI retries (worst case: 3 CI failures + 3 review rejections):** ~$15-20 per workflow.
-
-#### Rate-Limit Handling
-
-Each provider has different rate limits. The system handles them at the Mastra tool-call layer:
-
-| Provider                                      | Rate Limit Strategy                                                                                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Anthropic (`claude-opus-4-6`)                 | Respect `retry-after` header. Exponential backoff starting at 30s. If 429 persists for >5m, fail activity (Temporal will retry per policy). |
-| OpenAI (`gpt-5.2`, `text-embedding-3-large`)  | Respect `x-ratelimit-reset-tokens` header. Queue requests with token bucket (10K TPM reserve).                                              |
-| Google (`gemini-2.5-pro`, `gemini-2.5-flash`) | Respect `Retry-After` header. Fall back to Vertex AI endpoint if AI Studio quota is exhausted.                                              |
-
-**Provider failover:** If the primary model returns 5 consecutive 429s or 500s within a 10-minute window, the activity automatically switches to the fallback model specified in Section 4.1. This is logged as an OTel event and a Slack audit message.
-
-#### Cost Observability
-
-All LLM calls emit OTel spans with the following attributes:
-
-```typescript
-span.setAttributes({
-  'llm.model': 'claude-opus-4-6',
-  'llm.provider': 'anthropic',
-  'llm.input_tokens': usage.input_tokens,
-  'llm.output_tokens': usage.output_tokens,
-  'llm.cost_usd': calculateCost(model, usage),
-  'workflow.id': workflowId,
-  'workflow.budget_remaining_tokens': remainingBudget,
-});
-```
-
-The Web Dashboard (Phase 4) aggregates these spans to display per-workflow and per-agent cost breakdowns.
+Per-call pricing is looked up from `MODEL_PRICES` in `packages/worker/src/lib/costTracking.ts` (overrideable via `MODEL_PRICE_<PROVIDER>_<MODEL>` env vars). All LLM calls emit OTel spans with cost attributes (`llm.cost_usd`, `workflow.budget_remaining_tokens`) that feed the `/analytics` dashboard.
 
 ## 5. End-to-End Workflow Lifecycle
 

@@ -100,15 +100,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 - `signalSlots.test.ts` — falsy payloads, undefined-to-null, slot isolation, clear-then-wait-then-take contract, at-least-once tolerance
 - `codemod.test.ts` — registration guards, single + chained migrations, invalid output rejection
 
-### Known follow-ups before/around Phase 2
+### Coverage gaps resolved in Phase 2
 
-Coverage gaps that didn't block phase 1 but should land soon:
-- `stepRegistry.ts` — at minimum `assertBuiltinStepsRegistered` (the worker-startup invariant)
-- `artifactStore.ts` — Postgres backend round-trip with mocked Prisma; S3 backend's lazy-load error when SDK absent
-- `activities/templates.ts` — `createWorkflowRun` idempotency on retry (the upsert-by-workflowId), error paths
-- Gateway `resolveDefaultTemplate` — team-default present / absent / both absent
-
-Smoke test (manual, one-time): start a real Temporal worker + gateway + Postgres, fire one work request, verify it walks the seeded `default-engineering@v1` template end-to-end and that `workflow_runs` + `workflow_steps` populate.
+All four items shipped in Phase 2: `assertBuiltinStepsRegistered` invariant test, `artifactStore` Postgres/S3 backend tests, `createWorkflowRun` idempotency tests, and `resolveDefaultTemplate` gateway tests.
 
 ---
 
@@ -611,18 +605,7 @@ All folded into the squashed init migration per the repo convention.
 
 ---
 
-## Resume Checklist
-
-When picking up a new phase:
-
-1. **Read the open questions for that phase** above. Confirm answers with the requester before writing code.
-2. **Branch from main.** All work goes through PRs.
-3. **Update this doc as you go.** Move "Open questions" answers into the "Decisions" table when locked. Move phase status from "Not started" to "In progress" to "Done", with the PR number.
-4. **Schema changes.** Until production exists, prefer squashing migrations into `20260510000000_init` rather than chaining new ones (per the convention this repo follows for non-pgvector DDL).
-5. **Tests.** Match phase 1's coverage style: pure logic gets dedicated unit tests; Temporal-backed wiring gets a thin abstraction (like `SignalSlots`) so it's testable without `TestWorkflowEnvironment`.
-6. **Lint + typecheck.** `yarn lint:fix && yarn typecheck && yarn test` — all must be clean.
-
-### Current entry points (as of this PR)
+## Entry Points
 
 - Interpreter: `packages/shared/src/workflow/interpreter.ts` → `runSpec(spec, ctx, dispatcher)`
 - Workflow runtime: `packages/worker/src/workflows/runnable.ts` → `RunnableWorkflow`
