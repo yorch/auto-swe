@@ -1,4 +1,4 @@
-import type { RepositorySummary, TeamSummary } from '@auto-swe/shared/types/api';
+import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 
@@ -127,7 +127,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   );
   if (!repo) {
     process.stderr.write(
-      `Repository "${flags.repo}" not found. Use "auto-swe workflows list" to see configured repos.\n`
+      `Repository "${flags.repo}" not found. Check the /repositories page in the web UI for configured repos.\n`
     );
     return 1;
   }
@@ -147,12 +147,6 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     }
     templateId = tpl.id;
   }
-
-  // Resolve the team from the repo so the gateway can pick the right default template
-  const teams = await apiRequest<TeamSummary[]>(env, 'GET', '/api/v1/teams');
-  // The gateway resolves the team from the repo; we just need the repo ID.
-  // Extra team resolution is only needed if the user passes --team (not yet).
-  void teams; // reserved for future --team flag
 
   const body: Record<string, unknown> = {
     budgetTier: budget,

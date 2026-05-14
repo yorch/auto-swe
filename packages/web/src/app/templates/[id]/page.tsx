@@ -165,6 +165,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const handleDeleteNode = () => {
     if (!parsed?.ok || !selectedNodeId) return;
     const deletingId = selectedNodeId;
+    if (deletingId === parsed.spec.entry) return;
     const { [deletingId]: _removed, ...restNodes } = parsed.spec.nodes;
     const cleanedNodes = Object.fromEntries(
       Object.entries(restNodes).map(([nid, node]) => {
@@ -405,8 +406,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 <div className="flex items-center justify-between">
                   <CardTitle>Node · {selectedNodeId}</CardTitle>
                   <button
-                    className="text-xs text-red-600 hover:underline"
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={selectedNodeId === spec?.entry}
                     onClick={handleDeleteNode}
+                    title={
+                      selectedNodeId === spec?.entry ? 'Cannot delete the entry node' : undefined
+                    }
                     type="button"
                   >
                     Delete node
