@@ -241,7 +241,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + temporal + otel-lgtm)
-cp .env.example .env    # Fill in ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
+cp .env.example .env    # Fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
 yarn docker:infra:up
 
 # 3. Database setup

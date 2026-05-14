@@ -177,11 +177,11 @@ Per-gate `onFail` mode lives on the step node:
 - `packages/shared/src/workflow/defaultEngineeringSpec.ts` — leave at v1; the seed spec doesn't need gates yet
 - New `examples/qualityGates.spec.ts` — sample spec consumers can copy that injects gates between implement and PR
 
-### Open questions
+### Resolved decisions
 
-1. **Should `runTests` reuse the implementer's TDD test runs**, or always run fresh? (Probably fresh — TDD might use a faster subset.)
-2. **Gate-failure feedback to the implementer.** When a gate fails with `onFail: block`, should we automatically run `executeReviewFixImplementation` with the gate output? Adding a `runFixForFailedGate` step keeps the loop explicit in the spec.
-3. **Where do gate-runtime configs live?** Repo-level (`Repository.gateCommands JSONB`)? Per-template (in the spec)? Phase-2 default: per-template config fields; phase-5 may add repo-level overrides.
+1. `runTests` always runs the full suite fresh — see decision #13. TDD uses a faster subset internally.
+2. Gate-failure feedback uses an explicit `executeGateFixImplementation` step so the fix loop is visible in the DAG — see decision #11.
+3. Gate-runtime configs follow the precedence: step config → `Repository.gateCommands` → built-in defaults — see decision #12.
 
 ---
 
@@ -236,11 +236,11 @@ planDecomposition
   └─ review → terminate
 ```
 
-### Known follow-ups (phase 3.5)
+### Follow-ups resolved in Phase 3.5
 
-- **Parallel execution.** `runFanOut` currently runs branches sequentially. The follow-up swaps to `Promise.all` with a concurrency limiter; Temporal-history budgeting may require chunked artifact persistence inside subgraphs.
-- **Conflict resolution agent.** A `resolveMergeConflict` step that runs the implementer against the conflict markers before reporting failure.
-- **Per-branch quality gates.** The example spec only runs the implementer per subtask; teams will want lint/typecheck per branch before merge.
+- **Parallel execution** — shipped in Phase 3.5: concurrency-bounded `Promise.all` worker pool in `runFanOut`.
+- **Conflict resolution agent** — shipped in Phase 3.5: `resolveMergeConflict` activity backed by the implementer agent.
+- **Per-branch quality gates** — example spec (`examples/perBranchGates.spec.ts`) shipped in Phase 8.
 
 ### Files touched (recap)
 
@@ -626,7 +626,7 @@ When picking up a new phase:
 
 - Interpreter: `packages/shared/src/workflow/interpreter.ts` → `runSpec(spec, ctx, dispatcher)`
 - Workflow runtime: `packages/worker/src/workflows/runnable.ts` → `RunnableWorkflow`
-- Step catalog: `packages/worker/src/lib/stepRegistry.ts`
+- Step catalog: `packages/shared/src/workflow/stepRegistry.ts` (moved from `packages/worker` in Phase 4)
 - Spec schema: `packages/shared/src/workflow/spec.ts`
 - Default seeded spec: `packages/shared/src/workflow/defaultEngineeringSpec.ts`
 - Artifact store: `packages/worker/src/lib/artifactStore.ts`
