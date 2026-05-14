@@ -17,7 +17,6 @@ For deeper context on architecture and design rationale, refer to:
 | Document                          | Covers                                               |
 | --------------------------------- | ---------------------------------------------------- |
 | `docs/mvp-architecture.md`        | Core architecture, component design, data flow       |
-| `docs/mvp-implementation.md`      | Build guide with project structure and build order   |
 | `docs/gateway-and-auth.md`        | JWT auth, RBAC, Team API, Slack OAuth, full API spec |
 | `docs/data-and-infra.md`          | Embedding pipeline, executor images, security review |
 | `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |
@@ -241,7 +240,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + temporal + otel-lgtm)
-cp .env.example .env    # Fill in ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
+cp .env.example .env    # Fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
 yarn docker:infra:up
 
 # 3. Database setup

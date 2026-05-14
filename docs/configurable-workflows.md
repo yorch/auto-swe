@@ -100,15 +100,9 @@ The runtime that drives every work request is a **JSON-defined, versioned, team-
 - `signalSlots.test.ts` — falsy payloads, undefined-to-null, slot isolation, clear-then-wait-then-take contract, at-least-once tolerance
 - `codemod.test.ts` — registration guards, single + chained migrations, invalid output rejection
 
-### Known follow-ups before/around Phase 2
+### Coverage gaps resolved in Phase 2
 
-Coverage gaps that didn't block phase 1 but should land soon:
-- `stepRegistry.ts` — at minimum `assertBuiltinStepsRegistered` (the worker-startup invariant)
-- `artifactStore.ts` — Postgres backend round-trip with mocked Prisma; S3 backend's lazy-load error when SDK absent
-- `activities/templates.ts` — `createWorkflowRun` idempotency on retry (the upsert-by-workflowId), error paths
-- Gateway `resolveDefaultTemplate` — team-default present / absent / both absent
-
-Smoke test (manual, one-time): start a real Temporal worker + gateway + Postgres, fire one work request, verify it walks the seeded `default-engineering@v1` template end-to-end and that `workflow_runs` + `workflow_steps` populate.
+All four items shipped in Phase 2: `assertBuiltinStepsRegistered` invariant test, `artifactStore` Postgres/S3 backend tests, `createWorkflowRun` idempotency tests, and `resolveDefaultTemplate` gateway tests.
 
 ---
 
@@ -177,11 +171,11 @@ Per-gate `onFail` mode lives on the step node:
 - `packages/shared/src/workflow/defaultEngineeringSpec.ts` — leave at v1; the seed spec doesn't need gates yet
 - New `examples/qualityGates.spec.ts` — sample spec consumers can copy that injects gates between implement and PR
 
-### Open questions
+### Resolved decisions
 
-1. **Should `runTests` reuse the implementer's TDD test runs**, or always run fresh? (Probably fresh — TDD might use a faster subset.)
-2. **Gate-failure feedback to the implementer.** When a gate fails with `onFail: block`, should we automatically run `executeReviewFixImplementation` with the gate output? Adding a `runFixForFailedGate` step keeps the loop explicit in the spec.
-3. **Where do gate-runtime configs live?** Repo-level (`Repository.gateCommands JSONB`)? Per-template (in the spec)? Phase-2 default: per-template config fields; phase-5 may add repo-level overrides.
+1. `runTests` always runs the full suite fresh — see decision #13. TDD uses a faster subset internally.
+2. Gate-failure feedback uses an explicit `executeGateFixImplementation` step so the fix loop is visible in the DAG — see decision #11.
+3. Gate-runtime configs follow the precedence: step config → `Repository.gateCommands` → built-in defaults — see decision #12.
 
 ---
 
@@ -236,11 +230,11 @@ planDecomposition
   └─ review → terminate
 ```
 
-### Known follow-ups (phase 3.5)
+### Follow-ups resolved in Phase 3.5
 
-- **Parallel execution.** `runFanOut` currently runs branches sequentially. The follow-up swaps to `Promise.all` with a concurrency limiter; Temporal-history budgeting may require chunked artifact persistence inside subgraphs.
-- **Conflict resolution agent.** A `resolveMergeConflict` step that runs the implementer against the conflict markers before reporting failure.
-- **Per-branch quality gates.** The example spec only runs the implementer per subtask; teams will want lint/typecheck per branch before merge.
+- **Parallel execution** — shipped in Phase 3.5: concurrency-bounded `Promise.all` worker pool in `runFanOut`.
+- **Conflict resolution agent** — shipped in Phase 3.5: `resolveMergeConflict` activity backed by the implementer agent.
+- **Per-branch quality gates** — example spec (`examples/perBranchGates.spec.ts`) shipped in Phase 8.
 
 ### Files touched (recap)
 
@@ -611,22 +605,11 @@ All folded into the squashed init migration per the repo convention.
 
 ---
 
-## Resume Checklist
-
-When picking up a new phase:
-
-1. **Read the open questions for that phase** above. Confirm answers with the requester before writing code.
-2. **Branch from main.** All work goes through PRs.
-3. **Update this doc as you go.** Move "Open questions" answers into the "Decisions" table when locked. Move phase status from "Not started" to "In progress" to "Done", with the PR number.
-4. **Schema changes.** Until production exists, prefer squashing migrations into `20260510000000_init` rather than chaining new ones (per the convention this repo follows for non-pgvector DDL).
-5. **Tests.** Match phase 1's coverage style: pure logic gets dedicated unit tests; Temporal-backed wiring gets a thin abstraction (like `SignalSlots`) so it's testable without `TestWorkflowEnvironment`.
-6. **Lint + typecheck.** `yarn lint:fix && yarn typecheck && yarn test` — all must be clean.
-
-### Current entry points (as of this PR)
+## Entry Points
 
 - Interpreter: `packages/shared/src/workflow/interpreter.ts` → `runSpec(spec, ctx, dispatcher)`
 - Workflow runtime: `packages/worker/src/workflows/runnable.ts` → `RunnableWorkflow`
-- Step catalog: `packages/worker/src/lib/stepRegistry.ts`
+- Step catalog: `packages/shared/src/workflow/stepRegistry.ts` (moved from `packages/worker` in Phase 4)
 - Spec schema: `packages/shared/src/workflow/spec.ts`
 - Default seeded spec: `packages/shared/src/workflow/defaultEngineeringSpec.ts`
 - Artifact store: `packages/worker/src/lib/artifactStore.ts`
