@@ -47,6 +47,7 @@ describe('POST /api/v1/work-requests', () => {
       },
     } as unknown as never);
     app.decorate('temporal', {
+      cancelWorkflow: async () => {},
       signalWorkflow: async () => {},
       startEpicWorkflow: async () => {},
       startRunnableWorkflow: async () => {},

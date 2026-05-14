@@ -43,6 +43,7 @@ function buildApp(state: FakeState): FastifyInstance {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: 'u1' }),
   } as unknown as never);
   app.decorate('temporal', {
+    cancelWorkflow: async () => undefined,
     signalWorkflow: async () => undefined,
     startRunnableWorkflow: async () => undefined,
   } as unknown as never);

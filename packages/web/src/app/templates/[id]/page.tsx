@@ -1,6 +1,6 @@
 'use client';
 
-import type { ShellNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import type { Node, ShellNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
@@ -21,6 +21,35 @@ import { formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
+}
+
+const EDGE_FIELDS = ['next', 'onTrue', 'onFalse', 'onReceive', 'onTimeout', 'subgraph', 'join'];
+
+type EdgeFieldDef = { field: string; label: string; required: boolean };
+function getEdgeFields(node: Node): EdgeFieldDef[] {
+  switch (node.type) {
+    case 'step':
+    case 'set':
+    case 'shell':
+      return [{ field: 'next', label: 'Next', required: false }];
+    case 'cond':
+      return [
+        { field: 'onTrue', label: 'On true', required: true },
+        { field: 'onFalse', label: 'On false', required: true },
+      ];
+    case 'signal':
+      return [
+        { field: 'onReceive', label: 'On receive', required: true },
+        { field: 'onTimeout', label: 'On timeout', required: true },
+      ];
+    case 'fanOut':
+      return [
+        { field: 'subgraph', label: 'Subgraph', required: true },
+        { field: 'join', label: 'Join', required: true },
+      ];
+    default:
+      return [];
+  }
 }
 
 function tryParseSpec(
@@ -112,11 +141,66 @@ export default function TemplateDetailPage({ params }: PageProps) {
     await promoteVersion.mutateAsync(effectiveVersion);
   };
 
+  const commitSpec = (nextSpec: WorkflowSpec) => {
+    setEditorJson(JSON.stringify(nextSpec, null, 2));
+    setEditorMode('edit');
+  };
+
+  const handleAddNode = (stepName: string) => {
+    if (!parsed?.ok) return;
+    const existingIds = Object.keys(parsed.spec.nodes);
+    let newId = stepName.replace(/[^a-zA-Z0-9]/g, '_');
+    if (existingIds.includes(newId)) {
+      let i = 2;
+      while (existingIds.includes(`${newId}_${i}`)) i++;
+      newId = `${newId}_${i}`;
+    }
+    commitSpec({
+      ...parsed.spec,
+      nodes: { ...parsed.spec.nodes, [newId]: { step: stepName, type: 'step' as const } },
+    });
+    setSelectedNodeId(newId);
+  };
+
+  const handleDeleteNode = () => {
+    if (!parsed?.ok || !selectedNodeId) return;
+    const deletingId = selectedNodeId;
+    if (deletingId === parsed.spec.entry) return;
+    const { [deletingId]: _removed, ...restNodes } = parsed.spec.nodes;
+    const cleanedNodes = Object.fromEntries(
+      Object.entries(restNodes).map(([nid, node]) => {
+        const patched = { ...(node as unknown as Record<string, unknown>) };
+        for (const f of EDGE_FIELDS) if (patched[f] === deletingId) delete patched[f];
+        return [nid, patched];
+      })
+    ) as WorkflowSpec['nodes'];
+    commitSpec({ ...parsed.spec, nodes: cleanedNodes });
+    setSelectedNodeId(null);
+  };
+
+  const handleEdgeChange = (field: string, targetId: string | null) => {
+    if (!parsed?.ok || !selectedNodeId) return;
+    const node = parsed.spec.nodes[selectedNodeId];
+    if (!node) return;
+    const patched = { ...(node as unknown as Record<string, unknown>) };
+    if (targetId) patched[field] = targetId;
+    else delete patched[field];
+    commitSpec({
+      ...parsed.spec,
+      nodes: {
+        ...parsed.spec.nodes,
+        [selectedNodeId]: patched as WorkflowSpec['nodes'][string],
+      },
+    });
+  };
+
   const selectedNode = selectedNodeId && spec?.nodes[selectedNodeId];
   const selectedStepMeta =
     selectedNode && selectedNode.type === 'step'
       ? stepRegistry?.find((s) => s.name === selectedNode.step)
       : null;
+  const selectedNodeEdgeFields = selectedNode ? getEdgeFields(selectedNode) : [];
+  const otherNodeIds = spec ? Object.keys(spec.nodes).filter((nid) => nid !== selectedNodeId) : [];
 
   // Per-field config edits mutate the in-memory spec and re-serialize into
   // editorJson. Switches to edit mode so the existing Save/Cancel buttons
@@ -319,7 +403,20 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {selectedNode && (
             <Card>
               <CardHeader>
-                <CardTitle>Node · {selectedNodeId}</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Node · {selectedNodeId}</CardTitle>
+                  <button
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={selectedNodeId === spec?.entry}
+                    onClick={handleDeleteNode}
+                    title={
+                      selectedNodeId === spec?.entry ? 'Cannot delete the entry node' : undefined
+                    }
+                    type="button"
+                  >
+                    Delete node
+                  </button>
+                </div>
               </CardHeader>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
@@ -354,6 +451,39 @@ export default function TemplateDetailPage({ params }: PageProps) {
                     {JSON.stringify(selectedNode, null, 2)}
                   </pre>
                 </details>
+                {selectedNodeEdgeFields.length > 0 && (
+                  <div className="pt-2 border-t border-[var(--border)] space-y-2">
+                    <div className="text-xs font-medium text-[var(--muted-foreground)]">Edges</div>
+                    {selectedNodeEdgeFields.map(({ field, label, required }) => (
+                      <div className="flex items-center justify-between gap-2" key={field}>
+                        <label
+                          className="text-xs text-[var(--muted-foreground)] shrink-0"
+                          htmlFor={`edge-${field}`}
+                        >
+                          {label}
+                          {required ? ' *' : ''}
+                        </label>
+                        <select
+                          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] flex-1 max-w-[180px]"
+                          id={`edge-${field}`}
+                          onChange={(e) => handleEdgeChange(field, e.target.value || null)}
+                          value={
+                            ((selectedNode as unknown as Record<string, unknown>)[field] as
+                              | string
+                              | undefined) ?? ''
+                          }
+                        >
+                          <option value="">{required ? '— pick node —' : '— none —'}</option>
+                          {otherNodeIds.map((nid) => (
+                            <option key={nid} value={nid}>
+                              {nid}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </dl>
             </Card>
           )}
@@ -408,11 +538,25 @@ export default function TemplateDetailPage({ params }: PageProps) {
             </p>
             <ul className="space-y-1 max-h-96 overflow-y-auto text-xs">
               {(stepRegistry ?? []).map((s) => (
-                <li className="border-b border-[var(--border)] pb-1.5" key={s.name}>
-                  <div className="font-mono">{s.name}</div>
-                  <div className="text-[var(--muted-foreground)]">
-                    <span className="uppercase">{s.category}</span> · {s.label}
+                <li
+                  className="border-b border-[var(--border)] pb-1.5 flex items-start justify-between gap-1"
+                  key={s.name}
+                >
+                  <div>
+                    <div className="font-mono">{s.name}</div>
+                    <div className="text-[var(--muted-foreground)]">
+                      <span className="uppercase">{s.category}</span> · {s.label}
+                    </div>
                   </div>
+                  <button
+                    className="shrink-0 text-lg leading-none text-[var(--primary)] hover:opacity-70 disabled:opacity-30"
+                    disabled={!parsed?.ok}
+                    onClick={() => handleAddNode(s.name)}
+                    title={`Add ${s.name} node`}
+                    type="button"
+                  >
+                    +
+                  </button>
                 </li>
               ))}
             </ul>

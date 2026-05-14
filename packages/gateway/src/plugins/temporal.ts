@@ -12,6 +12,7 @@ declare module 'fastify' {
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
+      cancelWorkflow: (workflowId: string) => Promise<void>;
     };
   }
 }
@@ -23,6 +24,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   const client = new Client({ connection });
 
   fastify.decorate('temporal', {
+    async cancelWorkflow(workflowId: string): Promise<void> {
+      const handle = client.workflow.getHandle(workflowId);
+      await handle.cancel();
+    },
+
     async signalWorkflow(
       workflowId: string,
       signalName: string,

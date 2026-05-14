@@ -6,7 +6,7 @@ import { use, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
-import { useWorkflowRun } from '@/hooks/useWorkflows';
+import { useCancelWorkflowRun, useWorkflowRun } from '@/hooks/useWorkflows';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -16,6 +16,7 @@ interface PageProps {
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: run, isLoading } = useWorkflowRun(id);
+  const cancelRun = useCancelWorkflowRun(id);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const dagOverlay = useMemo(() => {
@@ -59,12 +60,28 @@ export default function RunDetailPage({ params }: PageProps) {
             v{run.templateVersion} · {formatRelativeTime(run.startedAt)}
           </span>
         </div>
-        <Link
-          className="text-sm text-[var(--muted-foreground)] hover:underline"
-          href={`/templates/${run.templateId}`}
-        >
-          View template →
-        </Link>
+        <div className="flex items-center gap-3">
+          {run.status === 'RUNNING' && (
+            <button
+              className="text-sm px-3 py-1.5 rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+              disabled={cancelRun.isPending}
+              onClick={() => {
+                if (window.confirm('Cancel this run? In-flight steps will be aborted.')) {
+                  cancelRun.mutate();
+                }
+              }}
+              type="button"
+            >
+              {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
+            </button>
+          )}
+          <Link
+            className="text-sm text-[var(--muted-foreground)] hover:underline"
+            href={`/templates/${run.templateId}`}
+          >
+            View template →
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
