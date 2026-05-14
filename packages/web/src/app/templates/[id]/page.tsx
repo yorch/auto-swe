@@ -23,6 +23,8 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+const EDGE_FIELDS = ['next', 'onTrue', 'onFalse', 'onReceive', 'onTimeout', 'subgraph', 'join'];
+
 type EdgeFieldDef = { field: string; label: string; required: boolean };
 function getEdgeFields(node: Node): EdgeFieldDef[] {
   switch (node.type) {
@@ -139,6 +141,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
     await promoteVersion.mutateAsync(effectiveVersion);
   };
 
+  const commitSpec = (nextSpec: WorkflowSpec) => {
+    setEditorJson(JSON.stringify(nextSpec, null, 2));
+    setEditorMode('edit');
+  };
+
   const handleAddNode = (stepName: string) => {
     if (!parsed?.ok) return;
     const existingIds = Object.keys(parsed.spec.nodes);
@@ -148,12 +155,10 @@ export default function TemplateDetailPage({ params }: PageProps) {
       while (existingIds.includes(`${newId}_${i}`)) i++;
       newId = `${newId}_${i}`;
     }
-    const nextSpec: WorkflowSpec = {
+    commitSpec({
       ...parsed.spec,
       nodes: { ...parsed.spec.nodes, [newId]: { step: stepName, type: 'step' as const } },
-    };
-    setEditorJson(JSON.stringify(nextSpec, null, 2));
-    setEditorMode('edit');
+    });
     setSelectedNodeId(newId);
   };
 
@@ -161,16 +166,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (!parsed?.ok || !selectedNodeId) return;
     const deletingId = selectedNodeId;
     const { [deletingId]: _removed, ...restNodes } = parsed.spec.nodes;
-    const edgeCols = ['next', 'onTrue', 'onFalse', 'onReceive', 'onTimeout', 'subgraph', 'join'];
     const cleanedNodes = Object.fromEntries(
       Object.entries(restNodes).map(([nid, node]) => {
         const patched = { ...(node as unknown as Record<string, unknown>) };
-        for (const f of edgeCols) if (patched[f] === deletingId) delete patched[f];
+        for (const f of EDGE_FIELDS) if (patched[f] === deletingId) delete patched[f];
         return [nid, patched];
       })
     ) as WorkflowSpec['nodes'];
-    setEditorJson(JSON.stringify({ ...parsed.spec, nodes: cleanedNodes }, null, 2));
-    setEditorMode('edit');
+    commitSpec({ ...parsed.spec, nodes: cleanedNodes });
     setSelectedNodeId(null);
   };
 
@@ -181,15 +184,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
     const patched = { ...(node as unknown as Record<string, unknown>) };
     if (targetId) patched[field] = targetId;
     else delete patched[field];
-    const nextSpec: WorkflowSpec = {
+    commitSpec({
       ...parsed.spec,
       nodes: {
         ...parsed.spec.nodes,
         [selectedNodeId]: patched as WorkflowSpec['nodes'][string],
       },
-    };
-    setEditorJson(JSON.stringify(nextSpec, null, 2));
-    setEditorMode('edit');
+    });
   };
 
   const selectedNode = selectedNodeId && spec?.nodes[selectedNodeId];

@@ -88,8 +88,9 @@ export default function GlobalAnalyticsPage() {
 
   const rows = useMemo(() => {
     if (!data) return [];
+    const filterLower = filter.toLowerCase();
     const filtered = filter
-      ? data.perTemplate.filter((r) => r.templateName.toLowerCase().includes(filter.toLowerCase()))
+      ? data.perTemplate.filter((r) => r.templateName.toLowerCase().includes(filterLower))
       : data.perTemplate;
     return [...filtered].sort((a, b) => {
       let av: number;

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { requireAuth } from '../plugins/auth.js';
 
 /**
  * Platform-admin routes.
@@ -22,7 +22,6 @@ const PruneQuery = z.object({
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // ── List all PATs across all users ──
   app.get('/access-tokens', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
     const rows = await fastify.prisma.personalAccessToken.findMany({
       orderBy: { createdAt: 'desc' },
@@ -40,7 +39,6 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: rows };
   });
 
-  // ── Revoke any PAT by ID ──
   app.delete(
     '/access-tokens/:id',
     {
@@ -48,7 +46,6 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { params: TokenIdParam },
     },
     async (request, reply) => {
-      requireUser(request);
       const existing = await fastify.prisma.personalAccessToken.findUnique({
         where: { id: request.params.id },
       });
@@ -68,9 +65,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Prune old shell-audit rows ──
-  // Intended to be called from a cron job (e.g. daily at midnight).
-  // Returns the number of deleted rows so the caller can log/alert on anomalies.
+  // Intended for cron use; returns count so callers can alert on anomalies.
   app.post(
     '/shell-audit/prune',
     {

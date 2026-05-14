@@ -28,6 +28,8 @@ export default function AdminAccessTokensPage() {
     }
   };
 
+  const now = new Date();
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -81,7 +83,7 @@ export default function AdminAccessTokensPage() {
                 {tokens.map((t) => {
                   const status = t.revokedAt
                     ? 'REVOKED'
-                    : t.expiresAt && new Date(t.expiresAt) < new Date()
+                    : t.expiresAt && new Date(t.expiresAt) < now
                       ? 'EXPIRED'
                       : 'ACTIVE';
                   return (
