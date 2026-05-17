@@ -1,22 +1,85 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuthStore } from '@/stores/authStore';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+
+interface ProviderFlags {
+  github: boolean;
+  google: boolean;
+  magicLink: boolean;
+}
+
+type Tab = 'magic' | 'password';
+
 export default function LoginPage() {
+  // useSearchParams() requires a Suspense boundary above it when the page
+  // is statically prerendered at build time. Wrapping the whole component
+  // keeps the page eligible for SSG while still letting us read the
+  // ?bridge=1 hint from the magic-link / social callback.
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const login = useAuthStore((s) => s.login);
+  const signInWithProvider = useAuthStore((s) => s.signInWithProvider);
+  const requestMagicLink = useAuthStore((s) => s.requestMagicLink);
+  const hydrate = useAuthStore((s) => s.hydrateFromBetterAuthSession);
+
+  const [tab, setTab] = useState<Tab>('magic');
+  const [providers, setProviders] = useState<ProviderFlags>({
+    github: false,
+    google: false,
+    magicLink: true,
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // After a better-auth social or magic-link sign-in lands back here with
+  // ?bridge=1, immediately exchange the session cookie for a JWT and route
+  // the user into the dashboard.
+  useEffect(() => {
+    if (searchParams.get('bridge') !== '1') return;
+    let cancelled = false;
+    (async () => {
+      const ok = await hydrate();
+      if (!cancelled && ok) router.replace('/');
+      if (!cancelled && !ok) setError('Sign-in completed but no session was found — try again.');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, hydrate, router]);
+
+  // Which social providers are configured in the backend?
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v1/auth/providers`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setProviders(data as ProviderFlags);
+      })
+      .catch(() => {
+        /* ignore — default flags already set */
+      });
+  }, []);
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfo('');
     setLoading(true);
     try {
       await login(email, password);
@@ -28,11 +91,33 @@ export default function LoginPage() {
     }
   };
 
+  const handleMagicLinkSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    if (!email) {
+      setError('Enter an email to receive a sign-in link.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await requestMagicLink(email);
+      setInfo(
+        `A sign-in link was sent to ${email}. In dev, the link is logged to the gateway stdout.`
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not send magic link');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const hasSocial = providers.github || providers.google;
+
   return (
     <div className="relative grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
-      {/* LEFT: editorial panel */}
+      {/* LEFT — editorial panel (unchanged from prior design) */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
-        {/* Atmospheric glow + grid */}
         <div
           aria-hidden
           className="absolute inset-0 opacity-60"
@@ -88,31 +173,6 @@ export default function LoginPage() {
             Coordinate fleets of engineering agents, observe every workflow run, and ship code with
             the rigor of an instrument — not a gamble.
           </p>
-
-          <dl className="fade-up stagger-3 grid grid-cols-3 gap-px overflow-hidden border border-ink-600 bg-ink-600/40">
-            {[
-              { label: 'active runs', tone: 'ember', value: '∞' },
-              { label: 'agents', tone: 'paper', value: '12' },
-              { label: 'uptime', tone: 'moss', value: '99.9%' },
-            ].map((s) => (
-              <div className="bg-ink-950 px-5 py-5" key={s.label}>
-                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-                  {s.label}
-                </div>
-                <div
-                  className={`tabular mt-2 font-display text-3xl font-light leading-none ${
-                    s.tone === 'ember'
-                      ? 'text-ember-400'
-                      : s.tone === 'moss'
-                        ? 'text-moss-400'
-                        : 'text-paper-100'
-                  }`}
-                >
-                  {s.value}
-                </div>
-              </div>
-            ))}
-          </dl>
         </div>
 
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
@@ -121,10 +181,9 @@ export default function LoginPage() {
         </footer>
       </aside>
 
-      {/* RIGHT: form panel */}
+      {/* RIGHT — sign-in panel */}
       <section className="relative flex items-center justify-center bg-ink-900 px-6 py-12 lg:px-16">
         <div className="w-full max-w-sm">
-          {/* Mobile wordmark */}
           <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
             <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
               auto
@@ -136,61 +195,151 @@ export default function LoginPage() {
             ¶ § auth/01
           </div>
           <h1 className="mb-2 font-display text-4xl font-light tracking-tight text-paper-50">
-            Resume your session
+            Sign in.
           </h1>
-          <p className="mb-10 text-sm text-paper-400">Authenticate to enter the control plane.</p>
+          <p className="mb-8 text-sm text-paper-400">
+            Pick a sign-in method. Magic-link works for any team member.
+          </p>
 
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            {error && (
-              <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-                ! {error}
+          {/* Social providers — only shown when configured in the backend */}
+          {hasSocial && (
+            <div className="mb-6 space-y-2">
+              {providers.github && (
+                <button
+                  className="group flex w-full items-center justify-center gap-2 rounded-sm border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
+                  onClick={() => signInWithProvider('github')}
+                  type="button"
+                >
+                  <span aria-hidden>◐</span>
+                  <span>continue with github</span>
+                </button>
+              )}
+              {providers.google && (
+                <button
+                  className="group flex w-full items-center justify-center gap-2 rounded-sm border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
+                  onClick={() => signInWithProvider('google')}
+                  type="button"
+                >
+                  <span aria-hidden>◑</span>
+                  <span>continue with google</span>
+                </button>
+              )}
+              <div className="my-6 flex items-center gap-4">
+                <span className="h-px flex-1 bg-ink-600" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                  or
+                </span>
+                <span className="h-px flex-1 bg-ink-600" />
               </div>
-            )}
-            <Input
-              autoComplete="email"
-              label="Email"
-              name="email"
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@workshop.dev"
-              required
-              type="email"
-              value={email}
-            />
-            <Input
-              autoComplete="current-password"
-              label="Password"
-              name="password"
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••"
-              required
-              type="password"
-              value={password}
-            />
-            <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
-              {loading ? 'Authenticating…' : 'Enter →'}
-            </Button>
-          </form>
+            </div>
+          )}
 
-          {/* Divider */}
-          <div className="my-8 flex items-center gap-4">
-            <span className="h-px flex-1 bg-ink-600" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-              or
-            </span>
-            <span className="h-px flex-1 bg-ink-600" />
+          {/* Tab switcher: magic link vs password */}
+          <div className="mb-5 flex gap-px overflow-hidden rounded-sm border border-ink-600 bg-ink-600/40">
+            <button
+              className={`flex-1 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                tab === 'magic'
+                  ? 'bg-ink-800 text-ember-400'
+                  : 'bg-ink-900/60 text-paper-400 hover:bg-ink-800/60'
+              }`}
+              onClick={() => {
+                setTab('magic');
+                setError('');
+                setInfo('');
+              }}
+              type="button"
+            >
+              Magic link
+            </button>
+            <button
+              className={`flex-1 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                tab === 'password'
+                  ? 'bg-ink-800 text-ember-400'
+                  : 'bg-ink-900/60 text-paper-400 hover:bg-ink-800/60'
+              }`}
+              onClick={() => {
+                setTab('password');
+                setError('');
+                setInfo('');
+              }}
+              type="button"
+            >
+              Password
+            </button>
           </div>
 
-          <a
-            className="group flex w-full items-center justify-center gap-2 rounded-sm border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-300 transition-colors hover:border-ember-400 hover:text-ember-400"
-            href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/connect`}
-          >
-            <span>continue with slack</span>
-            <span className="transition-transform group-hover:translate-x-0.5">↗</span>
-          </a>
+          {error && (
+            <div className="mb-4 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+              ! {error}
+            </div>
+          )}
+          {info && (
+            <div className="mb-4 rounded-sm border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
+              ✓ {info}
+            </div>
+          )}
 
-          <p className="mt-10 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-            Forgot your password? Reach an admin to reset.
-          </p>
+          {tab === 'magic' ? (
+            <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
+              <Input
+                autoComplete="email"
+                label="Email"
+                name="email"
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@workshop.dev"
+                required
+                type="email"
+                value={email}
+              />
+              <Button
+                className="w-full"
+                disabled={loading}
+                size="lg"
+                type="submit"
+                variant="primary"
+              >
+                {loading ? 'Sending…' : 'Email me a sign-in link →'}
+              </Button>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+                In dev, the magic link prints to the gateway stdout.
+              </p>
+            </form>
+          ) : (
+            <form className="space-y-5" onSubmit={handlePasswordSubmit}>
+              <Input
+                autoComplete="email"
+                label="Email"
+                name="email"
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@workshop.dev"
+                required
+                type="email"
+                value={email}
+              />
+              <Input
+                autoComplete="current-password"
+                label="Password"
+                name="password"
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••"
+                required
+                type="password"
+                value={password}
+              />
+              <Button
+                className="w-full"
+                disabled={loading}
+                size="lg"
+                type="submit"
+                variant="primary"
+              >
+                {loading ? 'Authenticating…' : 'Enter →'}
+              </Button>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+                Uses legacy bcrypt accounts. Prefer magic link for new sign-ins.
+              </p>
+            </form>
+          )}
         </div>
       </section>
     </div>

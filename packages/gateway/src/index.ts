@@ -6,9 +6,11 @@ const otel = initTelemetry('auto-swe-gateway');
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import { fromNodeHeaders } from 'better-auth/node';
 import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { auth as betterAuth, configuredProviders } from './lib/betterAuth.js';
 import authPlugin from './plugins/auth.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
@@ -67,6 +69,85 @@ async function start() {
 
   // Health check
   app.get('/health', async () => ({ status: 'ok' }));
+
+  // ── Better Auth handler — multi-provider browser sign-in flow.
+  // Mounted at /api/auth/* per the better-auth convention. Cookie-based
+  // sessions live independently of the existing JWT/PAT bearer scheme;
+  // the /api/v1/auth/session-token bridge below exchanges a valid
+  // better-auth session for a short-lived JWT the rest of the API
+  // already understands. ──
+  app.route({
+    async handler(request, reply) {
+      try {
+        const url = new URL(request.url, `http://${request.headers.host}`);
+        const headers = fromNodeHeaders(request.headers);
+        const req = new Request(url.toString(), {
+          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+          headers,
+          method: request.method,
+        });
+        const response = await betterAuth.handler(req);
+        reply.status(response.status);
+        response.headers.forEach((value, key) => {
+          reply.header(key, value);
+        });
+        return reply.send(response.body ? await response.text() : null);
+      } catch (error) {
+        app.log.error({ err: error }, 'better-auth handler failed');
+        return reply.status(500).send({
+          error: { code: 'AUTH_HANDLER_ERROR', message: 'Internal authentication error' },
+        });
+      }
+    },
+    method: ['GET', 'POST'],
+    url: '/api/auth/*',
+  });
+
+  // Public: which social providers are configured? The login page reads
+  // this to know whether to show GitHub / Google buttons (they're hidden
+  // when the env vars are missing in dev).
+  app.get('/api/v1/auth/providers', async () => configuredProviders());
+
+  // Bridge: better-auth session cookie → existing JWT. The web app calls
+  // this once after a successful social / magic-link login to get an
+  // access token the rest of /api/v1/* recognises (PAT-or-JWT bearer).
+  app.post('/api/v1/auth/session-token', async (request, reply) => {
+    try {
+      const headers = fromNodeHeaders(request.headers);
+      const session = await betterAuth.api.getSession({ headers });
+      if (!session) {
+        return reply.status(401).send({
+          error: { code: 'NO_SESSION', message: 'No active better-auth session' },
+        });
+      }
+      // Find the auto-swe User row to read role + slackId. better-auth's
+      // user record carries our additionalFields (role, isActive, slackId)
+      // but we re-fetch the canonical row in case it was updated.
+      const user = await app.prisma.user.findUnique({ where: { id: session.user.id } });
+      if (!user?.isActive) {
+        return reply.status(403).send({
+          error: { code: 'USER_INACTIVE', message: 'User account is not active' },
+        });
+      }
+      const accessToken = app.auth.signAccessToken({
+        role: user.role,
+        ...(user.slackId ? { slackId: user.slackId } : {}),
+        sub: user.id,
+      });
+      return reply.send({
+        data: {
+          accessToken,
+          expiresIn: 3600,
+          user: { email: user.email, id: user.id, role: user.role },
+        },
+      });
+    } catch (err) {
+      app.log.error({ err }, 'session-token bridge failed');
+      return reply.status(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'session-token bridge failed' },
+      });
+    }
+  });
 
   // ── Public routes (no auth) ──
   await app.register(authRoutes, { prefix: '/api/v1/auth' });

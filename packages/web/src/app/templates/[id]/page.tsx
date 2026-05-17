@@ -345,8 +345,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   )}
                 </div>
                 <p className="mt-3 text-[11px] leading-snug text-paper-500">
-                  Save changes to create a second version and unlock version
-                  switching.
+                  Save changes to create a second version and unlock version switching.
                 </p>
               </Card>
             ) : (

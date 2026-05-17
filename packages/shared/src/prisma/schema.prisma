@@ -222,7 +222,14 @@ model TeamMembership {
 model User {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email          String         @unique
-  passwordHash   String         @map("password_hash")
+  /// Legacy bcrypt hash. Optional because OAuth-only / magic-link-only
+  /// users have no password; better-auth stores its own credential hash
+  /// in the `accounts` table.
+  passwordHash   String?        @map("password_hash")
+  /// Better-auth canonical fields.
+  name           String?
+  emailVerified  Boolean        @default(false) @map("email_verified")
+  image          String?
   slackId        String?        @unique @map("slack_id")
   role           Role           @default(ENGINEER)
   isActive       Boolean        @default(true) @map("is_active")
@@ -232,8 +239,69 @@ model User {
   refreshTokens  RefreshToken[]
   memberships    TeamMembership[]
   accessTokens   PersonalAccessToken[]
+  /// Better-auth relations.
+  accounts       Account[]
+  sessions       Session[]
 
   @@map("users")
+}
+
+/// Better-auth `Account` model — one row per linked provider per user.
+/// `providerId='credential'` holds the email+password account; OAuth rows
+/// carry the access/refresh/id tokens from the upstream provider.
+model Account {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId              String    @map("account_id")
+  providerId             String    @map("provider_id")
+  userId                 String    @map("user_id") @db.Uuid
+  accessToken            String?   @map("access_token")
+  refreshToken           String?   @map("refresh_token")
+  idToken                String?   @map("id_token")
+  accessTokenExpiresAt   DateTime? @map("access_token_expires_at") @db.Timestamptz
+  refreshTokenExpiresAt  DateTime? @map("refresh_token_expires_at") @db.Timestamptz
+  scope                  String?
+  /// Better-auth's own credential hash (scrypt) for `providerId='credential'`.
+  password               String?
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// Better-auth `Session` model — one row per active browser session.
+/// Distinct from `RefreshToken` (which the hand-rolled JWT path uses).
+model Session {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token     String   @unique
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Better-auth `Verification` model — short-lived tokens for email
+/// verification and magic-link sign-in.
+model Verification {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([identifier])
+  @@map("verifications")
 }
 
 model WorkRequest {

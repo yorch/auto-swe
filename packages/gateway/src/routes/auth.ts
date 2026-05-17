@@ -34,6 +34,17 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // passwordHash is null for users created via better-auth's social /
+      // magic-link flows — they should sign in through /api/auth/* instead
+      // of this legacy bcrypt endpoint.
+      if (!user.passwordHash) {
+        return reply.status(401).send({
+          error: {
+            code: 'NO_PASSWORD',
+            message: 'This account has no password — sign in via magic link or a social provider.',
+          },
+        });
+      }
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) {
         return reply.status(401).send({
