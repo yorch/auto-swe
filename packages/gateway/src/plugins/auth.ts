@@ -65,13 +65,21 @@ export { getErrorMessage, getErrorName };
 const ACCESS_TOKEN_TTL = '1h';
 const REFRESH_TOKEN_BYTES = 48;
 
+const JWT_DEV_FALLBACK = 'dev-secret-change-me';
+
 function getPrivateKey(): string {
   const keyPath = process.env.JWT_PRIVATE_KEY_PATH;
   if (keyPath) {
     return fs.readFileSync(keyPath, 'utf-8');
   }
-  // Fallback for development: use a shared secret (HS256)
-  return process.env.JWT_SECRET ?? 'dev-secret-change-me';
+  // Fallback for development: use a shared secret (HS256).
+  const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
+  if (process.env.NODE_ENV === 'production' && secret === JWT_DEV_FALLBACK) {
+    throw new Error(
+      'JWT_SECRET (or JWT_PRIVATE_KEY_PATH) must be set in production — refusing to sign with the dev fallback.'
+    );
+  }
+  return secret;
 }
 
 function getPublicKey(): string {
@@ -180,30 +188,74 @@ async function verifyPatPayload(request: FastifyRequest, token: string): Promise
   };
 }
 
+/** Resolve a better-auth browser session cookie into a synthesized JwtPayload.
+ *  Returns null when no session is present so the caller can fall through to
+ *  the unauthorized response. Throws only on User lookup failures (which the
+ *  caller surfaces as 403). */
+async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayload | null> {
+  // Lazy-load to avoid pulling the better-auth module graph into the auth
+  // plugin's hot startup path (and to avoid a cycle if betterAuth.ts ever
+  // imports from this file).
+  const [{ auth: betterAuth }, { fromNodeHeaders }] = await Promise.all([
+    import('../lib/betterAuth.js'),
+    import('better-auth/node'),
+  ]);
+  const session = await betterAuth.api.getSession({
+    headers: fromNodeHeaders(request.headers),
+  });
+  if (!session) return null;
+  const user = await request.server.prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
+  if (!user?.isActive) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    exp: now + 60,
+    iat: now,
+    role: user.role,
+    ...(user.slackId ? { slackId: user.slackId } : {}),
+    sub: user.id,
+  };
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return reply.status(401).send({
-        error: { code: 'UNAUTHORIZED', message: 'Missing or invalid Authorization header' },
-      });
+    let payload: JwtPayload | null = null;
+
+    // Path 1: Authorization: Bearer <PAT or JWT>
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      try {
+        payload = token.startsWith(PAT_PREFIX)
+          ? await verifyPatPayload(request, token)
+          : request.server.auth.verifyAccessToken(token);
+      } catch (err: unknown) {
+        if (err instanceof PatAuthError) {
+          return reply.status(401).send({ error: { code: err.code, message: err.message } });
+        }
+        return reply.status(401).send({
+          error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
+        });
+      }
+    } else {
+      // Path 2: better-auth session cookie — browser path that doesn't carry
+      // an Authorization header. Letting requests authenticate purely on the
+      // session cookie removes the need for the /api/v1/auth/session-token
+      // JWT bridge in the long run.
+      try {
+        payload = await verifyBetterAuthSession(request);
+      } catch (err) {
+        request.log.warn({ err }, 'better-auth session check failed');
+      }
     }
 
-    const token = authHeader.slice(7);
-    let payload: JwtPayload;
-    try {
-      payload = token.startsWith(PAT_PREFIX)
-        ? await verifyPatPayload(request, token)
-        : request.server.auth.verifyAccessToken(token);
-      request.user = payload;
-    } catch (err: unknown) {
-      if (err instanceof PatAuthError) {
-        return reply.status(401).send({ error: { code: err.code, message: err.message } });
-      }
+    if (!payload) {
       return reply.status(401).send({
-        error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
+        error: { code: 'UNAUTHORIZED', message: 'Missing or invalid credentials' },
       });
     }
+    request.user = payload;
 
     // Platform role check
     if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {

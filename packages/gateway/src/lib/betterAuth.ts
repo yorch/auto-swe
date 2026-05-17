@@ -29,11 +29,91 @@ const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) })
 
 const BASE_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:8080';
 const CLIENT_ORIGIN = process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// Production guard: never let the in-source dev fallback ship. Failing fast
+// here surfaces missing secrets at boot time rather than letting better-auth
+// sign cookies with a known-public string.
+const DEV_FALLBACK_SECRET =
+  'dev-better-auth-secret-please-change-this-in-production-at-least-32-chars';
+const RESOLVED_SECRET = process.env.BETTER_AUTH_SECRET ?? DEV_FALLBACK_SECRET;
+if (IS_PRODUCTION && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
+  throw new Error(
+    'BETTER_AUTH_SECRET must be set in production (≥32 chars, generated with crypto rand).'
+  );
+}
 
 const githubClientId = process.env.GITHUB_CLIENT_ID;
 const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+const resendApiKey = process.env.RESEND_API_KEY;
+const fromEmail = process.env.AUTH_FROM_EMAIL;
+
+/**
+ * Send a magic-link email. Resolves the transport from env at call time so
+ * tests / dev can swap behaviour without restarting:
+ *   - If RESEND_API_KEY + AUTH_FROM_EMAIL are set → POST to Resend
+ *   - Else → log to stdout (dev convenience; surfaces the URL for copy-paste)
+ *
+ * Prod deployments without Resend should swap this for SES / Mailgun /
+ * Postmark / SMTP — the function signature is fixed by better-auth.
+ */
+async function deliverMagicLink({ email, url }: { email: string; url: string }): Promise<void> {
+  if (resendApiKey && fromEmail) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        body: JSON.stringify({
+          from: fromEmail,
+          html: renderMagicLinkHtml({ email, url }),
+          subject: 'Your auto-swe sign-in link',
+          text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
+          to: email,
+        }),
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Resend returned ${res.status}: ${body.slice(0, 200)}`);
+      }
+      return;
+    } catch (err) {
+      // Fall through to console as a safety net so a transient Resend outage
+      // doesn't lock everyone out in dev. In prod the throw would surface to
+      // better-auth's caller and the user would see an error.
+      if (IS_PRODUCTION) throw err;
+      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when Resend fails
+      console.warn(`[magic-link] Resend failed (${(err as Error).message}); falling back to log`);
+    }
+  }
+  // biome-ignore lint/suspicious/noConsole: dev-only magic-link delivery
+  console.log(
+    `\n[magic-link] → ${email}\n[magic-link]   ${url}\n[magic-link]   (link expires in 10 min)\n`
+  );
+}
+
+function renderMagicLinkHtml({ email, url }: { email: string; url: string }): string {
+  // Plain, inline-styled HTML so it renders identically across mail clients
+  // without external CSS. Matches the workshop-telemetry aesthetic.
+  return `<!doctype html><html><body style="background:#0b0e13;color:#f2ede2;font-family:'IBM Plex Sans',system-ui,sans-serif;padding:32px;margin:0">
+    <div style="max-width:480px;margin:auto;border:1px solid #1f2530;background:#11151d;padding:32px">
+      <h1 style="font-family:'Fraunces',Georgia,serif;font-size:28px;font-weight:400;margin:0 0 16px;letter-spacing:-0.015em">Sign in to auto-swe</h1>
+      <p style="font-size:14px;line-height:1.5;color:#a8a395;margin:0 0 24px">
+        Hi ${email}, click the button below to sign in. This link expires in 10 minutes.
+      </p>
+      <a href="${url}" style="display:inline-block;background:#e26b3c;color:#0b0e13;text-decoration:none;padding:12px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.12em;text-transform:uppercase">Sign in →</a>
+      <p style="font-size:11px;color:#666458;margin:32px 0 0;font-family:'JetBrains Mono',monospace">
+        If the button doesn't work, paste this URL into your browser:<br/>
+        <span style="word-break:break-all;color:#a8a395">${url}</span>
+      </p>
+    </div>
+  </body></html>`;
+}
 
 export const auth = betterAuth({
   // Cookies on the gateway need to be readable by the browser running on
@@ -64,21 +144,12 @@ export const auth = betterAuth({
     magicLink({
       disableSignUp: false,
       expiresIn: 60 * 10, // 10 minutes
-      sendMagicLink: async ({ email, url }) => {
-        // Dev: log to stdout so engineers can copy-paste the link from logs.
-        // Prod: swap this for a real transactional-email transport.
-        // biome-ignore lint/suspicious/noConsole: dev-only magic-link delivery
-        console.log(
-          `\n[magic-link] → ${email}\n[magic-link]   ${url}\n[magic-link]   (link expires in 10 min)\n`
-        );
-      },
+      sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
     }),
   ],
   // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
   // its own server-side redirect handling so it doesn't need to appear here.
-  secret:
-    process.env.BETTER_AUTH_SECRET ??
-    'dev-better-auth-secret-please-change-this-in-production-at-least-32-chars',
+  secret: RESOLVED_SECRET,
   socialProviders: {
     ...(githubClientId && githubClientSecret
       ? {
