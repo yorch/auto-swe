@@ -313,45 +313,81 @@ export default function TemplateDetailPage({ params }: PageProps) {
             )}
           </div>
 
-          {/* Right rail — versions */}
+          {/* Right rail — versions. Compact single-line layout when the
+              template only has one version (no picker needed), full list
+              otherwise. */}
           <aside className="fade-up stagger-2 space-y-4">
-            <Card variant="inset">
-              <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
-              <ul className="space-y-1">
-                {template.versions.map((v) => (
-                  <li key={v.id}>
-                    <button
-                      className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
-                        effectiveVersion === v.version
-                          ? 'bg-ink-700 text-paper-100'
-                          : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
-                      }`}
-                      onClick={() => setSelectedVersion(v.version)}
-                      type="button"
-                    >
-                      <div className="flex items-baseline justify-between">
-                        <span className="tabular font-mono">v{v.version}</span>
-                        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                          {formatRelativeTime(v.createdAt)}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {v.version === template.activeVersion && (
-                          <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
-                            active
+            {template.versions.length === 1 ? (
+              <Card variant="inset">
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                  Version
+                </div>
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="tabular font-mono text-sm text-paper-100">
+                    v{template.versions[0]?.version}
+                  </span>
+                  {template.versions[0] && (
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                      {formatRelativeTime(template.versions[0].createdAt)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {template.versions[0]?.version === template.activeVersion && (
+                    <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                      active
+                    </span>
+                  )}
+                  {template.versions[0]?.version === template.experimentVersion && (
+                    <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                      experiment
+                    </span>
+                  )}
+                </div>
+                <p className="mt-3 text-[11px] leading-snug text-paper-500">
+                  Save changes to create a second version and unlock version
+                  switching.
+                </p>
+              </Card>
+            ) : (
+              <Card variant="inset">
+                <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
+                <ul className="space-y-1">
+                  {template.versions.map((v) => (
+                    <li key={v.id}>
+                      <button
+                        className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
+                          effectiveVersion === v.version
+                            ? 'bg-ink-700 text-paper-100'
+                            : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
+                        }`}
+                        onClick={() => setSelectedVersion(v.version)}
+                        type="button"
+                      >
+                        <div className="flex items-baseline justify-between">
+                          <span className="tabular font-mono">v{v.version}</span>
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                            {formatRelativeTime(v.createdAt)}
                           </span>
-                        )}
-                        {v.version === template.experimentVersion && (
-                          <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
-                            experiment
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {v.version === template.activeVersion && (
+                            <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                              active
+                            </span>
+                          )}
+                          {v.version === template.experimentVersion && (
+                            <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                              experiment
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
 
             {analytics && analytics.totalRuns > 0 && (
               <Card variant="inset">
