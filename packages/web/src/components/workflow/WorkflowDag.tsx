@@ -1,218 +1,131 @@
 'use client';
 
-import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { useMemo, useRef } from 'react';
+/**
+ * WorkflowDag — React Flow-based renderer for WorkflowSpec graphs.
+ *
+ * Preserves the original SVG renderer's prop surface (`spec`, `statuses`,
+ * `diffMarkers`, `selectedNodeId`, `onSelect`, `responsive`) so the template-
+ * detail, diff, and run viewers can keep importing it unchanged. Adds:
+ *   - pan + wheel-zoom
+ *   - minimap
+ *   - "fit to view" / "actual size" / "+ / −" controls
+ *   - per-node multi-port handles for cond / signal / fanOut
+ *   - smooth-step edges color-coded by kind
+ *
+ * For interactive editing, prefer the higher-level <TemplateEditor> wrapper
+ * which adds drag-to-create, drag-to-connect, and an inspector rail.
+ */
+
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
-  type DiffKind,
-  diffStrokeColor,
-  type LayoutEdge,
-  type LayoutNode,
-  layoutSpec,
-  NODE_HEIGHT,
-  NODE_WIDTH,
-  nodeCategoryColor,
-  statusFill,
-} from '@/lib/workflowLayout';
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  type Node as RFNode,
+  useEdgesState,
+  useNodesState,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { useEffect, useMemo } from 'react';
+import { DagNode, type DagNodeData } from './dagNode';
+import { specToFlow } from './specToFlow';
 
 export type { DiffKind } from '@/lib/workflowLayout';
 
 export interface DagStatusOverlay {
-  /** Latest status per nodeId (after dedup by attempt). */
   byNodeId: Record<string, { status: string; attempt: number } | undefined>;
 }
 
 interface Props {
   spec: WorkflowSpec;
-  /** Optional per-node status — used by the run viewer to colour live state. */
   statuses?: DagStatusOverlay;
-  /** Optional per-node diff highlight — used by the diff viewer. */
-  diffMarkers?: Record<string, DiffKind>;
+  diffMarkers?: Record<string, import('@/lib/workflowLayout').DiffKind>;
   selectedNodeId?: string | null;
   onSelect?: (id: string | null) => void;
-  /** When true, the diagram fills its container; otherwise uses natural width. */
+  /** Kept for API compatibility — React Flow is always responsive. */
   responsive?: boolean;
+  /** Container height. Defaults to 480px so the diagram has room to breathe. */
+  height?: number | string;
 }
 
-function edgeStrokeColor(kind: LayoutEdge['kind']): string {
-  switch (kind) {
-    case 'onTrue':
-      return '#16a34a';
-    case 'onFalse':
-      return '#dc2626';
-    case 'onTimeout':
-      return '#d97706';
-    case 'subgraph':
-      return '#7c3aed';
-    case 'join':
-      return '#0d9488';
-    default:
-      return '#94a3b8';
-  }
-}
+const NODE_TYPES = { dag: DagNode };
 
-function nodeSubLabel(node: Node): string | null {
-  switch (node.type) {
-    case 'step':
-      return node.step;
-    case 'cond':
-      return node.expr;
-    case 'signal':
-      return node.name;
-    case 'fanOut':
-      return `fanOut · ${node.itemKey ?? 'subtask'}`;
-    case 'terminate':
-      return `→ ${node.status}`;
-    case 'set':
-      return Object.keys(node.values ?? {})
-        .slice(0, 3)
-        .join(', ');
-    case 'shell':
-      return `shell · ${node.image}`;
-  }
-}
-
-function edgePath(from: LayoutNode, to: LayoutNode): string {
-  const fromX = from.x + NODE_WIDTH;
-  const fromY = from.y + NODE_HEIGHT / 2;
-  const toX = to.x;
-  const toY = to.y + NODE_HEIGHT / 2;
-  const mid = (fromX + toX) / 2;
-  return `M ${fromX} ${fromY} C ${mid} ${fromY}, ${mid} ${toY}, ${toX} ${toY}`;
-}
-
-export function WorkflowDag({
-  spec,
-  statuses,
-  diffMarkers,
-  selectedNodeId,
-  onSelect,
-  responsive = true,
-}: Props) {
-  const layout = useMemo(() => layoutSpec(spec), [spec]);
-  const nodeIndex = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout.nodes]);
-  const sortedNodes = useMemo(
-    () => layout.nodes.slice().sort((a, b) => a.x - b.x || a.y - b.y),
-    [layout.nodes]
+function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, height }: Props) {
+  const initial = useMemo(
+    () => specToFlow(spec, { diffMarkers, statuses }),
+    [spec, statuses, diffMarkers]
   );
-  const nodeRefs = useRef<Map<string, SVGGElement>>(new Map());
-  const padding = 24;
-  const viewBox = `${-padding} ${-padding} ${layout.width + padding * 2} ${layout.height + padding * 2}`;
+
+  const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
+  const [edges, , onEdgesChange] = useEdgesState(initial.edges);
+
+  // Reflect external spec / overlay changes back into the flow state.
+  // Using JSON serialization as the dep is cheap for the workflow sizes
+  // we expect (<100 nodes) and avoids deep-equality libraries.
+  useEffect(() => {
+    setNodes(initial.nodes);
+  }, [initial.nodes, setNodes]);
+
+  // Reflect external selection by setting React Flow's `selected` flag.
+  const nodesWithSelection = useMemo(
+    () =>
+      nodes.map((n) => ({
+        ...n,
+        selected: n.id === selectedNodeId,
+      })),
+    [nodes, selectedNodeId]
+  );
 
   return (
-    <svg
-      aria-label="Workflow DAG"
-      height={layout.height + padding * 2}
-      role="img"
-      style={{ maxWidth: '100%' }}
-      viewBox={viewBox}
-      width={responsive ? '100%' : layout.width + padding * 2}
+    <div
+      className="relative rounded-sm border border-ink-600 bg-ink-900"
+      style={{ height: height ?? 480 }}
     >
-      <defs>
-        <marker
-          id="dag-arrow"
-          markerHeight="6"
-          markerWidth="6"
-          orient="auto-start-reverse"
-          refX="6"
-          refY="3"
-          viewBox="0 0 6 6"
-        >
-          <path d="M 0 0 L 6 3 L 0 6 z" fill="#94a3b8" />
-        </marker>
-      </defs>
+      <ReactFlow
+        edges={edges}
+        fitView
+        fitViewOptions={{ maxZoom: 1.2, padding: 0.2 }}
+        maxZoom={2.5}
+        minZoom={0.15}
+        nodes={nodesWithSelection}
+        nodesConnectable={false}
+        nodesDraggable={false}
+        nodeTypes={NODE_TYPES}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={(_, n) => onSelect?.(n.id === selectedNodeId ? null : n.id)}
+        onNodesChange={onNodesChange}
+        onPaneClick={() => onSelect?.(null)}
+        proOptions={{ hideAttribution: true }}
+        zoomOnDoubleClick={false}
+      >
+        <Background color="#1f2530" gap={24} size={1.2} variant={BackgroundVariant.Dots} />
+        <MiniMap
+          maskColor="rgba(7,9,12,0.85)"
+          nodeColor={() => '#171c26'}
+          nodeStrokeColor="#2a323f"
+          pannable
+          style={{
+            background: '#0b0e13',
+            border: '1px solid #1f2530',
+          }}
+          zoomable
+        />
+        <Controls
+          className="![&>button]:!bg-ink-800 ![&>button]:!border-ink-500 ![&>button]:!text-paper-200"
+          showInteractive={false}
+        />
+      </ReactFlow>
+    </div>
+  );
+}
 
-      {layout.edges.map((e) => {
-        const from = nodeIndex.get(e.from);
-        const to = nodeIndex.get(e.to);
-        if (!from || !to) return null;
-        const stroke = edgeStrokeColor(e.kind);
-        return (
-          <g key={`edge-${e.from}-${e.to}-${e.kind}`}>
-            <path
-              d={edgePath(from, to)}
-              fill="none"
-              markerEnd="url(#dag-arrow)"
-              stroke={stroke}
-              strokeWidth={1.5}
-            />
-          </g>
-        );
-      })}
-
-      {layout.nodes.map((n) => {
-        const color = nodeCategoryColor(n.node);
-        const status = statuses?.byNodeId[n.id];
-        const statusColor = statusFill(status?.status);
-        const isSelected = n.id === selectedNodeId;
-        return (
-          // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> with role=button is the conventional accessible widget pattern here
-          <g
-            aria-label={`workflow node ${n.id}`}
-            key={n.id}
-            onClick={onSelect ? () => onSelect(n.id === selectedNodeId ? null : n.id) : undefined}
-            onKeyDown={
-              onSelect
-                ? (event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      onSelect(n.id === selectedNodeId ? null : n.id);
-                      return;
-                    }
-                    const dir =
-                      event.key === 'ArrowRight' || event.key === 'ArrowDown'
-                        ? 1
-                        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-                          ? -1
-                          : 0;
-                    if (dir !== 0) {
-                      event.preventDefault();
-                      const idx = sortedNodes.findIndex((sn) => sn.id === n.id);
-                      const nextIdx = idx + dir;
-                      if (nextIdx >= 0 && nextIdx < sortedNodes.length) {
-                        const nextId = sortedNodes[nextIdx].id;
-                        onSelect(nextId);
-                        nodeRefs.current.get(nextId)?.focus();
-                      }
-                    }
-                  }
-                : undefined
-            }
-            ref={(el) => {
-              if (el) nodeRefs.current.set(n.id, el);
-              else nodeRefs.current.delete(n.id);
-            }}
-            role={onSelect ? 'button' : undefined}
-            style={{ cursor: onSelect ? 'pointer' : 'default' }}
-            tabIndex={onSelect ? 0 : undefined}
-            transform={`translate(${n.x}, ${n.y})`}
-          >
-            <rect
-              fill={color.fill}
-              height={NODE_HEIGHT}
-              rx={8}
-              stroke={
-                isSelected ? '#0f172a' : (diffStrokeColor(diffMarkers?.[n.id]) ?? color.stroke)
-              }
-              strokeDasharray={diffMarkers?.[n.id] === 'removed' ? '4 3' : undefined}
-              strokeWidth={isSelected || diffMarkers?.[n.id] ? 2.5 : 1.5}
-              width={NODE_WIDTH}
-            />
-            {statusColor && <rect fill={statusColor} height={NODE_HEIGHT} rx={8} width={4} />}
-            <text fill={color.text} fontSize={13} fontWeight={600} x={12} y={20}>
-              {n.id.length > 22 ? `${n.id.slice(0, 21)}…` : n.id}
-            </text>
-            <text fill={color.text} fontSize={11} opacity={0.75} x={12} y={38}>
-              {nodeSubLabel(n.node) ?? n.node.type}
-            </text>
-            {status && (
-              <text fill={color.text} fontSize={10} opacity={0.85} x={12} y={51}>
-                {status.status}
-                {status.attempt > 1 ? ` · attempt ${status.attempt}` : ''}
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </svg>
+export function WorkflowDag(props: Props) {
+  return (
+    <ReactFlowProvider>
+      <InnerDag {...props} />
+    </ReactFlowProvider>
   );
 }

@@ -151,6 +151,19 @@ export function useStepRegistry() {
   });
 }
 
+export function useCreateWorkflowTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      description?: string;
+      teamId?: string | null;
+      spec: unknown;
+    }) => api.post<{ data: WorkflowTemplateSummary }>('/api/v1/workflow-templates', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+  });
+}
+
 export function useCreateWorkflowVersion(templateId: string) {
   const qc = useQueryClient();
   return useMutation({

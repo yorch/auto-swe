@@ -1,18 +1,19 @@
 'use client';
 
-import type { Node, ShellNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { NodeConfigForm } from '@/components/workflow/NodeConfigForm';
+import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
   usePromoteWorkflowVersion,
   useStepRegistry,
-  useUpdateWorkflowTemplate,
   useWorkflowTemplate,
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
@@ -23,34 +24,7 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-const EDGE_FIELDS = ['next', 'onTrue', 'onFalse', 'onReceive', 'onTimeout', 'subgraph', 'join'];
-
-type EdgeFieldDef = { field: string; label: string; required: boolean };
-function getEdgeFields(node: Node): EdgeFieldDef[] {
-  switch (node.type) {
-    case 'step':
-    case 'set':
-    case 'shell':
-      return [{ field: 'next', label: 'Next', required: false }];
-    case 'cond':
-      return [
-        { field: 'onTrue', label: 'On true', required: true },
-        { field: 'onFalse', label: 'On false', required: true },
-      ];
-    case 'signal':
-      return [
-        { field: 'onReceive', label: 'On receive', required: true },
-        { field: 'onTimeout', label: 'On timeout', required: true },
-      ];
-    case 'fanOut':
-      return [
-        { field: 'subgraph', label: 'Subgraph', required: true },
-        { field: 'join', label: 'Join', required: true },
-      ];
-    default:
-      return [];
-  }
-}
+type ViewMode = 'view' | 'edit' | 'json';
 
 function tryParseSpec(
   json: string
@@ -72,68 +46,78 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const { data: analytics } = useWorkflowTemplateAnalytics(id, 30);
   const createVersion = useCreateWorkflowVersion(id);
   const promoteVersion = usePromoteWorkflowVersion(id);
-  const updateTemplate = useUpdateWorkflowTemplate(id);
 
-  const [editorJson, setEditorJson] = useState<string>('');
-  const [editorMode, setEditorMode] = useState<'view' | 'edit'>('view');
+  const [mode, setMode] = useState<ViewMode>('view');
+  const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
+  const [editorJson, setEditorJson] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (versionDetail) {
+      setEditorSpec(versionDetail.spec as WorkflowSpec);
       setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
       setSaveError(null);
     }
   }, [versionDetail]);
 
-  const parsed = useMemo(() => (editorJson ? tryParseSpec(editorJson) : null), [editorJson]);
-  const spec = parsed?.ok ? parsed.spec : null;
+  // In JSON mode, the textarea is the source of truth and we re-parse on every change.
+  const jsonParsed = useMemo(
+    () => (mode === 'json' && editorJson ? tryParseSpec(editorJson) : null),
+    [mode, editorJson]
+  );
+  const visualSpec: WorkflowSpec | null =
+    mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
 
   const stepRegistryByName = useMemo(
     () => (stepRegistry ? new Map(stepRegistry.map((s) => [s.name, s as StepMetadata])) : null),
     [stepRegistry]
   );
   const costEstimate = useMemo(() => {
-    if (!spec || !stepRegistryByName) return null;
-    return estimateSpecCost(spec, { stepLookup: (name) => stepRegistryByName.get(name) });
-  }, [spec, stepRegistryByName]);
-
-  // Phase-6 danger-zone surface. Shell nodes carry elevated privileges
-  // (ephemeral container, user-authored command), so the editor calls them
-  // out and prompts before save. RBAC is still enforced server-side.
-  const shellNodes = useMemo<Array<{ id: string; node: ShellNode }>>(() => {
-    if (!spec) return [];
-    const out: Array<{ id: string; node: ShellNode }> = [];
-    for (const [id, node] of Object.entries(spec.nodes)) {
-      if (node.type === 'shell') out.push({ id, node });
-    }
-    return out;
-  }, [spec]);
+    if (!visualSpec || !stepRegistryByName) return null;
+    return estimateSpecCost(visualSpec, { stepLookup: (name) => stepRegistryByName.get(name) });
+  }, [visualSpec, stepRegistryByName]);
 
   if (isLoading || !template) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
+    return (
+      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
+        loading template…
+      </div>
+    );
   }
 
   const handleSave = async () => {
-    if (!parsed?.ok) {
-      setSaveError(parsed?.error ?? 'JSON not parsed');
+    const specToSave = mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
+    if (!specToSave) {
+      setSaveError(jsonParsed?.ok === false ? jsonParsed.error : 'no spec to save');
       return;
     }
-    if (shellNodes.length > 0) {
+    const shellCount = Object.values(specToSave.nodes).filter((n) => n.type === 'shell').length;
+    if (shellCount > 0) {
       const ok = window.confirm(
-        `This version contains ${shellNodes.length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
+        `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
       );
       if (!ok) return;
     }
     try {
-      const result = await createVersion.mutateAsync(parsed.spec);
+      const result = await createVersion.mutateAsync(specToSave);
       const newVersion = (result as { data: { version: number } }).data.version;
       setSelectedVersion(newVersion);
-      setEditorMode('view');
+      setMode('view');
       setSaveError(null);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'save failed');
     }
+  };
+
+  const handleCancel = () => {
+    if (versionDetail) {
+      setEditorSpec(versionDetail.spec as WorkflowSpec);
+      setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
+    }
+    setMode('view');
+    setSaveError(null);
   };
 
   const handlePromote = async () => {
@@ -141,564 +125,244 @@ export default function TemplateDetailPage({ params }: PageProps) {
     await promoteVersion.mutateAsync(effectiveVersion);
   };
 
-  const commitSpec = (nextSpec: WorkflowSpec) => {
-    setEditorJson(JSON.stringify(nextSpec, null, 2));
-    setEditorMode('edit');
+  const handleSpecChange = (next: WorkflowSpec) => {
+    setEditorSpec(next);
+    setEditorJson(JSON.stringify(next, null, 2));
+    if (mode !== 'edit') setMode('edit');
   };
 
-  const handleAddNode = (stepName: string) => {
-    if (!parsed?.ok) return;
-    const existingIds = Object.keys(parsed.spec.nodes);
-    let newId = stepName.replace(/[^a-zA-Z0-9]/g, '_');
-    if (existingIds.includes(newId)) {
-      let i = 2;
-      while (existingIds.includes(`${newId}_${i}`)) i++;
-      newId = `${newId}_${i}`;
-    }
-    commitSpec({
-      ...parsed.spec,
-      nodes: { ...parsed.spec.nodes, [newId]: { step: stepName, type: 'step' as const } },
-    });
-    setSelectedNodeId(newId);
+  const handleJsonChange = (text: string) => {
+    setEditorJson(text);
+    const parsed = tryParseSpec(text);
+    if (parsed.ok) setEditorSpec(parsed.spec);
+    if (mode !== 'edit') setMode('edit');
   };
 
-  const handleDeleteNode = () => {
-    if (!parsed?.ok || !selectedNodeId) return;
-    const deletingId = selectedNodeId;
-    if (deletingId === parsed.spec.entry) return;
-    const { [deletingId]: _removed, ...restNodes } = parsed.spec.nodes;
-    const cleanedNodes = Object.fromEntries(
-      Object.entries(restNodes).map(([nid, node]) => {
-        const patched = { ...(node as unknown as Record<string, unknown>) };
-        for (const f of EDGE_FIELDS) if (patched[f] === deletingId) delete patched[f];
-        return [nid, patched];
-      })
-    ) as WorkflowSpec['nodes'];
-    commitSpec({ ...parsed.spec, nodes: cleanedNodes });
-    setSelectedNodeId(null);
-  };
+  const isDirty =
+    mode === 'edit' ||
+    (mode === 'json' && editorJson !== JSON.stringify(versionDetail?.spec, null, 2));
 
-  const handleEdgeChange = (field: string, targetId: string | null) => {
-    if (!parsed?.ok || !selectedNodeId) return;
-    const node = parsed.spec.nodes[selectedNodeId];
-    if (!node) return;
-    const patched = { ...(node as unknown as Record<string, unknown>) };
-    if (targetId) patched[field] = targetId;
-    else delete patched[field];
-    commitSpec({
-      ...parsed.spec,
-      nodes: {
-        ...parsed.spec.nodes,
-        [selectedNodeId]: patched as WorkflowSpec['nodes'][string],
-      },
-    });
-  };
-
-  const selectedNode = selectedNodeId && spec?.nodes[selectedNodeId];
-  const selectedStepMeta =
-    selectedNode && selectedNode.type === 'step'
-      ? stepRegistry?.find((s) => s.name === selectedNode.step)
-      : null;
-  const selectedNodeEdgeFields = selectedNode ? getEdgeFields(selectedNode) : [];
-  const otherNodeIds = spec ? Object.keys(spec.nodes).filter((nid) => nid !== selectedNodeId) : [];
-
-  // Per-field config edits mutate the in-memory spec and re-serialize into
-  // editorJson. Switches to edit mode so the existing Save/Cancel buttons
-  // can land the change as a new version. Falls through silently if the spec
-  // is in an unparseable state — the JSON editor stays the source of truth.
-  const handleConfigChange = (key: string, value: unknown) => {
-    if (!parsed?.ok || !selectedNodeId) return;
-    const node = parsed.spec.nodes[selectedNodeId];
-    if (!node || node.type !== 'step') return;
-    const currentConfig = node.config ?? {};
-    // No-op if the value didn't actually change. Stops a typed-then-erased
-    // keystroke from triggering a full spec re-serialize + DAG re-layout.
-    if (Object.is(currentConfig[key], value)) return;
-    const nextConfig = { ...currentConfig };
-    if (value === undefined) delete nextConfig[key];
-    else nextConfig[key] = value;
-    const nextSpec: WorkflowSpec = {
-      ...parsed.spec,
-      nodes: {
-        ...parsed.spec.nodes,
-        [selectedNodeId]: { ...node, config: nextConfig },
-      },
-    };
-    setEditorJson(JSON.stringify(nextSpec, null, 2));
-    setEditorMode('edit');
-  };
+  // Action bar — Save / Cancel / View JSON / View visual
+  const editorActions = (
+    <>
+      <Button
+        onClick={() => setMode(mode === 'json' ? 'edit' : 'json')}
+        size="sm"
+        variant={mode === 'json' ? 'primary' : 'ghost'}
+      >
+        {mode === 'json' ? 'Visual' : 'JSON'}
+      </Button>
+      {isDirty && (
+        <Button onClick={handleCancel} size="sm" variant="secondary">
+          Cancel
+        </Button>
+      )}
+      {isDirty && (
+        <Button
+          disabled={createVersion.isPending || (mode === 'json' && jsonParsed?.ok === false)}
+          onClick={handleSave}
+          size="sm"
+          variant="primary"
+        >
+          {createVersion.isPending ? 'Saving…' : 'Save new version'}
+        </Button>
+      )}
+      {!isDirty && effectiveVersion !== null && effectiveVersion !== template.activeVersion && (
+        <Button
+          disabled={promoteVersion.isPending}
+          onClick={handlePromote}
+          size="sm"
+          variant="primary"
+        >
+          {promoteVersion.isPending ? 'Promoting…' : 'Promote to active'}
+        </Button>
+      )}
+    </>
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link className="text-[var(--primary)] hover:underline text-sm" href="/templates">
-            &larr; Templates
-          </Link>
-          <h2 className="text-2xl font-bold">{template.name}</h2>
+    <div className="space-y-10">
+      <div className="fade-up">
+        <Link
+          className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
+          href="/templates"
+        >
+          <span>←</span> templates
+        </Link>
+        <div className="mt-4">
+          <PageHeader
+            actions={
+              <>
+                <Link
+                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
+                  href={`/templates/${id}/analytics`}
+                >
+                  Analytics →
+                </Link>
+                <Link
+                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
+                  href={`/templates/${id}/diff`}
+                >
+                  Compare →
+                </Link>
+                <Link
+                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
+                  href={`/templates/${id}/runs`}
+                >
+                  Run history →
+                </Link>
+              </>
+            }
+            chapter={`§ Template · v${effectiveVersion ?? '?'}`}
+            subtitle={template.description ?? undefined}
+            title={template.name}
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <StatusBadge status={template.status} />
           {template.isDefault && (
-            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded">default</span>
+            <span className="rounded-sm border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+              default
+            </span>
           )}
-        </div>
-        <div className="flex items-center gap-3">
-          <Link
-            className="text-sm text-[var(--muted-foreground)] hover:underline"
-            href={`/templates/${id}/analytics`}
-          >
-            Analytics →
-          </Link>
-          <Link
-            className="text-sm text-[var(--muted-foreground)] hover:underline"
-            href={`/templates/${id}/diff`}
-          >
-            Compare versions →
-          </Link>
-          <Link
-            className="text-sm text-[var(--muted-foreground)] hover:underline"
-            href={`/templates/${id}/runs`}
-          >
-            Run history →
-          </Link>
+          {effectiveVersion === template.activeVersion && (
+            <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-moss-400">
+              active
+            </span>
+          )}
         </div>
       </div>
 
-      {template.description && (
-        <p className="text-sm text-[var(--muted-foreground)]">{template.description}</p>
-      )}
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
+        {/* Editor */}
+        <div className="fade-up stagger-1 min-w-0 space-y-4">
+          {saveError && (
+            <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+              ! {saveError}
+            </div>
+          )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
+          {mode === 'view' && visualSpec && (
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <CardTitle>
-                  Spec — v{effectiveVersion ?? '?'}
-                  {effectiveVersion === template.activeVersion && (
-                    <span className="ml-2 text-xs px-1.5 py-0.5 bg-green-100 text-green-800 rounded">
-                      active
-                    </span>
-                  )}
-                  {costEstimate && costEstimate.totalUsd > 0 && (
-                    <span
-                      className="ml-2 text-xs px-1.5 py-0.5 bg-gray-100 text-gray-700 rounded font-normal"
-                      title={`Static estimate from step costHints. Branches take max; fanOut assumes width ${costEstimate.fanOutWidthAssumed}.`}
-                    >
-                      ~${costEstimate.totalUsd.toFixed(2)}/run
-                    </span>
-                  )}
-                  {analytics?.avgCostPerRun != null && analytics.totalRuns > 0 && (
-                    <span
-                      className="ml-2 text-xs px-1.5 py-0.5 bg-blue-50 text-blue-800 rounded font-normal"
-                      title={`Observed: average across ${analytics.totalRuns} run(s) in the last ${analytics.windowDays}d.`}
-                    >
-                      ${analytics.avgCostPerRun.toFixed(2)}/run (observed)
-                    </span>
-                  )}
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  {editorMode === 'view' ? (
-                    <button
-                      className="text-xs px-3 py-1 bg-[var(--primary)] text-white rounded hover:opacity-90"
-                      onClick={() => setEditorMode('edit')}
-                      type="button"
-                    >
-                      Edit JSON
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        className="text-xs px-3 py-1 border border-[var(--border)] rounded hover:bg-[var(--muted)]"
-                        onClick={() => {
-                          if (versionDetail)
-                            setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
-                          setEditorMode('view');
-                          setSaveError(null);
-                        }}
-                        type="button"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className="text-xs px-3 py-1 bg-[var(--primary)] text-white rounded hover:opacity-90 disabled:opacity-50"
-                        disabled={!parsed?.ok || createVersion.isPending}
-                        onClick={handleSave}
-                        type="button"
-                      >
-                        {createVersion.isPending ? 'Saving…' : 'Save as new version'}
-                      </button>
-                    </>
-                  )}
-                  {effectiveVersion !== null &&
-                    effectiveVersion !== template.activeVersion &&
-                    editorMode === 'view' && (
-                      <button
-                        className="text-xs px-3 py-1 border border-[var(--border)] rounded hover:bg-[var(--muted)]"
-                        disabled={promoteVersion.isPending}
-                        onClick={handlePromote}
-                        type="button"
-                      >
-                        {promoteVersion.isPending ? 'Promoting…' : 'Promote to active'}
-                      </button>
-                    )}
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                  Spec — read-only
                 </div>
+                <div className="flex items-center gap-2">{editorActions}</div>
               </div>
-            </CardHeader>
+              <WorkflowDag
+                height={520}
+                onSelect={setSelectedNodeId}
+                selectedNodeId={selectedNodeId}
+                spec={visualSpec}
+              />
+              {!isDirty && (
+                <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
+                  Edit visually →
+                </Button>
+              )}
+            </div>
+          )}
 
-            {shellNodes.length > 0 && (
-              <div className="mb-4 text-xs text-rose-900 bg-rose-50 border border-rose-300 rounded px-3 py-2">
-                <div className="font-semibold mb-1">
-                  ⚠ {shellNodes.length} shell step{shellNodes.length === 1 ? '' : 's'} — team-admin
-                  authoring required
-                </div>
-                <ul className="list-disc list-inside space-y-0.5">
-                  {shellNodes.slice(0, 5).map(({ id, node }) => (
-                    <li key={id}>
-                      <code>{id}</code> · {node.image} ·{' '}
-                      <code className="text-rose-700">
-                        {node.command.length > 80 ? `${node.command.slice(0, 80)}…` : node.command}
-                      </code>
-                    </li>
-                  ))}
-                  {shellNodes.length > 5 && <li>… and {shellNodes.length - 5} more</li>}
-                </ul>
-                <div className="mt-1 text-rose-800">
-                  Shell steps run user-authored commands in an ephemeral container. Saving will be
-                  rejected unless you are a team admin and every image is on this team's allowlist.
-                </div>
-              </div>
-            )}
+          {mode === 'edit' && editorSpec && stepRegistry && (
+            <TemplateEditor
+              actions={editorActions}
+              costEstimateUsd={costEstimate?.totalUsd}
+              observedCostUsd={analytics?.avgCostPerRun ?? null}
+              onChange={handleSpecChange}
+              onSelect={setSelectedNodeId}
+              parseError={null}
+              selectedNodeId={selectedNodeId}
+              spec={editorSpec}
+              stepRegistry={stepRegistry as StepMetadata[]}
+            />
+          )}
 
-            {saveError && (
-              <div className="mb-4 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
-                {saveError}
-              </div>
-            )}
-
-            {editorMode === 'edit' ? (
-              <div className="space-y-2">
-                <textarea
-                  className="w-full h-96 font-mono text-xs p-3 border border-[var(--border)] rounded"
-                  onChange={(e) => setEditorJson(e.target.value)}
-                  spellCheck={false}
-                  value={editorJson}
-                />
-                {parsed?.ok === false && (
-                  <div className="text-xs text-red-700">JSON parse error: {parsed.error}</div>
-                )}
-              </div>
-            ) : spec ? (
-              <div className="overflow-x-auto">
-                <WorkflowDag
-                  onSelect={setSelectedNodeId}
-                  selectedNodeId={selectedNodeId}
-                  spec={spec}
-                />
-              </div>
-            ) : (
-              <div className="text-sm text-[var(--muted-foreground)]">No spec to display</div>
-            )}
-          </Card>
-
-          {selectedNode && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Node · {selectedNodeId}</CardTitle>
-                  <button
-                    className="text-xs text-red-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-                    disabled={selectedNodeId === spec?.entry}
-                    onClick={handleDeleteNode}
-                    title={
-                      selectedNodeId === spec?.entry ? 'Cannot delete the entry node' : undefined
-                    }
-                    type="button"
-                  >
-                    Delete node
-                  </button>
+          {mode === 'json' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                  Raw JSON
                 </div>
-              </CardHeader>
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-[var(--muted-foreground)]">Type</dt>
-                  <dd className="font-mono text-xs">{selectedNode.type}</dd>
+                <div className="flex items-center gap-2">{editorActions}</div>
+              </div>
+              <textarea
+                className="h-[520px] w-full rounded-sm border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+                onChange={(e) => handleJsonChange(e.target.value)}
+                spellCheck={false}
+                value={editorJson}
+              />
+              {jsonParsed?.ok === false && (
+                <div className="font-mono text-[11px] uppercase tracking-wider text-brick-400">
+                  ! JSON parse error — {jsonParsed.error}
                 </div>
-                {selectedNode.type === 'step' && (
-                  <div className="flex justify-between">
-                    <dt className="text-[var(--muted-foreground)]">Step</dt>
-                    <dd className="font-mono text-xs">{selectedNode.step}</dd>
-                  </div>
-                )}
-                {selectedStepMeta && (
-                  <>
-                    <div className="text-xs text-[var(--muted-foreground)] pt-2 border-t border-[var(--border)]">
-                      {selectedStepMeta.description}
-                    </div>
-                    {selectedNode.type === 'step' && (
-                      <NodeConfigForm
-                        fields={selectedStepMeta.configFields}
-                        onChange={handleConfigChange}
-                        values={(selectedNode.config ?? {}) as Record<string, unknown>}
-                      />
-                    )}
-                  </>
-                )}
-                <details className="pt-2">
-                  <summary className="text-xs cursor-pointer text-[var(--muted-foreground)]">
-                    Raw JSON
-                  </summary>
-                  <pre className="mt-2 text-xs bg-[var(--muted)] p-2 rounded overflow-x-auto">
-                    {JSON.stringify(selectedNode, null, 2)}
-                  </pre>
-                </details>
-                {selectedNodeEdgeFields.length > 0 && (
-                  <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                    <div className="text-xs font-medium text-[var(--muted-foreground)]">Edges</div>
-                    {selectedNodeEdgeFields.map(({ field, label, required }) => (
-                      <div className="flex items-center justify-between gap-2" key={field}>
-                        <label
-                          className="text-xs text-[var(--muted-foreground)] shrink-0"
-                          htmlFor={`edge-${field}`}
-                        >
-                          {label}
-                          {required ? ' *' : ''}
-                        </label>
-                        <select
-                          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] flex-1 max-w-[180px]"
-                          id={`edge-${field}`}
-                          onChange={(e) => handleEdgeChange(field, e.target.value || null)}
-                          value={
-                            ((selectedNode as unknown as Record<string, unknown>)[field] as
-                              | string
-                              | undefined) ?? ''
-                          }
-                        >
-                          <option value="">{required ? '— pick node —' : '— none —'}</option>
-                          {otherNodeIds.map((nid) => (
-                            <option key={nid} value={nid}>
-                              {nid}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </dl>
-            </Card>
+              )}
+            </div>
           )}
         </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Versions</CardTitle>
-            </CardHeader>
+        {/* Right rail — versions */}
+        <aside className="fade-up stagger-2 space-y-4">
+          <Card variant="inset">
+            <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
             <ul className="space-y-1">
               {template.versions.map((v) => (
                 <li key={v.id}>
                   <button
-                    className={`w-full text-left text-sm px-2 py-1.5 rounded hover:bg-[var(--muted)] ${
-                      effectiveVersion === v.version ? 'bg-[var(--muted)] font-medium' : ''
+                    className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
+                      effectiveVersion === v.version
+                        ? 'bg-ink-700 text-paper-100'
+                        : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
                     }`}
                     onClick={() => setSelectedVersion(v.version)}
                     type="button"
                   >
-                    <div className="flex items-center justify-between">
-                      <span>
-                        v{v.version}
-                        {v.version === template.activeVersion && (
-                          <span className="ml-2 text-xs px-1 py-0.5 bg-green-100 text-green-800 rounded">
-                            active
-                          </span>
-                        )}
-                        {v.version === template.experimentVersion && (
-                          <span className="ml-2 text-xs px-1 py-0.5 bg-purple-100 text-purple-800 rounded">
-                            exp
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-xs text-[var(--muted-foreground)]">
+                    <div className="flex items-baseline justify-between">
+                      <span className="tabular font-mono">v{v.version}</span>
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
                         {formatRelativeTime(v.createdAt)}
                       </span>
                     </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Step palette</CardTitle>
-            </CardHeader>
-            <p className="text-xs text-[var(--muted-foreground)] mb-3">
-              Steps available in this build. Reference these from spec nodes by{' '}
-              <code>step: &lt;name&gt;</code>.
-            </p>
-            <ul className="space-y-1 max-h-96 overflow-y-auto text-xs">
-              {(stepRegistry ?? []).map((s) => (
-                <li
-                  className="border-b border-[var(--border)] pb-1.5 flex items-start justify-between gap-1"
-                  key={s.name}
-                >
-                  <div>
-                    <div className="font-mono">{s.name}</div>
-                    <div className="text-[var(--muted-foreground)]">
-                      <span className="uppercase">{s.category}</span> · {s.label}
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {v.version === template.activeVersion && (
+                        <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                          active
+                        </span>
+                      )}
+                      {v.version === template.experimentVersion && (
+                        <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                          experiment
+                        </span>
+                      )}
                     </div>
-                  </div>
-                  <button
-                    className="shrink-0 text-lg leading-none text-[var(--primary)] hover:opacity-70 disabled:opacity-30"
-                    disabled={!parsed?.ok}
-                    onClick={() => handleAddNode(s.name)}
-                    title={`Add ${s.name} node`}
-                    type="button"
-                  >
-                    +
                   </button>
                 </li>
               ))}
             </ul>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Settings</CardTitle>
-            </CardHeader>
-            <div className="space-y-4 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  checked={template.isDefault}
-                  disabled={updateTemplate.isPending}
-                  onChange={(e) => updateTemplate.mutate({ isDefault: e.target.checked })}
-                  type="checkbox"
-                />
-                Default for {template.team?.name ?? 'all teams'}
-              </label>
-              <ExperimentForm
-                activeVersion={template.activeVersion}
-                experimentSplit={template.experimentSplit}
-                experimentVersion={template.experimentVersion}
-                onSave={(body) => updateTemplate.mutate(body)}
-                pending={updateTemplate.isPending}
-                versions={template.versions}
-              />
-            </div>
-          </Card>
-        </div>
+          {analytics && analytics.totalRuns > 0 && (
+            <Card variant="inset">
+              <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
+              <dl className="space-y-3 text-sm">
+                <Stat label="Runs" value={analytics.totalRuns} />
+                {analytics.avgCostPerRun != null && (
+                  <Stat label="Avg cost / run" value={`$${analytics.avgCostPerRun.toFixed(2)}`} />
+                )}
+              </dl>
+            </Card>
+          )}
+        </aside>
       </div>
     </div>
   );
 }
 
-interface ExperimentFormProps {
-  versions: Array<{ id: string; version: number }>;
-  activeVersion: number | null;
-  experimentVersion: number | null;
-  experimentSplit: number | null;
-  pending: boolean;
-  onSave: (body: { experimentVersion: number | null; experimentSplit: number | null }) => void;
-}
-
-function ExperimentForm({
-  versions,
-  activeVersion,
-  experimentVersion,
-  experimentSplit,
-  pending,
-  onSave,
-}: ExperimentFormProps) {
-  const [version, setVersion] = useState<number | null>(experimentVersion);
-  const [split, setSplit] = useState<number>(experimentSplit ?? 0);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setVersion(experimentVersion);
-    setSplit(experimentSplit ?? 0);
-  }, [experimentVersion, experimentSplit]);
-
-  const dirty = version !== experimentVersion || split !== (experimentSplit ?? 0);
-
-  const handleSave = () => {
-    if (split > 0 && version === null) {
-      setError('Pick an experiment version before enabling the split.');
-      return;
-    }
-    setError(null);
-    onSave({
-      experimentSplit: split === 0 ? null : split,
-      experimentVersion: version,
-    });
-  };
-
-  const handleDisable = () => {
-    setError(null);
-    setVersion(null);
-    setSplit(0);
-    onSave({ experimentSplit: null, experimentVersion: null });
-  };
-
+function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="pt-4 border-t border-[var(--border)] space-y-2">
-      <div className="font-medium text-xs uppercase text-[var(--muted-foreground)]">
-        A/B Experiment
-      </div>
-      <p className="text-xs text-[var(--muted-foreground)]">
-        Route a percentage of incoming work requests to a non-active version. Bucketing is
-        deterministic by ticket ID so re-runs land on the same arm.
-      </p>
-      <label className="flex items-center justify-between gap-2">
-        <span className="text-xs">Experiment version</span>
-        <select
-          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] flex-1 max-w-[140px]"
-          onChange={(e) => setVersion(e.target.value === '' ? null : Number(e.target.value))}
-          value={version ?? ''}
-        >
-          <option value="">— none —</option>
-          {versions
-            .filter((v) => v.version !== activeVersion)
-            .map((v) => (
-              <option key={v.id} value={v.version}>
-                v{v.version}
-              </option>
-            ))}
-        </select>
-      </label>
-      <label className="flex items-center justify-between gap-2">
-        <span className="text-xs">Split (%)</span>
-        <input
-          className="px-2 py-1 border border-[var(--border)] rounded text-xs bg-[var(--background)] w-20 text-right"
-          max={100}
-          min={0}
-          onChange={(e) =>
-            setSplit(Math.max(0, Math.min(100, Number.parseInt(e.target.value, 10) || 0)))
-          }
-          type="number"
-          value={split}
-        />
-      </label>
-      {error && <div className="text-xs text-red-700">{error}</div>}
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          className="text-xs px-3 py-1 bg-[var(--primary)] text-white rounded hover:opacity-90 disabled:opacity-50"
-          disabled={pending || !dirty}
-          onClick={handleSave}
-          type="button"
-        >
-          {pending ? 'Saving…' : 'Save'}
-        </button>
-        {(experimentVersion !== null || (experimentSplit ?? 0) > 0) && (
-          <button
-            className="text-xs px-3 py-1 border border-[var(--border)] rounded hover:bg-[var(--muted)] disabled:opacity-50"
-            disabled={pending}
-            onClick={handleDisable}
-            type="button"
-          >
-            Disable
-          </button>
-        )}
-      </div>
+    <div className="flex items-baseline justify-between border-t border-ink-600 pt-2 first:border-t-0 first:pt-0">
+      <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">{label}</dt>
+      <dd className="tabular font-mono text-sm text-paper-100">{value}</dd>
     </div>
   );
 }

@@ -241,3 +241,54 @@
     animation: accent-slide 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   React Flow theme overrides — dark surface, ember accents.
+   ──────────────────────────────────────────────────────────────────────── */
+.react-flow__controls {
+  background: var(--color-ink-800);
+  border: 1px solid var(--color-ink-500);
+  border-radius: 2px;
+  box-shadow: none;
+}
+.react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  color: var(--color-paper-300);
+  background: var(--color-ink-800);
+  border-bottom: 1px solid var(--color-ink-600);
+  fill: var(--color-paper-300);
+}
+.react-flow__controls-button:hover {
+  color: var(--color-ember-400);
+  background: var(--color-ink-700);
+  fill: var(--color-ember-400);
+}
+.react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__handle {
+  transition: transform 120ms ease-out;
+}
+.react-flow__handle:hover {
+  transform: scale(1.6);
+}
+.react-flow__edge-path {
+  transition: stroke 120ms ease-out;
+}
+/* biome-ignore lint/complexity/noImportantStyles: needs to win against React Flow's inline edge styles */
+.react-flow__edge.selected .react-flow__edge-path,
+/* biome-ignore lint/complexity/noImportantStyles: same as above */
+.react-flow__edge:focus .react-flow__edge-path,
+/* biome-ignore lint/complexity/noImportantStyles: same as above */
+.react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: var(--color-ember-400) !important;
+  stroke-width: 2.5 !important;
+}
+.react-flow__minimap-mask {
+  fill: rgba(7, 9, 12, 0.85);
+}
