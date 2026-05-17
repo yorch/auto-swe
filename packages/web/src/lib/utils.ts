@@ -49,26 +49,74 @@ export function formatPercent(p: number | null): string {
   return `${(p * 100).toFixed(1)}%`;
 }
 
-export const STATUS_COLORS: Record<string, string> = {
-  // ── WorkflowTemplateStatus ──
-  ACTIVE: 'bg-green-100 text-green-800',
-  ARCHIVED: 'bg-gray-100 text-gray-800',
-  // ── ActiveWorkflow.currentStatus ──
-  AWAITING_CI: 'bg-yellow-100 text-yellow-800',
-  AWAITING_HUMAN_MERGE: 'bg-orange-100 text-orange-800',
-  // ── WorkflowRunStatus ──
-  CANCELLED: 'bg-gray-100 text-gray-800',
-  COMPLETED: 'bg-green-100 text-green-800',
-  DRAFT: 'bg-yellow-100 text-yellow-800',
-  FAILED: 'bg-red-100 text-red-800',
-  IMPLEMENTING: 'bg-blue-100 text-blue-800',
-  IN_REVIEW: 'bg-purple-100 text-purple-800',
-  // ── WorkflowStepRecordStatus (PASSED unique to step rows; others shared) ──
-  PASSED: 'bg-green-100 text-green-800',
-  PENDING: 'bg-purple-100 text-purple-800',
-  RUNNING: 'bg-blue-100 text-blue-800',
-  SKIPPED: 'bg-gray-100 text-gray-700',
-  SUCCESS: 'bg-green-100 text-green-800',
-  TIMED_OUT: 'bg-gray-100 text-gray-800',
-  VALIDATING_CONTEXT: 'bg-indigo-100 text-indigo-800',
+// ── Status palette aligned with the Workshop Telemetry design system ────────
+type StatusMeta = {
+  /** Border + text colour combo for the pill */
+  classes: string;
+  /** Background colour for the leading status dot */
+  dotClass: string;
+  /** If true, dot pulses to indicate an in-flight workflow */
+  live?: boolean;
 };
+
+const MOSS: StatusMeta = {
+  classes: 'border-moss-600/40 bg-moss-600/10 text-moss-400',
+  dotClass: 'bg-moss-400',
+};
+const EMBER_LIVE: StatusMeta = {
+  classes: 'border-ember-600/40 bg-ember-600/10 text-ember-400',
+  dotClass: 'bg-ember-400',
+  live: true,
+};
+const DUST_LIVE: StatusMeta = {
+  classes: 'border-dust-600/40 bg-dust-600/10 text-dust-400',
+  dotClass: 'bg-dust-400',
+  live: true,
+};
+const AMBER: StatusMeta = {
+  classes: 'border-amber-600/40 bg-amber-600/10 text-amber-400',
+  dotClass: 'bg-amber-400',
+};
+const BRICK: StatusMeta = {
+  classes: 'border-brick-600/40 bg-brick-600/10 text-brick-400',
+  dotClass: 'bg-brick-400',
+};
+const VIOLET: StatusMeta = {
+  classes: 'border-violet-600/40 bg-violet-600/10 text-violet-400',
+  dotClass: 'bg-violet-400',
+};
+const NEUTRAL: StatusMeta = {
+  classes: 'border-ink-500 bg-ink-700/40 text-paper-400',
+  dotClass: 'bg-paper-500',
+};
+
+export const STATUS_META: Record<string, StatusMeta> = {
+  // ── WorkflowTemplateStatus ──
+  ACTIVE: MOSS,
+  ARCHIVED: NEUTRAL,
+  // ── ActiveWorkflow.currentStatus ──
+  AWAITING_CI: AMBER,
+  AWAITING_HUMAN_MERGE: { ...AMBER, dotClass: 'bg-ember-400', live: true },
+  // ── WorkflowRunStatus ──
+  CANCELLED: NEUTRAL,
+  COMPLETED: MOSS,
+  DRAFT: AMBER,
+  FAILED: BRICK,
+  IMPLEMENTING: EMBER_LIVE,
+  IN_REVIEW: VIOLET,
+  // ── WorkflowStepRecordStatus ──
+  PASSED: MOSS,
+  PENDING: AMBER,
+  RUNNING: DUST_LIVE,
+  SKIPPED: NEUTRAL,
+  SUCCESS: MOSS,
+  TIMED_OUT: NEUTRAL,
+  UNKNOWN: NEUTRAL,
+  VALIDATING_CONTEXT: EMBER_LIVE,
+};
+
+/** Legacy alias for code that still imports STATUS_COLORS (string classes).
+ *  Returns the combined classes string per status. */
+export const STATUS_COLORS: Record<string, string> = Object.fromEntries(
+  Object.entries(STATUS_META).map(([k, v]) => [k, v.classes])
+);

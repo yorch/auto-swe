@@ -5,6 +5,8 @@ import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useWorkflows } from '@/hooks/useWorkflows';
 import {
@@ -29,102 +31,138 @@ export default function DashboardPage() {
   const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
   const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
 
-  if (isLoading)
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  if (isLoading) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-500">
+          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
+          loading telemetry…
+        </div>
+      </div>
+    );
+  }
+
+  const now = new Date();
+  const today = new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'long',
+    weekday: 'long',
+    year: 'numeric',
+  }).format(now);
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Dashboard</h2>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <div className="text-3xl font-bold text-[var(--primary)]">{active.length}</div>
-          <div className="text-sm text-[var(--muted-foreground)]">Active Workflows</div>
-        </Card>
-        <Card>
-          <div className="text-3xl font-bold text-[var(--success)]">{completed.length}</div>
-          <div className="text-sm text-[var(--muted-foreground)]">Completed</div>
-        </Card>
-        <Card>
-          <div className="text-3xl font-bold text-[var(--destructive)]">{failed.length}</div>
-          <div className="text-sm text-[var(--muted-foreground)]">Failed</div>
-        </Card>
-        <Card>
-          <div className="text-3xl font-bold text-[var(--warning)]">{needsAttention.length}</div>
-          <div className="text-sm text-[var(--muted-foreground)]">Needs Attention</div>
-        </Card>
+    <div className="space-y-12">
+      <div className="fade-up">
+        <PageHeader
+          chapter={`§ Dashboard · ${today}`}
+          subtitle="A live cross-section of every active engineering workflow under management. Watch where intent meets execution."
+          title="The workshop, at a glance."
+        />
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Workflow Status</CardTitle>
-          </CardHeader>
-          <WorkflowStatusChart data={statusData} />
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Workflows Over Time</CardTitle>
-          </CardHeader>
-          <WorkflowsOverTimeChart data={timeData} />
-        </Card>
-      </div>
+      {/* KPI row — flat, no cards, just rules */}
+      <section className="fade-up stagger-1 grid grid-cols-2 gap-y-8 border-y border-ink-600 py-8 sm:grid-cols-4">
+        <Stat label="Active" tone="ember" unit="runs" value={active.length} />
+        <Stat label="Completed" tone="moss" unit="runs" value={completed.length} />
+        <Stat label="Failed" tone="brick" unit="runs" value={failed.length} />
+        <Stat label="Attention" tone="amber" unit="items" value={needsAttention.length} />
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Workflows by Repository</CardTitle>
-        </CardHeader>
-        <WorkflowsByRepoChart data={repoData} />
-      </Card>
+      {/* Charts grid */}
+      <section className="fade-up stagger-2">
+        <SectionHeader hint={`${all.length} runs · last 30 days`} number="01" title="Telemetry" />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle eyebrow="distribution">By status</CardTitle>
+            </CardHeader>
+            <WorkflowStatusChart data={statusData} />
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle eyebrow="velocity">Over time</CardTitle>
+            </CardHeader>
+            <WorkflowsOverTimeChart data={timeData} />
+          </Card>
+        </div>
+      </section>
 
+      {/* By repo */}
+      <section className="fade-up stagger-3">
+        <SectionHeader hint="topology" number="02" title="By repository" />
+        <Card>
+          <WorkflowsByRepoChart data={repoData} />
+        </Card>
+      </section>
+
+      {/* Needs attention */}
       {needsAttention.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Needs Attention</CardTitle>
-          </CardHeader>
-          <div className="space-y-3">
-            {needsAttention.map((w) => (
-              <a
-                className="flex items-center justify-between p-3 rounded-md hover:bg-[var(--muted)]"
-                href={`/workflows/${w.id}`}
-                key={w.id}
-              >
-                <div>
-                  <span className="font-medium">{w.repository?.repoName ?? 'Unknown'}</span>
-                  <span className="text-sm text-[var(--muted-foreground)] ml-2">
-                    {w.assignedBranch}
-                  </span>
-                </div>
-                <StatusBadge status={w.currentStatus} />
-              </a>
-            ))}
-          </div>
-        </Card>
+        <section className="fade-up stagger-4">
+          <SectionHeader
+            hint={`${needsAttention.length} pending`}
+            number="03"
+            title="Needs attention"
+          />
+          <Card variant="inset">
+            <ul className="divide-y divide-ink-600">
+              {needsAttention.map((w) => (
+                <li key={w.id}>
+                  <a
+                    className="group flex items-center justify-between py-3 transition-colors hover:text-ember-400"
+                    href={`/workflows/${w.id}`}
+                  >
+                    <div className="flex min-w-0 items-baseline gap-4">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                        ↳
+                      </span>
+                      <span className="truncate text-sm text-paper-100 group-hover:text-ember-400">
+                        {w.repository?.repoName ?? 'unknown'}
+                      </span>
+                      <span className="font-mono text-[11px] text-paper-500">
+                        {w.assignedBranch}
+                      </span>
+                    </div>
+                    <StatusBadge status={w.currentStatus} />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </section>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-        </CardHeader>
-        <div className="space-y-2">
-          {all.slice(0, 10).map((w) => (
-            <a
-              className="flex items-center justify-between p-2 rounded hover:bg-[var(--muted)]"
-              href={`/workflows/${w.id}`}
-              key={w.id}
-            >
-              <div className="flex items-center gap-3">
-                <StatusBadge status={w.currentStatus} />
-                <span className="text-sm">{w.repository?.repoName ?? 'Unknown'}</span>
-              </div>
-              <span className="text-xs text-[var(--muted-foreground)]">
-                {formatRelativeTime(w.updatedAt)}
-              </span>
-            </a>
-          ))}
-        </div>
-      </Card>
+      {/* Recent activity */}
+      <section className="fade-up stagger-5">
+        <SectionHeader hint="recent · 10" number="04" title="Activity log" />
+        <Card variant="inset">
+          <ul className="divide-y divide-ink-600">
+            {all.slice(0, 10).map((w) => (
+              <li key={w.id}>
+                <a
+                  className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
+                  href={`/workflows/${w.id}`}
+                >
+                  <StatusBadge showDot status={w.currentStatus} />
+                  <span className="min-w-0 truncate text-sm text-paper-200 group-hover:text-ember-400">
+                    {w.repository?.repoName ?? 'unknown'}
+                  </span>
+                  <span className="hidden font-mono text-[11px] text-paper-500 sm:inline">
+                    {w.assignedBranch}
+                  </span>
+                  <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
+                    {formatRelativeTime(w.updatedAt)}
+                  </span>
+                </a>
+              </li>
+            ))}
+            {all.length === 0 && (
+              <li className="py-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+                no workflows yet — submit one to begin
+              </li>
+            )}
+          </ul>
+        </Card>
+      </section>
     </div>
   );
 }

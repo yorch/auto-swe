@@ -1,6 +1,15 @@
 'use client';
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  AXIS_LINE,
+  AXIS_TICK,
+  EmptyChart,
+  GRID_STROKE,
+  TOOLTIP_ITEM_STYLE,
+  TOOLTIP_LABEL_STYLE,
+  TOOLTIP_STYLE,
+} from './chartChrome';
 import { CHART_PALETTE } from './colors';
 
 interface Props {
@@ -8,27 +17,30 @@ interface Props {
 }
 
 export function LessonsByTypeChart({ data }: Props) {
-  if (data.length === 0) {
-    return (
-      <p className="text-sm text-[var(--muted-foreground)] text-center py-8">No lesson data</p>
-    );
-  }
+  if (data.length === 0) return <EmptyChart label="no lesson data" />;
 
   return (
     <ResponsiveContainer height={280} width="100%">
       <BarChart data={data}>
-        <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+        <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
         <XAxis
           angle={-30}
+          axisLine={AXIS_LINE}
           dataKey="type"
           height={60}
           interval={0}
           textAnchor="end"
-          tick={{ fontSize: 12 }}
+          tick={AXIS_TICK}
+          tickLine={AXIS_LINE}
         />
-        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-        <Tooltip />
-        <Bar dataKey="count" fill={CHART_PALETTE[3]} radius={[4, 4, 0, 0]} />
+        <YAxis allowDecimals={false} axisLine={AXIS_LINE} tick={AXIS_TICK} tickLine={AXIS_LINE} />
+        <Tooltip
+          contentStyle={TOOLTIP_STYLE}
+          cursor={{ fill: '#171c26' }}
+          itemStyle={TOOLTIP_ITEM_STYLE}
+          labelStyle={TOOLTIP_LABEL_STYLE}
+        />
+        <Bar dataKey="count" fill={CHART_PALETTE[3]} radius={[1, 1, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
