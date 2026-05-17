@@ -3,13 +3,21 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
+COPY .yarn/releases ./.yarn/releases
+COPY packages/cli/package.json packages/cli/
+COPY packages/gateway/package.json packages/gateway/
 COPY packages/shared/package.json packages/shared/
+COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 RUN corepack enable && yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
 COPY packages/worker/ packages/worker/
+
+# prisma.config.ts eagerly resolves DATABASE_URL even for generate-only calls,
+# so a placeholder is required (prisma-7-ci-generate-database-url pattern).
+ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 RUN yarn workspace @auto-swe/shared prisma generate \
  && yarn workspace @auto-swe/shared build \
  && yarn workspace @auto-swe/worker build
@@ -19,9 +27,14 @@ FROM node:24-alpine AS prod-deps
 WORKDIR /app
 
 COPY package.json yarn.lock .yarnrc.yml ./
+COPY .yarn/releases ./.yarn/releases
+COPY packages/cli/package.json packages/cli/
+COPY packages/gateway/package.json packages/gateway/
 COPY packages/shared/package.json packages/shared/
+COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn workspaces focus @auto-swe/worker --production
+RUN corepack enable && yarn workspaces focus @auto-swe/worker --production \
+ && mkdir -p packages/shared/node_modules packages/worker/node_modules
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine
