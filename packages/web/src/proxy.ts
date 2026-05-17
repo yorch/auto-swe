@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 
 const PUBLIC_PATHS = ['/login', '/api'];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public paths
@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   }
 
   // Check for auth cookie (set by client-side login flow).
-  // localStorage is not accessible in middleware, so the cookie is the
+  // localStorage is not accessible in the proxy, so the cookie is the
   // only server-side signal. The client-side Providers component
   // handles the full token lifecycle via localStorage.
   const token = request.cookies.get('accessToken')?.value;
