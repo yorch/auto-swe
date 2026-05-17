@@ -140,11 +140,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   const isDirty =
     mode === 'edit' ||
-    (mode === 'json' && editorJson !== JSON.stringify(versionDetail?.spec, null, 2));
+    (mode === 'json' &&
+      versionDetail !== undefined &&
+      editorJson !== JSON.stringify(versionDetail.spec, null, 2));
 
-  // Action bar — Save / Cancel / View JSON / View visual
+  // Action bar — Edit / Save / Cancel / View JSON / View visual
   const editorActions = (
     <>
+      {mode === 'view' && (
+        <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
+          Edit
+        </Button>
+      )}
       <Button
         onClick={() => setMode(mode === 'json' ? 'edit' : 'json')}
         size="sm"
@@ -275,16 +282,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
                 <WorkflowDag
-                  height={520}
+                  height="calc(100vh - 360px)"
                   onSelect={setSelectedNodeId}
                   selectedNodeId={selectedNodeId}
                   spec={visualSpec}
                 />
-                {!isDirty && (
-                  <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
-                    Edit visually →
-                  </Button>
-                )}
               </div>
             )}
 

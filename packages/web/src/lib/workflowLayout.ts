@@ -1,16 +1,16 @@
 /**
- * Lightweight layered layout for WorkflowSpec DAGs.
+ * Hierarchical layout for WorkflowSpec DAGs via dagre.
  *
- * Computes (x, y) coordinates for every node using a shortest-path BFS rank
- * assignment from the entry node, with index-within-rank for x. Back-edges
- * (cond → onTrue pointing to an already-ranked ancestor) are kept in the edge
- * list but do not affect ranks. Disconnected nodes are placed in a trailing
- * column (one past the deepest ranked node) so they don't crowd the entry
- * column. This avoids pulling in a real graph-layout dep like dagre while
- * still producing readable diagrams for the workflow sizes we expect
- * (<100 nodes).
+ * The previous implementation rolled its own BFS rank assignment. That worked
+ * for tiny demo graphs but flattened branchy real-world workflows (default-
+ * engineering's 35 nodes ended up in a single horizontal strip because each
+ * forward edge bumped a node to a fresh rank with indexInRank=0). dagre's
+ * network-simplex layered layout handles branches, back-edges, and varying
+ * fan-in/out cleanly, so we delegate to it and translate its results into
+ * the {nodes, edges, width, height} shape the rest of the app already uses.
  */
 import type { Node, WorkflowSpec } from '@auto-swe/shared/workflow';
+import dagre from 'dagre';
 
 export type EdgeKind =
   | 'next'
@@ -32,6 +32,8 @@ export interface LayoutNode {
   node: Node;
   x: number;
   y: number;
+  /** Reserved for compatibility with the older renderer — dagre doesn't
+   *  expose rank or indexInRank directly. */
   rank: number;
   indexInRank: number;
 }
@@ -43,8 +45,8 @@ export interface LayoutResult {
   height: number;
 }
 
-export const NODE_WIDTH = 180;
-export const NODE_HEIGHT = 56;
+export const NODE_WIDTH = 220;
+export const NODE_HEIGHT = 88;
 export const RANK_X_SPACING = 240;
 export const NODE_Y_SPACING = 80;
 
@@ -80,76 +82,70 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
     return { edges: [], height: 0, nodes: [], width: 0 };
   }
 
+  // Collect logical edges first — used both for layout input and for the
+  // returned LayoutEdge list (which preserves edge kind for styling).
   const allEdges: LayoutEdge[] = [];
   for (const id of nodeIds) {
     for (const e of collectEdges(spec.nodes[id] as Node, id)) {
       // Drop edges to unknown nodes (shouldn't happen with a parsed spec, but
-      // be defensive — partially-edited specs in the editor may dangle).
+      // partially-edited specs in the editor may dangle).
       if (e.to in spec.nodes) allEdges.push(e);
     }
   }
 
-  // BFS rank assignment from the entry. Cycles are tolerated: a back-edge
-  // visits a node whose rank is already set, so we skip it.
-  const edgesByFrom = new Map<string, LayoutEdge[]>();
+  // Build the dagre graph. Left-to-right layered layout matches the original
+  // visual convention; node-/edge-sep are tuned to leave room for our 220×88
+  // node cards plus the smoothstep edges from React Flow.
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({
+    edgesep: 24,
+    marginx: 12,
+    marginy: 12,
+    nodesep: 28,
+    rankdir: 'LR',
+    ranker: 'network-simplex',
+    ranksep: 80,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  for (const id of nodeIds) {
+    g.setNode(id, { height: NODE_HEIGHT, width: NODE_WIDTH });
+  }
   for (const e of allEdges) {
-    const bucket = edgesByFrom.get(e.from);
-    if (bucket) bucket.push(e);
-    else edgesByFrom.set(e.from, [e]);
-  }
-  const rank = new Map<string, number>();
-  rank.set(spec.entry, 0);
-  const queue: string[] = [spec.entry];
-  while (queue.length > 0) {
-    const id = queue.shift() as string;
-    const r = rank.get(id) ?? 0;
-    for (const e of edgesByFrom.get(id) ?? []) {
-      if (!rank.has(e.to)) {
-        rank.set(e.to, r + 1);
-        queue.push(e.to);
-      }
-    }
-  }
-  // Park any disconnected nodes in a trailing column past the deepest ranked
-  // node so they don't crowd the entry column.
-  let deepest = 0;
-  for (const r of rank.values()) deepest = Math.max(deepest, r);
-  for (const id of nodeIds) {
-    if (!rank.has(id)) rank.set(id, deepest + 1);
+    // dagre dedupes by (from,to); multi-edges with different kinds (e.g.
+    // fanOut's subgraph + join to the same node) collapse to one layout edge.
+    // That's fine — kind is preserved in `allEdges` for rendering.
+    g.setEdge(e.from, e.to);
   }
 
-  // Group by rank, then assign indexInRank deterministically by id.
-  const byRank = new Map<number, string[]>();
-  for (const id of nodeIds) {
-    const r = rank.get(id) as number;
-    if (!byRank.has(r)) byRank.set(r, []);
-    (byRank.get(r) as string[]).push(id);
-  }
-  for (const ids of byRank.values()) ids.sort();
+  dagre.layout(g);
 
-  const nodes: LayoutNode[] = [];
-  let maxRank = 0;
-  let maxIndex = 0;
-  for (const [r, ids] of byRank.entries()) {
-    maxRank = Math.max(maxRank, r);
-    ids.forEach((id, i) => {
-      maxIndex = Math.max(maxIndex, i);
-      nodes.push({
-        id,
-        indexInRank: i,
-        node: spec.nodes[id] as Node,
-        rank: r,
-        x: r * RANK_X_SPACING,
-        y: i * (NODE_HEIGHT + NODE_Y_SPACING),
-      });
-    });
-  }
+  let maxX = 0;
+  let maxY = 0;
+  const nodes: LayoutNode[] = nodeIds.map((id) => {
+    const n = g.node(id);
+    // dagre returns the *centre* of the node; React Flow expects the top-left
+    // corner. Convert here so the rest of the app can keep treating positions
+    // as top-left.
+    const x = n.x - NODE_WIDTH / 2;
+    const y = n.y - NODE_HEIGHT / 2;
+    maxX = Math.max(maxX, x + NODE_WIDTH);
+    maxY = Math.max(maxY, y + NODE_HEIGHT);
+    return {
+      id,
+      indexInRank: 0,
+      node: spec.nodes[id] as Node,
+      rank: 0,
+      x,
+      y,
+    };
+  });
 
   return {
     edges: allEdges,
-    height: (maxIndex + 1) * (NODE_HEIGHT + NODE_Y_SPACING),
+    height: Math.max(0, maxY),
     nodes,
-    width: (maxRank + 1) * RANK_X_SPACING + NODE_WIDTH,
+    width: Math.max(0, maxX),
   };
 }
 

@@ -344,6 +344,7 @@ function EditorInner({
 
         {/* Inspector */}
         <NodeInspector
+          allNodeIds={Object.keys(spec.nodes)}
           isEntry={selectedNodeId === spec.entry}
           node={selectedNode}
           nodeId={selectedNodeId}
@@ -370,16 +371,28 @@ interface InspectorProps {
   node: SpecNode | null;
   stepMeta: StepMetadata | null | undefined;
   isEntry: boolean;
+  allNodeIds: string[];
   onChangeNode: (next: SpecNode) => void;
   onRename: (oldId: string, newId: string) => void;
   onDelete: () => void;
 }
+
+const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
+  join: 'Join',
+  next: 'Next',
+  onFalse: 'On false',
+  onReceive: 'On receive',
+  onTimeout: 'On timeout',
+  onTrue: 'On true',
+  subgraph: 'Subgraph',
+};
 
 function NodeInspector({
   nodeId,
   node,
   stepMeta,
   isEntry,
+  allNodeIds,
   onChangeNode,
   onRename,
   onDelete,
@@ -491,6 +504,21 @@ function NodeInspector({
           />
         )}
 
+        {/* Outgoing-edge connections — explicit dropdowns alongside the
+            canvas drag-to-connect. On big graphs with tiny nodes the
+            dropdowns are often the only practical way to retarget an edge. */}
+        <EdgeConnectionsSection
+          allNodeIds={allNodeIds}
+          node={node}
+          nodeId={nodeId}
+          onSetEdge={(field, target) => {
+            const patched = { ...(node as unknown as Record<string, unknown>) };
+            if (target) patched[field] = target;
+            else delete patched[field];
+            onChangeNode(patched as unknown as SpecNode);
+          }}
+        />
+
         {/* Raw JSON escape hatch */}
         <details className="mt-6 border-t border-ink-600 pt-4">
           <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 hover:text-paper-200">
@@ -502,6 +530,58 @@ function NodeInspector({
         </details>
       </div>
     </aside>
+  );
+}
+
+function EdgeConnectionsSection({
+  node,
+  nodeId,
+  allNodeIds,
+  onSetEdge,
+}: {
+  node: SpecNode;
+  nodeId: string;
+  allNodeIds: string[];
+  onSetEdge: (field: HandleKind, target: string | null) => void;
+}) {
+  const handles = handleKindsFor(node);
+  if (handles.length === 0) return null;
+  const otherIds = allNodeIds.filter((id) => id !== nodeId);
+  const nodeRecord = node as unknown as Record<string, unknown>;
+
+  return (
+    <div className="mt-6 space-y-3 border-t border-ink-600 pt-4">
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        Outgoing edges
+      </div>
+      {handles.map((kind) => {
+        const current = (nodeRecord[kind] as string | undefined) ?? '';
+        const selectId = `edge-${kind}`;
+        return (
+          <div className="space-y-1" key={kind}>
+            <label
+              className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+              htmlFor={selectId}
+            >
+              {HANDLE_LABEL_FULL[kind]}
+            </label>
+            <select
+              className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+              id={selectId}
+              onChange={(e) => onSetEdge(kind, e.target.value || null)}
+              value={current}
+            >
+              <option value="">— none —</option>
+              {otherIds.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -541,6 +621,11 @@ function StepConfigSection({
           }}
           values={(node.config ?? {}) as Record<string, unknown>}
         />
+      )}
+      {stepMeta && stepMeta.configFields.length === 0 && (
+        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+          — no configurable fields —
+        </p>
       )}
       {!stepMeta && (
         <p className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
