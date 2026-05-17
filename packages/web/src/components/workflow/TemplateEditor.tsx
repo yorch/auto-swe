@@ -271,7 +271,7 @@ function EditorInner({
     selectedNode && selectedNode.type === 'step' ? stepRegistryByName.get(selectedNode.step) : null;
 
   return (
-    <div className="flex h-[640px] flex-col overflow-hidden rounded-sm border border-ink-600 bg-ink-900">
+    <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden rounded-sm border border-ink-600 bg-ink-900">
       {/* Action bar */}
       <div className="flex items-center justify-between gap-4 border-b border-ink-600 px-4 py-2">
         <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">

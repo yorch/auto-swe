@@ -233,127 +233,138 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
-        {/* Editor */}
-        <div className="fade-up stagger-1 min-w-0 space-y-4">
-          {saveError && (
-            <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-              ! {saveError}
-            </div>
-          )}
-
-          {mode === 'view' && visualSpec && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                  Spec — read-only
-                </div>
-                <div className="flex items-center gap-2">{editorActions}</div>
-              </div>
-              <WorkflowDag
-                height={520}
-                onSelect={setSelectedNodeId}
-                selectedNodeId={selectedNodeId}
-                spec={visualSpec}
-              />
-              {!isDirty && (
-                <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
-                  Edit visually →
-                </Button>
-              )}
-            </div>
-          )}
-
-          {mode === 'edit' && editorSpec && stepRegistry && (
-            <TemplateEditor
-              actions={editorActions}
-              costEstimateUsd={costEstimate?.totalUsd}
-              observedCostUsd={analytics?.avgCostPerRun ?? null}
-              onChange={handleSpecChange}
-              onSelect={setSelectedNodeId}
-              parseError={null}
-              selectedNodeId={selectedNodeId}
-              spec={editorSpec}
-              stepRegistry={stepRegistry as StepMetadata[]}
-            />
-          )}
-
-          {mode === 'json' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                  Raw JSON
-                </div>
-                <div className="flex items-center gap-2">{editorActions}</div>
-              </div>
-              <textarea
-                className="h-[520px] w-full rounded-sm border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-                onChange={(e) => handleJsonChange(e.target.value)}
-                spellCheck={false}
-                value={editorJson}
-              />
-              {jsonParsed?.ok === false && (
-                <div className="font-mono text-[11px] uppercase tracking-wider text-brick-400">
-                  ! JSON parse error — {jsonParsed.error}
-                </div>
-              )}
-            </div>
-          )}
+      {saveError && (
+        <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+          ! {saveError}
         </div>
+      )}
 
-        {/* Right rail — versions */}
-        <aside className="fade-up stagger-2 space-y-4">
-          <Card variant="inset">
-            <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
-            <ul className="space-y-1">
-              {template.versions.map((v) => (
-                <li key={v.id}>
-                  <button
-                    className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
-                      effectiveVersion === v.version
-                        ? 'bg-ink-700 text-paper-100'
-                        : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
-                    }`}
-                    onClick={() => setSelectedVersion(v.version)}
-                    type="button"
-                  >
-                    <div className="flex items-baseline justify-between">
-                      <span className="tabular font-mono">v{v.version}</span>
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                        {formatRelativeTime(v.createdAt)}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {v.version === template.activeVersion && (
-                        <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
-                          active
-                        </span>
-                      )}
-                      {v.version === template.experimentVersion && (
-                        <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
-                          experiment
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Card>
+      {/* Edit mode: drops the right side rail and escapes the page's `px-10`
+          padding so the editor fills the available main-content area. We can't
+          use `w-screen` / `ml-[calc(50%-50vw)]` because the sidebar isn't part
+          of the viewport-relative content area, so a viewport-relative bleed
+          would overflow past the right edge. The `-mx-10` here just neutralises
+          the AppShell's content padding, which is enough on typical laptop /
+          desktop viewports to fill the visual main area. */}
+      {mode === 'edit' && editorSpec && stepRegistry && (
+        <div className="fade-up stagger-1 -mx-10">
+          <TemplateEditor
+            actions={editorActions}
+            costEstimateUsd={costEstimate?.totalUsd}
+            observedCostUsd={analytics?.avgCostPerRun ?? null}
+            onChange={handleSpecChange}
+            onSelect={setSelectedNodeId}
+            parseError={null}
+            selectedNodeId={selectedNodeId}
+            spec={editorSpec}
+            stepRegistry={stepRegistry as StepMetadata[]}
+          />
+        </div>
+      )}
 
-          {analytics && analytics.totalRuns > 0 && (
-            <Card variant="inset">
-              <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
-              <dl className="space-y-3 text-sm">
-                <Stat label="Runs" value={analytics.totalRuns} />
-                {analytics.avgCostPerRun != null && (
-                  <Stat label="Avg cost / run" value={`$${analytics.avgCostPerRun.toFixed(2)}`} />
+      {/* View / JSON mode: keep the side versions rail for quick navigation. */}
+      {mode !== 'edit' && (
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
+          <div className="fade-up stagger-1 min-w-0 space-y-4">
+            {mode === 'view' && visualSpec && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                    Spec — read-only
+                  </div>
+                  <div className="flex items-center gap-2">{editorActions}</div>
+                </div>
+                <WorkflowDag
+                  height={520}
+                  onSelect={setSelectedNodeId}
+                  selectedNodeId={selectedNodeId}
+                  spec={visualSpec}
+                />
+                {!isDirty && (
+                  <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
+                    Edit visually →
+                  </Button>
                 )}
-              </dl>
+              </div>
+            )}
+
+            {mode === 'json' && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+                    Raw JSON
+                  </div>
+                  <div className="flex items-center gap-2">{editorActions}</div>
+                </div>
+                <textarea
+                  className="h-[520px] w-full rounded-sm border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+                  onChange={(e) => handleJsonChange(e.target.value)}
+                  spellCheck={false}
+                  value={editorJson}
+                />
+                {jsonParsed?.ok === false && (
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-brick-400">
+                    ! JSON parse error — {jsonParsed.error}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right rail — versions */}
+          <aside className="fade-up stagger-2 space-y-4">
+            <Card variant="inset">
+              <SectionHeader hint={`${template.versions.length}`} number="01" title="Versions" />
+              <ul className="space-y-1">
+                {template.versions.map((v) => (
+                  <li key={v.id}>
+                    <button
+                      className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
+                        effectiveVersion === v.version
+                          ? 'bg-ink-700 text-paper-100'
+                          : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
+                      }`}
+                      onClick={() => setSelectedVersion(v.version)}
+                      type="button"
+                    >
+                      <div className="flex items-baseline justify-between">
+                        <span className="tabular font-mono">v{v.version}</span>
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                          {formatRelativeTime(v.createdAt)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {v.version === template.activeVersion && (
+                          <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                            active
+                          </span>
+                        )}
+                        {v.version === template.experimentVersion && (
+                          <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                            experiment
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </Card>
-          )}
-        </aside>
-      </div>
+
+            {analytics && analytics.totalRuns > 0 && (
+              <Card variant="inset">
+                <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
+                <dl className="space-y-3 text-sm">
+                  <Stat label="Runs" value={analytics.totalRuns} />
+                  {analytics.avgCostPerRun != null && (
+                    <Stat label="Avg cost / run" value={`$${analytics.avgCostPerRun.toFixed(2)}`} />
+                  )}
+                </dl>
+              </Card>
+            )}
+          </aside>
+        </div>
+      )}
     </div>
   );
 }
