@@ -342,11 +342,22 @@ export function useAdminRevokeSession() {
   });
 }
 
+export interface CreateWorkRequestBody {
+  externalTicketId: string;
+  description: string;
+  repoIds: string[];
+  budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';
+}
+
+export interface CreateWorkRequestResponse {
+  data: { workflowIds: string[]; workRequestId: string };
+}
+
 export function useCreateWorkRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { externalTicketId: string; description: string; repoIds: string[] }) =>
-      api.post('/api/v1/work-requests', body),
+    mutationFn: (body: CreateWorkRequestBody) =>
+      api.post<CreateWorkRequestResponse>('/api/v1/work-requests', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   });
 }

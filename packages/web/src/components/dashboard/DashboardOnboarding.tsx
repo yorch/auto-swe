@@ -2,6 +2,8 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 
@@ -9,7 +11,15 @@ type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
-export function DashboardOnboarding({ repos, role }: { repos: RepositorySummary[]; role: Role }) {
+export function DashboardOnboarding({
+  repos,
+  role,
+  onSubmit,
+}: {
+  repos: RepositorySummary[];
+  role: Role;
+  onSubmit?: () => void;
+}) {
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
   const hasRepo = repos.length > 0;
   const sampleRepo = repos[0];
@@ -77,18 +87,29 @@ export function DashboardOnboarding({ repos, role }: { repos: RepositorySummary[
           />
           <OnboardingStep
             body={
-              <p>
-                Use the API directly, or the <code className="text-paper-200">auto-swe</code> CLI.
-                {hasRepo ? (
-                  <>
-                    {' '}
-                    Target the repo <span className="text-paper-200">{sampleRepoLabel}</span> with
-                    its ID below.
-                  </>
-                ) : (
-                  <> Step 1 unlocks this.</>
+              <div className="space-y-3">
+                <p>
+                  {hasRepo ? (
+                    <>
+                      Target <span className="text-paper-200">{sampleRepoLabel}</span> with a ticket
+                      ID and a brief.
+                    </>
+                  ) : (
+                    <>Step 01 unlocks this — connect a repository first.</>
+                  )}
+                </p>
+                {onSubmit && (
+                  <Button
+                    disabled={!hasRepo}
+                    onClick={onSubmit}
+                    size="sm"
+                    type="button"
+                    variant="primary"
+                  >
+                    + Submit work request
+                  </Button>
                 )}
-              </p>
+              </div>
             }
             disabled={!hasRepo}
             index={2}
@@ -120,20 +141,9 @@ export function DashboardOnboarding({ repos, role }: { repos: RepositorySummary[
       </section>
 
       <section className="fade-up stagger-2">
-        <SectionHeader hint="copy & paste" number="02" title="Your first work request" />
+        <SectionHeader hint="optional" number="02" title="Prefer the API or CLI?" />
         <Card variant="inset">
-          <pre className="overflow-x-auto font-mono text-[12px] leading-relaxed text-paper-200">
-            <code>{curlExample}</code>
-          </pre>
-          <p className="mt-4 text-xs text-paper-500">
-            Get <span className="text-paper-300">&lt;your-token&gt;</span> from{' '}
-            <Link className="text-ember-400 hover:underline" href="/settings">
-              Settings → Personal access tokens
-            </Link>
-            . The CLI (<code className="text-paper-300">yarn workspace @auto-swe/cli build</code>)
-            reads <code className="text-paper-300">AUTO_SWE_TOKEN</code> from your environment for
-            the same effect.
-          </p>
+          <ApiCurlDetails curlExample={curlExample} />
         </Card>
       </section>
 
@@ -192,6 +202,38 @@ function OnboardingStep({
       <h3 className="mb-3 font-display text-lg text-paper-100">{title}</h3>
       <div className="text-sm leading-relaxed text-paper-400">{body}</div>
     </Card>
+  );
+}
+
+function ApiCurlDetails({ curlExample }: { curlExample: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        aria-expanded={open}
+        className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-400 hover:text-ember-400"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        {open ? '— Hide API example' : '+ Show API example'}
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <pre className="overflow-x-auto font-mono text-[12px] leading-relaxed text-paper-200">
+            <code>{curlExample}</code>
+          </pre>
+          <p className="text-xs text-paper-500">
+            Get <span className="text-paper-300">&lt;your-token&gt;</span> from{' '}
+            <Link className="text-ember-400 hover:underline" href="/settings">
+              Settings → Personal access tokens
+            </Link>
+            . The CLI (<code className="text-paper-300">yarn workspace @auto-swe/cli build</code>)
+            reads <code className="text-paper-300">AUTO_SWE_TOKEN</code> from your environment for
+            the same effect.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

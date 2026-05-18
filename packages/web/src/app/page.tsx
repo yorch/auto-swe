@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
 import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding';
+import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
@@ -22,6 +24,8 @@ export default function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows();
   const { data: repos, isLoading: reposLoading } = useRepositories();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const canSubmit = (repos ?? []).length > 0;
 
   const all = workflows ?? [];
   const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
@@ -47,7 +51,12 @@ export default function DashboardPage() {
   }
 
   if (all.length === 0) {
-    return <DashboardOnboarding repos={repos ?? []} role={role} />;
+    return (
+      <>
+        <DashboardOnboarding onSubmit={() => setSubmitOpen(true)} repos={repos ?? []} role={role} />
+        <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
+      </>
+    );
   }
 
   const now = new Date();
@@ -62,11 +71,22 @@ export default function DashboardPage() {
     <div className="space-y-12">
       <div className="fade-up">
         <PageHeader
+          actions={
+            <Button
+              disabled={!canSubmit}
+              onClick={() => setSubmitOpen(true)}
+              title={canSubmit ? undefined : 'Connect a repository first'}
+              variant="primary"
+            >
+              + Submit work request
+            </Button>
+          }
           chapter={`§ Dashboard · ${today}`}
           subtitle="A live cross-section of every active engineering workflow under management. Watch where intent meets execution."
           title="The workshop, at a glance."
         />
       </div>
+      <SubmitWorkRequestModal onClose={() => setSubmitOpen(false)} open={submitOpen} />
 
       {/* KPI row — flat, no cards, just rules */}
       <section className="fade-up stagger-1 grid grid-cols-2 gap-y-8 border-y border-ink-600 py-8 sm:grid-cols-4">
@@ -163,11 +183,6 @@ export default function DashboardPage() {
                 </a>
               </li>
             ))}
-            {all.length === 0 && (
-              <li className="py-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-                no workflows yet — submit one to begin
-              </li>
-            )}
           </ul>
         </Card>
       </section>
