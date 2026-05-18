@@ -4,20 +4,24 @@ import { useMemo } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
+import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useWorkflows } from '@/hooks/useWorkflows';
+import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
 import {
   groupWorkflowsByDate,
   groupWorkflowsByRepo,
   groupWorkflowsByStatus,
 } from '@/lib/chartUtils';
 import { formatRelativeTime } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows();
+  const { data: repos, isLoading: reposLoading } = useRepositories();
+  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
 
   const all = workflows ?? [];
   const active = all.filter((w) => !['COMPLETED', 'FAILED', 'TIMED_OUT'].includes(w.currentStatus));
@@ -31,7 +35,7 @@ export default function DashboardPage() {
   const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
   const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
 
-  if (isLoading) {
+  if (isLoading || reposLoading) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
         <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-500">
@@ -40,6 +44,10 @@ export default function DashboardPage() {
         </div>
       </div>
     );
+  }
+
+  if (all.length === 0) {
+    return <DashboardOnboarding repos={repos ?? []} role={role} />;
   }
 
   const now = new Date();
