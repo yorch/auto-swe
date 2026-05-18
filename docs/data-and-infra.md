@@ -1,6 +1,6 @@
 # Data Layer & Infrastructure
 
-> Original design doc for data, infra, and security — extracted from [PLAN.md](../PLAN.md). All four phases have shipped. The shipped Prisma schema (10 models) lives at `packages/shared/src/prisma/schema.prisma` and is the authoritative reference. Note: the executor-image build pipeline and K8s/IRSA sections describe a deployment model that diverged from implementation — actual workspace isolation is Docker-in-Docker (see [STATUS.md](../STATUS.md)).
+> Original design doc for data, infra, and security — extracted from [PLAN.md](../PLAN.md). All four phases have shipped. The shipped Prisma schema lives at `packages/shared/src/prisma/schema.prisma` and is the authoritative reference (its model count has grown past the 10 sketched here as auth, workflow templates, and audit trails were added). §3.1–3.2 have been rewritten to describe the Docker-in-Docker workspace model that actually shipped; other sections remain as-designed and may diverge from current code — see [STATUS.md](../STATUS.md) for a phase-by-phase status.
 
 ## 1. Prisma Data Model (Relational Domain Schema & RBAC)
 
@@ -318,125 +318,39 @@ To ensure system stability, the agentic system acts purely as an orchestrator an
 
 Work requests trigger execution strictly within isolated clones of Target Repositories.
 
-- **Custom Executor Images:** Instead of a generic environment, the K8s Job dynamically pulls the pre-configured Docker image specified in `Repository.executorImage`. This allows the agent to immediately execute `npm install` or `mvn test` using internal corporate registries, pre-cached certificates, and specific language versions without complex setup scripting.
-- **Volume Sandboxing:** The MCP tools configured for the agent are hard-chrooted to `/workspace/target-repo`. The agent cannot traverse up the file tree to read host node configuration or the agent framework source code.
-- **Just-In-Time (JIT) Credential Scoping:** The agent is never provided global admin GitHub tokens. The Control Plane generates a short-lived, repository-scoped Installation Access Token permitting only read/write access to the assigned branch.
+- **Custom Executor Images:** The worker spawns an ephemeral Docker container (`docker run -d ... <image> sleep infinity`) per work request, using the image specified in `Repository.executorImage` (default `node:24-alpine`). This lets the agent immediately execute `npm install` or `mvn test` against language-specific toolchains without complex setup scripting. Image references are validated against `DOCKER_IMAGE_REF_RE` before being passed to the shell.
+- **Volume Sandboxing:** The agent's bash/file tools execute via `docker exec` and the working directory is fixed to `/workspace/target-repo`. The agent runs inside the container's filesystem and cannot reach the worker host's filesystem or the agent framework source code.
+- **Just-In-Time (JIT) Credential Scoping:** Today the worker authenticates to GitHub with a single PAT (`GITHUB_TOKEN`) injected into the clone URL inside the container. JIT installation-scoped tokens via a GitHub App remain future work (see the design-decisions table in [`README.md`](../README.md)).
 
-### 3.2 Custom Executor Image Build Pipeline
+### 3.2 Executor Image Selection
 
-> ⚠️ **PHASE 4** — Custom executor images are not part of the MVP. The MVP uses the default `node:24-alpine` image. This section documents the production build pipeline for later phases.
+> The original design called for a per-repo executor-image build pipeline running on ECR + IRSA. That model was dropped in favour of pulling images directly from any registry the worker host's Docker daemon can reach. This section describes what actually shipped; the historical pipeline lives in git history.
 
-The `Repository.executorImage` field references a pre-built Docker image. This section defines who builds these images, where they're stored, and how they're kept current.
+The `Repository.executorImage` column stores a Docker image reference (default `node:24-alpine`). When a work request runs, `executeImplementation` reads it and passes it to `createWorkspace`, which:
 
-#### Image Registry
+1. Validates the reference against `DOCKER_IMAGE_REF_RE` (defined in `@auto-swe/shared/workflow`) to reject anything that's not a well-formed `<registry>/<repo>:<tag>`.
+2. Starts a long-lived container with `docker run -d --name workspace-<random-hex> -- <image> sleep infinity`. The `--` separator prevents image arguments from being interpreted as docker flags.
+3. Installs git inside the container (`apk add --no-cache git` for Alpine bases) and configures a local commit identity.
+4. Clones the repo at depth 50 using an authenticated URL (`https://x-access-token:<GITHUB_TOKEN>@…`).
+5. Returns a handle whose command runner shells into the container via `docker exec workspace-<id>` and whose `destroy()` runs `docker rm -f` — always called from a `finally` block.
 
-All executor images are stored in a private Amazon ECR (Elastic Container Registry) repository:
+See `packages/worker/src/activities/workspace.ts` for the full implementation and `packages/worker/src/lib/ephemeralContainer.ts` for the shared cleanup helper.
 
-```
-<aws-account-id>.dkr.ecr.<region>.amazonaws.com/auto-swe/executors/<org>-<repo>
-```
+#### Choosing an Image
 
-Example: `123456789.dkr.ecr.us-east-1.amazonaws.com/auto-swe/executors/acme-payments-api`
+| Choice                                  | When to use it                                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Default (`node:24-alpine`)              | Pure-Node repos, prototyping. Cheapest pull, agent installs anything else it needs on demand.                           |
+| Public image (e.g. `python:3.13-slim`)  | Different language toolchains. Anything on the Docker Hub / GHCR public catalog works without auth.                     |
+| Private image (`ghcr.io/acme/exec:foo`) | Internal CA certs, pre-cached deps, corporate registries. The worker host must be `docker login`-ed to the registry first. |
 
-#### Image Build Process
+There is no build trigger, no GitHub Actions workflow, and no IRSA service account. Pre-baking custom images is left to whatever CI the team already has — auto-swe just pulls whatever `executorImage` points at.
 
-Each onboarded repository can optionally include a `.auto-swe/Dockerfile` in its root. If absent, a default image is used.
+#### Hardening Notes (for production deployments)
 
-```dockerfile
-# Example: .auto-swe/Dockerfile for a Node.js project with internal registry
-FROM node:24-alpine
-
-# Internal corporate CA certificate
-COPY .auto-swe/certs/internal-ca.crt /usr/local/share/ca-certificates/
-RUN update-ca-certificates
-
-# Configure npm to use internal registry
-RUN npm config set registry https://npm.internal.acme.com
-
-# Pre-install global tools used by the agent
-RUN npm install -g typescript jest ts-jest
-
-WORKDIR /workspace/target-repo
-```
-
-#### Build Trigger & CI Pipeline
-
-Executor images are built via a GitHub Actions workflow in the **Control Plane repository** (not the target repo):
-
-```yaml
-# .github/workflows/build-executor.yml
-name: Build Executor Image
-on:
-  workflow_dispatch:
-    inputs:
-      repo_id:
-        description: 'Repository UUID from the database'
-        required: true
-  # Also triggered by the Repository Onboarding API
-  repository_dispatch:
-    types: [build-executor]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # For OIDC → ECR auth
-    steps:
-      - name: Fetch repo config
-        run: |
-          # Query the Gateway API for repo details
-          REPO=$(curl -s -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ github.event.inputs.repo_id }}")
-          echo "ORG=$(echo $REPO | jq -r '.data.organizationName')" >> $GITHUB_ENV
-          echo "REPO_NAME=$(echo $REPO | jq -r '.data.repoName')" >> $GITHUB_ENV
-
-      - name: Checkout target repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.ORG }}/${{ env.REPO_NAME }}
-          token: ${{ secrets.GITHUB_APP_TOKEN }}
-
-      - name: Build and push to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - run: |
-          DOCKERFILE=".auto-swe/Dockerfile"
-          if [ ! -f "$DOCKERFILE" ]; then
-            DOCKERFILE="defaults/Dockerfile.node20"  # Fallback to default
-          fi
-          IMAGE_TAG="${{ env.ORG }}-${{ env.REPO_NAME }}:$(date +%Y%m%d)-${GITHUB_SHA::8}"
-          docker build -f "$DOCKERFILE" -t "$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG" .
-          docker push "$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG"
-
-      - name: Update repository config
-        run: |
-          curl -X PATCH -H "Authorization: Bearer ${{ secrets.GATEWAY_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"executorImage\": \"$ECR_REGISTRY/auto-swe/executors/$IMAGE_TAG\"}" \
-            "${{ secrets.GATEWAY_URL }}/api/v1/repositories/${{ github.event.inputs.repo_id }}"
-```
-
-#### Image Freshness
-
-| Trigger               | When                                                          | What Happens                                                                    |
-| --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Repository onboarding | `POST /api/v1/repositories`                                   | Gateway fires `repository_dispatch` event → builds initial image                |
-| Manual rebuild        | Admin clicks "Rebuild Image" in Web Dashboard                 | Gateway fires `workflow_dispatch` → rebuilds from latest `.auto-swe/Dockerfile` |
-| Scheduled rebuild     | Weekly cron (Sunday 02:00 UTC)                                | Rebuilds all active repository images to pick up OS/dependency patches          |
-| Dockerfile change     | PR merged to target repo that modifies `.auto-swe/Dockerfile` | GitHub webhook → Gateway detects path change → triggers rebuild                 |
-
-#### K8s Image Pull Credentials
-
-The agent worker nodes authenticate to ECR using IAM Roles for Service Accounts (IRSA). No long-lived credentials are stored in the cluster:
-
-```yaml
-# k8s/agent-worker-sa.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: agent-worker
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/auto-swe-ecr-pull
-```
+- The worker process mounts `/var/run/docker.sock` — anyone with code execution inside the worker container has root on the host. Keep the worker host isolated.
+- The shell wrapper inside the workspace escapes single quotes (`shellQuote`), but agent-generated commands run inside the workspace container with whatever permissions the executor image grants. Use minimal-privilege base images.
+- `GITHUB_TOKEN` is embedded in the clone URL inside the container. It lives for the container's lifetime (workflow run) and is destroyed with `docker rm -f`. A GitHub App with per-repo installation tokens would shorten that window further (still future work).
 
 ### 3.3 The TDD Loop
 
