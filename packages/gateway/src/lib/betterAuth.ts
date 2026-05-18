@@ -143,6 +143,73 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
   );
 }
 
+/**
+ * Send a password-reset email. Same transport resolution as the magic link
+ * (SMTP → Resend → console). The URL better-auth supplies has the reset
+ * token embedded; the recipient pastes it into the /reset-password page
+ * (which calls POST /api/auth/reset-password with the token + new pw).
+ */
+async function deliverPasswordReset({ email, url }: { email: string; url: string }): Promise<void> {
+  const subject = 'Reset your auto-swe password';
+  const text = `Reset your auto-swe password:\n\n${url}\n\n(This link expires in 1 hour. If you didn't request a reset, ignore this email.)`;
+  const html = renderPasswordResetHtml({ email, url });
+
+  const transporter = getSmtpTransporter();
+  if (transporter) {
+    try {
+      const info = await transporter.sendMail({ from: fromEmail, html, subject, text, to: email });
+      if (info.rejected.length > 0 && info.accepted.length === 0) {
+        throw new Error(`SMTP relay rejected ${email}: ${info.response}`);
+      }
+      return;
+    } catch (err) {
+      if (IS_PRODUCTION) throw err;
+      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when SMTP fails
+      console.warn(`[password-reset] SMTP failed (${(err as Error).message}); falling back`);
+    }
+  }
+  if (resendApiKey && fromEmail) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        body: JSON.stringify({ from: fromEmail, html, subject, text, to: email }),
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      });
+      if (!res.ok) {
+        throw new Error(`Resend returned ${res.status}`);
+      }
+      return;
+    } catch (err) {
+      if (IS_PRODUCTION) throw err;
+      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when Resend fails
+      console.warn(`[password-reset] Resend failed (${(err as Error).message}); falling back`);
+    }
+  }
+  // biome-ignore lint/suspicious/noConsole: dev-only password-reset delivery
+  console.log(
+    `\n[password-reset] → ${email}\n[password-reset]   ${url}\n[password-reset]   (link expires in 1 hour)\n`
+  );
+}
+
+function renderPasswordResetHtml({ email, url }: { email: string; url: string }): string {
+  return `<!doctype html><html><body style="background:#0b0e13;color:#f2ede2;font-family:'IBM Plex Sans',system-ui,sans-serif;padding:32px;margin:0">
+    <div style="max-width:480px;margin:auto;border:1px solid #1f2530;background:#11151d;padding:32px">
+      <h1 style="font-family:'Fraunces',Georgia,serif;font-size:28px;font-weight:400;margin:0 0 16px;letter-spacing:-0.015em">Reset your password</h1>
+      <p style="font-size:14px;line-height:1.5;color:#a8a395;margin:0 0 24px">
+        Hi ${email}, click the button below to choose a new password. This link expires in 1 hour. If you didn't request a reset, ignore this email — your password won't change.
+      </p>
+      <a href="${url}" style="display:inline-block;background:#e26b3c;color:#0b0e13;text-decoration:none;padding:12px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.12em;text-transform:uppercase">Choose new password →</a>
+      <p style="font-size:11px;color:#666458;margin:32px 0 0;font-family:'JetBrains Mono',monospace">
+        If the button doesn't work, paste this URL into your browser:<br/>
+        <span style="word-break:break-all;color:#a8a395">${url}</span>
+      </p>
+    </div>
+  </body></html>`;
+}
+
 function renderMagicLinkHtml({ email, url }: { email: string; url: string }): string {
   // Plain, inline-styled HTML so it renders identically across mail clients
   // without external CSS. Matches the workshop-telemetry aesthetic.
@@ -230,6 +297,10 @@ export const auth = betterAuth({
     enabled: true,
     minPasswordLength: 8,
     requireEmailVerification: false,
+    // Reuse the same multi-transport delivery we use for magic links —
+    // SMTP > Resend > console fallback. The user receives a tokenised
+    // reset URL pointing at the web app's /reset-password page.
+    sendResetPassword: async ({ user, url }) => deliverPasswordReset({ email: user.email, url }),
   },
   plugins: [
     magicLink({

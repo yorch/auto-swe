@@ -11,7 +11,18 @@ import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { auth as betterAuth, configuredProviders } from './lib/betterAuth.js';
-import authPlugin from './plugins/auth.js';
+import authPlugin, { invalidateSessionCache } from './plugins/auth.js';
+
+/** Extract the better-auth session token from a cookie header string. */
+function extractSessionCookie(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const idx = cookieHeader.indexOf('better-auth.session_token=');
+  if (idx === -1) return null;
+  const start = idx + 'better-auth.session_token='.length;
+  const end = cookieHeader.indexOf(';', start);
+  return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
+}
+
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
@@ -77,16 +88,34 @@ async function start() {
   // better-auth session for a short-lived JWT the rest of the API
   // already understands. ──
   app.route({
+    // Tighter rate-limit on the wildcard auth surface. The global limit is
+    // 200/min — way too permissive for sign-in / sign-up / reset endpoints
+    // where credential-stuffing or magic-link spam should be capped.
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
     async handler(request, reply) {
       try {
         const url = new URL(request.url, `http://${request.headers.host}`);
         const headers = fromNodeHeaders(request.headers);
+        // Snapshot the session-cookie value BEFORE better-auth runs — on a
+        // successful /sign-out it'll clear the cookie in the response, and
+        // we want to invalidate our in-memory cache for that token regardless.
+        const sessionCookieBefore = extractSessionCookie(request.headers.cookie);
         const req = new Request(url.toString(), {
           ...(request.body ? { body: JSON.stringify(request.body) } : {}),
           headers,
           method: request.method,
         });
         const response = await betterAuth.handler(req);
+        // Invalidate the cache for sign-out / revoke-session calls so the
+        // logged-out user is locked out immediately instead of waiting up
+        // to 60s for the cached entry to expire.
+        if (
+          response.status < 400 &&
+          sessionCookieBefore &&
+          (url.pathname.endsWith('/sign-out') || url.pathname.endsWith('/revoke-session'))
+        ) {
+          invalidateSessionCache(sessionCookieBefore);
+        }
         reply.status(response.status);
         response.headers.forEach((value, key) => {
           reply.header(key, value);

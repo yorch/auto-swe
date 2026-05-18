@@ -31,6 +31,12 @@ interface AuthState {
   /** Request a magic link be emailed to `email`. In dev (and on transport
    *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
+  /** Request a password-reset email. Same multi-transport delivery as
+   *  magic links. The link in the email lands at `/reset-password?token=…`. */
+  requestPasswordReset: (email: string) => Promise<void>;
+  /** Finish the password-reset flow: submit a new password + the token from
+   *  the email URL. Logs the user in afterwards via auto-sign-in. */
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Reconcile UI auth state with the local credential picture: prefer a
    *  valid JWT in localStorage; failing that, ask the gateway whether the
@@ -183,6 +189,35 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (!res.ok) {
       const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
       throw new Error(errBody?.message ?? 'Failed to request magic link');
+    }
+  },
+
+  requestPasswordReset: async (email) => {
+    const res = await fetch(`${API_BASE}/api/auth/forget-password`, {
+      body: JSON.stringify({
+        email,
+        redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/reset-password`,
+      }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(errBody?.message ?? 'Failed to request password reset');
+    }
+  },
+
+  resetPassword: async (token, newPassword) => {
+    const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+      body: JSON.stringify({ newPassword, token }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(errBody?.message ?? 'Failed to reset password');
     }
   },
 

@@ -1,15 +1,23 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
-import { useUpdateUser, useUsers } from '@/hooks/useWorkflows';
+import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
+
+type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function UsersPage() {
   const { data: users, isLoading } = useUsers();
   const updateUser = useUpdateUser();
+  const inviteUser = useInviteUser();
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<Role>('ENGINEER');
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteInfo, setInviteInfo] = useState<string | null>(null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -36,6 +44,20 @@ export default function UsersPage() {
   const handleApprove = (id: string) => updateUser.mutate({ id, patch: { isActive: true } });
   const handleSuspend = (id: string) => updateUser.mutate({ id, patch: { isActive: false } });
 
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteError(null);
+    setInviteInfo(null);
+    try {
+      await inviteUser.mutateAsync({ email: inviteEmail, role: inviteRole });
+      setInviteInfo(`Invite sent to ${inviteEmail} — they'll receive a magic-link email.`);
+      setInviteEmail('');
+      setInviteRole('ENGINEER');
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : 'invite failed');
+    }
+  };
+
   return (
     <div className="space-y-10">
       <div className="fade-up">
@@ -46,11 +68,63 @@ export default function UsersPage() {
         />
       </div>
 
+      {/* Invite by email — admin sends a magic-link to the address. The
+          invitee lands pre-active + pre-membered to the default team. */}
+      <section className="fade-up stagger-1">
+        <SectionHeader hint="email + magic link" number="01" title="Invite a teammate" />
+        <Card variant="inset">
+          {inviteError && (
+            <div className="mb-3 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+              ! {inviteError}
+            </div>
+          )}
+          {inviteInfo && (
+            <div className="mb-3 rounded-sm border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
+              ✓ {inviteInfo}
+            </div>
+          )}
+          <form className="flex flex-wrap items-end gap-3" onSubmit={handleInvite}>
+            <div className="flex-1 min-w-[240px]">
+              <Input
+                label="Email"
+                name="invite-email"
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="teammate@workshop.dev"
+                required
+                type="email"
+                value={inviteEmail}
+              />
+            </div>
+            <div>
+              <label
+                className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+                htmlFor="invite-role"
+              >
+                Role
+              </label>
+              <select
+                className="mt-1.5 h-10 rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
+                id="invite-role"
+                onChange={(e) => setInviteRole(e.target.value as Role)}
+                value={inviteRole}
+              >
+                <option value="ENGINEER">ENGINEER</option>
+                <option value="LEAD">LEAD</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </div>
+            <Button disabled={inviteUser.isPending} size="md" type="submit" variant="primary">
+              {inviteUser.isPending ? 'Sending…' : 'Send invite →'}
+            </Button>
+          </form>
+        </Card>
+      </section>
+
       {pending.length > 0 && (
-        <section className="fade-up stagger-1">
+        <section className="fade-up stagger-2">
           <SectionHeader
             hint={`${pending.length} awaiting approval`}
-            number="01"
+            number="02"
             title="Pending sign-ups"
           />
           <Card variant="inset">
@@ -93,10 +167,10 @@ export default function UsersPage() {
         </section>
       )}
 
-      <section className={cn('fade-up', pending.length > 0 ? 'stagger-2' : 'stagger-1')}>
+      <section className={cn('fade-up', pending.length > 0 ? 'stagger-3' : 'stagger-2')}>
         <SectionHeader
           hint={`${active.length} active`}
-          number={pending.length > 0 ? '02' : '01'}
+          number={pending.length > 0 ? '03' : '02'}
           title="Active members"
         />
         <Card className="overflow-hidden p-0" variant="inset">

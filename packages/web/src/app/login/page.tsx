@@ -34,6 +34,7 @@ function LoginPageInner() {
   const login = useAuthStore((s) => s.login);
   const signInWithProvider = useAuthStore((s) => s.signInWithProvider);
   const requestMagicLink = useAuthStore((s) => s.requestMagicLink);
+  const requestPasswordReset = useAuthStore((s) => s.requestPasswordReset);
   const hydrate = useAuthStore((s) => s.hydrateFromSession);
 
   const [tab, setTab] = useState<Tab>('magic');
@@ -98,6 +99,26 @@ function LoginPageInner() {
       router.push('/');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setError('');
+    setInfo('');
+    if (!email) {
+      setError('Enter the email associated with your account first.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await requestPasswordReset(email);
+      setInfo(
+        `If an account exists for ${email}, a reset link is on its way. In dev, the link is logged to the gateway stdout.`
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not send reset link');
     } finally {
       setLoading(false);
     }
@@ -386,9 +407,19 @@ function LoginPageInner() {
               >
                 {loading ? 'Authenticating…' : 'Enter →'}
               </Button>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-                Uses legacy bcrypt accounts. Prefer magic link for new sign-ins.
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+                  Email+password via better-auth or legacy bcrypt.
+                </p>
+                <button
+                  className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
+                  disabled={loading}
+                  onClick={handleForgotPassword}
+                  type="button"
+                >
+                  Forgot?
+                </button>
+              </div>
             </form>
           )}
         </div>
