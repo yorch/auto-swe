@@ -10,26 +10,26 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.76",
-    "@ai-sdk/google": "3.0.71",
-    "@ai-sdk/openai": "3.0.63",
+    "@ai-sdk/anthropic": "3.0.78",
+    "@ai-sdk/google": "3.0.75",
+    "@ai-sdk/openai": "3.0.64",
     "@ai-sdk/openai-compatible": "2.0.47",
     "@auto-swe/shared": "*",
-    "@mastra/core": "1.32.1",
+    "@mastra/core": "1.35.0",
     "@octokit/rest": "22.0.1",
     "@opentelemetry/api": "1.9.1",
-    "@opentelemetry/exporter-metrics-otlp-grpc": "0.217.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "0.217.0",
-    "@opentelemetry/instrumentation-http": "0.217.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "0.218.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "0.218.0",
+    "@opentelemetry/instrumentation-http": "0.218.0",
     "@opentelemetry/sdk-metrics": "2.7.1",
-    "@temporalio/activity": "1.17.1",
-    "@temporalio/worker": "1.17.1",
-    "@temporalio/workflow": "1.17.1",
-    "ai": "6.0.177",
+    "@temporalio/activity": "1.17.2",
+    "@temporalio/worker": "1.17.2",
+    "@temporalio/workflow": "1.17.2",
+    "ai": "6.0.184",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "tsx": "4.21.0",
+    "tsx": "4.22.1",
     "typescript": "6.0.3"
   }
 }

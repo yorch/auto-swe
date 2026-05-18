@@ -33,8 +33,8 @@
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/resources": "2.7.1",
-    "@opentelemetry/sdk-node": "0.217.0",
-    "@opentelemetry/semantic-conventions": "1.40.0",
+    "@opentelemetry/sdk-node": "0.218.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
     "@prisma/adapter-pg": "7.8.0",
     "@prisma/client": "7.8.0",
     "bcrypt": "6.0.0",
