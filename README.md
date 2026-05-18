@@ -137,24 +137,49 @@ open http://localhost:8233
 
 | Variable                | Required  | Description                                                                                  |
 | ----------------------- | --------- | -------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`          | Yes       | PostgreSQL connection string                                                                 |
-| `TEMPORAL_ADDRESS`      | Yes       | Temporal server address (default: `localhost:7233`)                                          |
-| `ANTHROPIC_API_KEY`     | Yes       | Claude API key (Implementer, Review, Planner, Memory agents)                                 |
-| `GITHUB_TOKEN`          | Yes       | GitHub PAT with `repo` scope                                                                 |
-| `GITHUB_WEBHOOK_SECRET` | Yes       | Secret for verifying GitHub webhook signatures                                               |
-| `OPENAI_API_KEY`        | Yes       | OpenAI key for `text-embedding-3-large` embeddings                                           |
-| `JWT_SECRET`            | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
-| `JWT_PRIVATE_KEY_PATH`  | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                          |
-| `JWT_PUBLIC_KEY_PATH`   | Optional¹ | Path to RSA public key. Required when using RS256                                            |
-| `SEED_ADMIN_PASSWORD`   | Seed only | Password for the seeded admin user                                                           |
-| `SLACK_CLIENT_ID`       | Optional  | Slack OAuth app credentials                                  |
-| `SLACK_CLIENT_SECRET`   | Optional  | Slack OAuth app credentials                                  |
-| `SLACK_SIGNING_SECRET`  | Optional  | For verifying Slack interactive webhook signatures           |
-| `BRANCH_PREFIX`         | Optional  | Git branch prefix (default: `auto`)                          |
-| `GITHUB_URL`            | Optional  | Override for GitHub Enterprise Server                        |
-| `GITHUB_API_URL`        | Optional  | Override for GitHub Enterprise Server API                                                    |
+| `DATABASE_URL`              | Yes       | PostgreSQL connection string                                                                   |
+| `TEMPORAL_ADDRESS`          | Yes       | Temporal server address (default: `localhost:7233`)                                            |
+| `ANTHROPIC_API_KEY`         | Yes       | Claude API key (Implementer, Review, Planner, Memory agents)                                   |
+| `GITHUB_TOKEN`              | Yes       | GitHub PAT with `repo` scope                                                                   |
+| `GITHUB_WEBHOOK_SECRET`     | Yes       | Secret for verifying GitHub webhook signatures                                                 |
+| `OPENAI_API_KEY`            | Yes       | OpenAI key for `text-embedding-3-large` embeddings                                             |
+| `JWT_SECRET`                | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
+| `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
+| `JWT_PUBLIC_KEY_PATH`       | Optional¹ | Path to RSA public key. Required when using RS256                                              |
+| `BETTER_AUTH_URL`           | Prod²     | Gateway base URL used as the OAuth callback origin                                             |
+| `BETTER_AUTH_SECRET`        | Prod²     | ≥32-char secret for signing better-auth session cookies                                        |
+| `SEED_ADMIN_PASSWORD`       | Seed only | Password for the seeded admin user (required in production)                                    |
+| `SEED_ADMIN_EMAIL`          | Optional  | Override for the seeded admin email (default: `admin@auto-swe.local`)                          |
+| `PORT`                      | Optional  | Gateway HTTP port (default: `8080`)                                                            |
+| `CORS_ORIGIN`               | Optional  | Comma-separated browser origins; first entry is the better-auth client origin                  |
+| `PUBLIC_URL`                | Optional  | Public base URL of the gateway used for the Slack OAuth callback                               |
+| `DEFAULT_TEAM_SLUG`         | Optional  | Slug new better-auth sign-ups join automatically (default: `default`)                          |
+| `NEXT_PUBLIC_API_URL`       | Web       | Gateway URL the web bundle calls (default: `http://localhost:8080`)                            |
+| `NEXT_PUBLIC_APP_VERSION`   | Web       | Version label shown in the login page footer                                                   |
+| `RESEND_API_KEY`            | Optional³ | Resend HTTP API key for magic-link email delivery                                              |
+| `SMTP_HOST` / `SMTP_PORT`   | Optional³ | SMTP transport for magic-link email (alternative to Resend)                                    |
+| `SMTP_USER` / `SMTP_PASS`   | Optional³ | SMTP auth credentials (omit for unauthenticated relays)                                        |
+| `AUTH_FROM_EMAIL`           | Optional³ | `From` address for magic-link / verification emails                                            |
+| `GITHUB_CLIENT_ID`          | Optional⁴ | GitHub OAuth client id (enables "Continue with GitHub")                                        |
+| `GITHUB_CLIENT_SECRET`      | Optional⁴ | GitHub OAuth client secret                                                                     |
+| `GOOGLE_CLIENT_ID`          | Optional⁴ | Google OAuth client id (enables "Continue with Google")                                        |
+| `GOOGLE_CLIENT_SECRET`      | Optional⁴ | Google OAuth client secret                                                                     |
+| `SLACK_CLIENT_ID`           | Optional  | Slack OAuth app credentials                                                                    |
+| `SLACK_CLIENT_SECRET`       | Optional  | Slack OAuth app credentials                                                                    |
+| `SLACK_SIGNING_SECRET`      | Optional  | For verifying Slack interactive webhook signatures                                             |
+| `SLACK_BOT_TOKEN`           | Optional  | Bot token (`xoxb-…`) for posting run notifications                                             |
+| `BRANCH_PREFIX`             | Optional  | Git branch prefix (default: `auto`)                                                            |
+| `GITHUB_URL`                | Optional  | Override for GitHub Enterprise Server                                                          |
+| `GITHUB_API_URL`            | Optional  | Override for GitHub Enterprise Server API                                                      |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OTLP/HTTP endpoint for traces + logs (set when running `yarn docker:up`)                       |
+| `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset (see `.env.example`)    |
 
 ¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
+² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
+³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
+⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
+
+See [`.env.example`](./.env.example) for the full annotated template, including LLM provider selection, per-model price overrides, and embedding configuration.
 
 ## Commands
 
