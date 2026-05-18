@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/Input';
 import { useAuthStore } from '@/stores/authStore';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? '0.0.0';
+const IS_DEV = process.env.NODE_ENV !== 'production';
 
 interface ProviderFlags {
   github: boolean;
@@ -115,7 +117,9 @@ function LoginPageInner() {
     try {
       await requestPasswordReset(email);
       setInfo(
-        `If an account exists for ${email}, a reset link is on its way. In dev, the link is logged to the gateway stdout.`
+        IS_DEV
+          ? `If an account exists for ${email}, a reset link is on its way. In dev, the link is logged to the gateway stdout.`
+          : `If an account exists for ${email}, a reset link is on its way.`
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not send reset link');
@@ -136,7 +140,9 @@ function LoginPageInner() {
     try {
       await requestMagicLink(email);
       setInfo(
-        `A sign-in link was sent to ${email}. In dev, the link is logged to the gateway stdout.`
+        IS_DEV
+          ? `A sign-in link was sent to ${email}. In dev, the link is logged to the gateway stdout.`
+          : `A sign-in link was sent to ${email}.`
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not send magic link');
@@ -164,8 +170,8 @@ function LoginPageInner() {
           <p className="mb-6 text-sm leading-relaxed text-paper-400">
             We received your sign-in for{' '}
             <span className="font-mono text-paper-100">{pendingEmail}</span>. An admin needs to
-            approve your account before you can use the workshop. You can close this tab — we'll
-            email you when your access is live.
+            approve your account before you can use the workshop. Ping an admin once you're approved
+            — sign in again and you'll be in.
           </p>
           <div className="rounded-sm border border-ink-600 bg-ink-800/40 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500">
             status: pending
@@ -219,7 +225,7 @@ function LoginPageInner() {
               <span className="display-italic text-3xl leading-none text-ember-400">·swe</span>
             </div>
             <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-              engineering · telemetry · v0.1
+              engineering · telemetry · v{APP_VERSION}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -248,8 +254,8 @@ function LoginPageInner() {
         </div>
 
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          <span>© {new Date().getFullYear()} · workshop</span>
-          <span>secured by hmac · jwt rotation enabled</span>
+          <span>© {new Date().getFullYear()} · brnby</span>
+          <span>oauth + magic link + password</span>
         </footer>
       </aside>
 
@@ -270,7 +276,7 @@ function LoginPageInner() {
             Sign in.
           </h1>
           <p className="mb-8 text-sm text-paper-400">
-            Pick a sign-in method. Magic-link works for any team member.
+            Pick a sign-in method. New email addresses join a pending-approval queue.
           </p>
 
           {/* Social providers — only shown when configured in the backend */}
@@ -358,7 +364,7 @@ function LoginPageInner() {
                 label="Email"
                 name="email"
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@workshop.dev"
+                placeholder="you@example.com"
                 required
                 type="email"
                 value={email}
@@ -372,9 +378,11 @@ function LoginPageInner() {
               >
                 {loading ? 'Sending…' : 'Email me a sign-in link →'}
               </Button>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-                In dev, the magic link prints to the gateway stdout.
-              </p>
+              {IS_DEV && (
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+                  In dev, the magic link prints to the gateway stdout.
+                </p>
+              )}
             </form>
           ) : (
             <form className="space-y-5" onSubmit={handlePasswordSubmit}>
@@ -383,7 +391,7 @@ function LoginPageInner() {
                 label="Email"
                 name="email"
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@workshop.dev"
+                placeholder="you@example.com"
                 required
                 type="email"
                 value={email}
@@ -407,17 +415,14 @@ function LoginPageInner() {
               >
                 {loading ? 'Authenticating…' : 'Enter →'}
               </Button>
-              <div className="flex items-center justify-between">
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-                  Email+password via better-auth or legacy bcrypt.
-                </p>
+              <div className="flex items-center justify-end">
                 <button
                   className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
                   disabled={loading}
                   onClick={handleForgotPassword}
                   type="button"
                 >
-                  Forgot?
+                  Forgot password?
                 </button>
               </div>
             </form>

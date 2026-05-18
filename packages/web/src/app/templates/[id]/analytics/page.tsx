@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { use, useState } from 'react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useWorkflows';
