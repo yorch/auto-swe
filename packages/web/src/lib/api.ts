@@ -41,17 +41,28 @@ export class ApiClient {
       ...((options.headers as Record<string, string>) ?? {}),
     };
 
+    // `credentials: 'include'` sends the better-auth session cookie cross-
+    // origin. The gateway's requireAuth tries the Authorization header first
+    // (legacy JWT / PAT path) and falls back to the session cookie — so this
+    // wrapper supports both auth modes without per-call branching.
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
+      credentials: 'include',
       headers,
     });
 
     if (response.status === 401) {
-      // Try refresh
+      // Try the legacy refresh path. Only meaningful when a JWT was already
+      // in play; for the better-auth cookie path a 401 means the session was
+      // revoked / expired and the user has to sign back in.
       const refreshed = await this.tryRefresh();
       if (refreshed) {
         headers.Authorization = `Bearer ${this.accessToken}`;
-        const retryResponse = await fetch(`${API_BASE}${path}`, { ...options, headers });
+        const retryResponse = await fetch(`${API_BASE}${path}`, {
+          ...options,
+          credentials: 'include',
+          headers,
+        });
         if (!retryResponse.ok) {
           const err = await retryResponse.json().catch(() => ({}));
           throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${retryResponse.status}`);

@@ -5,37 +5,56 @@ interface AuthState {
   user: { sub: string; role: string; email?: string; slackId?: string } | null;
   isAuthenticated: boolean;
   /** Legacy email+password sign-in via the hand-rolled /api/v1/auth/login.
-   *  Kept for back-compat with pre-better-auth seeded users. */
+   *  Kept for back-compat with pre-better-auth seeded users. Mints a JWT
+   *  that lives in localStorage; subsequent API calls also send the
+   *  better-auth session cookie automatically (credentials: 'include'),
+   *  but the gateway prefers the bearer when both are present. */
   login: (email: string, password: string) => Promise<void>;
-  /** Exchange a better-auth session cookie for a JWT the rest of /api/v1/*
-   *  understands. Call this once after a social or magic-link sign-in
-   *  completes. Returns true if a session was found and exchanged. */
-  hydrateFromBetterAuthSession: () => Promise<boolean>;
+  /** Resolve the active session from a better-auth cookie. Used after the
+   *  social / magic-link callback lands back on /login?bridge=1 — no JWT
+   *  is minted; instead the gateway authenticates every subsequent API
+   *  call by reading the session cookie via credentials: 'include'. */
+  hydrateFromSession: () => Promise<boolean>;
   /** Kick off the OAuth dance for the given provider. The browser navigates
    *  away to the provider's auth screen and returns via the callback URL
-   *  (which lands back on /login → hydrateFromBetterAuthSession). */
+   *  (which lands back on /login → hydrateFromSession). */
   signInWithProvider: (provider: 'github' | 'google') => void;
-  /** Request a magic link be emailed to `email`. In dev the link is logged
-   *  to the gateway stdout. Resolves with the better-auth response so the
-   *  caller can surface "check your email" UI. */
+  /** Request a magic link be emailed to `email`. In dev (and on transport
+   *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
   logout: () => Promise<void>;
-  checkAuth: () => void;
+  /** Reconcile UI auth state with the local credential picture: prefer a
+   *  valid JWT in localStorage; failing that, ask the gateway whether the
+   *  caller has an active better-auth session. */
+  checkAuth: () => Promise<void>;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+/** Lifetime of the proxy-visible marker cookie. Just long enough to span
+ *  a typical session — actual auth always re-verifies against the gateway. */
+const MARKER_TTL_SECONDS = 60 * 60 * 24 * 7;
+const MARKER_COOKIE = 'web-session-active';
 
-function setSessionCookie(token: string): void {
+function setLegacyTokenCookie(token: string): void {
   if (typeof window === 'undefined') return;
   const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
-  // biome-ignore lint/suspicious/noDocumentCookie: Next.js proxy needs to read this cookie server-side; HttpOnly is impossible from client JS. Gateway verifies the JWT on every request — that's the real security boundary.
+  // biome-ignore lint/suspicious/noDocumentCookie: same-origin cookie read by the Next.js proxy to gate routes; gateway re-verifies the JWT.
   document.cookie = `accessToken=${token}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
 }
 
-function clearSessionCookie(): void {
+function setSessionMarkerCookie(): void {
   if (typeof window === 'undefined') return;
-  // biome-ignore lint/suspicious/noDocumentCookie: see setSessionCookie() — same cookie, server-readable by design.
+  const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
+  // biome-ignore lint/suspicious/noDocumentCookie: presence-only marker for the Next.js proxy; the real session cookie lives on the gateway origin.
+  document.cookie = `${MARKER_COOKIE}=1; path=/; max-age=${MARKER_TTL_SECONDS}; SameSite=Lax${isSecure}`;
+}
+
+function clearAllAuthCookies(): void {
+  if (typeof window === 'undefined') return;
+  // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
   document.cookie = 'accessToken=; path=/; max-age=0';
+  // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
+  document.cookie = `${MARKER_COOKIE}=; path=/; max-age=0`;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
@@ -44,49 +63,70 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   return JSON.parse(atob(parts[1]));
 }
 
+/** Shape of the relevant subset of better-auth's get-session response. */
+interface BetterAuthSessionResponse {
+  session?: { id: string; expiresAt: string };
+  user?: {
+    id: string;
+    email?: string;
+    role?: string;
+    slackId?: string | null;
+  };
+}
+
+async function fetchBetterAuthSession(): Promise<AuthState['user']> {
+  const res = await fetch(`${API_BASE}/api/auth/get-session`, {
+    credentials: 'include',
+  });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as BetterAuthSessionResponse | null;
+  if (!body?.user) return null;
+  return {
+    role: body.user.role ?? 'ENGINEER',
+    sub: body.user.id,
+    ...(body.user.email ? { email: body.user.email } : {}),
+    ...(body.user.slackId ? { slackId: body.user.slackId } : {}),
+  };
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
-  checkAuth: () => {
+  checkAuth: async () => {
+    // Path 1: valid JWT in localStorage → trust it (matches legacy behaviour
+    // and avoids a network round-trip on app load when the user just
+    // refreshed mid-session).
     const token = api.getToken();
-    if (!token) {
-      set({ isAuthenticated: false, user: null });
+    if (token) {
+      try {
+        const payload = decodeJwtPayload(token);
+        if ((payload.exp as number) * 1000 > Date.now()) {
+          set({ isAuthenticated: true, user: payload as AuthState['user'] });
+          return;
+        }
+      } catch {
+        /* fall through to the session probe */
+      }
+      api.clearToken();
+    }
+
+    // Path 2: probe the gateway for a better-auth session. credentials:
+    // 'include' sends the cross-origin session cookie if one exists.
+    const user = await fetchBetterAuthSession();
+    if (user) {
+      setSessionMarkerCookie();
+      set({ isAuthenticated: true, user });
       return;
     }
-    try {
-      const payload = decodeJwtPayload(token);
-      if ((payload.exp as number) * 1000 < Date.now()) {
-        api.clearToken();
-        clearSessionCookie();
-        set({ isAuthenticated: false, user: null });
-        return;
-      }
-      set({ isAuthenticated: true, user: payload as AuthState['user'] });
-    } catch {
-      api.clearToken();
-      clearSessionCookie();
-      set({ isAuthenticated: false, user: null });
-    }
+
+    clearAllAuthCookies();
+    set({ isAuthenticated: false, user: null });
   },
 
-  hydrateFromBetterAuthSession: async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/auth/session-token`, {
-        // The better-auth session cookie lives on the gateway origin; sending
-        // it requires credentials: 'include' on the cross-origin fetch.
-        credentials: 'include',
-        method: 'POST',
-      });
-      if (!res.ok) return false;
-      const body = (await res.json()) as { data: { accessToken: string } };
-      api.setToken(body.data.accessToken);
-      setSessionCookie(body.data.accessToken);
-      set({
-        isAuthenticated: true,
-        user: decodeJwtPayload(body.data.accessToken) as AuthState['user'],
-      });
-      return true;
-    } catch {
-      return false;
-    }
+  hydrateFromSession: async () => {
+    const user = await fetchBetterAuthSession();
+    if (!user) return false;
+    setSessionMarkerCookie();
+    set({ isAuthenticated: true, user });
+    return true;
   },
   isAuthenticated: false,
 
@@ -96,7 +136,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       password,
     });
     api.setToken(data.accessToken);
-    setSessionCookie(data.accessToken);
+    setLegacyTokenCookie(data.accessToken);
     set({
       isAuthenticated: true,
       user: decodeJwtPayload(data.accessToken) as AuthState['user'],
@@ -104,15 +144,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
-    // Tell the gateway to clear the better-auth session cookie too. If it
-    // fails (no session, network issue) we still clear local state.
+    // Clear the better-auth session on the gateway (best-effort — local
+    // state is wiped regardless so the UI never gets stuck on a stale
+    // identity).
     try {
       await fetch(`${API_BASE}/api/auth/sign-out`, { credentials: 'include', method: 'POST' });
     } catch {
       /* ignore */
     }
     api.clearToken();
-    clearSessionCookie();
+    clearAllAuthCookies();
     set({ isAuthenticated: false, user: null });
   },
 
@@ -134,18 +175,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   signInWithProvider: (provider) => {
     if (typeof window === 'undefined') return;
-    // The browser is redirected to better-auth's OAuth-initiate endpoint,
-    // which 302s onward to the provider. After the user authorises, the
-    // provider redirects back to {BETTER_AUTH_URL}/api/auth/callback/{provider},
-    // better-auth sets the session cookie, then redirects to callbackURL.
     const callbackURL = `${window.location.origin}/login?bridge=1`;
-    const url = new URL(`${API_BASE}/api/auth/sign-in/social`);
-    url.searchParams.set('provider', provider);
-    url.searchParams.set('callbackURL', callbackURL);
-    // Better-auth expects this as a POST with JSON body — but for browser
-    // redirect we hit a form-encoded POST. Easier: navigate to a GET helper
-    // url that better-auth also accepts on /sign-in/social/{provider}.
-    // For maximum compat: do a POST via a tiny dynamically-created form.
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = `${API_BASE}/api/auth/sign-in/social`;

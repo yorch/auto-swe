@@ -3,21 +3,31 @@ import { NextResponse } from 'next/server';
 
 const PUBLIC_PATHS = ['/login', '/api'];
 
+/**
+ * Two cookies can signal an authenticated session to this proxy:
+ *
+ *   - `accessToken` (legacy): the JWT itself, set by the email+password
+ *     login flow. The proxy only checks presence — the gateway is the
+ *     real validator.
+ *   - `web-session-active` (better-auth path): a marker the authStore
+ *     drops after a successful magic-link or social sign-in. The actual
+ *     session cookie (`better-auth.session_token`) lives on the gateway
+ *     origin and isn't visible to this proxy.
+ *
+ * Either is enough to let the request through; the gateway's requireAuth
+ * still enforces real auth on every /api/v1/* call.
+ */
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  // Check for auth cookie (set by client-side login flow).
-  // localStorage is not accessible in the proxy, so the cookie is the
-  // only server-side signal. The client-side Providers component
-  // handles the full token lifecycle via localStorage.
-  const token = request.cookies.get('accessToken')?.value;
+  const hasLegacyToken = Boolean(request.cookies.get('accessToken')?.value);
+  const hasBetterAuthMarker = Boolean(request.cookies.get('web-session-active')?.value);
 
-  if (!token) {
+  if (!(hasLegacyToken || hasBetterAuthMarker)) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);

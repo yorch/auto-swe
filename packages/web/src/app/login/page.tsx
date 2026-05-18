@@ -34,7 +34,7 @@ function LoginPageInner() {
   const login = useAuthStore((s) => s.login);
   const signInWithProvider = useAuthStore((s) => s.signInWithProvider);
   const requestMagicLink = useAuthStore((s) => s.requestMagicLink);
-  const hydrate = useAuthStore((s) => s.hydrateFromBetterAuthSession);
+  const hydrate = useAuthStore((s) => s.hydrateFromSession);
 
   const [tab, setTab] = useState<Tab>('magic');
   const [providers, setProviders] = useState<ProviderFlags>({
