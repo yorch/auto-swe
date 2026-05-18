@@ -69,6 +69,24 @@ export function useUsers() {
   });
 }
 
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Partial<{
+        isActive: boolean;
+        role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+        slackId: string | null;
+      }>;
+    }) => api.patch<{ data: UserSummary }>(`/api/v1/users/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
 export function useLessons() {
   return useQuery({
     queryFn: () => api.get<{ data: LessonListItem[] }>('/api/v1/lessons').then((r) => r.data),

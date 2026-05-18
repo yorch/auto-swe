@@ -23,14 +23,18 @@ async function main() {
     console.log('  Set SEED_ADMIN_PASSWORD in your .env to use a stable password.');
   }
 
-  // Seed admin user
+  // Seed admin user. emailVerified is set TRUE so better-auth's
+  // account-linking-by-verified-email picks this row up when the same email
+  // later signs in via GitHub / Google / magic-link (otherwise a duplicate
+  // would be created).
   const admin = await prisma.user.upsert({
     create: {
       email: 'admin@auto-swe.local',
+      emailVerified: true,
       passwordHash: await bcrypt.hash(adminPassword, 12),
       role: 'ADMIN',
     },
-    update: {},
+    update: { emailVerified: true },
     where: { email: 'admin@auto-swe.local' },
   });
   console.log(`Seed: admin user created (${admin.id})`);

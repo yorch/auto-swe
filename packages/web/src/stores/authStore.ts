@@ -2,7 +2,16 @@ import { create } from 'zustand';
 import { api } from '@/lib/api';
 
 interface AuthState {
-  user: { sub: string; role: string; email?: string; slackId?: string } | null;
+  user: {
+    sub: string;
+    role: string;
+    email?: string;
+    slackId?: string;
+    /** Approval-queue flag. New social / magic-link sign-ups land with
+     *  isActive=false and need an admin to flip them. Login page renders
+     *  a pending screen instead of routing into the app. */
+    isActive?: boolean;
+  } | null;
   isAuthenticated: boolean;
   /** Legacy email+password sign-in via the hand-rolled /api/v1/auth/login.
    *  Kept for back-compat with pre-better-auth seeded users. Mints a JWT
@@ -71,6 +80,7 @@ interface BetterAuthSessionResponse {
     email?: string;
     role?: string;
     slackId?: string | null;
+    isActive?: boolean;
   };
 }
 
@@ -82,6 +92,9 @@ async function fetchBetterAuthSession(): Promise<AuthState['user']> {
   const body = (await res.json().catch(() => null)) as BetterAuthSessionResponse | null;
   if (!body?.user) return null;
   return {
+    // Default to true so a stale cache / pre-better-auth user (where
+    // isActive may be missing from the response) renders as active.
+    isActive: body.user.isActive ?? true,
     role: body.user.role ?? 'ENGINEER',
     sub: body.user.id,
     ...(body.user.email ? { email: body.user.email } : {}),

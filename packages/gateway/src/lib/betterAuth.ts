@@ -161,7 +161,21 @@ function renderMagicLinkHtml({ email, url }: { email: string; url: string }): st
   </body></html>`;
 }
 
+/** Slug of the team new sign-ups are added to. Override via env if your
+ *  deployment uses a different "everyone" team. */
+const DEFAULT_TEAM_SLUG = process.env.DEFAULT_TEAM_SLUG ?? 'default';
+
 export const auth = betterAuth({
+  // Link sign-ins by verified email so a user who's already in the system
+  // via GitHub and then signs in with Google (same verified email) ends up
+  // attached to the existing User row instead of creating a duplicate.
+  // Trusted providers skip the explicit-link-confirmation step.
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ['github', 'google', 'email-password'],
+    },
+  },
   // Cookies on the gateway need to be readable by the browser running on
   // a different port. SameSite=Lax is sufficient for top-level GET nav and
   // OAuth callbacks; Secure flips on automatically under HTTPS.
@@ -180,6 +194,37 @@ export const auth = betterAuth({
   },
   baseURL: BASE_URL,
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
+  // Post-create hook: auto-add new users to the configured default team so
+  // team-scoped pages have something to show even before an admin has done
+  // any explicit assignment. Failures are swallowed (with a server log) so a
+  // missing default team doesn't block the sign-up — the user can still be
+  // assigned manually.
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          try {
+            const team = await prisma.team.findUnique({ where: { slug: DEFAULT_TEAM_SLUG } });
+            if (!team) {
+              // biome-ignore lint/suspicious/noConsole: surfaces a real misconfiguration.
+              console.warn(
+                `[better-auth] default team '${DEFAULT_TEAM_SLUG}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
+              );
+              return;
+            }
+            await prisma.teamMembership.upsert({
+              create: { role: 'ENGINEER', teamId: team.id, userId: user.id },
+              update: {},
+              where: { userId_teamId: { teamId: team.id, userId: user.id } },
+            });
+          } catch (err) {
+            // biome-ignore lint/suspicious/noConsole: post-create hook failures are diagnostic.
+            console.error(`[better-auth] auto-team-membership hook failed for ${user.email}:`, err);
+          }
+        },
+      },
+    },
+  },
   emailAndPassword: {
     autoSignIn: true,
     enabled: true,
@@ -213,9 +258,13 @@ export const auth = betterAuth({
   // legacy `password_hash` column lives on `users` for back-compat (the
   // old admin seed used it) but better-auth stores its own credential hash
   // in the Account row, so this field is optional from better-auth's POV.
+  //
+  // `isActive: false` is the default for new sign-ups — they sit in an
+  // approval queue until an admin flips them via PATCH /api/v1/users/:id.
+  // The seeded admin is pre-active via the shared seed.
   user: {
     additionalFields: {
-      isActive: { defaultValue: true, input: false, required: false, type: 'boolean' },
+      isActive: { defaultValue: false, input: false, required: false, type: 'boolean' },
       role: { defaultValue: 'ENGINEER', input: false, required: false, type: 'string' },
       slackId: { input: false, required: false, type: 'string' },
     },

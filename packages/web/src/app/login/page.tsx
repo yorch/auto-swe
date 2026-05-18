@@ -47,17 +47,29 @@ function LoginPageInner() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
+  // Set after hydrate when the resolved user has isActive=false. Renders
+  // a dedicated approval-pending screen instead of bouncing to /.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
   // After a better-auth social or magic-link sign-in lands back here with
-  // ?bridge=1, immediately exchange the session cookie for a JWT and route
-  // the user into the dashboard.
+  // ?bridge=1, resolve the session and either route into the dashboard or
+  // surface the pending-approval screen depending on isActive.
   useEffect(() => {
     if (searchParams.get('bridge') !== '1') return;
     let cancelled = false;
     (async () => {
       const ok = await hydrate();
-      if (!cancelled && ok) router.replace('/');
-      if (!cancelled && !ok) setError('Sign-in completed but no session was found — try again.');
+      if (cancelled) return;
+      if (!ok) {
+        setError('Sign-in completed but no session was found — try again.');
+        return;
+      }
+      const u = useAuthStore.getState().user;
+      if (u?.isActive === false) {
+        setPendingEmail(u.email ?? null);
+        return;
+      }
+      router.replace('/');
     })();
     return () => {
       cancelled = true;
@@ -113,6 +125,45 @@ function LoginPageInner() {
   };
 
   const hasSocial = providers.github || providers.google;
+
+  // Pending-approval short-circuit: the user authenticated successfully via
+  // better-auth but their User row is isActive=false. Show an explanatory
+  // screen instead of the sign-in form so they understand why nothing else
+  // in the app works yet.
+  if (pendingEmail) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink-900 px-6 py-12">
+        <div className="w-full max-w-sm">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-400">
+            ¶ § auth/pending
+          </div>
+          <h1 className="mb-3 font-display text-4xl font-light tracking-tight text-paper-50">
+            Awaiting approval.
+          </h1>
+          <p className="mb-6 text-sm leading-relaxed text-paper-400">
+            We received your sign-in for{' '}
+            <span className="font-mono text-paper-100">{pendingEmail}</span>. An admin needs to
+            approve your account before you can use the workshop. You can close this tab — we'll
+            email you when your access is live.
+          </p>
+          <div className="rounded-sm border border-ink-600 bg-ink-800/40 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500">
+            status: pending
+          </div>
+          <Button
+            className="mt-6"
+            onClick={() => {
+              setPendingEmail(null);
+              router.replace('/login');
+            }}
+            size="sm"
+            variant="secondary"
+          >
+            ← Back to sign in
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
