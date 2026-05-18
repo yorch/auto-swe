@@ -18,6 +18,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { magicLink } from 'better-auth/plugins';
+import nodemailer, { type Transporter } from 'nodemailer';
 
 // Reuse the same Prisma client wiring the rest of the gateway uses so we
 // hit the same connection pool.
@@ -50,17 +51,65 @@ const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.AUTH_FROM_EMAIL;
+const smtpHost = process.env.SMTP_HOST;
+const smtpPort = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+
+/** Lazy-initialised SMTP transporter — only built when SMTP env is present
+ *  AND the first magic link wants delivery. Reused across calls. */
+let smtpTransporter: Transporter | null = null;
+function getSmtpTransporter(): Transporter | null {
+  if (!(smtpHost && smtpPort && fromEmail)) return null;
+  if (!smtpTransporter) {
+    smtpTransporter = nodemailer.createTransport({
+      auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
+      host: smtpHost,
+      port: smtpPort,
+      // STARTTLS on 587, implicit TLS on 465. Match real-world provider defaults.
+      secure: smtpPort === 465,
+    });
+  }
+  return smtpTransporter;
+}
 
 /**
  * Send a magic-link email. Resolves the transport from env at call time so
- * tests / dev can swap behaviour without restarting:
- *   - If RESEND_API_KEY + AUTH_FROM_EMAIL are set → POST to Resend
- *   - Else → log to stdout (dev convenience; surfaces the URL for copy-paste)
+ * tests / dev can swap behaviour without restarting. Resolution order:
  *
- * Prod deployments without Resend should swap this for SES / Mailgun /
- * Postmark / SMTP — the function signature is fixed by better-auth.
+ *   1. SMTP_HOST + SMTP_PORT + AUTH_FROM_EMAIL → nodemailer (covers Mailgun,
+ *      Postmark, SES via SMTP creds, self-hosted Postfix, etc.)
+ *   2. RESEND_API_KEY + AUTH_FROM_EMAIL → POST to Resend (HTTP API)
+ *   3. Else → console.log (dev convenience; URL for copy-paste)
+ *
+ * Production deployments must configure one of the real transports — the
+ * console fallback is a dev-only convenience.
  */
 async function deliverMagicLink({ email, url }: { email: string; url: string }): Promise<void> {
+  const transporter = getSmtpTransporter();
+  if (transporter) {
+    try {
+      const info = await transporter.sendMail({
+        from: fromEmail,
+        html: renderMagicLinkHtml({ email, url }),
+        subject: 'Your auto-swe sign-in link',
+        text: `Sign in to auto-swe:\n\n${url}\n\n(This link expires in 10 minutes.)`,
+        to: email,
+      });
+      // SMTP `sendMail` resolves on submission acceptance, not on delivery.
+      // Inspect `accepted` / `rejected` to distinguish — a non-empty rejected
+      // list means the relay refused the address even though the call
+      // "succeeded". See the `nodemailer-sendmail-accepted-vs-delivered` skill.
+      if (info.rejected.length > 0 && info.accepted.length === 0) {
+        throw new Error(`SMTP relay rejected ${email}: ${info.response}`);
+      }
+      return;
+    } catch (err) {
+      if (IS_PRODUCTION) throw err;
+      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when SMTP fails
+      console.warn(`[magic-link] SMTP failed (${(err as Error).message}); falling back`);
+    }
+  }
   if (resendApiKey && fromEmail) {
     try {
       const res = await fetch('https://api.resend.com/emails', {
@@ -83,9 +132,6 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       }
       return;
     } catch (err) {
-      // Fall through to console as a safety net so a transient Resend outage
-      // doesn't lock everyone out in dev. In prod the throw would surface to
-      // better-auth's caller and the user would see an error.
       if (IS_PRODUCTION) throw err;
       // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when Resend fails
       console.warn(`[magic-link] Resend failed (${(err as Error).message}); falling back to log`);

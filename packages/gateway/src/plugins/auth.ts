@@ -188,11 +188,43 @@ async function verifyPatPayload(request: FastifyRequest, token: string): Promise
   };
 }
 
+/** In-memory cache for session validation results. Keyed by the raw session
+ *  cookie value; entries live for SESSION_CACHE_TTL_MS. This eliminates the
+ *  per-request Postgres roundtrip for steady-state browser traffic — a typical
+ *  page render fires 5-15 API calls, and without the cache each would hit the
+ *  sessions + users tables via better-auth's getSession.
+ *
+ *  Memory bound: SESSION_CACHE_MAX entries, evicted FIFO when full. At ~150
+ *  bytes per entry this caps the cache at well under 1 MB. */
+const SESSION_CACHE_TTL_MS = 60_000;
+const SESSION_CACHE_MAX = 2000;
+const sessionPayloadCache = new Map<string, { payload: JwtPayload; expiresAt: number }>();
+
+function extractSessionCookieValue(headers: FastifyRequest['headers']): string | null {
+  const raw = headers.cookie;
+  if (typeof raw !== 'string') return null;
+  // Quick scan for the better-auth session cookie name. We don't bother
+  // parsing the full cookie string — just the one value we care about.
+  const idx = raw.indexOf('better-auth.session_token=');
+  if (idx === -1) return null;
+  const start = idx + 'better-auth.session_token='.length;
+  const end = raw.indexOf(';', start);
+  return decodeURIComponent(raw.slice(start, end === -1 ? undefined : end));
+}
+
 /** Resolve a better-auth browser session cookie into a synthesized JwtPayload.
  *  Returns null when no session is present so the caller can fall through to
- *  the unauthorized response. Throws only on User lookup failures (which the
- *  caller surfaces as 403). */
+ *  the unauthorized response. */
 async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayload | null> {
+  // Fast path: cache hit by session-cookie value. Stale entries are dropped
+  // here so the lazy expiry doesn't grow the map unbounded over time.
+  const sessionToken = extractSessionCookieValue(request.headers);
+  if (sessionToken) {
+    const hit = sessionPayloadCache.get(sessionToken);
+    if (hit && hit.expiresAt > Date.now()) return hit.payload;
+    if (hit) sessionPayloadCache.delete(sessionToken);
+  }
+
   // Lazy-load to avoid pulling the better-auth module graph into the auth
   // plugin's hot startup path (and to avoid a cycle if betterAuth.ts ever
   // imports from this file).
@@ -204,18 +236,44 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
     headers: fromNodeHeaders(request.headers),
   });
   if (!session) return null;
-  const user = await request.server.prisma.user.findUnique({
-    where: { id: session.user.id },
-  });
-  if (!user?.isActive) return null;
+  // `session.user` carries the additionalFields we declared in betterAuth.ts
+  // (role, isActive, slackId), so we no longer need a second Prisma roundtrip
+  // to the users table. Type the relevant subset to satisfy TS without `any`.
+  const u = session.user as {
+    id: string;
+    role: Role;
+    isActive: boolean;
+    slackId?: string | null;
+  };
+  if (!u.isActive) return null;
   const now = Math.floor(Date.now() / 1000);
-  return {
+  const payload: JwtPayload = {
     exp: now + 60,
     iat: now,
-    role: user.role,
-    ...(user.slackId ? { slackId: user.slackId } : {}),
-    sub: user.id,
+    role: u.role,
+    ...(u.slackId ? { slackId: u.slackId } : {}),
+    sub: u.id,
   };
+
+  // Stash in the cache for follow-up requests on the same session.
+  if (sessionToken) {
+    if (sessionPayloadCache.size >= SESSION_CACHE_MAX) {
+      // FIFO eviction — Map iteration order is insertion order.
+      const firstKey = sessionPayloadCache.keys().next().value;
+      if (firstKey !== undefined) sessionPayloadCache.delete(firstKey);
+    }
+    sessionPayloadCache.set(sessionToken, {
+      expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+      payload,
+    });
+  }
+  return payload;
+}
+
+/** Drop a session from the in-memory cache (used by sign-out so the user
+ *  is immediately logged out instead of waiting up to 60s for the TTL). */
+export function invalidateSessionCache(sessionToken: string): void {
+  sessionPayloadCache.delete(sessionToken);
 }
 
 export function requireAuth(options: RBACOptions = {}) {
