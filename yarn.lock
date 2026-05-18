@@ -229,6 +229,8 @@ __metadata:
     "@types/pg": "npm:8.20.0"
     bcrypt: "npm:6.0.0"
     better-auth: "npm:^1.6.11"
+    dotenv: "npm:^17.4.2"
+    dotenv-expand: "npm:^13.0.0"
     fastify: "npm:5.8.5"
     fastify-plugin: "npm:5.1.0"
     fastify-raw-body: "npm:5.0.0"
@@ -5013,7 +5015,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dotenv-expand@npm:13.0.0":
+"dotenv-expand@npm:13.0.0, dotenv-expand@npm:^13.0.0":
   version: 13.0.0
   resolution: "dotenv-expand@npm:13.0.0"
   dependencies:

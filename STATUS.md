@@ -1,6 +1,6 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-12.
+> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-17.
 
 ## Legend
 
@@ -139,6 +139,9 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Workflow-engine Phase 7 — first-class in Slack + CLI                                                  | Done   | —     | `/auto-swe` slash command (workflows list/show + run modal), per-step Slack failure notifications, new `packages/cli/` workspace (`auto-swe workflows list/show/export/import`).                                                     |
 | Workflow-engine Phase 8 — ergonomics + memory + cost denorm + cancellation                            | Done   | —     | Personal access tokens, CLI `runs` + `tokens` subcommands, Slack success notifications, `recordLessonDirectly` for resolver/shell steps, `WorkflowRun.costUsdAccrued` denormalization, A/B significance hint, fan-out cancellation.  |
 | Workflow-engine Phase 9 — analytics UI + CLI run + cancel run                                        | Done   | —     | `/analytics` global page, A/B winner badge on template analytics, `auto-swe run` CLI subcommand, cancel-run API (`POST /workflow-runs/:id/cancel`) + web UI button.                                                                  |
+| Web redesign — "Workshop Telemetry"                                                                   | Done   | —     | Dark warm-ink surface, single terracotta accent, Fraunces × IBM Plex Sans × JetBrains Mono via `next/font`. New primitives (`Button`, `Input`, `Stat`, `PageHeader`, `SectionHeader`, `Card` variants), redesigned `Sidebar` / `TopBar` / `AppShell` chrome, dark-mode Recharts via `chartChrome.tsx`. Login + dashboard rebuilt as exemplars; interior pages cascade through the new tokens. Screenshots in `docs/redesign/`. |
+| Visual workflow template editor — React Flow + dagre + drag-to-create                                 | Done   | —     | `WorkflowDag` rewritten on `@xyflow/react` (pan / zoom / minimap / fit-view + multi-source handles per cond / signal / fanOut). New `TemplateEditor` adds drag-from-palette node creation, drag-to-connect edges, schema-aware right-rail inspector with explicit edge dropdowns. Dagre network-simplex layout replaces the custom BFS — branchy graphs render as proper multi-row hierarchies. 5 curated starter specs on `/templates`. Sub-pages (runs / diff / analytics) redesigned to match. |
+| Browser sign-in via better-auth — GitHub / Google / magic-link / email-password                       | Done   | —     | `better-auth` mounted at `/api/auth/*` on Fastify with email+password, GitHub, Google, and 10-min magic-link. SMTP / Resend / console magic-link transports. Cookie-based browser sessions; `requireAuth` has a third validation path with 60s in-memory cache. Existing PAT + JWT-bearer paths untouched for CLI/API use. Linked-accounts settings page; `db:seed:auth` provisions the credential Account for the seeded admin. Production secret guards on `BETTER_AUTH_SECRET` / `JWT_SECRET`. Setup guide in `docs/oauth-setup.md`. |
 
 ---
 
@@ -150,7 +153,10 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Phase 2   | 10               | 10     | 0       | 0           |
 | Phase 3   | 14               | 14     | 0       | 0           |
 | Phase 4   | 12               | 11     | 0       | 1           |
-| **Total** | **46**           | **45** | **0**   | **1**       |
+| Post-MVP  | 3                | 3      | 0       | 0           |
+| **Total** | **49**           | **48** | **0**   | **1**       |
+
+> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, and the better-auth multi-provider sign-in migration.
 
 ### Not started (full list)
 

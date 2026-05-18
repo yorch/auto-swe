@@ -34,6 +34,12 @@ async function main() {
     where: { email: 'admin@auto-swe.local' },
   });
   console.log(`Seed: admin user created (${admin.id})`);
+  console.log(
+    '  Sign in with email+password via the legacy bcrypt path, or use magic link / GitHub / Google.'
+  );
+  console.log(
+    '  Run `yarn db:seed:auth` next to also provision a better-auth credential (enables the new email+password tab on /login).'
+  );
 
   // Seed default team
   const team = await prisma.team.upsert({
