@@ -102,35 +102,48 @@ Temporal Web UI is available at <http://localhost:8233>.
 
 ### Submit a work request
 
-```bash
-# Get a JWT first
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@example.com","password":"<SEED_ADMIN_PASSWORD>"}' \
-  | jq -r '.data.accessToken')
+Three equivalent entry points — pick the one that fits the workflow:
 
-# Submit a work request (standard budget tier)
-curl -X POST http://localhost:8080/api/v1/work-requests \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "externalTicketId": "JIRA-42",
-    "description": "Add a GET /health endpoint that returns { status: ok }",
-    "repoIds": ["<repo-uuid-from-seed>"],
-    "budgetTier": "STANDARD"
-  }'
-```
+1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, click **+ Submit work request** in the header (or in the onboarding panel if you have no runs yet). The repo dropdown, brief, and budget tier are all there; on submit it routes you to the new run.
+2. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
+3. **Raw HTTP** — useful for scripting / CI. Either a JWT (legacy `/auth/login`) or a PAT created in the UI works as the bearer:
+
+   ```bash
+   TOKEN=<your-PAT-from-Settings → API tokens>   # or mint a JWT via /auth/login
+
+   curl -X POST http://localhost:8080/api/v1/work-requests \
+     -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "externalTicketId": "JIRA-42",
+       "description": "Add a GET /health endpoint that returns { status: ok }",
+       "repoIds": ["<repo-uuid>"],
+       "budgetTier": "STANDARD"
+     }'
+   ```
 
 `budgetTier` controls the LLM token budget: `STANDARD` (2M/500K tokens), `LARGE` (8M/2M), `EPIC` (20M/5M). The workflow is terminated with `BUDGET_EXCEEDED` if the limit is breached.
+
+For multi-repo changes, use **Epics** (`/epics` in the dashboard, or `POST /api/v1/epics`) — the Planner agent decomposes the brief into per-repo child workflows.
 
 ### Monitor
 
 ```bash
-# List workflows
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/workflows
+# Dashboard — KPIs, recent activity, "needs attention" queue
+open http://localhost:3000
+
+# Full run history with filters
+open http://localhost:3000/runs
 
 # Temporal Web UI — real-time workflow state, history, signals
 open http://localhost:8233
+```
+
+Or via the API:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/workflows
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-runs?status=RUNNING'
 ```
 
 ## Environment variables

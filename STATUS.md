@@ -1,6 +1,6 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-17.
+> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-18.
 
 ## Legend
 
@@ -142,6 +142,8 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Web redesign — "Workshop Telemetry"                                                                   | Done   | —     | Dark warm-ink surface, single terracotta accent, Fraunces × IBM Plex Sans × JetBrains Mono via `next/font`. New primitives (`Button`, `Input`, `Stat`, `PageHeader`, `SectionHeader`, `Card` variants), redesigned `Sidebar` / `TopBar` / `AppShell` chrome, dark-mode Recharts via `chartChrome.tsx`. Login + dashboard rebuilt as exemplars; interior pages cascade through the new tokens. Screenshots in `docs/redesign/`. |
 | Visual workflow template editor — React Flow + dagre + drag-to-create                                 | Done   | —     | `WorkflowDag` rewritten on `@xyflow/react` (pan / zoom / minimap / fit-view + multi-source handles per cond / signal / fanOut). New `TemplateEditor` adds drag-from-palette node creation, drag-to-connect edges, schema-aware right-rail inspector with explicit edge dropdowns. Dagre network-simplex layout replaces the custom BFS — branchy graphs render as proper multi-row hierarchies. 5 curated starter specs on `/templates`. Sub-pages (runs / diff / analytics) redesigned to match. |
 | Browser sign-in via better-auth — GitHub / Google / magic-link / email-password                       | Done   | —     | `better-auth` mounted at `/api/auth/*` on Fastify with email+password, GitHub, Google, and 10-min magic-link. SMTP / Resend / console magic-link transports. Cookie-based browser sessions; `requireAuth` has a third validation path with 60s in-memory cache. Existing PAT + JWT-bearer paths untouched for CLI/API use. Linked-accounts settings page; `db:seed:auth` provisions the credential Account for the seeded admin. Production secret guards on `BETTER_AUTH_SECRET` / `JWT_SECRET`. Setup guide in `docs/oauth-setup.md`. |
+| UI coverage closure — work-request modal, onboarding panel, repo / team / PAT / epic / lesson-search / runs-list management | Done | — | New `Modal` primitive + 11 hooks bring every previously API-only endpoint onto the dashboard: `+ Submit work request` on the dashboard / `/workflows`; new-user onboarding panel (Step 01 connect-repo, Step 02 first-request CTA, Step 03 watch-it-run, collapsible curl); `/repositories` add+edit forms; `/settings → API tokens` (create / list / revoke with one-time secret reveal); `/teams` create + edit + add member + inline role change + shell-image allowlist editor; `/epics` multi-repo create form; `/lessons` search bar; new `/runs` global run history with status+template filters. Only endpoints still API-only are the external webhooks and the legacy `POST /users` (invite is preferred). |
+| Prisma migration consolidation — clean init + HNSW                                                    | Done   | —     | Squashed 4 drift-laden migrations (broken `_add_better_auth_tables` that only dropped the HNSW index, plus the re-add and a repair migration) into one canonical init generated from `schema.prisma` + a separate HNSW-index migration. Verified against a fresh DB. Other devs must `migrate reset` before pulling.                                                                                                                                                                                                                       |
 
 ---
 
@@ -153,10 +155,10 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Phase 2   | 10               | 10     | 0       | 0           |
 | Phase 3   | 14               | 14     | 0       | 0           |
 | Phase 4   | 12               | 11     | 0       | 1           |
-| Post-MVP  | 3                | 3      | 0       | 0           |
-| **Total** | **49**           | **48** | **0**   | **1**       |
+| Post-MVP  | 5                | 5      | 0       | 0           |
+| **Total** | **51**           | **50** | **0**   | **1**       |
 
-> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, and the better-auth multi-provider sign-in migration.
+> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, the better-auth multi-provider sign-in migration, the UI-coverage closure pass (one-stop admin/engineer surface on the dashboard), and the Prisma migration consolidation.
 
 ### Not started (full list)
 

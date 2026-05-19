@@ -1,11 +1,20 @@
 # Web Dashboard — ASCII Wireframes
 
-> **Tech stack:** Next.js 16 + React 19 + Tailwind CSS 4 + shadcn/ui + Radix UI + Recharts
-> **API base:** `GET/POST/PATCH/DELETE /api/v1/*` (gateway on `:8080`)
-> **Auth:** JWT in `Authorization: Bearer <token>` header (HS256 by default for Docker Compose; RS256 if `JWT_PRIVATE_KEY_PATH` is set)
+> **Tech stack:** Next.js 16 + React 19 + Tailwind CSS 4 + custom "Workshop Telemetry" primitives (no shadcn/Radix; see `packages/web/src/components/ui/`) + Recharts
+> **API base:** `GET/POST/PATCH/PUT/DELETE /api/v1/*` (gateway on `:8080`)
+> **Auth:** any of (a) better-auth session cookie (browser, default), (b) JWT bearer (legacy email+password, HS256 by default for Docker Compose; RS256 if `JWT_PRIVATE_KEY_PATH` is set), or (c) personal access token (`ats_…`) for CLI / scripts — mint at Settings → API tokens.
 > **Roles:** `ADMIN > LEAD > ENGINEER` (numeric hierarchy 3 > 2 > 1)
 >
 > See [Web UI Technical Stack](#web-ui-technical-stack) at the end of this document for full library details.
+
+> **Status note (2026-05-18).** This file is a historical design doc — kept for context on intent. Where it diverges from what shipped, the shipped UI is authoritative (see `packages/web/src/app/`). Notable differences:
+>
+> - **Dashboard** now ships an onboarding panel (3-step "get started" + collapsible API example) that replaces the empty-state when the user has no runs, plus a persistent `+ Submit work request` button in the header that opens a modal form.
+> - **`/runs`** (not in this doc) is a global workflow-run history with status + template filters and offset pagination — distinct from `/workflows` which lists `ActiveWorkflow` rows.
+> - **Settings** has an "API tokens" section (create / list / revoke personal access tokens with a one-time secret-reveal modal) — used by the CLI via `AUTO_SWE_TOKEN`.
+> - **Team detail** has a shell-image allowlist editor (one image per line, validated against `DOCKER_IMAGE_REF_RE`) gated to admin/lead.
+> - **Team member remove** (DELETE `/teams/:id/members/:userId`) referenced below has no backend endpoint; the UI exposes add + role-change only.
+> - **Epics** is a real form (multi-repo selector) that routes to the epic workflow on submit; the doc's "dependency graph builder" is not built — dependencies come from the Planner agent's decomposition.
 
 ---
 

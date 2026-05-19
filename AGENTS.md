@@ -240,24 +240,35 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + temporal + otel-lgtm)
-cp .env.example .env    # Fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET
+cp .env.example .env    # Fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, SEED_ADMIN_PASSWORD
 yarn docker:infra:up
 
 # 3. Database setup
 yarn db:migrate && yarn db:generate && yarn db:seed
+#  ↳ seeds the admin user, default team, sample repo, and default workflow
+#    template. Re-running `yarn db:migrate:reset` is the cleanest way to
+#    start over locally (migrations consolidate into a single init + the
+#    pgvector HNSW index migration; see packages/shared/src/prisma/migrations).
 
-# 4. Start services (two terminals)
+# 4. Start services (three terminals — or `yarn dev` to run all three)
 yarn dev:gateway         # Terminal 1 — http://localhost:8080
 yarn dev:worker          # Terminal 2
+yarn dev:web             # Terminal 3 — http://localhost:3000
 
-# 5. Submit a test work request
+# 5. Drive it from the dashboard
+#    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD,
+#    then either click "+ Submit work request" or follow the onboarding panel.
+#    For headless / scripted use, mint a PAT at Settings → API tokens and:
+TOKEN=<paste-PAT>
 curl -X POST http://localhost:8080/api/v1/work-requests \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"externalTicketId":"JIRA-1","description":"Add GET /health endpoint","repoIds":["<repo-uuid-from-seed>"]}'
 
 # 6. Monitor
-# Temporal Web UI: http://localhost:8233
-# Workflows:      http://localhost:8080/api/v1/workflows
+# Dashboard:       http://localhost:3000     (KPIs + needs-attention queue)
+# Run history:     http://localhost:3000/runs
+# Temporal UI:     http://localhost:8233    (workflow history, signals)
 ```
 
 ---
