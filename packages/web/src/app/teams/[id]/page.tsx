@@ -7,7 +7,7 @@ import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
+import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -16,6 +16,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const { data: team, isLoading } = useTeam(id);
   const updateMember = useUpdateTeamMember(id);
+  const removeMember = useRemoveTeamMember(id);
   const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
   const canManage = platformRole === 'ADMIN' || platformRole === 'LEAD';
 
@@ -62,6 +63,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 <th className="text-left py-2">Email</th>
                 <th className="text-left py-2">Platform Role</th>
                 <th className="text-left py-2">Team Role</th>
+                {canManage && <th className="py-2" />}
               </tr>
             </thead>
             <tbody>
@@ -90,11 +92,38 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                       m.role
                     )}
                   </td>
+                  {canManage && (
+                    <td className="py-2 text-right">
+                      {m.user?.id && (
+                        <Button
+                          disabled={removeMember.isPending}
+                          onClick={() => {
+                            const userId = m.user?.id;
+                            if (!userId) return;
+                            if (
+                              window.confirm(
+                                `Remove ${m.user?.email ?? 'this user'} from ${team.name}?`
+                              )
+                            ) {
+                              removeMember.mutate(userId);
+                            }
+                          }}
+                          size="sm"
+                          variant="danger"
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
               {memberships.length === 0 && (
                 <tr>
-                  <td className="py-4 text-center text-xs text-paper-500" colSpan={3}>
+                  <td
+                    className="py-4 text-center text-xs text-paper-500"
+                    colSpan={canManage ? 4 : 3}
+                  >
                     No members yet.
                   </td>
                 </tr>

@@ -490,6 +490,14 @@ export function useUpdateTeamMember(teamId: string) {
   });
 }
 
+export function useRemoveTeamMember(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.delete(`/api/v1/teams/${teamId}/members/${userId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team', teamId] }),
+  });
+}
+
 export function useTeamShellAllowlist(teamId: string) {
   return useQuery({
     enabled: !!teamId,
