@@ -361,3 +361,205 @@ export function useCreateWorkRequest() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   });
 }
+
+// ── Repositories ──────────────────────────────────────────────────────────
+
+export interface CreateRepoBody {
+  organizationName: string;
+  repoName: string;
+  defaultBranch?: string;
+  teamId: string;
+  executorImage?: string;
+  language?: string;
+  description?: string;
+  githubUrl?: string;
+  githubApiUrl?: string;
+}
+export interface UpdateRepoBody {
+  defaultBranch?: string;
+  description?: string | null;
+  executorImage?: string | null;
+  isActive?: boolean;
+  language?: string | null;
+  teamId?: string;
+  githubUrl?: string | null;
+  githubApiUrl?: string | null;
+}
+
+export function useCreateRepository() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateRepoBody) =>
+      api.post<{ data: RepositorySummary }>('/api/v1/repositories', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
+export function useUpdateRepository(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateRepoBody) =>
+      api.patch<{ data: RepositorySummary }>(`/api/v1/repositories/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
+// ── Personal access tokens (user's own) ──────────────────────────────────
+
+export interface PatSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+export interface PatCreated {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  /** Plaintext appears in the create response exactly once. */
+  token: string;
+}
+
+export function usePersonalAccessTokens() {
+  return useQuery({
+    queryFn: () => api.get<{ data: PatSummary[] }>('/api/v1/auth/tokens').then((r) => r.data),
+    queryKey: ['pats'],
+  });
+}
+
+export function useCreatePat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; expiresInDays?: number }) =>
+      api.post<{ data: PatCreated }>('/api/v1/auth/tokens', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pats'] }),
+  });
+}
+
+export function useRevokePat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/auth/tokens/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pats'] }),
+  });
+}
+
+// ── Teams (create / edit / members / shell allowlist) ────────────────────
+
+export function useCreateTeam() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; slug: string; description?: string }) =>
+      api.post<{ data: TeamSummary }>('/api/v1/teams', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  });
+}
+
+export function useUpdateTeam(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name?: string; description?: string }) =>
+      api.patch<{ data: TeamSummary }>(`/api/v1/teams/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['teams'] });
+      qc.invalidateQueries({ queryKey: ['team', id] });
+    },
+  });
+}
+
+export function useAddTeamMember(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { userId: string; role?: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+      api.post(`/api/v1/teams/${teamId}/members`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team', teamId] }),
+  });
+}
+
+export function useUpdateTeamMember(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+      api.patch(`/api/v1/teams/${teamId}/members/${userId}`, { role }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team', teamId] }),
+  });
+}
+
+export function useTeamShellAllowlist(teamId: string) {
+  return useQuery({
+    enabled: !!teamId,
+    queryFn: () =>
+      api
+        .get<{ data: { shellImageAllowlist: string[] } }>(
+          `/api/v1/teams/${teamId}/shell-image-allowlist`
+        )
+        .then((r) => r.data),
+    queryKey: ['team-shell-allowlist', teamId],
+  });
+}
+
+export function useUpdateTeamShellAllowlist(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shellImageAllowlist: string[]) =>
+      api.put<{ data: { shellImageAllowlist: string[] } }>(
+        `/api/v1/teams/${teamId}/shell-image-allowlist`,
+        { shellImageAllowlist }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-shell-allowlist', teamId] }),
+  });
+}
+
+// ── Epics ────────────────────────────────────────────────────────────────
+
+export function useCreateEpic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { externalTicketId: string; description: string; repoIds: string[] }) =>
+      api.post<{ data: { epicWorkflowId: string; workRequestId: string } }>('/api/v1/epics', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
+  });
+}
+
+// ── Lessons ──────────────────────────────────────────────────────────────
+
+export function useLessonSearch(q: string, repoId: string | null) {
+  return useQuery({
+    enabled: !!q && !!repoId,
+    queryFn: () =>
+      api
+        .get<{ data: LessonListItem[] }>(
+          `/api/v1/lessons/search?q=${encodeURIComponent(q)}&repoId=${repoId}`
+        )
+        .then((r) => r.data),
+    queryKey: ['lesson-search', q, repoId],
+  });
+}
+
+// ── All workflow runs (global list, not template-scoped) ─────────────────
+
+export function useAllWorkflowRuns(
+  filters: { status?: string; templateId?: string; limit?: number; offset?: number } = {}
+) {
+  const params = new URLSearchParams();
+  if (filters.status) params.set('status', filters.status);
+  if (filters.templateId) params.set('templateId', filters.templateId);
+  params.set('limit', String(filters.limit ?? 50));
+  params.set('offset', String(filters.offset ?? 0));
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{
+          data: WorkflowRunSummary[];
+          meta: { limit: number; offset: number; total: number };
+        }>(`/api/v1/workflow-runs?${params.toString()}`)
+        .then((r) => ({ data: r.data, meta: r.meta })),
+    queryKey: ['workflow-runs', filters],
+    refetchInterval: 10_000,
+  });
+}

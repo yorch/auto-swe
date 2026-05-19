@@ -113,6 +113,10 @@ export class ApiClient {
     return this.fetch<T>(path, { body: JSON.stringify(body), method: 'PATCH' });
   }
 
+  put<T>(path: string, body: unknown) {
+    return this.fetch<T>(path, { body: JSON.stringify(body), method: 'PUT' });
+  }
+
   delete<T>(path: string) {
     return this.fetch<T>(path, { method: 'DELETE' });
   }

@@ -1,18 +1,32 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { TeamFormModal } from '@/components/teams/TeamFormModal';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { useTeams } from '@/hooks/useWorkflows';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamsPage() {
   const { data: teams, isLoading } = useTeams();
+  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const canCreate = role === 'ADMIN';
+  const [creating, setCreating] = useState(false);
 
   if (isLoading)
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Teams</h2>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-2xl font-bold">Teams</h2>
+        {canCreate && (
+          <Button onClick={() => setCreating(true)} variant="primary">
+            + New team
+          </Button>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(teams ?? []).map((t) => (
           <Link href={`/teams/${t.id}`} key={t.id}>
@@ -29,6 +43,7 @@ export default function TeamsPage() {
           </Link>
         ))}
       </div>
+      <TeamFormModal mode={{ kind: 'create' }} onClose={() => setCreating(false)} open={creating} />
     </div>
   );
 }

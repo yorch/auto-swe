@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -284,6 +285,11 @@ export default function SettingsPage() {
             need a fresh session, request one from the login page.
           </p>
         </Card>
+      </section>
+
+      <section className="fade-up stagger-4">
+        <SectionHeader hint="for the auto-swe CLI" number="04" title="API tokens" />
+        <AccessTokensSection />
       </section>
     </div>
   );

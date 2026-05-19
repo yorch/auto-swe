@@ -1,17 +1,27 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
 import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useLessons } from '@/hooks/useWorkflows';
+import { Input } from '@/components/ui/Input';
+import { useLessonSearch, useLessons, useRepositories } from '@/hooks/useWorkflows';
 import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
 
 export default function LessonsPage() {
   const { data: lessons, isLoading } = useLessons();
+  const { data: repos = [] } = useRepositories();
+  const [query, setQuery] = useState('');
+  const [repoId, setRepoId] = useState('');
+  const searchEnabled = query.trim().length > 0 && !!repoId;
+  const { data: searchResults, isFetching: searchLoading } = useLessonSearch(
+    searchEnabled ? query.trim() : '',
+    searchEnabled ? repoId : null
+  );
 
   const all = lessons ?? [];
+  const visible = searchEnabled ? (searchResults ?? []) : all;
   const typeData = useMemo(() => groupLessonsByType(all), [all]);
   const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
@@ -38,8 +48,48 @@ export default function LessonsPage() {
         </Card>
       </div>
 
+      {/* Search bar — text + repo are both required by the API */}
+      <Card variant="inset">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_240px]">
+          <Input
+            label="Search"
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="e.g. retry, timeout, race condition"
+            value={query}
+          />
+          <div className="space-y-1.5">
+            <label
+              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+              htmlFor="lesson-repo"
+            >
+              Repository
+            </label>
+            <select
+              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
+              id="lesson-repo"
+              onChange={(e) => setRepoId(e.target.value)}
+              value={repoId}
+            >
+              <option value="">All repos (no search)</option>
+              {repos.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.organizationName}/{r.repoName}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {searchEnabled && (
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
+            {searchLoading
+              ? 'Searching…'
+              : `${visible.length} match${visible.length === 1 ? '' : 'es'} for "${query.trim()}"`}
+          </p>
+        )}
+      </Card>
+
       <div className="space-y-4">
-        {all.map((l) => (
+        {visible.map((l) => (
           <Card key={l.id}>
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -60,9 +110,9 @@ export default function LessonsPage() {
             </div>
           </Card>
         ))}
-        {all.length === 0 && (
+        {visible.length === 0 && (
           <p className="text-center text-[var(--muted-foreground)] py-12">
-            No lessons recorded yet
+            {searchEnabled ? 'No matches.' : 'No lessons recorded yet'}
           </p>
         )}
       </div>
