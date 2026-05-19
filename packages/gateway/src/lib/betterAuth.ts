@@ -106,7 +106,6 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       return;
     } catch (err) {
       if (IS_PRODUCTION) throw err;
-      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when SMTP fails
       console.warn(`[magic-link] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
@@ -133,11 +132,9 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       return;
     } catch (err) {
       if (IS_PRODUCTION) throw err;
-      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when Resend fails
       console.warn(`[magic-link] Resend failed (${(err as Error).message}); falling back to log`);
     }
   }
-  // biome-ignore lint/suspicious/noConsole: dev-only magic-link delivery
   console.log(
     `\n[magic-link] → ${email}\n[magic-link]   ${url}\n[magic-link]   (link expires in 10 min)\n`
   );
@@ -164,7 +161,6 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
       return;
     } catch (err) {
       if (IS_PRODUCTION) throw err;
-      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when SMTP fails
       console.warn(`[password-reset] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
@@ -184,11 +180,9 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
       return;
     } catch (err) {
       if (IS_PRODUCTION) throw err;
-      // biome-ignore lint/suspicious/noConsole: dev-only diagnostic when Resend fails
       console.warn(`[password-reset] Resend failed (${(err as Error).message}); falling back`);
     }
   }
-  // biome-ignore lint/suspicious/noConsole: dev-only password-reset delivery
   console.log(
     `\n[password-reset] → ${email}\n[password-reset]   ${url}\n[password-reset]   (link expires in 1 hour)\n`
   );
@@ -273,7 +267,6 @@ export const auth = betterAuth({
           try {
             const team = await prisma.team.findUnique({ where: { slug: DEFAULT_TEAM_SLUG } });
             if (!team) {
-              // biome-ignore lint/suspicious/noConsole: surfaces a real misconfiguration.
               console.warn(
                 `[better-auth] default team '${DEFAULT_TEAM_SLUG}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
               );
@@ -285,7 +278,6 @@ export const auth = betterAuth({
               where: { userId_teamId: { teamId: team.id, userId: user.id } },
             });
           } catch (err) {
-            // biome-ignore lint/suspicious/noConsole: post-create hook failures are diagnostic.
             console.error(`[better-auth] auto-team-membership hook failed for ${user.email}:`, err);
           }
         },
