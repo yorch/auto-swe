@@ -22,6 +22,7 @@ For deeper context on architecture and design rationale, refer to:
 | `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |
 | `docs/wireframes.md`              | Web dashboard wireframes and page layouts            |
 | `docs/configurable-workflows.md`  | Living roadmap for the configurable-workflow engine (phases, decisions, open questions) |
+| `docs/deployment.md`              | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
 
 ---
 

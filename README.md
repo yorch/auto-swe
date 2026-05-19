@@ -98,6 +98,8 @@ cd packages/web && yarn dev   # → http://localhost:3000
 
 Temporal Web UI is available at <http://localhost:8233>.
 
+For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — end-to-end runbook covering env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, backup, and a hardening checklist.
+
 ## Usage
 
 ### Submit a work request
