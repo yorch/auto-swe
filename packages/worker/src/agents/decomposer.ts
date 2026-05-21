@@ -50,18 +50,16 @@ const DecomposerOutputSchema = z.object({
 export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
   return tracer.startActiveSpan(
     'llm.plan_decomposition',
-    {
-      attributes: {
-        'llm.model': getModelSpec('planner'),
-        'request.ticket': request.externalTicketId,
-      },
-    },
+    { attributes: { 'request.ticket': request.externalTicketId } },
     async (span) => {
       try {
+        const modelSpec = await getModelSpec('planner');
+        const model = await getModel('planner');
+        span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
           id: 'feature-decomposer',
           instructions: DECOMPOSER_AGENT_PROMPT,
-          model: getModel('planner'),
+          model,
           name: 'feature-decomposer',
         });
 

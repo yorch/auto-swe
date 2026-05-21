@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
+import { seedConfigFromEnv } from './lib/config/seed.js';
 
 async function run() {
   // Install Temporal runtime with OTel metrics if endpoint is available
@@ -20,6 +21,20 @@ async function run() {
         },
       },
     });
+  }
+
+  // Bootstrap LLM model + credential configuration from env vars into the DB.
+  // Idempotent and concurrent-worker-safe; failures are logged but non-fatal
+  // (the resolver's env fallback keeps activities running until the DB is reachable).
+  try {
+    const seedResult = await seedConfigFromEnv();
+    if (seedResult.rolesSeeded > 0 || seedResult.credentialsSeeded > 0) {
+      console.log(
+        `[config] seeded ${seedResult.rolesSeeded} model role(s) and ${seedResult.credentialsSeeded} provider credential(s) from env`
+      );
+    }
+  } catch (err) {
+    console.error('[config] env→DB seed failed (non-fatal, resolver will use env fallback):', err);
   }
 
   const connection = await NativeConnection.connect({

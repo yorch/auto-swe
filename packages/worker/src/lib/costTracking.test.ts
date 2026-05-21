@@ -1,13 +1,17 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock prisma before importing the module under test
+// Mock prisma before importing the module under test. `modelRoleConfig` and
+// `providerCredential` are stubbed to return null so `recordLlmUsage`'s
+// `getModelSpec` call falls through to env-var defaults.
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: {
       findFirst: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
     },
+    modelRoleConfig: { findFirst: vi.fn().mockResolvedValue(null) },
+    providerCredential: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 

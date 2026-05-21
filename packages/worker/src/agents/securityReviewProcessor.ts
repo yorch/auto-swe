@@ -28,45 +28,44 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 // ── Security Review Agent ──
 
 export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
-  return tracer.startActiveSpan(
-    'llm.security_scan',
-    { attributes: { 'llm.model': getModelSpec('securityReview') } },
-    async (span) => {
-      try {
-        const agent = new Agent({
-          id: 'security-review-gate',
-          instructions: SECURITY_REVIEW_PROMPT,
-          model: getModel('securityReview'),
-          name: 'security-review-gate',
-        });
+  return tracer.startActiveSpan('llm.security_scan', async (span) => {
+    try {
+      const modelSpec = await getModelSpec('securityReview');
+      const model = await getModel('securityReview');
+      span.setAttribute('llm.model', modelSpec);
+      const agent = new Agent({
+        id: 'security-review-gate',
+        instructions: SECURITY_REVIEW_PROMPT,
+        model,
+        name: 'security-review-gate',
+      });
 
-        const result = await agent.generate(
-          [
-            {
-              content: diff,
-              role: 'user',
-            },
-          ],
-          { structuredOutput: { schema: SecurityScanResultSchema } }
-        );
+      const result = await agent.generate(
+        [
+          {
+            content: diff,
+            role: 'user',
+          },
+        ],
+        { structuredOutput: { schema: SecurityScanResultSchema } }
+      );
 
-        if (!result.object) {
-          throw new Error('Security review agent did not return structured output');
-        }
-        const scanResult = result.object as SecurityScanResult;
-
-        // Enforce invariant: passed must be false if any CRITICAL finding exists
-        const hasCritical = scanResult.findings.some((f) => f.severity === 'CRITICAL');
-        return {
-          ...scanResult,
-          passed: hasCritical ? false : scanResult.passed,
-        };
-      } catch (e) {
-        span.recordException(e as Error);
-        throw e;
-      } finally {
-        span.end();
+      if (!result.object) {
+        throw new Error('Security review agent did not return structured output');
       }
+      const scanResult = result.object as SecurityScanResult;
+
+      // Enforce invariant: passed must be false if any CRITICAL finding exists
+      const hasCritical = scanResult.findings.some((f) => f.severity === 'CRITICAL');
+      return {
+        ...scanResult,
+        passed: hasCritical ? false : scanResult.passed,
+      };
+    } catch (e) {
+      span.recordException(e as Error);
+      throw e;
+    } finally {
+      span.end();
     }
-  );
+  });
 }

@@ -16,7 +16,11 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
     // `activityInfo()` throws with a specific message when called outside an
     // activity context (worker boot, unit tests). Any other error is a real
     // bug — let it propagate so we don't silently degrade to GLOBAL scope.
-    if (err instanceof Error && /not in activity/i.test(err.message)) return {};
+    if (
+      err instanceof Error &&
+      /activity context (not initialized|is not available)/i.test(err.message)
+    )
+      return {};
     throw err;
   }
   if (!wid) return {};

@@ -28,7 +28,9 @@ function safePath(relPath: string): string {
  * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
  * Each tool call is translated to a `docker exec` command inside the workspace.
  */
-export function createImplementerAgent(workspace: Workspace): { agent: Agent; mastra: Mastra } {
+export async function createImplementerAgent(
+  workspace: Workspace
+): Promise<{ agent: Agent; mastra: Mastra }> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
@@ -113,7 +115,7 @@ export function createImplementerAgent(workspace: Workspace): { agent: Agent; ma
   const implementerAgent = new Agent({
     id: 'implementer',
     instructions: '', // Set per-call via system message
-    model: getModel('implementer'),
+    model: await getModel('implementer'),
     name: 'implementer',
     tools: { bash, listDirectory, readFile, writeFile },
   });

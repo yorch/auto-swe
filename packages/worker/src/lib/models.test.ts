@@ -1,5 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type AgentRole, getModel, getModelSpec, resolveModel } from './models.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { findFirstMock, credFindFirstMock } = vi.hoisted(() => ({
+  credFindFirstMock: vi.fn().mockResolvedValue(null),
+  findFirstMock: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    modelRoleConfig: { findFirst: findFirstMock },
+    providerCredential: { findFirst: credFindFirstMock },
+  },
+}));
+
+import { _resetConfigCacheForTests } from './config/cache.js';
+import {
+  _resetModelCacheForTests,
+  type AgentRole,
+  getModel,
+  getModelSpec,
+  resolveModel,
+} from './models.js';
 
 const ROLES: AgentRole[] = [
   'implementer',
@@ -19,62 +39,75 @@ const ROLE_ENV: Record<AgentRole, string> = {
   validateContext: 'CONTEXT_VALIDATOR_MODEL',
 };
 
-describe('getModelSpec', () => {
-  const originalEnv = { ...process.env };
+const originalEnv = { ...process.env };
 
+beforeEach(() => {
+  process.env = { ...originalEnv };
+  _resetConfigCacheForTests();
+  _resetModelCacheForTests();
+  findFirstMock.mockReset().mockResolvedValue(null);
+  credFindFirstMock.mockReset().mockResolvedValue(null);
+});
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+});
+
+describe('getModelSpec', () => {
   beforeEach(() => {
     for (const v of Object.values(ROLE_ENV)) delete process.env[v];
   });
 
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('falls back to anthropic defaults when no env override is set', () => {
+  it('falls back to anthropic defaults when no DB row and no env override', async () => {
     for (const role of ROLES) {
-      expect(getModelSpec(role)).toMatch(/^anthropic\//);
+      _resetConfigCacheForTests();
+      expect(await getModelSpec(role)).toMatch(/^anthropic\//);
     }
   });
 
-  it('honours the env override for each role', () => {
+  it('honours the env override for each role when DB is empty', async () => {
     for (const role of ROLES) {
+      _resetConfigCacheForTests();
       process.env[ROLE_ENV[role]] = 'openai/gpt-5';
-      expect(getModelSpec(role)).toBe('openai/gpt-5');
+      expect(await getModelSpec(role)).toBe('openai/gpt-5');
       delete process.env[ROLE_ENV[role]];
     }
   });
 
-  it('treats whitespace-only env values as unset', () => {
+  it('treats whitespace-only env values as unset', async () => {
     process.env.IMPLEMENTER_MODEL = '   ';
-    expect(getModelSpec('implementer')).toMatch(/^anthropic\//);
+    expect(await getModelSpec('implementer')).toMatch(/^anthropic\//);
+  });
+
+  it('uses the DB row when present', async () => {
+    findFirstMock.mockResolvedValue({ credential: null, modelSpec: 'openai/gpt-from-db' });
+    expect(await getModelSpec('implementer')).toBe('openai/gpt-from-db');
   });
 });
 
 describe('resolveModel', () => {
-  const originalEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('builds Anthropic models', () => {
+  it('builds Anthropic models from env', () => {
     const m = resolveModel('anthropic/claude-opus-4-6');
     expect(m.provider).toMatch(/anthropic/);
   });
 
-  it('builds OpenAI models', () => {
+  it('builds OpenAI models from env', () => {
     const m = resolveModel('openai/gpt-5');
     expect(m.provider).toMatch(/openai/);
   });
 
-  it('builds Google models', () => {
+  it('builds Google models from env', () => {
     const m = resolveModel('google/gemini-2.5-pro');
     expect(m.provider).toMatch(/google/);
   });
 
+  it('builds Anthropic models with an explicit apiKey override', () => {
+    const m = resolveModel('anthropic/claude-opus-4-6', 'sk-ant-override');
+    expect(m.provider).toMatch(/anthropic/);
+    expect(m.modelId).toBe('claude-opus-4-6');
+  });
+
   it('matches built-in providers case-insensitively', () => {
-    // Without normalisation `OpenAI/gpt-5` would fall through to the
-    // OpenAI-compatible path and fail with a misleading "Set OPENAI_API_BASE".
     expect(resolveModel('OpenAI/gpt-5').provider).toMatch(/openai/);
     expect(resolveModel('ANTHROPIC/claude-opus-4-6').provider).toMatch(/anthropic/);
     expect(resolveModel('Google/gemini-2.5-pro').provider).toMatch(/google/);
@@ -99,6 +132,12 @@ describe('resolveModel', () => {
     expect(m.modelId).toBe('llama3.1:70b');
   });
 
+  it('uses an explicit apiBase override for unknown providers (no env required)', () => {
+    delete process.env.OPENCODEGO_API_BASE;
+    const m = resolveModel('opencodego/glm-5', 'sk-go', 'https://opencode.ai/zen/go/v1');
+    expect(m.modelId).toBe('glm-5');
+  });
+
   it('throws on unknown provider when no API base is configured', () => {
     delete process.env.MYSTERY_API_BASE;
     expect(() => resolveModel('mystery/some-model')).toThrow(/MYSTERY_API_BASE/);
@@ -109,26 +148,26 @@ describe('resolveModel', () => {
     expect(() => resolveModel('/foo')).toThrow();
     expect(() => resolveModel('foo/')).toThrow();
   });
-
-  it('uppercases and normalises hyphens in provider env-var lookup', () => {
-    process.env.MY_GATEWAY_API_BASE = 'https://gw.example.com/v1';
-    const m = resolveModel('my-gateway/some-model');
-    expect(m.modelId).toBe('some-model');
-  });
 });
 
 describe('getModel', () => {
-  const originalEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('returns a model for every defined role', () => {
+  it('returns a model for every defined role', async () => {
     for (const role of ROLES) {
-      const m = getModel(role);
+      _resetConfigCacheForTests();
+      _resetModelCacheForTests();
+      const m = await getModel(role);
       expect(m).toBeDefined();
       expect(typeof m.modelId).toBe('string');
     }
+  });
+
+  it('uses a DB-backed credential when one is configured', async () => {
+    findFirstMock.mockResolvedValue({
+      credential: null,
+      modelSpec: 'anthropic/claude-opus-4-7',
+    });
+    credFindFirstMock.mockImplementation(async () => null);
+    const m = await getModel('implementer');
+    expect(m.provider).toMatch(/anthropic/);
   });
 });

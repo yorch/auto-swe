@@ -60,7 +60,7 @@ export async function executeImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     // Create Mastra agent with tools bound to workspace
-    const { agent } = createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';

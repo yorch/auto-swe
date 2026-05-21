@@ -20,6 +20,15 @@ vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: vi.fn(() => ({ textEmbeddingModel: openaiCompatTextEmbeddingFactory })),
 }));
 
+// Embeddings now consults the credential resolver, which needs prisma. Stub it
+// to return null so the env-var fallback path (which the existing tests
+// exercise) keeps working.
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    providerCredential: { findFirst: vi.fn().mockResolvedValue(null) },
+  },
+}));
+
 import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
 
 const originalEnv = { ...process.env };

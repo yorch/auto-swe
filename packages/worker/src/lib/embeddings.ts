@@ -1,5 +1,8 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { embed } from 'ai';
+import { currentRequestContext } from './config/contextLookup.js';
+import { resolveProviderCredential } from './config/resolver.js';
 import { createOpenAICompatibleClient, parseProviderModelSpec } from './providerUtils.js';
 
 /**
@@ -18,42 +21,77 @@ interface CachedEmbeddingModel {
   spec: string;
   provider: string;
   model: EmbeddingModel;
+  cacheKey: string;
 }
 
 let cachedModel: CachedEmbeddingModel | null = null;
 
-function buildEmbeddingModel(spec: string): CachedEmbeddingModel {
+/// Embedding-model spec lookup. Embeddings have one role across the system
+/// (memory-commit), so we use a single env var rather than the per-role
+/// `ModelRoleConfig` table. Credentials still flow through the resolver so
+/// you can override the OpenAI API key from the dashboard.
+async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
+  const spec = process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
   const { provider, modelId } = parseProviderModelSpec(spec);
 
+  const ctx = await currentRequestContext();
+  const cred = await resolveProviderCredential(provider, ctx);
+  const apiKey = cred?.apiKey;
+  const apiBase = cred?.apiBase;
+
+  const cacheKey = `${spec}|${apiKey ? apiKey.slice(-6) : ''}|${apiBase ?? ''}`;
+  if (cachedModel?.cacheKey === cacheKey) return cachedModel;
+
   if (provider === 'openai') {
-    if (!process.env.OPENAI_API_KEY) {
+    const effectiveKey = apiKey ?? process.env.OPENAI_API_KEY;
+    if (!effectiveKey) {
       throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
     }
-    return {
-      model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId),
+    cachedModel = {
+      cacheKey,
+      model: createOpenAI({ apiKey: effectiveKey, baseURL: apiBase }).embedding(modelId),
       provider,
       spec,
     };
+    return cachedModel;
   }
 
-  return {
+  // Non-OpenAI providers route through the OpenAI-compatible client. Prefer
+  // DB-backed credentials; fall back to `<PROVIDER>_API_BASE` / `<PROVIDER>_API_KEY`
+  // env vars so deployments that haven't migrated to DB-backed config still work.
+  if (apiBase) {
+    cachedModel = {
+      cacheKey,
+      model: createOpenAICompatible({
+        apiKey,
+        baseURL: apiBase,
+        name: provider,
+      }).textEmbeddingModel(modelId),
+      provider,
+      spec,
+    };
+    return cachedModel;
+  }
+  // A DB credential without an apiBase is unusable for OpenAI-compatible
+  // providers — we have no endpoint to call. Fail loudly so the operator
+  // notices the bad config rather than silently dropping the key.
+  if (apiKey) {
+    throw new Error(
+      `Provider credential for '${provider}' has an apiKey but no apiBase, and '${provider}' is not a built-in provider. Set an apiBase on the credential (dashboard or ${provider.toUpperCase().replace(/-/g, '_')}_API_BASE env var).`
+    );
+  }
+  cachedModel = {
+    cacheKey,
     model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId),
     provider,
     spec,
   };
-}
-
-function getEmbeddingModel(): CachedEmbeddingModel {
-  const spec = process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
-  if (!cachedModel || cachedModel.spec !== spec) {
-    cachedModel = buildEmbeddingModel(spec);
-  }
   return cachedModel;
 }
 
 /**
- * For tests — clears the cached embedding client so env changes take effect on
- * the next call.
+ * For tests — clears the cached embedding client so env or DB changes take
+ * effect on the next call.
  */
 export function _resetEmbeddingClientForTests(): void {
   cachedModel = null;
@@ -66,7 +104,7 @@ export function _resetEmbeddingClientForTests(): void {
  * since pgvector storage is fixed-width.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const { provider, model } = getEmbeddingModel();
+  const { provider, model } = await buildEmbeddingModel();
   // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
   // from its native 3072 down to the 1536 required by the pgvector column.
   // Other providers don't accept this key, so it's only sent for OpenAI.

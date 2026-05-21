@@ -141,7 +141,7 @@ export async function recordLlmUsage(
   usage: TokenUsage,
   spanName = 'llm.usage'
 ): Promise<void> {
-  const modelSpec = getModelSpec(role);
+  const modelSpec = await getModelSpec(role);
   const { known } = getModelPrice(modelSpec);
 
   await tracer.startActiveSpan(spanName, async (span) => {

@@ -367,7 +367,7 @@ async function mergeOneWithResolver(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const { agent } = createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace);
     const result = await agent.generate(
       [
         { content: MERGE_CONFLICT_RESOLVER_PROMPT, role: 'system' },

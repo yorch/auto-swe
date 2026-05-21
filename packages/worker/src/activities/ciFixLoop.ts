@@ -70,7 +70,7 @@ export async function executeCIFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace);
 
     // Run the agent in CI fix mode
     const ciFix = await agent.generate(
@@ -174,7 +174,7 @@ export async function executeReviewFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace);
 
     const reviewFix = await agent.generate(
       [

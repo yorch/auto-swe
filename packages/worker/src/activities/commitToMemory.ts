@@ -66,7 +66,7 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
     instructions: MEMORY_SUMMARIZER_PROMPT,
-    model: getModel('commitToMemory'),
+    model: await getModel('commitToMemory'),
     name: 'memory-summarizer',
   });
 
