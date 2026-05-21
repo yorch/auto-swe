@@ -16,6 +16,22 @@ interface ProviderFlags {
   magicLink: boolean;
 }
 
+/**
+ * Structural validation for the /api/v1/auth/providers response. Used to
+ * distinguish "real gateway, providers reported" from "200 OK but something
+ * else is on the port and returned a different shape" (e.g. an adminer
+ * container or a misconfigured reverse proxy).
+ */
+function looksLikeProviderResponse(data: unknown): data is ProviderFlags {
+  if (typeof data !== 'object' || data === null) return false;
+  const o = data as Record<string, unknown>;
+  return (
+    typeof o.github === 'boolean' &&
+    typeof o.google === 'boolean' &&
+    typeof o.magicLink === 'boolean'
+  );
+}
+
 type Tab = 'magic' | 'password';
 
 export default function LoginPage() {
@@ -88,20 +104,41 @@ function LoginPageInner() {
   }, [searchParams, hydrate, router]);
 
   // Which social providers are configured in the backend? Also doubles as
-  // the gateway-reachability check (see gatewayDown above).
+  // the gateway-reachability check (see gatewayDown above). "Gateway is up"
+  // means three things in this context: (1) the request didn't fail at the
+  // network/CORS layer, (2) the response was 2xx, AND (3) the body is the
+  // shape we expect — a JSON object with the three provider flags. The third
+  // check matters because a port collision on 8080 (e.g. an unrelated adminer
+  // / PHP container) can answer 200 with HTML, which would otherwise leave
+  // the page in a quiet "no providers" state instead of telling the user
+  // why nothing works.
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/auth/providers`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data) setProviders(data as ProviderFlags);
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/auth/providers`);
+        if (!res.ok) {
+          // 4xx/5xx — could be the real gateway throwing, or a wrong server
+          // on the port. Either way the page can't continue, so surface it.
+          setGatewayDown(true);
+          return;
+        }
+        const data = (await res.json()) as unknown;
+        if (!looksLikeProviderResponse(data)) {
+          // 200 OK but the body isn't our shape — almost certainly a different
+          // server bound to the port. Surface as gateway-down.
+          setGatewayDown(true);
+          return;
+        }
+        setProviders(data);
         setGatewayDown(false);
-      })
-      .catch((err) => {
-        // `fetch` throws TypeError on network-level failure (DNS down, server
-        // down, CORS preflight rejected). HTTP errors come back as a non-ok
-        // Response and don't throw — those still mean the gateway is reachable.
-        if (err instanceof TypeError) setGatewayDown(true);
-      });
+      } catch (err) {
+        // TypeError: network failure (DNS, server down, CORS rejected).
+        // SyntaxError: 200 OK but body wasn't valid JSON (wrong server bound).
+        if (err instanceof TypeError || err instanceof SyntaxError) {
+          setGatewayDown(true);
+        }
+      }
+    })();
   }, []);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
