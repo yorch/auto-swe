@@ -117,13 +117,8 @@ describe('getArtifact / getArtifactText (postgres backend)', () => {
   });
 });
 
-describe('putArtifact (s3 backend, sdk missing)', () => {
-  it('surfaces a clear error when ARTIFACT_S3_BUCKET is set but the SDK is not installed', async () => {
-    process.env.ARTIFACT_S3_BUCKET = 'test-bucket';
-    // The SDK is not in the worker dependency graph by default, so dynamic
-    // import returns null and putArtifact should throw a helpful message.
-    await expect(putArtifact({ body: 'x', kind: 'logs' })).rejects.toThrow(
-      /@aws-sdk\/client-s3 not installed/
-    );
-  });
-});
+// The "SDK is optional" contract this file used to assert (with a test that
+// verified the helpful error message when @aws-sdk/client-s3 was missing) was
+// retired when the SDK became a hard dependency of the worker — needed by the
+// MinIO local-dev flow added in PR #25. The error path in artifactStore.ts is
+// kept as a defensive fallback but is no longer reachable in normal use.

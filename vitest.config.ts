@@ -74,6 +74,13 @@ export default defineConfig({
         find: '@auto-swe/shared',
         replacement: path.resolve(__dirname, 'packages/shared/src/index.ts'),
       },
+      // Web package internal alias — Next.js reads this from tsconfig paths,
+      // but vitest doesn't, so the React component tests need it spelled out
+      // here. Mirrors `packages/web/tsconfig.json` ("@/*" -> "./src/*").
+      {
+        find: /^@\/(.*)$/,
+        replacement: path.resolve(__dirname, 'packages/web/src/$1'),
+      },
     ],
   },
   test: {
@@ -84,6 +91,10 @@ export default defineConfig({
     },
     environment: 'node',
     globals: true,
-    include: ['packages/*/src/**/*.test.ts'],
+    // Default `.test.ts` is Node; React component tests are `.test.tsx` and
+    // opt into jsdom via a `// @vitest-environment jsdom` pragma at the top
+    // of each file. (The deprecated `environmentMatchGlobs` got replaced by
+    // the `projects` API in vitest 3.x; per-file pragmas keep the config flat.)
+    include: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.test.tsx'],
   },
 });
