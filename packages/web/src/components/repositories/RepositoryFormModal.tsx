@@ -33,17 +33,27 @@ export function RepositoryFormModal({
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset form state from `initial` only when the modal opens — the previous
+  // version also depended on `teams` so it re-ran every time the useTeams()
+  // query resolved (or any parent re-render produced a new array identity)
+  // and stomped user input.
   useEffect(() => {
     if (!open) return;
     setOrganizationName(initial?.organizationName ?? '');
     setRepoName(initial?.repoName ?? '');
     setDefaultBranch(initial?.defaultBranch ?? 'main');
-    setTeamId(initial?.team?.id ?? teams[0]?.id ?? '');
     setExecutorImage(initial?.executorImage ?? '');
     setLanguage(initial?.language ?? '');
     setDescription(initial?.description ?? '');
     setIsActive(initial?.isActive ?? true);
     setError(null);
+  }, [open, initial]);
+
+  // Default-select the first team only when nothing is selected yet, so a
+  // late-resolving useTeams() doesn't override an in-flight admin selection.
+  useEffect(() => {
+    if (!open) return;
+    setTeamId((prev) => prev || initial?.team?.id || teams[0]?.id || '');
   }, [open, initial, teams]);
 
   async function handleSubmit(e: React.FormEvent) {

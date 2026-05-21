@@ -26,11 +26,20 @@ export function AddMemberModal({
 
   const eligible = users.filter((u) => !existingUserIds.includes(u.id) && u.isActive);
 
+  // Two effects, not one — keeping the role/error reset gated to `open` only
+  // means typing or selecting doesn't get stomped when `users` / `eligible`
+  // re-resolve to a new array reference on the next render.
   useEffect(() => {
     if (!open) return;
-    setUserId(eligible[0]?.id ?? '');
     setRole('ENGINEER');
     setError(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Default-select the first eligible user, but only once — preserve any
+    // explicit choice the admin already made.
+    setUserId((prev) => prev || (eligible[0]?.id ?? ''));
   }, [open, eligible]);
 
   async function handleSubmit(e: React.FormEvent) {
