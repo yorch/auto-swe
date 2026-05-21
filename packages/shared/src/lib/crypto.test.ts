@@ -25,8 +25,8 @@ describe('crypto', () => {
   it('produces a fresh nonce per call', () => {
     const a = encryptSecret('same-plaintext');
     const b = encryptSecret('same-plaintext');
-    expect(a.nonce.equals(b.nonce)).toBe(false);
-    expect(a.ciphertext.equals(b.ciphertext)).toBe(false);
+    expect(Buffer.from(a.nonce).equals(Buffer.from(b.nonce))).toBe(false);
+    expect(Buffer.from(a.ciphertext).equals(Buffer.from(b.ciphertext))).toBe(false);
   });
 
   it('rejects empty plaintext', () => {
@@ -35,7 +35,7 @@ describe('crypto', () => {
 
   it('rejects a tampered ciphertext', () => {
     const sealed = encryptSecret('sk-keepme');
-    const tampered = Buffer.from(sealed.ciphertext);
+    const tampered = new Uint8Array(sealed.ciphertext);
     tampered[0] = tampered[0] ^ 0xff;
     expect(() => decryptSecret({ ...sealed, ciphertext: tampered })).toThrow();
   });

@@ -1,0 +1,62 @@
+// The Prisma-generated enum lives in the shared package; import the value-form
+// from the barrel for runtime use and re-cast as a string-literal union locally.
+type PrismaAgentRole =
+  | 'IMPLEMENTER'
+  | 'REVIEWER'
+  | 'PLANNER'
+  | 'SECURITY_REVIEW'
+  | 'VALIDATE_CONTEXT'
+  | 'COMMIT_TO_MEMORY';
+
+/// Internal-to-the-worker role identifier. Matches the camelCase enum the
+/// rest of the worker code uses (e.g. `'implementer'`), as opposed to the
+/// SCREAMING_SNAKE_CASE variant in the Prisma enum.
+export type AgentRole =
+  | 'implementer'
+  | 'reviewer'
+  | 'planner'
+  | 'securityReview'
+  | 'validateContext'
+  | 'commitToMemory';
+
+/// Maps the worker's camelCase role names to Prisma's enum values.
+export const ROLE_TO_PRISMA: Record<AgentRole, PrismaAgentRole> = {
+  commitToMemory: 'COMMIT_TO_MEMORY',
+  implementer: 'IMPLEMENTER',
+  planner: 'PLANNER',
+  reviewer: 'REVIEWER',
+  securityReview: 'SECURITY_REVIEW',
+  validateContext: 'VALIDATE_CONTEXT',
+};
+
+export const PRISMA_TO_ROLE: Record<PrismaAgentRole, AgentRole> = {
+  COMMIT_TO_MEMORY: 'commitToMemory',
+  IMPLEMENTER: 'implementer',
+  PLANNER: 'planner',
+  REVIEWER: 'reviewer',
+  SECURITY_REVIEW: 'securityReview',
+  VALIDATE_CONTEXT: 'validateContext',
+};
+
+/// Optional scoping context for config resolution. When unset, only the
+/// GLOBAL row is consulted (or, in tests with no DB row, env vars fall back).
+export interface ResolveCtx {
+  teamId?: string;
+  workflowTemplateId?: string;
+}
+
+/// Resolved model + (optional) credential override for a single role lookup.
+/// Returned by `resolveModelConfig`. `apiKey` is the decrypted plaintext;
+/// callers should pass it straight into the provider client and not log it.
+export interface ResolvedModelConfig {
+  /** `<provider>/<model-id>` spec the agent should bind to. */
+  spec: string;
+  /** Which scope row supplied the spec — for OTel attribution. */
+  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL' | 'ENV_FALLBACK';
+  /** Plaintext API key from the resolved credential. Undefined if no
+   *  credential is configured for this provider (caller may fall back to
+   *  the built-in env-driven provider client). */
+  apiKey?: string;
+  /** Base URL override from the resolved credential. */
+  apiBase?: string;
+}

@@ -35,9 +35,9 @@ function loadKey(): Buffer {
 }
 
 export interface EncryptedSecret {
-  ciphertext: Buffer;
-  nonce: Buffer;
-  authTag: Buffer;
+  ciphertext: Uint8Array<ArrayBuffer>;
+  nonce: Uint8Array<ArrayBuffer>;
+  authTag: Uint8Array<ArrayBuffer>;
   keyVersion: number;
   lastFour: string;
 }
@@ -52,12 +52,23 @@ export function encryptSecret(plaintext: string): EncryptedSecret {
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const authTag = cipher.getAuthTag();
   return {
-    authTag,
-    ciphertext,
+    authTag: toArrayBufferUint8(authTag),
+    ciphertext: toArrayBufferUint8(ciphertext),
     keyVersion: CURRENT_KEY_VERSION,
     lastFour: plaintext.slice(-4),
-    nonce,
+    nonce: toArrayBufferUint8(nonce),
   };
+}
+
+/// Node's `Buffer.from`/`randomBytes` return a `Uint8Array<ArrayBufferLike>`,
+/// but Prisma's generated types expect `Uint8Array<ArrayBuffer>` (without
+/// `SharedArrayBuffer` in the union). Copy into a fresh ArrayBuffer to
+/// narrow the type without a runtime allocation hit beyond the copy itself.
+function toArrayBufferUint8(src: Uint8Array): Uint8Array<ArrayBuffer> {
+  const buf = new ArrayBuffer(src.byteLength);
+  const out = new Uint8Array(buf);
+  out.set(src);
+  return out;
 }
 
 export function decryptSecret(record: {
