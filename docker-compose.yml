@@ -42,6 +42,16 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
+      # Artifact store — opt in by setting ARTIFACT_S3_BUCKET in your .env.
+      # When set, the worker writes artifacts to the MinIO container started
+      # by docker-compose.infra.yml using S3-compatible APIs.
+      - ARTIFACT_S3_BUCKET=${ARTIFACT_S3_BUCKET:-}
+      - ARTIFACT_S3_REGION=${ARTIFACT_S3_REGION:-us-east-1}
+      - ARTIFACT_S3_ENDPOINT=${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      - ARTIFACT_S3_FORCE_PATH_STYLE=${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
+      - ARTIFACT_S3_PREFIX=${ARTIFACT_S3_PREFIX:-workflow-artifacts}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DinD access
 
