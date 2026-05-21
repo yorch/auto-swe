@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
+import { gatewayUnreachableMessage } from '@/lib/networkErrors';
 
 interface AuthState {
   user: {
@@ -90,10 +91,43 @@ interface BetterAuthSessionResponse {
   };
 }
 
+/**
+ * Wrapper around `fetch` for better-auth POST endpoints. Folds three layers of
+ * error handling into one place: (1) gateway-unreachable network failures get
+ * a friendly message naming the API_BASE, (2) non-2xx responses surface the
+ * server's `message` field, (3) the caller's `fallback` is used otherwise.
+ */
+async function betterAuthPost(path: string, body: unknown, fallback: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      body: JSON.stringify(body),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+  } catch (err) {
+    const friendly = gatewayUnreachableMessage(err, API_BASE);
+    throw new Error(friendly ?? fallback);
+  }
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(errBody?.message ?? fallback);
+  }
+}
+
 async function fetchBetterAuthSession(): Promise<AuthState['user']> {
-  const res = await fetch(`${API_BASE}/api/auth/get-session`, {
-    credentials: 'include',
-  });
+  // Probe call — never throw. A network failure here just means "no session"
+  // from the UI's perspective; the user lands on /login and the page itself
+  // surfaces a friendly banner if the gateway is unreachable. Without this
+  // swallow, the unhandled rejection bubbles to React's error boundary and
+  // shows the dev-overlay "Failed to fetch" crash.
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/auth/get-session`, { credentials: 'include' });
+  } catch {
+    return null;
+  }
   if (!res.ok) return null;
   const body = (await res.json().catch(() => null)) as BetterAuthSessionResponse | null;
   if (!body?.user) return null;
@@ -177,48 +211,33 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   requestMagicLink: async (email) => {
-    const res = await fetch(`${API_BASE}/api/auth/sign-in/magic-link`, {
-      body: JSON.stringify({
+    await betterAuthPost(
+      '/api/auth/sign-in/magic-link',
+      {
         callbackURL: `${typeof window !== 'undefined' ? window.location.origin : ''}/login?bridge=1`,
         email,
-      }),
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(errBody?.message ?? 'Failed to request magic link');
-    }
+      },
+      'Failed to request magic link'
+    );
   },
 
   requestPasswordReset: async (email) => {
-    const res = await fetch(`${API_BASE}/api/auth/forget-password`, {
-      body: JSON.stringify({
+    await betterAuthPost(
+      '/api/auth/forget-password',
+      {
         email,
         redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/reset-password`,
-      }),
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(errBody?.message ?? 'Failed to request password reset');
-    }
+      },
+      'Failed to request password reset'
+    );
   },
 
   resetPassword: async (token, newPassword) => {
-    const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
-      body: JSON.stringify({ newPassword, token }),
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(errBody?.message ?? 'Failed to reset password');
-    }
+    await betterAuthPost(
+      '/api/auth/reset-password',
+      { newPassword, token },
+      'Failed to reset password'
+    );
   },
 
   signInWithProvider: (provider) => {

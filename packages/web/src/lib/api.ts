@@ -1,3 +1,5 @@
+import { gatewayUnreachableMessage } from './networkErrors';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 interface ApiError {
@@ -45,11 +47,20 @@ export class ApiClient {
     // origin. The gateway's requireAuth tries the Authorization header first
     // (legacy JWT / PAT path) and falls back to the session cookie — so this
     // wrapper supports both auth modes without per-call branching.
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      credentials: 'include',
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        credentials: 'include',
+        headers,
+      });
+    } catch (err) {
+      // Network-level failure (gateway down, CORS rejected, DNS failure, …)
+      // Rewrap with a message that says exactly what wasn't reachable.
+      const friendly = gatewayUnreachableMessage(err, API_BASE);
+      if (friendly) throw new Error(friendly);
+      throw err;
+    }
 
     if (response.status === 401) {
       // Try the legacy refresh path. Only meaningful when a JWT was already

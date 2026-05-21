@@ -45,6 +45,14 @@ function LoginPageInner() {
     google: false,
     magicLink: true,
   });
+  /**
+   * The first thing the login page does is probe `/api/v1/auth/providers` to
+   * see which social providers are configured. That probe doubles as a
+   * gateway-reachability check — if it fails at the network level, no other
+   * action on this page will work either, and we want to say so loudly rather
+   * than letting the user hit Submit and meet a generic "Failed to fetch".
+   */
+  const [gatewayDown, setGatewayDown] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -79,15 +87,20 @@ function LoginPageInner() {
     };
   }, [searchParams, hydrate, router]);
 
-  // Which social providers are configured in the backend?
+  // Which social providers are configured in the backend? Also doubles as
+  // the gateway-reachability check (see gatewayDown above).
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/auth/providers`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data) setProviders(data as ProviderFlags);
+        setGatewayDown(false);
       })
-      .catch(() => {
-        /* ignore — default flags already set */
+      .catch((err) => {
+        // `fetch` throws TypeError on network-level failure (DNS down, server
+        // down, CORS preflight rejected). HTTP errors come back as a non-ok
+        // Response and don't throw — those still mean the gateway is reachable.
+        if (err instanceof TypeError) setGatewayDown(true);
       });
   }, []);
 
@@ -278,6 +291,23 @@ function LoginPageInner() {
           <p className="mb-8 text-sm text-paper-400">
             Pick a sign-in method. New email addresses join a pending-approval queue.
           </p>
+
+          {gatewayDown && (
+            <div className="mb-6 rounded-sm border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-brick-200">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-brick-400">
+                ! Gateway unreachable
+              </div>
+              <p className="leading-relaxed">
+                Can't reach the auto-swe gateway at{' '}
+                <code className="text-brick-100">{API_BASE}</code>. Sign-in won't work until the
+                gateway is running and CORS_ORIGIN includes this page's origin (
+                <code className="text-brick-100">
+                  {typeof window !== 'undefined' ? window.location.origin : ''}
+                </code>
+                ).
+              </p>
+            </div>
+          )}
 
           {/* Social providers — only shown when configured in the backend */}
           {hasSocial && (
