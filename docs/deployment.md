@@ -17,8 +17,11 @@ Five long-running processes plus one Docker daemon:
 | `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces via the host socket. |
 | `web`                      | built from `packages/web/Dockerfile`               | Next.js dashboard on `:3000`. Stateless, scale horizontally.           |
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.8.1`                          | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
+| object store (optional)    | AWS S3 / Cloudflare R2 / `minio/minio` / etc.      | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
 The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request (see [`data-and-infra.md` §3.2](./data-and-infra.md#32-executor-image-selection)). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+
+> **Local-dev shortcut.** `yarn docker:infra:up` brings up MinIO (the `minio` + `minio-setup` containers in `docker-compose.infra.yml`) and pre-creates the `auto-swe-artifacts` bucket. Uncomment the `ARTIFACT_S3_*` and `AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY` blocks in `.env.example` (defaults match the MinIO container) to flip the worker onto S3 mode locally. Console at <http://localhost:9001> with `minioadmin`/`minioadmin`.
 
 ---
 
@@ -113,11 +116,14 @@ SLACK_CLIENT_SECRET=...
 SLACK_SIGNING_SECRET=...
 SLACK_BOT_TOKEN=xoxb-...
 
-# Artifact store (recommended in prod)
+# Artifact store (recommended in prod). The S3 client uses standard
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars — or any other AWS SDK
+# credential chain (IAM role, EC2 instance profile, etc.) when those are unset.
 ARTIFACT_S3_BUCKET=auto-swe-artifacts
 ARTIFACT_S3_REGION=us-east-1
 ARTIFACT_S3_PREFIX=workflow-artifacts
-# ARTIFACT_S3_ENDPOINT=https://s3.eu-west-1.amazonaws.com   # only if non-AWS
+# ARTIFACT_S3_ENDPOINT=https://s3.eu-west-1.amazonaws.com   # only if non-AWS / R2 / MinIO
+# ARTIFACT_S3_FORCE_PATH_STYLE=true                         # required for MinIO + some R2 setups
 
 # Observability
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
