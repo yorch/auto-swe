@@ -102,3 +102,43 @@ services:
       - TEMPORAL_CORS_ORIGINS=http://localhost:${WEB_PORT:-3000}
     ports:
       - "${TEMPORAL_UI_PORT:-8233}:8080"
+
+  # MinIO — S3-compatible object store for the artifact backend.
+  # Activated locally by setting ARTIFACT_S3_BUCKET / ARTIFACT_S3_ENDPOINT in
+  # the worker env (see .env.example). The bucket is created by minio-setup
+  # below, so the worker can write artifacts on first start.
+  minio:
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # One-shot: create the artifact bucket once MinIO is up so the worker can
+  # use the S3 backend out-of-the-box. Idempotent — re-runs are a no-op.
+  minio-setup:
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-04-16T18-13-26Z}
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - ARTIFACT_S3_BUCKET=${ARTIFACT_S3_BUCKET:-auto-swe-artifacts}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
+       mc mb --ignore-existing \"local/$$ARTIFACT_S3_BUCKET\" &&
+       echo \"MinIO bucket ready: $$ARTIFACT_S3_BUCKET\""
+    restart: on-failure:5

@@ -185,7 +185,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `GITHUB_URL`                | Optional  | Override for GitHub Enterprise Server                                                          |
 | `GITHUB_API_URL`            | Optional  | Override for GitHub Enterprise Server API                                                      |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OTLP/HTTP endpoint for traces + logs (set when running `yarn docker:up`)                       |
-| `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset (see `.env.example`)    |
+| `ARTIFACT_S3_*`             | Optional  | S3-compatible artifact store; falls back to Postgres-inline when unset. `yarn docker:infra:up` ships a MinIO container at `localhost:9000` (console `:9001`) with the bucket pre-created (see `.env.example`) |
 
 ¹ JWT auth has two modes: HS256 (default — set `JWT_SECRET`) or RS256 (set `JWT_PRIVATE_KEY_PATH` + `JWT_PUBLIC_KEY_PATH`).
 ² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
