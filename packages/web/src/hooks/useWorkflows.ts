@@ -96,6 +96,27 @@ export function useInviteUser() {
   });
 }
 
+export interface CreateUserBody {
+  email: string;
+  /** Omit to let the gateway auto-generate one (returned once in the response). */
+  password?: string;
+  role?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  slackId?: string;
+}
+
+export interface CreatedUser extends UserSummary {
+  /** Only present when password was auto-generated. Shown to the admin once. */
+  temporaryPassword?: string;
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateUserBody) => api.post<{ data: CreatedUser }>('/api/v1/users', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
 export function useLessons() {
   return useQuery({
     queryFn: () => api.get<{ data: LessonListItem[] }>('/api/v1/lessons').then((r) => r.data),

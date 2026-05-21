@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +19,7 @@ export default function UsersPage() {
   const [inviteRole, setInviteRole] = useState<Role>('ENGINEER');
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
+  const [creatingDirect, setCreatingDirect] = useState(false);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -69,9 +71,21 @@ export default function UsersPage() {
       </div>
 
       {/* Invite by email — admin sends a magic-link to the address. The
-          invitee lands pre-active + pre-membered to the default team. */}
+          invitee lands pre-active + pre-membered to the default team.
+          For service accounts (or when SMTP/Resend isn't configured),
+          "+ Create directly" pops the CreateUserModal which posts to
+          POST /api/v1/users and reveals an auto-generated password once. */}
       <section className="fade-up stagger-1">
-        <SectionHeader hint="email + magic link" number="01" title="Invite a teammate" />
+        <SectionHeader
+          actions={
+            <Button onClick={() => setCreatingDirect(true)} size="sm" variant="secondary">
+              + Create directly
+            </Button>
+          }
+          hint="email + magic link"
+          number="01"
+          title="Invite a teammate"
+        />
         <Card variant="inset">
           {inviteError && (
             <div className="mb-3 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
@@ -228,6 +242,8 @@ export default function UsersPage() {
           </table>
         </Card>
       </section>
+
+      <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
     </div>
   );
 }
