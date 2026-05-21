@@ -38,6 +38,27 @@ enum WorkflowTemplateStatus {
   ARCHIVED
 }
 
+enum ConfigScope {
+  GLOBAL
+  TEAM
+  WORKFLOW_TEMPLATE
+}
+
+enum AgentRole {
+  IMPLEMENTER
+  REVIEWER
+  PLANNER
+  SECURITY_REVIEW
+  VALIDATE_CONTEXT
+  COMMIT_TO_MEMORY
+}
+
+enum ConfigAuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
 model ActiveWorkflow {
   id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   temporalWorkflowId String         @unique @map("temporal_workflow_id")
@@ -196,10 +217,12 @@ model Team {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships       TeamMembership[]
-  repositories      Repository[]
-  workflowTemplates WorkflowTemplate[]
-  shellAudits       WorkflowShellAudit[]
+  memberships         TeamMembership[]
+  repositories        Repository[]
+  workflowTemplates   WorkflowTemplate[]
+  shellAudits         WorkflowShellAudit[]
+  modelRoleConfigs    ModelRoleConfig[]
+  providerCredentials ProviderCredential[]
 
   @@map("teams")
 }
@@ -419,8 +442,9 @@ model WorkflowTemplate {
   createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  versions      WorkflowTemplateVersion[]
-  workflowRuns  WorkflowRun[]
+  versions         WorkflowTemplateVersion[]
+  workflowRuns     WorkflowRun[]
+  modelRoleConfigs ModelRoleConfig[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -441,6 +465,85 @@ model WorkflowTemplateVersion {
 
   @@unique([templateId, version])
   @@map("workflow_template_versions")
+}
+
+/// Per-role model spec (`<provider>/<model-id>`) at one of three scopes:
+/// GLOBAL (system-wide default), TEAM (overrides global for one team), or
+/// WORKFLOW_TEMPLATE (overrides team+global for one template). Resolution
+/// cascade is template → team → global; the first match wins. At most one
+/// row per (role, scope, scope-key) — enforced by partial unique indexes
+/// defined in raw SQL alongside this migration since Prisma's DSL can't
+/// express WHERE clauses on unique indexes.
+///
+/// `credentialId` is an optional override that points at a specific
+/// `ProviderCredential` row. When null the resolver looks up the credential
+/// by provider name using the same scope cascade. Typically set only at
+/// WORKFLOW_TEMPLATE scope to pin a template to a specific credential set.
+model ModelRoleConfig {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  role               AgentRole
+  scope              ConfigScope
+  teamId             String?             @map("team_id") @db.Uuid
+  team               Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
+  workflowTemplate   WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+  modelSpec          String              @map("model_spec")
+  credentialId      String?              @map("credential_id") @db.Uuid
+  credential        ProviderCredential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  createdById       String?              @map("created_by_id") @db.Uuid
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([scope, teamId])
+  @@index([scope, workflowTemplateId])
+  @@map("model_role_configs")
+}
+
+/// Encrypted API credential for one LLM provider, scoped GLOBAL or TEAM.
+/// (WORKFLOW_TEMPLATE scope is intentionally unsupported — templates can
+/// reference existing credentials via `ModelRoleConfig.credentialId` but
+/// can't create their own.) API key bytes are AES-256-GCM encrypted with
+/// the key from `CONFIG_ENCRYPTION_KEY`; see `packages/shared/src/lib/crypto.ts`.
+/// `lastFour` is the trailing four plaintext chars, stored for UI display
+/// only. `keyVersion` exists for future key-rotation support.
+model ProviderCredential {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider        String
+  scope           ConfigScope
+  teamId          String?           @map("team_id") @db.Uuid
+  team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  apiBase         String?           @map("api_base")
+  apiKeyCiphertext Bytes            @map("api_key_ciphertext")
+  apiKeyNonce     Bytes             @map("api_key_nonce")
+  apiKeyAuthTag   Bytes             @map("api_key_auth_tag")
+  keyVersion      Int               @default(1) @map("key_version")
+  lastFour        String            @map("last_four")
+  createdById     String?           @map("created_by_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  modelRoleConfigs ModelRoleConfig[]
+
+  @@index([provider, scope, teamId])
+  @@map("provider_credentials")
+}
+
+/// Audit trail for changes to ModelRoleConfig and ProviderCredential.
+/// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
+/// recorded). Written from the gateway routes that mutate these rows.
+model ConfigAuditLog {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType  String            @map("entity_type")
+  entityId    String            @map("entity_id") @db.Uuid
+  action      ConfigAuditAction
+  actorId     String?           @map("actor_id") @db.Uuid
+  beforeJson  Json?             @map("before_json")
+  afterJson   Json?             @map("after_json")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@map("config_audit_log")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template
