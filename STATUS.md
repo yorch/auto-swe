@@ -144,6 +144,7 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Browser sign-in via better-auth — GitHub / Google / magic-link / email-password                       | Done   | —     | `better-auth` mounted at `/api/auth/*` on Fastify with email+password, GitHub, Google, and 10-min magic-link. SMTP / Resend / console magic-link transports. Cookie-based browser sessions; `requireAuth` has a third validation path with 60s in-memory cache. Existing PAT + JWT-bearer paths untouched for CLI/API use. Linked-accounts settings page; `db:seed:auth` provisions the credential Account for the seeded admin. Production secret guards on `BETTER_AUTH_SECRET` / `JWT_SECRET`. Setup guide in `docs/oauth-setup.md`. |
 | UI coverage closure — work-request modal, onboarding panel, repo / team / PAT / epic / lesson-search / runs-list management | Done | — | New `Modal` primitive + 11 hooks bring every previously API-only endpoint onto the dashboard: `+ Submit work request` on the dashboard / `/workflows`; new-user onboarding panel (Step 01 connect-repo, Step 02 first-request CTA, Step 03 watch-it-run, collapsible curl); `/repositories` add+edit forms; `/settings → API tokens` (create / list / revoke with one-time secret reveal); `/teams` create + edit + add member + inline role change + shell-image allowlist editor; `/epics` multi-repo create form; `/lessons` search bar; new `/runs` global run history with status+template filters. Only endpoints still API-only are the external webhooks and the legacy `POST /users` (invite is preferred). |
 | Prisma migration consolidation — clean init + HNSW                                                    | Done   | —     | Squashed 4 drift-laden migrations (broken `_add_better_auth_tables` that only dropped the HNSW index, plus the re-add and a repair migration) into one canonical init generated from `schema.prisma` + a separate HNSW-index migration. Verified against a fresh DB. Other devs must `migrate reset` before pulling.                                                                                                                                                                                                                       |
+| DB-backed LLM model + credential configuration                                                       | Done   | —     | Moved model selection and provider API keys out of env vars into Postgres. New tables (`ModelRoleConfig`, `ProviderCredential`, `ConfigAuditLog`) + AES-256-GCM crypto helpers + 3-level scope cascade (workflow-template → team → global → env fallback). Worker resolver pulls `{teamId, workflowTemplateId}` from `currentWorkflowId()`; no plumbing changes to activity inputs. Gateway admin + team-owner CRUD routes with SSRF-guarded credential probe and concurrency-safe upserts. Dashboard at `/admin/model-config` (tabs: Roles, Credentials, Audit log) plus team-detail page integration. Env vars are now first-boot-seed-only via `seedConfigFromEnv()`. See `docs/model-configuration.md`. |
 
 ---
 
@@ -155,10 +156,10 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Phase 2   | 10               | 10     | 0       | 0           |
 | Phase 3   | 14               | 14     | 0       | 0           |
 | Phase 4   | 12               | 11     | 0       | 1           |
-| Post-MVP  | 5                | 5      | 0       | 0           |
-| **Total** | **51**           | **50** | **0**   | **1**       |
+| Post-MVP  | 6                | 6      | 0       | 0           |
+| **Total** | **52**           | **51** | **0**   | **1**       |
 
-> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, the better-auth multi-provider sign-in migration, the UI-coverage closure pass (one-stop admin/engineer surface on the dashboard), and the Prisma migration consolidation.
+> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, the better-auth multi-provider sign-in migration, the UI-coverage closure pass (one-stop admin/engineer surface on the dashboard), the Prisma migration consolidation, and the DB-backed LLM model + credential configuration.
 
 ### Not started (full list)
 

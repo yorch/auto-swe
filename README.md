@@ -80,7 +80,13 @@ corepack enable && yarn install
 
 # 2. Configure environment
 cp .env.example .env
-# Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
+# Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY,
+# and CONFIG_ENCRYPTION_KEY (generate with:
+#   node -e "console.log(crypto.randomBytes(32).toString('base64'))"
+# )
+# Note: provider API keys / model picks are now editable from the dashboard
+# (/admin/model-config) — env vars only seed the GLOBAL row on first worker
+# boot. See docs/model-configuration.md.
 
 # 3. Start infrastructure (Postgres, Temporal)
 yarn docker:infra:up
@@ -154,10 +160,11 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | ----------------------- | --------- | -------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`              | Yes       | PostgreSQL connection string                                                                   |
 | `TEMPORAL_ADDRESS`          | Yes       | Temporal server address (default: `localhost:7233`)                                            |
-| `ANTHROPIC_API_KEY`         | Yes       | Claude API key (Implementer, Review, Planner, Memory agents)                                   |
+| `ANTHROPIC_API_KEY`         | Seed only⁵ | Claude API key (Implementer, Review, Planner, Memory agents). Copied into `provider_credentials` on first boot; managed from the dashboard thereafter. |
+| `CONFIG_ENCRYPTION_KEY`     | Yes       | AES-256-GCM key (base64-encoded 32 bytes) for encrypting `provider_credentials.api_key_ciphertext`. Generate with `node -e "console.log(crypto.randomBytes(32).toString('base64'))"`. |
 | `GITHUB_TOKEN`              | Yes       | GitHub PAT with `repo` scope                                                                   |
 | `GITHUB_WEBHOOK_SECRET`     | Yes       | Secret for verifying GitHub webhook signatures                                                 |
-| `OPENAI_API_KEY`            | Yes       | OpenAI key for `text-embedding-3-large` embeddings                                             |
+| `OPENAI_API_KEY`            | Seed only⁵ | OpenAI key for `text-embedding-3-large` embeddings + any `openai/*` model role. Same seed-then-DB story as `ANTHROPIC_API_KEY`. |
 | `JWT_SECRET`                | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
 | `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
 | `JWT_PUBLIC_KEY_PATH`       | Optional¹ | Path to RSA public key. Required when using RS256                                              |
@@ -193,6 +200,8 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 ² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
 ³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
 ⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
+
+⁵ Provider API keys (Anthropic, OpenAI, Google, OpenAI-compatible) are seeded from env vars into `provider_credentials` on the worker's first boot, then managed from the dashboard at `/admin/model-config`. Rotating a key in the env after first boot has no effect. See [`docs/model-configuration.md`](./docs/model-configuration.md).
 
 See [`.env.example`](./.env.example) for the full annotated template, including LLM provider selection, per-model price overrides, and embedding configuration.
 

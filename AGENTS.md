@@ -23,6 +23,7 @@ For deeper context on architecture and design rationale, refer to:
 | `docs/wireframes.md`              | Web dashboard wireframes and page layouts            |
 | `docs/configurable-workflows.md`  | Living roadmap for the configurable-workflow engine (phases, decisions, open questions) |
 | `docs/deployment.md`              | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
+| `docs/model-configuration.md`     | DB-backed model + credential config (scope cascade, encryption, day-2 ops) |
 
 ---
 
@@ -160,9 +161,18 @@ The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
 
 ### Multi-Model Support
 
-Each agent role resolves its model at call time through `getModel(role)`:
+As of Phase 4, model selection and provider credentials live in the database (`ModelRoleConfig`, `ProviderCredential`) and are editable from the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). Env vars are consulted only on the worker's first boot, when `seedConfigFromEnv()` copies them into the GLOBAL scope rows. After that, env edits are no-ops — make changes through the UI.
 
-| Role              | Env var                   | Default                       |
+**Scope cascade** at activity-call time (worker's `resolveModelConfig(role, ctx)`):
+
+1. `WORKFLOW_TEMPLATE` row matching the run's template ID, if any
+2. `TEAM` row matching the work request's team, if any
+3. `GLOBAL` row (system-wide default)
+4. Env-var fallback (only hit on a pre-seed DB or in unit tests)
+
+Per-role defaults baked into both the seed and the env-fallback path:
+
+| Role              | Env var (seed only)       | Default                       |
 | ----------------- | ------------------------- | ----------------------------- |
 | `implementer`     | `IMPLEMENTER_MODEL`       | `anthropic/claude-opus-4-7`   |
 | `reviewer`        | `REVIEWER_MODEL`          | `anthropic/claude-opus-4-7`   |
@@ -171,9 +181,13 @@ Each agent role resolves its model at call time through `getModel(role)`:
 | `validateContext` | `CONTEXT_VALIDATOR_MODEL` | `anthropic/claude-sonnet-4-6` |
 | `commitToMemory`  | `MEMORY_SUMMARIZER_MODEL` | `anthropic/claude-opus-4-7`   |
 
-Spec format is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires `<PROVIDER>_API_BASE` (uppercase, hyphens → underscores) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, etc.
+**Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the credential row (or, for env-fallback only, `<PROVIDER>_API_BASE`) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, OpenCode Go, etc.
 
-**Latest model IDs at the time of writing** (override defaults via the env vars above; pricing for these is already in `MODEL_PRICES`):
+**Credentials** are stored AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`. The encryption key (`CONFIG_ENCRYPTION_KEY`, base64 32 bytes) is required to start the worker or gateway — fail fast on missing/wrong-length. Rotation is not yet implemented; the `key_version` column is reserved for it.
+
+**Mid-run config changes:** activities re-resolve their model on each call. An edit lands on the next LLM call within an already-running workflow rather than waiting for a fresh run. The Model Config dashboard surfaces this in a standing banner.
+
+**Latest model IDs at the time of writing** (override defaults from the dashboard; pricing for these is in `MODEL_PRICES`):
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
