@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { use, useState } from 'react';
+import { TeamModelConfigSection } from '@/components/modelConfig/TeamModelConfigSection';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
@@ -166,6 +167,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       {canManage && <ShellAllowlistEditor teamId={id} />}
+      {canManage && <TeamModelConfigSection teamId={id} />}
 
       <TeamFormModal
         mode={{
