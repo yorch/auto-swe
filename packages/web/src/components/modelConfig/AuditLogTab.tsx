@@ -49,7 +49,7 @@ export function AuditLogTab() {
                 <span className="text-paper-500"> · {r.entityId.slice(0, 8)}…</span>
               </td>
               <td className="py-2 font-mono text-[11px] text-paper-400">
-                {r.actorId ? r.actorId.slice(0, 8) + '…' : 'system'}
+                {r.actorId ? `${r.actorId.slice(0, 8)}…` : 'system'}
               </td>
               <td className="py-2 font-mono text-[10px] text-paper-400">
                 {summarize(r.beforeJson, r.afterJson)}

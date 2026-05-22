@@ -678,9 +678,7 @@ function FanOutSection({
   onChange: (next: SpecNode) => void;
 }) {
   const overFrom = 'from' in node.over ? (node.over as { from: string }).from : '';
-  const [exportsText, setExportsText] = useState<string>(() =>
-    (node.exports ?? []).join('\n')
-  );
+  const [exportsText, setExportsText] = useState<string>(() => (node.exports ?? []).join('\n'));
   const prevExportsRef = useRef(node.exports);
   useEffect(() => {
     if (node.exports !== prevExportsRef.current) {
@@ -737,7 +735,8 @@ function FanOutSection({
           max={20}
           min={1}
           onChange={(e) => {
-            const v = e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
+            const v =
+              e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
             onChange({ ...node, concurrency: v } as SpecNode);
           }}
           placeholder="4 (default)"
@@ -757,8 +756,7 @@ function FanOutSection({
           className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
           htmlFor="fanout-exports"
         >
-          Exports{' '}
-          <span className="normal-case text-paper-600">(one per line)</span>
+          Exports <span className="normal-case text-paper-600">(one per line)</span>
         </label>
         <p className="mt-0.5 text-[10px] leading-snug text-paper-500">
           Context paths that flow back to the parent scope after the fan-out joins.
@@ -849,9 +847,7 @@ function ShellSection({
           <input
             className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
             id="shell-memory"
-            onChange={(e) =>
-              onChange({ ...node, memory: e.target.value || undefined } as SpecNode)
-            }
+            onChange={(e) => onChange({ ...node, memory: e.target.value || undefined } as SpecNode)}
             placeholder="512m"
             value={node.memory ?? ''}
           />
@@ -1126,16 +1122,18 @@ function OnFailSection({
       </select>
       {mode === 'retry' && (
         <div className="space-y-1">
-          <label className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500">
+          <label
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+            htmlFor="onfail-retry-count"
+          >
             Retry attempts (max 10)
           </label>
           <input
             className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            id="onfail-retry-count"
             max={10}
             min={1}
-            onChange={(e) =>
-              onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })
-            }
+            onChange={(e) => onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })}
             type="number"
             value={retryCount}
           />

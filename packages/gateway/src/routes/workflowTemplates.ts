@@ -79,7 +79,9 @@ async function assertShellImagesAllowed(
   fastify: FastifyInstance,
   teamId: string | null,
   shellNodes: ShellNodeWithId[]
-): Promise<{ ok: true; egressAllowlist: string[] } | { ok: false; statusCode: number; body: unknown }> {
+): Promise<
+  { ok: true; egressAllowlist: string[] } | { ok: false; statusCode: number; body: unknown }
+> {
   if (shellNodes.length === 0) return { egressAllowlist: [], ok: true };
   const team = teamId
     ? await fastify.prisma.team.findUnique({
@@ -421,7 +423,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           });
           const initialVersion = created.versions[0];
           if (initialVersion) {
-            await recordShellAudit(tx, initialVersion.id, teamId ?? null, user.sub, shellNodes, egressAllowlist);
+            await recordShellAudit(
+              tx,
+              initialVersion.id,
+              teamId ?? null,
+              user.sub,
+              shellNodes,
+              egressAllowlist
+            );
           }
           return created;
         });
