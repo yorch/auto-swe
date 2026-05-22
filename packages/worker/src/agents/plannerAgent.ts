@@ -29,18 +29,16 @@ export async function decomposeEpic(
 ): Promise<PlannedRepo[]> {
   return tracer.startActiveSpan(
     'llm.epic_planning',
-    {
-      attributes: {
-        'epic.repo_count': availableRepos.length,
-        'llm.model': getModelSpec('planner'),
-      },
-    },
+    { attributes: { 'epic.repo_count': availableRepos.length } },
     async (span) => {
       try {
+        const modelSpec = await getModelSpec('planner');
+        const model = await getModel('planner');
+        span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
           id: 'epic-planner',
           instructions: PLANNER_AGENT_PROMPT,
-          model: getModel('planner'),
+          model,
           name: 'epic-planner',
         });
 

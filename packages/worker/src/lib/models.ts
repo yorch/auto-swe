@@ -2,76 +2,109 @@ import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOpenAICompatibleClient, parseProviderModelSpec } from './providerUtils.js';
+import { currentRequestContext } from './config/contextLookup.js';
+import { resolveModelConfig } from './config/resolver.js';
+import type { AgentRole as ConfigAgentRole } from './config/types.js';
+import { parseProviderModelSpec } from './providerUtils.js';
 
 // All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
 // derive the type from the existing anthropic provider so we don't take a hard
 // dependency on @ai-sdk/provider (the type-only package is a transitive dep).
 type LanguageModel = ReturnType<typeof anthropic>;
 
-export type AgentRole =
-  | 'implementer'
-  | 'reviewer'
-  | 'planner'
-  | 'securityReview'
-  | 'validateContext'
-  | 'commitToMemory';
-
-const DEFAULT_MODELS: Record<AgentRole, string> = {
-  commitToMemory: 'anthropic/claude-opus-4-7',
-  implementer: 'anthropic/claude-opus-4-7',
-  planner: 'anthropic/claude-sonnet-4-6',
-  reviewer: 'anthropic/claude-opus-4-7',
-  securityReview: 'anthropic/claude-sonnet-4-6',
-  validateContext: 'anthropic/claude-sonnet-4-6',
-};
-
-const ROLE_ENV_VAR: Record<AgentRole, string> = {
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
-  implementer: 'IMPLEMENTER_MODEL',
-  planner: 'PLANNER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
-  securityReview: 'SECURITY_REVIEW_MODEL',
-  validateContext: 'CONTEXT_VALIDATOR_MODEL',
-};
+export type AgentRole = ConfigAgentRole;
 
 /**
- * Returns the configured model spec for a role: env override, falling back to the default.
+ * Returns the configured model spec for a role at the current scope. Picks up
+ * `{ teamId, workflowTemplateId }` from the Temporal activity context.
+ * Throws `ConfigMissingError` if the GLOBAL ModelRoleConfig row is missing
+ * (the worker's startup check should have caught this; runtime delete is
+ * the only way to hit it now).
  */
-export function getModelSpec(role: AgentRole): string {
-  return process.env[ROLE_ENV_VAR[role]]?.trim() || DEFAULT_MODELS[role];
+export async function getModelSpec(role: AgentRole): Promise<string> {
+  const ctx = await currentRequestContext();
+  const resolved = await resolveModelConfig(role, ctx);
+  return resolved.spec;
 }
 
 /**
- * Resolves a `<provider>/<model>` spec to a concrete Vercel AI SDK LanguageModel.
- *
- * Built-in providers: anthropic, openai, google.
- * Any other provider name is treated as an OpenAI-compatible endpoint and requires
- * `<UPPER>_API_BASE` (and typically `<UPPER>_API_KEY`) env vars — covers OpenRouter,
- * Ollama, vLLM, Groq, Cerebras, Inflection Pi, etc.
+ * Returns the language model bound to a given agent role. Same scope-
+ * resolution semantics as `getModelSpec`. Throws if config is missing.
+ * Process-local cache keeps us from rebuilding a fresh provider client on
+ * every call to the same role+context combo.
  */
-export function resolveModel(spec: string): LanguageModel {
+export async function getModel(role: AgentRole): Promise<LanguageModel> {
+  const ctx = await currentRequestContext();
+  const resolved = await resolveModelConfig(role, ctx);
+  return buildModel(resolved.spec, resolved.apiKey, resolved.apiBase);
+}
+
+/**
+ * Builds a Vercel AI SDK LanguageModel from a `<provider>/<model>` spec and an
+ * explicit API key. No env-default fallbacks — the caller MUST supply the
+ * apiKey from the resolver. Exported for tests and ad-hoc CLI scripts that
+ * already have credentials in hand.
+ */
+export function resolveModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
+  return buildModel(spec, apiKey, apiBase);
+}
+
+// ── Cache of constructed LanguageModel instances ──
+
+const modelCache = new Map<string, LanguageModel>();
+
+function cacheKeyForBuild(spec: string, apiKey: string, apiBase: string | undefined): string {
+  // Hash-ish key — include the last 6 chars of the apiKey so a credential
+  // rotation in the DB busts the cache without holding the full secret in the
+  // map key. apiBase is included verbatim since it's non-secret.
+  const keyTail = apiKey.slice(-6);
+  const base = apiBase ?? '';
+  return `${spec}|${keyTail}|${base}`;
+}
+
+function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
+  const key = cacheKeyForBuild(spec, apiKey, apiBase);
+  const cached = modelCache.get(key);
+  if (cached) return cached;
+
+  const built = buildModelUncached(spec, apiKey, apiBase);
+  modelCache.set(key, built);
+  return built;
+}
+
+function buildModelUncached(spec: string, apiKey: string, apiBase?: string): LanguageModel {
   const { provider, modelId } = parseProviderModelSpec(spec);
 
   switch (provider) {
     case 'anthropic':
-      return anthropic(modelId);
+      return createAnthropic({ apiKey, baseURL: apiBase })(modelId);
     case 'openai':
-      return openai(modelId);
+      return createOpenAI({ apiKey, baseURL: apiBase })(modelId);
     case 'google':
-      return google(modelId);
+      return createGoogleGenerativeAI({ apiKey, baseURL: apiBase })(modelId);
     default:
-      return createOpenAICompatibleClient(provider)(modelId);
+      // OpenAI-compatible providers require an apiBase. Throw a clear error
+      // so the operator notices the bad config rather than silently failing
+      // with an unhelpful SDK error.
+      if (!apiBase) {
+        throw new Error(
+          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /admin/model-config.`
+        );
+      }
+      return createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider })(modelId);
   }
 }
 
-/**
- * Returns the language model bound to a given agent role. Reads `<ROLE>_MODEL`
- * env vars at call time so configuration changes take effect on the next workflow run.
- */
-export function getModel(role: AgentRole): LanguageModel {
-  return resolveModel(getModelSpec(role));
+/// Drops the model-build cache. Used in tests and after credential rotations.
+export function _resetModelCacheForTests(): void {
+  modelCache.clear();
 }
+
+// Suppress unused-warnings on the bare SDK exports — kept for back-compat
+// with callers (tests, CLI scripts) that already imported them by name.
+void anthropic;
+void openai;
+void google;
 
 // Re-export createX functions so callers needing custom client options (e.g. baseURL
 // overrides for Bedrock/Azure) can construct providers directly without re-importing

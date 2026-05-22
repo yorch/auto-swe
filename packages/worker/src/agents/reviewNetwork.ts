@@ -43,13 +43,16 @@ async function runReviewerAgent(
 ): Promise<ReviewVerdict> {
   return tracer.startActiveSpan(
     `llm.review.${reviewerType}`,
-    { attributes: { 'llm.model': getModelSpec('reviewer'), 'llm.reviewer_type': reviewerType } },
+    { attributes: { 'llm.reviewer_type': reviewerType } },
     async (span) => {
       try {
+        const modelSpec = await getModelSpec('reviewer');
+        const model = await getModel('reviewer');
+        span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
           instructions: prompt,
-          model: getModel('reviewer'),
+          model,
           name: `${reviewerType.toLowerCase()}-reviewer`,
         });
 

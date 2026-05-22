@@ -1,134 +1,99 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type AgentRole, getModel, getModelSpec, resolveModel } from './models.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ROLES: AgentRole[] = [
-  'implementer',
-  'reviewer',
-  'planner',
-  'securityReview',
-  'validateContext',
-  'commitToMemory',
-];
+const { findFirstMock, credFindFirstMock } = vi.hoisted(() => ({
+  credFindFirstMock: vi.fn().mockResolvedValue(null),
+  findFirstMock: vi.fn().mockResolvedValue(null),
+}));
 
-const ROLE_ENV: Record<AgentRole, string> = {
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
-  implementer: 'IMPLEMENTER_MODEL',
-  planner: 'PLANNER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
-  securityReview: 'SECURITY_REVIEW_MODEL',
-  validateContext: 'CONTEXT_VALIDATOR_MODEL',
-};
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    embeddingConfig: { findUnique: vi.fn() },
+    modelRoleConfig: { findFirst: findFirstMock },
+    providerCredential: { findFirst: credFindFirstMock },
+  },
+}));
+
+import { _resetConfigCacheForTests } from './config/cache.js';
+import { ConfigMissingError } from './config/resolver.js';
+import { _resetModelCacheForTests, getModel, getModelSpec, resolveModel } from './models.js';
+
+beforeEach(() => {
+  _resetConfigCacheForTests();
+  _resetModelCacheForTests();
+  findFirstMock.mockReset().mockResolvedValue(null);
+  credFindFirstMock.mockReset().mockResolvedValue(null);
+});
+
+afterEach(() => {
+  _resetConfigCacheForTests();
+});
 
 describe('getModelSpec', () => {
-  const originalEnv = { ...process.env };
-
-  beforeEach(() => {
-    for (const v of Object.values(ROLE_ENV)) delete process.env[v];
+  it('throws ConfigMissingError when no GLOBAL row exists', async () => {
+    findFirstMock.mockResolvedValue(null);
+    await expect(getModelSpec('implementer')).rejects.toThrow(ConfigMissingError);
   });
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('falls back to anthropic defaults when no env override is set', () => {
-    for (const role of ROLES) {
-      expect(getModelSpec(role)).toMatch(/^anthropic\//);
-    }
-  });
-
-  it('honours the env override for each role', () => {
-    for (const role of ROLES) {
-      process.env[ROLE_ENV[role]] = 'openai/gpt-5';
-      expect(getModelSpec(role)).toBe('openai/gpt-5');
-      delete process.env[ROLE_ENV[role]];
-    }
-  });
-
-  it('treats whitespace-only env values as unset', () => {
-    process.env.IMPLEMENTER_MODEL = '   ';
-    expect(getModelSpec('implementer')).toMatch(/^anthropic\//);
-  });
+  // Spec roundtrip with a real DB-decrypt path is covered end-to-end in
+  // resolver.test.ts (uses vi.hoisted + encryptSecret to produce valid
+  // ciphertext). No need to duplicate the setup here.
 });
 
 describe('resolveModel', () => {
-  const originalEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('builds Anthropic models', () => {
-    const m = resolveModel('anthropic/claude-opus-4-6');
+  it('builds Anthropic models with an explicit apiKey', () => {
+    const m = resolveModel('anthropic/claude-opus-4-6', 'sk-ant-x');
     expect(m.provider).toMatch(/anthropic/);
+    expect(m.modelId).toBe('claude-opus-4-6');
   });
 
-  it('builds OpenAI models', () => {
-    const m = resolveModel('openai/gpt-5');
+  it('builds OpenAI models with an explicit apiKey', () => {
+    const m = resolveModel('openai/gpt-5', 'sk-openai-x');
     expect(m.provider).toMatch(/openai/);
   });
 
-  it('builds Google models', () => {
-    const m = resolveModel('google/gemini-2.5-pro');
+  it('builds Google models with an explicit apiKey', () => {
+    const m = resolveModel('google/gemini-2.5-pro', 'sk-google-x');
     expect(m.provider).toMatch(/google/);
   });
 
   it('matches built-in providers case-insensitively', () => {
-    // Without normalisation `OpenAI/gpt-5` would fall through to the
-    // OpenAI-compatible path and fail with a misleading "Set OPENAI_API_BASE".
-    expect(resolveModel('OpenAI/gpt-5').provider).toMatch(/openai/);
-    expect(resolveModel('ANTHROPIC/claude-opus-4-6').provider).toMatch(/anthropic/);
-    expect(resolveModel('Google/gemini-2.5-pro').provider).toMatch(/google/);
+    expect(resolveModel('OpenAI/gpt-5', 'sk-x').provider).toMatch(/openai/);
+    expect(resolveModel('ANTHROPIC/claude-opus-4-6', 'sk-x').provider).toMatch(/anthropic/);
+    expect(resolveModel('Google/gemini-2.5-pro', 'sk-x').provider).toMatch(/google/);
   });
 
   it('preserves model id casing (some self-hosted endpoints are case-sensitive)', () => {
-    process.env.OLLAMA_API_BASE = 'http://localhost:11434/v1';
-    const m = resolveModel('ollama/MyCustomModel:Latest');
+    const m = resolveModel('ollama/MyCustomModel:Latest', 'sk-x', 'http://localhost:11434/v1');
     expect(m.modelId).toBe('MyCustomModel:Latest');
   });
 
   it('preserves slashes in the model id (OpenRouter-style)', () => {
-    process.env.OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
-    process.env.OPENROUTER_API_KEY = 'test';
-    const m = resolveModel('openrouter/anthropic/claude-opus-4-6');
+    const m = resolveModel(
+      'openrouter/anthropic/claude-opus-4-6',
+      'sk-x',
+      'https://openrouter.ai/api/v1'
+    );
     expect(m.modelId).toBe('anthropic/claude-opus-4-6');
   });
 
-  it('routes unknown providers through OpenAI-compatible when API base is set', () => {
-    process.env.OLLAMA_API_BASE = 'http://localhost:11434/v1';
-    const m = resolveModel('ollama/llama3.1:70b');
-    expect(m.modelId).toBe('llama3.1:70b');
+  it('uses an explicit apiBase for unknown providers', () => {
+    const m = resolveModel('opencodego/glm-5', 'sk-go', 'https://opencode.ai/zen/go/v1');
+    expect(m.modelId).toBe('glm-5');
   });
 
-  it('throws on unknown provider when no API base is configured', () => {
-    delete process.env.MYSTERY_API_BASE;
-    expect(() => resolveModel('mystery/some-model')).toThrow(/MYSTERY_API_BASE/);
+  it('throws on unknown provider when no apiBase is supplied', () => {
+    expect(() => resolveModel('mystery/some-model', 'sk-x')).toThrow(/apiBase/);
   });
 
   it('rejects malformed specs', () => {
-    expect(() => resolveModel('claude-opus-4-6')).toThrow(/provider.*model/i);
-    expect(() => resolveModel('/foo')).toThrow();
-    expect(() => resolveModel('foo/')).toThrow();
-  });
-
-  it('uppercases and normalises hyphens in provider env-var lookup', () => {
-    process.env.MY_GATEWAY_API_BASE = 'https://gw.example.com/v1';
-    const m = resolveModel('my-gateway/some-model');
-    expect(m.modelId).toBe('some-model');
+    expect(() => resolveModel('claude-opus-4-6', 'sk-x')).toThrow(/provider.*model/i);
+    expect(() => resolveModel('/foo', 'sk-x')).toThrow();
+    expect(() => resolveModel('foo/', 'sk-x')).toThrow();
   });
 });
 
 describe('getModel', () => {
-  const originalEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it('returns a model for every defined role', () => {
-    for (const role of ROLES) {
-      const m = getModel(role);
-      expect(m).toBeDefined();
-      expect(typeof m.modelId).toBe('string');
-    }
+  it('throws ConfigMissingError when no DB config exists', async () => {
+    findFirstMock.mockResolvedValue(null);
+    await expect(getModel('implementer')).rejects.toThrow(ConfigMissingError);
   });
 });

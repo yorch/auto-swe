@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { use, useState } from 'react';
+import { TeamModelConfigSection } from '@/components/modelConfig/TeamModelConfigSection';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
@@ -18,7 +19,14 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const updateMember = useUpdateTeamMember(id);
   const removeMember = useRemoveTeamMember(id);
   const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const userId = useAuthStore((s) => s.user?.sub ?? null);
   const canManage = platformRole === 'ADMIN' || platformRole === 'LEAD';
+  // The model-config team-scoped endpoints require team-ADMIN role (or
+  // platform ADMIN as bypass). Compute the user's actual team-role here so
+  // we don't render a section that 403s on every API call. Platform LEAD
+  // without a team-ADMIN membership sees nothing.
+  const ownTeamRole = team?.memberships?.find((m) => m.user?.id === userId)?.role;
+  const canManageTeamConfig = platformRole === 'ADMIN' || ownTeamRole === 'ADMIN';
 
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -166,6 +174,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       {canManage && <ShellAllowlistEditor teamId={id} />}
+      {canManageTeamConfig && <TeamModelConfigSection teamId={id} />}
 
       <TeamFormModal
         mode={{

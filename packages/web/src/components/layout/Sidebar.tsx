@@ -41,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/users', label: 'Users', roles: ['ADMIN'] },
       { href: '/admin/sessions', label: 'Sessions', roles: ['ADMIN'] },
       { href: '/admin/access-tokens', label: 'PAT Admin', roles: ['ADMIN'] },
+      { href: '/admin/model-config', label: 'Model Config', roles: ['ADMIN'] },
       { href: '/docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/settings', label: 'Settings', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
     ],

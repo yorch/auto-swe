@@ -80,7 +80,11 @@ corepack enable && yarn install
 
 # 2. Configure environment
 cp .env.example .env
-# Fill in: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENAI_API_KEY
+# Fill in: GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, and CONFIG_ENCRYPTION_KEY
+# (generate with `openssl rand -base64 32`).
+# LLM provider keys and model picks are NOT env vars — add them via the
+# dashboard at /admin/model-config after starting the gateway+web. See
+# docs/model-configuration.md for the bootstrap flow.
 
 # 3. Start infrastructure (Postgres, Temporal)
 yarn docker:infra:up
@@ -154,10 +158,9 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | ----------------------- | --------- | -------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`              | Yes       | PostgreSQL connection string                                                                   |
 | `TEMPORAL_ADDRESS`          | Yes       | Temporal server address (default: `localhost:7233`)                                            |
-| `ANTHROPIC_API_KEY`         | Yes       | Claude API key (Implementer, Review, Planner, Memory agents)                                   |
+| `CONFIG_ENCRYPTION_KEY`     | Yes       | AES-256-GCM key (base64-encoded 32 bytes) for encrypting `provider_credentials.api_key_ciphertext`. Generate with `openssl rand -base64 32`. |
 | `GITHUB_TOKEN`              | Yes       | GitHub PAT with `repo` scope                                                                   |
 | `GITHUB_WEBHOOK_SECRET`     | Yes       | Secret for verifying GitHub webhook signatures                                                 |
-| `OPENAI_API_KEY`            | Yes       | OpenAI key for `text-embedding-3-large` embeddings                                             |
 | `JWT_SECRET`                | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
 | `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
 | `JWT_PUBLIC_KEY_PATH`       | Optional¹ | Path to RSA public key. Required when using RS256                                              |
@@ -193,6 +196,8 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 ² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
 ³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
 ⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
+
+Provider API keys (Anthropic, OpenAI, Google, OpenAI-compatible) and per-role model selection are NOT env vars — they live in the database and are managed at `/admin/model-config`. See [`docs/model-configuration.md`](./docs/model-configuration.md) for the bootstrap flow and day-2 operations.
 
 See [`.env.example`](./.env.example) for the full annotated template, including LLM provider selection, per-model price overrides, and embedding configuration.
 

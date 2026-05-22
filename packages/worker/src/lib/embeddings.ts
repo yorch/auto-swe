@@ -1,6 +1,8 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { embed } from 'ai';
-import { createOpenAICompatibleClient, parseProviderModelSpec } from './providerUtils.js';
+import { resolveEmbeddingConfig } from './config/resolver.js';
+import { parseProviderModelSpec } from './providerUtils.js';
 
 /**
  * pgvector column for AgentLesson is `vector(1536)` (see prisma schema). All
@@ -10,63 +12,62 @@ import { createOpenAICompatibleClient, parseProviderModelSpec } from './provider
  */
 const REQUIRED_DIMENSIONS = 1536;
 
-const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-large';
-
 type EmbeddingModel = ReturnType<ReturnType<typeof createOpenAI>['embedding']>;
 
 interface CachedEmbeddingModel {
-  spec: string;
+  cacheKey: string;
   provider: string;
   model: EmbeddingModel;
 }
 
 let cachedModel: CachedEmbeddingModel | null = null;
 
-function buildEmbeddingModel(spec: string): CachedEmbeddingModel {
+async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
+  const { spec, apiKey, apiBase } = await resolveEmbeddingConfig();
   const { provider, modelId } = parseProviderModelSpec(spec);
 
+  const cacheKey = `${spec}|${apiKey.slice(-6)}|${apiBase ?? ''}`;
+  if (cachedModel?.cacheKey === cacheKey) return cachedModel;
+
   if (provider === 'openai') {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is required for openai/* embedding models');
-    }
-    return {
-      model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).embedding(modelId),
+    cachedModel = {
+      cacheKey,
+      model: createOpenAI({ apiKey, baseURL: apiBase }).embedding(modelId),
       provider,
-      spec,
     };
+    return cachedModel;
   }
-
-  return {
-    model: createOpenAICompatibleClient(provider).textEmbeddingModel(modelId),
+  if (!apiBase) {
+    throw new Error(
+      `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /admin/model-config (Embeddings tab).`
+    );
+  }
+  cachedModel = {
+    cacheKey,
+    model: createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider }).textEmbeddingModel(
+      modelId
+    ),
     provider,
-    spec,
   };
-}
-
-function getEmbeddingModel(): CachedEmbeddingModel {
-  const spec = process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
-  if (!cachedModel || cachedModel.spec !== spec) {
-    cachedModel = buildEmbeddingModel(spec);
-  }
   return cachedModel;
 }
 
 /**
- * For tests — clears the cached embedding client so env changes take effect on
- * the next call.
+ * For tests — clears the cached embedding client so DB changes take effect
+ * on the next call.
  */
 export function _resetEmbeddingClientForTests(): void {
   cachedModel = null;
 }
 
 /**
- * Generate a 1536-dimensional vector embedding for the given text. Provider is
- * selected via the `EMBEDDING_MODEL` env var (default `openai/text-embedding-3-large`).
- * Throws if the configured model returns a vector of an unexpected dimensionality,
- * since pgvector storage is fixed-width.
+ * Generate a 1536-dimensional vector embedding for the given text. Spec +
+ * credentials come from the singleton `EmbeddingConfig` row. Throws if the
+ * configured model returns a vector of the wrong dimensionality (pgvector
+ * storage is fixed-width).
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const { provider, model } = getEmbeddingModel();
+  const { provider, model } = await buildEmbeddingModel();
   // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
   // from its native 3072 down to the 1536 required by the pgvector column.
   // Other providers don't accept this key, so it's only sent for OpenAI.

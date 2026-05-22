@@ -16,6 +16,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/workflowId.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/crypto',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/credentialScope',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialScope.ts'),
+      },
+      {
         find: '@auto-swe/shared/types/api',
         replacement: path.resolve(__dirname, 'packages/shared/src/types/api.ts'),
       },

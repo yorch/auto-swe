@@ -1,17 +1,49 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock prisma before importing the module under test
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
-    activeWorkflow: {
-      findFirst: vi.fn(),
-      update: vi.fn().mockResolvedValue({}),
+// Mock prisma before importing the module under test. modelRoleConfig +
+// providerCredential return a healthy GLOBAL row + credential so
+// recordLlmUsage's getModelSpec call resolves cleanly.
+//
+// Using an ASYNC factory + `await import()` so the alias map in
+// vitest.config.ts resolves `@auto-swe/shared/lib/crypto` to the .ts
+// source — synchronous `require()` would resolve via Node and demand a
+// built `dist/`, which CI doesn't produce before running the test job.
+vi.mock('@auto-swe/shared/db', async () => {
+  const { randomBytes } = await import('node:crypto');
+  if (!process.env.CONFIG_ENCRYPTION_KEY) {
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+  }
+  const { encryptSecret } = await import('@auto-swe/shared/lib/crypto');
+  const sealed = encryptSecret('sk-test-fixture');
+  return {
+    prisma: {
+      activeWorkflow: {
+        findFirst: vi.fn(),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      embeddingConfig: { findUnique: vi.fn() },
+      modelRoleConfig: {
+        findFirst: vi.fn().mockResolvedValue({
+          credential: null,
+          modelSpec: 'anthropic/claude-opus-4-7',
+        }),
+      },
+      providerCredential: {
+        findFirst: vi.fn().mockResolvedValue({
+          apiBase: null,
+          apiKeyAuthTag: sealed.authTag,
+          apiKeyCiphertext: sealed.ciphertext,
+          apiKeyNonce: sealed.nonce,
+          keyVersion: sealed.keyVersion,
+        }),
+      },
     },
-  },
-}));
+  };
+});
 
 import { prisma } from '@auto-swe/shared/db';
+import { _resetConfigCacheForTests } from './config/cache.js';
 import {
   BUDGET_LIMITS,
   calculateCostUsd,
@@ -21,6 +53,12 @@ import {
 } from './costTracking.js';
 
 const originalEnv = { ...process.env };
+
+beforeEach(() => {
+  // Drop resolved-config cache so each test's mock overrides take effect
+  // instead of being shadowed by the previous test's resolution.
+  _resetConfigCacheForTests();
+});
 
 afterEach(() => {
   process.env = { ...originalEnv };
@@ -142,7 +180,11 @@ describe('recordLlmUsage', () => {
   });
 
   it('still records usage for unknown models, just at zero cost', async () => {
-    process.env.IMPLEMENTER_MODEL = 'mystery/unreleased';
+    // Swap the GLOBAL ModelRoleConfig row to a spec not in MODEL_PRICES.
+    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
+      credential: null,
+      modelSpec: 'mystery/unreleased',
+    } as never);
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       budgetTier: 'STANDARD',
       costUsdAccrued: 0,
@@ -159,6 +201,42 @@ describe('recordLlmUsage', () => {
           costUsdAccrued: 0,
           tokensInputUsed: 1000,
           tokensOutputUsed: 500,
+        }),
+      })
+    );
+  });
+
+  it('still debits token counters when getModelSpec rejects (malformed DB row)', async () => {
+    // The GLOBAL row has a corrupt modelSpec — parseProviderModelSpec throws
+    // inside resolveModelConfig. Without the defensive try/catch, tokens
+    // already spent at the upstream LLM would never get debited and
+    // BUDGET_EXCEEDED would never fire — Temporal retries would re-spend
+    // tokens indefinitely.
+    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
+      credential: null,
+      modelSpec: 'broken-no-slash',
+    } as never);
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
+      budgetTier: 'STANDARD',
+      costUsdAccrued: 0,
+      id: 'wf-1',
+      tokensInputUsed: 0,
+      tokensOutputUsed: 0,
+    } as never);
+
+    // Must NOT reject — the workflow.update must still happen.
+    await recordLlmUsage('wf-temporal-1', 'implementer', {
+      inputTokens: 100_000,
+      outputTokens: 50_000,
+    });
+
+    expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          // Zero cost — unknown/unknown spec falls through to ZERO_PRICE.
+          costUsdAccrued: 0,
+          tokensInputUsed: 100_000,
+          tokensOutputUsed: 50_000,
         }),
       })
     );

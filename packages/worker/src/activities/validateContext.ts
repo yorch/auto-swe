@@ -25,43 +25,42 @@ export async function validateContext(
   let successCriteria: string[] = [];
 
   try {
-    successCriteria = await tracer.startActiveSpan(
-      'llm.context_validation',
-      { attributes: { 'llm.model': getModelSpec('validateContext') } },
-      async (span) => {
-        try {
-          const agent = new Agent({
-            id: 'context-validator',
-            instructions: CONTEXT_VALIDATOR_PROMPT,
-            model: getModel('validateContext'),
-            name: 'context-validator',
-          });
+    successCriteria = await tracer.startActiveSpan('llm.context_validation', async (span) => {
+      try {
+        const modelSpec = await getModelSpec('validateContext');
+        const model = await getModel('validateContext');
+        span.setAttribute('llm.model', modelSpec);
+        const agent = new Agent({
+          id: 'context-validator',
+          instructions: CONTEXT_VALIDATOR_PROMPT,
+          model,
+          name: 'context-validator',
+        });
 
-          const result = await agent.generate(
-            [
-              {
-                content: JSON.stringify({
-                  description: workRequest.description,
-                  requestPayload: workRequest.requestPayload,
-                  title: workRequest.externalTicketId,
-                }),
-                role: 'user',
-              },
-            ],
-            { structuredOutput: { schema: ContextValidationSchema } }
-          );
+        const result = await agent.generate(
+          [
+            {
+              content: JSON.stringify({
+                description: workRequest.description,
+                requestPayload: workRequest.requestPayload,
+                title: workRequest.externalTicketId,
+              }),
+              role: 'user',
+            },
+          ],
+          { structuredOutput: { schema: ContextValidationSchema } }
+        );
 
-          if (!result.object) return [];
-          const parsed = result.object as z.infer<typeof ContextValidationSchema>;
-          return parsed.successCriteria;
-        } catch (e) {
-          span.recordException(e as Error);
-          throw e;
-        } finally {
-          span.end();
-        }
+        if (!result.object) return [];
+        const parsed = result.object as z.infer<typeof ContextValidationSchema>;
+        return parsed.successCriteria;
+      } catch (e) {
+        span.recordException(e as Error);
+        throw e;
+      } finally {
+        span.end();
       }
-    );
+    });
   } catch {
     // Graceful degradation: empty criteria still allows workflow to proceed
   }

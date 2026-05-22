@@ -305,7 +305,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace);
 
     const gateFix = await agent.generate(
       [

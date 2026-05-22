@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { teamScopedConfigRoutes } from './modelConfig.js';
 
 const CreateTeamSchema = z.object({
   description: z.string().max(500).default(''),
@@ -34,6 +35,11 @@ const UpdateMemberSchema = z.object({
 
 export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // Phase 3 model-config team-scoped routes (added under the same /api/v1/teams
+  // prefix as the rest of this plugin). Defined in modelConfig.ts so admin and
+  // team-scope variants share helpers and audit-log writers.
+  await fastify.register(teamScopedConfigRoutes);
 
   // POST /api/v1/teams — Create team (ADMIN only)
   app.post(

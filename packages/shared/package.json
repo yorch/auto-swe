@@ -12,6 +12,8 @@
     "./types/api": "./dist/types/api.js",
     "./lib/workflowId": "./dist/lib/workflowId.js",
     "./lib/telemetry": "./dist/lib/telemetry.js",
+    "./lib/crypto": "./dist/lib/crypto.js",
+    "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./workflow": "./dist/workflow/index.js",
     "./workflow/spec": "./dist/workflow/spec.js",
     "./workflow/expr": "./dist/workflow/expr.js",
