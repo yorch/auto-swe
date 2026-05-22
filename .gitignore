@@ -30,3 +30,4 @@ output/
 
 # Docker bind-mount data directories (Postgres, Temporal Postgres)
 data/
+test-results/
