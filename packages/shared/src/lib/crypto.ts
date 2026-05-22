@@ -20,7 +20,8 @@ function loadKey(): Buffer {
   if (!raw) {
     throw new Error(
       'CONFIG_ENCRYPTION_KEY is required to encrypt/decrypt provider credentials. ' +
-        'Generate one with: `node -e "console.log(crypto.randomBytes(32).toString(\\"base64\\"))"`.'
+        'Generate one with `openssl rand -base64 32` ' +
+        "or `node -e \"console.log(require('node:crypto').randomBytes(32).toString('base64'))\"`."
     );
   }
   const decoded = Buffer.from(raw, 'base64');

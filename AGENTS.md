@@ -161,31 +161,43 @@ The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
 
 ### Multi-Model Support
 
-As of Phase 4, model selection and provider credentials live in the database (`ModelRoleConfig`, `ProviderCredential`) and are editable from the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). Env vars are consulted only on the worker's first boot, when `seedConfigFromEnv()` copies them into the GLOBAL scope rows. After that, env edits are no-ops — make changes through the UI.
+Model selection and provider credentials are fully DB-driven via the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).
 
 **Scope cascade** at activity-call time (worker's `resolveModelConfig(role, ctx)`):
 
 1. `WORKFLOW_TEMPLATE` row matching the run's template ID, if any
 2. `TEAM` row matching the work request's team, if any
-3. `GLOBAL` row (system-wide default)
-4. Env-var fallback (only hit on a pre-seed DB or in unit tests)
+3. `GLOBAL` row (system-wide default — required for every role)
 
-Per-role defaults baked into both the seed and the env-fallback path:
+No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker boot's `assertConfigReady()` walks every required row before the Temporal poller starts.
 
-| Role              | Env var (seed only)       | Default                       |
-| ----------------- | ------------------------- | ----------------------------- |
-| `implementer`     | `IMPLEMENTER_MODEL`       | `anthropic/claude-opus-4-7`   |
-| `reviewer`        | `REVIEWER_MODEL`          | `anthropic/claude-opus-4-7`   |
-| `planner`         | `PLANNER_MODEL`           | `anthropic/claude-sonnet-4-6` |
-| `securityReview`  | `SECURITY_REVIEW_MODEL`   | `anthropic/claude-sonnet-4-6` |
-| `validateContext` | `CONTEXT_VALIDATOR_MODEL` | `anthropic/claude-sonnet-4-6` |
-| `commitToMemory`  | `MEMORY_SUMMARIZER_MODEL` | `anthropic/claude-opus-4-7`   |
+**Bootstrap flow** (fresh deployment):
 
-**Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the credential row (or, for env-fallback only, `<PROVIDER>_API_BASE`) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, OpenCode Go, etc.
+1. `yarn db:migrate && yarn db:generate && yarn db:seed` — creates the admin user.
+2. Start gateway + web only.
+3. Sign in as admin at `/admin/model-config`. Click "Seed Anthropic defaults" to create the 6 GLOBAL `ModelRoleConfig` rows + the `EmbeddingConfig` singleton.
+4. Add at least one `ProviderCredential` for the providers the seeded specs reference (Anthropic by default; OpenAI for embeddings).
+5. Start the worker.
 
-**Credentials** are stored AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`. The encryption key (`CONFIG_ENCRYPTION_KEY`, base64 32 bytes) is required to start the worker or gateway — fail fast on missing/wrong-length. Rotation is not yet implemented; the `key_version` column is reserved for it.
+Per-role baked-in defaults (used by the "Seed defaults" button):
 
-**Mid-run config changes:** activities re-resolve their model on each call. An edit lands on the next LLM call within an already-running workflow rather than waiting for a fresh run. The Model Config dashboard surfaces this in a standing banner.
+| Role              | Default                       |
+| ----------------- | ----------------------------- |
+| `implementer`     | `anthropic/claude-opus-4-7`   |
+| `reviewer`        | `anthropic/claude-opus-4-7`   |
+| `planner`         | `anthropic/claude-sonnet-4-6` |
+| `securityReview`  | `anthropic/claude-sonnet-4-6` |
+| `validateContext` | `anthropic/claude-sonnet-4-6` |
+| `commitToMemory`  | `anthropic/claude-opus-4-7`   |
+| (embedding)       | `openai/text-embedding-3-large` |
+
+**Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the credential row — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, OpenCode Go, etc.
+
+**Embeddings** have a dedicated singleton `EmbeddingConfig` table (one row, system-wide). The chosen model must produce 1536-dim vectors — `generateEmbedding` throws if it doesn't.
+
+**Credentials** are stored AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`. The encryption key (`CONFIG_ENCRYPTION_KEY`, base64 32 bytes) is required to start gateway or worker — fail fast on missing/wrong-length. Rotation is not yet implemented; the `key_version` column is reserved for it.
+
+**Mid-run config changes:** activities re-resolve their model on each call. An edit lands on the next LLM call within an already-running workflow rather than waiting for a fresh run. The dashboard surfaces this in a standing banner.
 
 **Latest model IDs at the time of writing** (override defaults from the dashboard; pricing for these is in `MODEL_PRICES`):
 
