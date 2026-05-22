@@ -1,8 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 
 /**
- * Slack notifications. Two surfaces:
+ * Slack notifications. Three surfaces:
  *   - {@link notifySlackStepFailure} — per-step failure (phase 7)
+ *   - {@link notifySlackPrReady}     — PR opened / ready for review (phase 7)
  *   - {@link notifySlackRunComplete} — terminal-run summary (phase 8, opt-in)
  *
  * Channel resolution is shared via {@link resolveSlackChannel}: prefer the
@@ -11,7 +12,7 @@ import { prisma } from '@auto-swe/shared/db';
  * under one WorkRequest, so we match the run's `workflowId` against
  * `temporalWorkflowId` to pick the correct team (not an arbitrary first row).
  *
- * Both functions are best-effort. They silently no-op when `SLACK_BOT_TOKEN`
+ * All functions are best-effort. They silently no-op when `SLACK_BOT_TOKEN`
  * is unset, no channel resolves, the fetch times out, or Slack returns
  * `{ok: false}` — never let a Slack outage block the calling activity.
  */
@@ -134,6 +135,46 @@ async function postToSlack(
   }
 }
 
+/**
+ * Resolve a Slack channel directly from a WorkRequest row. Used by
+ * {@link notifySlackPrReady} which is called from createOrUpdatePullRequest
+ * (an activity that has the workRequestId, not a workflowRun id).
+ */
+async function resolveSlackChannelByWorkRequest(
+  workRequestId: string
+): Promise<{ channel: string; threadTs: string | null; ticket: string } | null> {
+  const workRequest = await prisma.workRequest.findUnique({
+    include: {
+      activeWorkflows: {
+        include: { repository: { select: { teamId: true } } },
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+      },
+    },
+    where: { id: workRequestId },
+  });
+  if (!workRequest) return null;
+
+  const ticket = workRequest.externalTicketId;
+  let channel = workRequest.slackChannelId ?? null;
+  let threadTs = workRequest.slackMessageTs ?? null;
+
+  if (!channel) {
+    const teamId = workRequest.activeWorkflows[0]?.repository?.teamId ?? null;
+    const team = teamId
+      ? await prisma.team.findUnique({
+          select: { slackNotifyChannel: true },
+          where: { id: teamId },
+        })
+      : null;
+    channel = team?.slackNotifyChannel ?? null;
+    threadTs = null;
+  }
+
+  if (!channel) return null;
+  return { channel, threadTs, ticket };
+}
+
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
@@ -157,6 +198,29 @@ export async function notifySlackStepFailure(input: {
     const errLine = input.error ? `: ${truncate(input.error, 400)}` : '';
     const text = `*[${resolved.ticket}]* \`${resolved.templateName}\` → step \`${input.nodeId}\` failed (attempt ${input.attempt})${errLine}`;
     await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify');
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * PR "ready for review" notification (phase 7). Fires when a new PR is opened
+ * so the originating Slack channel sees the link immediately. No opt-in needed
+ * — mirrors the step-failure surface. Best-effort; silently no-ops on any error.
+ */
+export async function notifySlackPrReady(input: {
+  workRequestId: string;
+  prNumber: number;
+  prUrl: string;
+}): Promise<void> {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return;
+
+  try {
+    const ctx = await resolveSlackChannelByWorkRequest(input.workRequestId);
+    if (!ctx) return;
+    const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
+    await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
   } catch {
     /* best-effort */
   }

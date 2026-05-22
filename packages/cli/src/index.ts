@@ -11,7 +11,7 @@ USAGE
   auto-swe <command> [subcommand] [args]
 
 COMMANDS
-  run --ticket=<id> --description=<text> --repo=<org/name> [--workflow=<name>]
+  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--workflow=<name>]
                                        Submit a work request and start a run
 
   workflows list                       List workflow templates visible to you

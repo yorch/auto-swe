@@ -69,8 +69,13 @@ vi.mock('../lib/costTracking.js', () => ({
   recordLlmUsage: vi.fn(),
 }));
 
+vi.mock('./commitToMemory.js', () => ({
+  recordLessonBackground: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { recordLessonBackground } from './commitToMemory.js';
 import { mergeBranches, resolveMergeConflict, subtaskBranchName } from './decomposition.js';
 
 const baseRequest = {
@@ -82,11 +87,14 @@ const baseRequest = {
 
 const mockedFindUnique = vi.mocked(prisma.repository.findUniqueOrThrow);
 
+const mockedRecordLesson = vi.mocked(recordLessonBackground);
+
 afterEach(() => {
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
   (fakeWorkspace.destroy as ReturnType<typeof vi.fn>).mockReset();
   generateMock.mockReset();
+  mockedRecordLesson.mockReset();
 });
 
 describe('subtaskBranchName', () => {
@@ -306,6 +314,76 @@ describe('resolveMergeConflict', () => {
     expect(result.passed).toBe(false);
     // Default of 1 attempt → resolver ran exactly once.
     expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires the MERGE_CONFLICT memory hook after a successful resolution', async () => {
+    primeRepo();
+    let conflictResolved = false;
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff') && !conflictResolved) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT (content): Merge conflict in foo.ts';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U'))
+        return conflictResolved ? '' : 'foo.ts\n';
+      if (cmd.startsWith('git diff --check')) {
+        if (conflictResolved) return '';
+        throw new Error('markers present');
+      }
+      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      if (cmd === 'git add -A') return '';
+      if (cmd.startsWith('git commit')) return '';
+      if (cmd.includes('git rev-parse HEAD')) return 'sha\n';
+      return '';
+    });
+    generateMock.mockImplementation(async () => {
+      conflictResolved = true;
+      return { usage: { totalTokens: 50 } };
+    });
+
+    const result = await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(true);
+    expect(mockedRecordLesson).toHaveBeenCalledOnce();
+    expect(mockedRecordLesson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        failureType: 'MERGE_CONFLICT',
+        repoId: 'repo-1',
+      })
+    );
+  });
+
+  it('does not fire the memory hook when resolution fails', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge --no-ff')) {
+        const err = new Error('CONFLICT') as Error & { stdout: string; stderr: string };
+        err.stdout = 'CONFLICT';
+        err.stderr = '';
+        throw err;
+      }
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
+      if (cmd.startsWith('git diff --check')) throw new Error('markers present');
+      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      return '';
+    });
+    generateMock.mockResolvedValue({ usage: { totalTokens: 50 } });
+
+    const result = await resolveMergeConflict({
+      maxAttemptsPerBranch: 1,
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+
+    expect(result.passed).toBe(false);
+    expect(mockedRecordLesson).not.toHaveBeenCalled();
   });
 
   it('surfaces remaining conflict + unmerged tail when the resolver cannot finish in maxAttempts', async () => {

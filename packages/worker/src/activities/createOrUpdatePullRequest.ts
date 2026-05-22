@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
+import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
   request: RepoWorkRequest,
@@ -70,6 +71,13 @@ export async function createOrUpdatePullRequest(
       status: 'OPEN',
       workflowId: workflow?.id,
     },
+  });
+
+  // Best-effort: let the originating Slack channel know the PR is open.
+  await notifySlackPrReady({
+    prNumber: pr.number,
+    prUrl: pr.html_url,
+    workRequestId: request.workRequestId,
   });
 
   return { prNumber: pr.number, prUrl: pr.html_url };
