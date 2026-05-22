@@ -1,48 +1,46 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Hoisted setup: vi.mock factories run before top-level code, so anything they
-// reference must come from a vi.hoisted block. We pre-seal a credential here
-// with a synthesized key, so the providerCredential.findFirst mock returns
-// valid ciphertext that the resolver can decrypt.
-const { sealedCred } = vi.hoisted(() => {
-  const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
-  process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
-  // Defer the encryption itself to after the mock is registered — it needs
-  // the encryptSecret function which lives in a non-mocked module, so we can
-  // require() it here lazily.
-  const { encryptSecret } =
-    require('@auto-swe/shared/lib/crypto') as typeof import('@auto-swe/shared/lib/crypto');
-  return { sealedCred: encryptSecret('sk-test-fixture') };
-});
-
 // Mock prisma before importing the module under test. modelRoleConfig +
 // providerCredential return a healthy GLOBAL row + credential so
 // recordLlmUsage's getModelSpec call resolves cleanly.
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
-    activeWorkflow: {
-      findFirst: vi.fn(),
-      update: vi.fn().mockResolvedValue({}),
+//
+// Using an ASYNC factory + `await import()` so the alias map in
+// vitest.config.ts resolves `@auto-swe/shared/lib/crypto` to the .ts
+// source — synchronous `require()` would resolve via Node and demand a
+// built `dist/`, which CI doesn't produce before running the test job.
+vi.mock('@auto-swe/shared/db', async () => {
+  const { randomBytes } = await import('node:crypto');
+  if (!process.env.CONFIG_ENCRYPTION_KEY) {
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+  }
+  const { encryptSecret } = await import('@auto-swe/shared/lib/crypto');
+  const sealed = encryptSecret('sk-test-fixture');
+  return {
+    prisma: {
+      activeWorkflow: {
+        findFirst: vi.fn(),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      embeddingConfig: { findUnique: vi.fn() },
+      modelRoleConfig: {
+        findFirst: vi.fn().mockResolvedValue({
+          credential: null,
+          modelSpec: 'anthropic/claude-opus-4-7',
+        }),
+      },
+      providerCredential: {
+        findFirst: vi.fn().mockResolvedValue({
+          apiBase: null,
+          apiKeyAuthTag: sealed.authTag,
+          apiKeyCiphertext: sealed.ciphertext,
+          apiKeyNonce: sealed.nonce,
+          keyVersion: sealed.keyVersion,
+        }),
+      },
     },
-    embeddingConfig: { findUnique: vi.fn() },
-    modelRoleConfig: {
-      findFirst: vi.fn().mockResolvedValue({
-        credential: null,
-        modelSpec: 'anthropic/claude-opus-4-7',
-      }),
-    },
-    providerCredential: {
-      findFirst: vi.fn().mockResolvedValue({
-        apiBase: null,
-        apiKeyAuthTag: sealedCred.authTag,
-        apiKeyCiphertext: sealedCred.ciphertext,
-        apiKeyNonce: sealedCred.nonce,
-        keyVersion: sealedCred.keyVersion,
-      }),
-    },
-  },
-}));
+  };
+});
 
 import { prisma } from '@auto-swe/shared/db';
 import { _resetConfigCacheForTests } from './config/cache.js';
