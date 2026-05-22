@@ -3,14 +3,16 @@
 import { useState } from 'react';
 import { AuditLogTab } from '@/components/modelConfig/AuditLogTab';
 import { CredentialsTab } from '@/components/modelConfig/CredentialsTab';
+import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
 import { MidRunWarning } from '@/components/modelConfig/MidRunWarning';
 import { RolesTab } from '@/components/modelConfig/RolesTab';
 
-type Tab = 'roles' | 'credentials' | 'audit';
+type Tab = 'roles' | 'credentials' | 'embeddings' | 'audit';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'roles', label: 'Roles' },
   { id: 'credentials', label: 'Credentials' },
+  { id: 'embeddings', label: 'Embeddings' },
   { id: 'audit', label: 'Audit log' },
 ];
 
@@ -47,6 +49,7 @@ export default function AdminModelConfigPage() {
       </div>
       {active === 'roles' && <RolesTab />}
       {active === 'credentials' && <CredentialsTab />}
+      {active === 'embeddings' && <EmbeddingsTab />}
       {active === 'audit' && <AuditLogTab />}
     </div>
   );

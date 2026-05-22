@@ -93,7 +93,7 @@ const IdParams = z.object({ id: z.string().uuid() });
 
 const AuditQuery = z.object({
   entityId: z.string().uuid().optional(),
-  entityType: z.enum(['ModelRoleConfig', 'ProviderCredential']).optional(),
+  entityType: z.enum(['ModelRoleConfig', 'ProviderCredential', 'EmbeddingConfig']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
@@ -146,7 +146,7 @@ function redactCredential(row: {
 async function writeAuditLog(
   fastify: FastifyInstance,
   args: {
-    entityType: 'ModelRoleConfig' | 'ProviderCredential';
+    entityType: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
     entityId: string;
     action: 'CREATE' | 'UPDATE' | 'DELETE';
     actor: JwtPayload;
@@ -671,7 +671,164 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: rows };
     }
   );
+
+  // ── Embedding config (singleton) ─────────────────────────────────────────
+
+  app.get('/embedding-config', { onRequest: adminOnly }, async () => {
+    const row = await fastify.prisma.embeddingConfig.findUnique({
+      include: { credential: { select: { id: true, lastFour: true, provider: true } } },
+      where: { id: 'default' },
+    });
+    return { data: row };
+  });
+
+  /// Upserts the singleton EmbeddingConfig. Provider is parsed from the spec
+  /// and verified — when the row pins a credentialId, the pinned credential's
+  /// provider must match the spec's provider (mirrors the assertConfigReady
+  /// invariant; would otherwise surface as a 401 at the next embedding call).
+  app.put(
+    '/embedding-config',
+    {
+      onRequest: adminOnly,
+      schema: {
+        body: z.object({
+          credentialId: z.string().uuid().nullable().optional(),
+          modelSpec: ModelSpecSchema,
+        }),
+      },
+    },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const { modelSpec, credentialId } = request.body;
+
+      if (credentialId) {
+        const cred = await fastify.prisma.providerCredential.findUnique({
+          where: { id: credentialId },
+        });
+        if (!cred) {
+          return reply.status(400).send({
+            error: {
+              code: 'CREDENTIAL_NOT_FOUND',
+              message: `Credential ${credentialId} does not exist`,
+            },
+          });
+        }
+        // Provider-match guard. The worker's assertConfigReady would also
+        // catch this on next boot, but failing fast at write time gives
+        // operators the error before they restart.
+        const specProvider = modelSpec.split('/')[0]?.toLowerCase();
+        if (specProvider && cred.provider !== specProvider) {
+          return reply.status(400).send({
+            error: {
+              code: 'CREDENTIAL_PROVIDER_MISMATCH',
+              message: `Credential is for provider '${cred.provider}' but spec is '${modelSpec}' (provider '${specProvider}'). Pick a matching credential.`,
+            },
+          });
+        }
+      }
+
+      const existing = await fastify.prisma.embeddingConfig.findUnique({
+        where: { id: 'default' },
+      });
+      const updated = await fastify.prisma.embeddingConfig.upsert({
+        create: {
+          credentialId: credentialId ?? null,
+          id: 'default',
+          modelSpec,
+          updatedById: actor.sub,
+        },
+        update: { credentialId: credentialId ?? null, modelSpec, updatedById: actor.sub },
+        where: { id: 'default' },
+      });
+      await writeAuditLog(fastify, {
+        action: existing ? 'UPDATE' : 'CREATE',
+        actor,
+        after: updated,
+        before: existing ?? undefined,
+        // EmbeddingConfig uses a literal string id, but ConfigAuditLog.entityId
+        // is UUID. We tag the audit entry with a sentinel UUID so audit-log
+        // readers can still group by entity. The mapping is one-to-one since
+        // the table is a singleton.
+        entityId: EMBEDDING_CONFIG_SENTINEL_UUID,
+        entityType: 'EmbeddingConfig',
+      });
+      return { data: updated };
+    }
+  );
+
+  /// One-click admin bootstrap: inserts a GLOBAL ModelRoleConfig row for each
+  /// of the 6 roles using the baked-in defaults, plus the EmbeddingConfig
+  /// singleton if missing. Idempotent — skips roles that already have a
+  /// GLOBAL row. Does NOT seed credentials; those must be added separately
+  /// because they require a real API key from the operator.
+  app.post('/defaults', { onRequest: adminOnly }, async (request) => {
+    const actor = requireUser(request);
+    const defaults = {
+      COMMIT_TO_MEMORY: 'anthropic/claude-opus-4-7',
+      IMPLEMENTER: 'anthropic/claude-opus-4-7',
+      PLANNER: 'anthropic/claude-sonnet-4-6',
+      REVIEWER: 'anthropic/claude-opus-4-7',
+      SECURITY_REVIEW: 'anthropic/claude-sonnet-4-6',
+      VALIDATE_CONTEXT: 'anthropic/claude-sonnet-4-6',
+    } as const;
+
+    let rolesSeeded = 0;
+    for (const [role, spec] of Object.entries(defaults)) {
+      const existing = await fastify.prisma.modelRoleConfig.findFirst({
+        where: { role: role as keyof typeof defaults, scope: 'GLOBAL' },
+      });
+      if (existing) continue;
+      // Two admins double-clicking the button race on the count-then-create;
+      // the partial unique index on (role) WHERE scope='GLOBAL' makes the
+      // second insert fail. Swallow it — the first writer wins.
+      try {
+        const created = await fastify.prisma.modelRoleConfig.create({
+          data: {
+            createdById: actor.sub,
+            modelSpec: spec,
+            role: role as keyof typeof defaults,
+            scope: 'GLOBAL',
+          },
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor,
+          after: created,
+          entityId: created.id,
+          entityType: 'ModelRoleConfig',
+        });
+        rolesSeeded += 1;
+      } catch (err) {
+        if (!isUniqueConstraintError(err)) throw err;
+      }
+    }
+
+    let embeddingSeeded = false;
+    const existingEmbedding = await fastify.prisma.embeddingConfig.findUnique({
+      where: { id: 'default' },
+    });
+    if (!existingEmbedding) {
+      try {
+        await fastify.prisma.embeddingConfig.create({
+          data: {
+            id: 'default',
+            modelSpec: 'openai/text-embedding-3-large',
+            updatedById: actor.sub,
+          },
+        });
+        embeddingSeeded = true;
+      } catch (err) {
+        // Same race — id='default' is the singleton primary key, so a
+        // concurrent insert produces P2002. Treat as "already seeded".
+        if (!isUniqueConstraintError(err)) throw err;
+      }
+    }
+
+    return { data: { embeddingSeeded, rolesSeeded } };
+  });
 };
+
+const EMBEDDING_CONFIG_SENTINEL_UUID = '00000000-0000-4000-a000-000000000001';
 
 // ── Team-scoped route helpers (exported for `teams.ts` to mount) ───────────
 

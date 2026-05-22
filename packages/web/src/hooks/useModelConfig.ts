@@ -52,13 +52,23 @@ export interface ProviderCredentialRow {
 
 export interface ConfigAuditRow {
   id: string;
-  entityType: 'ModelRoleConfig' | 'ProviderCredential';
+  entityType: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   actorId: string | null;
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
+}
+
+export interface EmbeddingConfigRow {
+  id: 'default';
+  modelSpec: string;
+  credentialId: string | null;
+  credential?: { id: string; provider: string; lastFour: string } | null;
+  updatedById: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── Admin (cross-scope) ──
@@ -193,7 +203,7 @@ export function useAdminTestCredential() {
 }
 
 export function useAdminConfigAuditLog(filter?: {
-  entityType?: 'ModelRoleConfig' | 'ProviderCredential';
+  entityType?: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
   entityId?: string;
   limit?: number;
 }) {
@@ -298,6 +308,45 @@ export function useTeamDeleteCredential(teamId: string) {
   return useMutation({
     mutationFn: (credId: string) => api.delete(`/api/v1/teams/${teamId}/credentials/${credId}`),
     onSuccess: () => invalidateCredentialQueries(qc),
+  });
+}
+
+// ── Embedding config (singleton) ──
+
+export function useEmbeddingConfig() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: EmbeddingConfigRow | null }>('/api/v1/admin/embedding-config')
+        .then((r) => r.data),
+    queryKey: ['admin-embedding-config'],
+  });
+}
+
+export function useUpdateEmbeddingConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { modelSpec: string; credentialId?: string | null }) =>
+      api.put<{ data: EmbeddingConfigRow }>('/api/v1/admin/embedding-config', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-embedding-config'] }),
+  });
+}
+
+// ── Bootstrap "Seed defaults" button ──
+
+export function useSeedDefaults() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: { rolesSeeded: number; embeddingSeeded: boolean } }>(
+        '/api/v1/admin/defaults',
+        {}
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-embedding-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-config-audit-log'] });
+    },
   });
 }
 

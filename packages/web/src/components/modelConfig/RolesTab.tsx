@@ -15,6 +15,7 @@ import {
   useAdminDeleteModelConfig,
   useAdminModelConfigs,
   useAdminUpsertModelConfig,
+  useSeedDefaults,
 } from '@/hooks/useModelConfig';
 
 const ROLE_LABELS: Record<ModelRole, string> = {
@@ -37,6 +38,13 @@ export function RolesTab() {
 
   const upsert = useAdminUpsertModelConfig();
   const del = useAdminDeleteModelConfig();
+  const seedDefaults = useSeedDefaults();
+
+  // Empty-state detection. The worker refuses to start without GLOBAL rows
+  // for every role + an EmbeddingConfig, so a fresh install lands here.
+  const globalRoles = (rows ?? []).filter((r) => r.scope === 'GLOBAL').map((r) => r.role);
+  const missingGlobalRoles = MODEL_ROLES.filter((r) => !globalRoles.includes(r));
+  const showBootstrapBanner = !isLoading && missingGlobalRoles.length > 0;
 
   const byRole: Record<ModelRole, ModelRoleConfigRow[]> = {
     COMMIT_TO_MEMORY: [],
@@ -51,6 +59,27 @@ export function RolesTab() {
   return (
     <div className="space-y-6">
       {isLoading && <p className="text-sm text-paper-400">Loading…</p>}
+      {showBootstrapBanner && (
+        <div className="rounded-sm border border-ember-400/40 bg-ember-400/5 px-4 py-3 text-xs text-ember-200">
+          <div className="mb-2">
+            <strong className="font-semibold text-ember-100">Bootstrap needed.</strong>{' '}
+            {missingGlobalRoles.length} of 6 roles have no GLOBAL configuration. The worker will
+            refuse to start until every role + at least one matching credential exists.
+          </div>
+          <Button
+            disabled={seedDefaults.isPending}
+            onClick={() => seedDefaults.mutate()}
+            size="sm"
+            variant="primary"
+          >
+            {seedDefaults.isPending ? 'Seeding…' : 'Seed Anthropic defaults'}
+          </Button>
+          <span className="ml-2 text-[11px] text-paper-500">
+            Creates GLOBAL rows pointing at <code>anthropic/claude-opus-4-7</code> /{' '}
+            <code>claude-sonnet-4-6</code>. Add an Anthropic credential under the Credentials tab.
+          </span>
+        </div>
+      )}
       {MODEL_ROLES.map((role) => (
         <Card key={role}>
           <CardHeader>
