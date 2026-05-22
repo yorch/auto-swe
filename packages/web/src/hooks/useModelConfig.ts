@@ -156,6 +156,7 @@ export function useAdminCredentials() {
 function invalidateCredentialQueries(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['admin-credentials'] });
   qc.invalidateQueries({ queryKey: ['team-credentials'] });
+  qc.invalidateQueries({ queryKey: ['team-accessible-credentials'] });
   qc.invalidateQueries({ queryKey: ['admin-model-config'] });
   qc.invalidateQueries({ queryKey: ['team-model-config'] });
   qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
@@ -272,6 +273,22 @@ export function useTeamCredentials(teamId: string) {
         .get<{ data: ProviderCredentialRow[] }>(`/api/v1/teams/${teamId}/credentials`)
         .then((r) => r.data),
     queryKey: ['team-credentials', teamId],
+  });
+}
+
+/// Returns this team's TEAM-scope credentials + all GLOBAL credentials —
+/// the union the team owner is allowed to pin on a model role override.
+/// Backed by `GET /api/v1/teams/:id/accessible-credentials`, which is
+/// gated on team-ADMIN role (not platform-ADMIN), so non-admin team owners
+/// can populate the picker without 403'ing.
+export function useTeamAccessibleCredentials(teamId: string) {
+  return useQuery({
+    enabled: Boolean(teamId),
+    queryFn: () =>
+      api
+        .get<{ data: ProviderCredentialRow[] }>(`/api/v1/teams/${teamId}/accessible-credentials`)
+        .then((r) => r.data),
+    queryKey: ['team-accessible-credentials', teamId],
   });
 }
 

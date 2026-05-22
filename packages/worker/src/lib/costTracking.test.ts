@@ -207,4 +207,40 @@ describe('recordLlmUsage', () => {
       })
     );
   });
+
+  it('still debits token counters when getModelSpec rejects (malformed DB row)', async () => {
+    // The GLOBAL row has a corrupt modelSpec — parseProviderModelSpec throws
+    // inside resolveModelConfig. Without the defensive try/catch, tokens
+    // already spent at the upstream LLM would never get debited and
+    // BUDGET_EXCEEDED would never fire — Temporal retries would re-spend
+    // tokens indefinitely.
+    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
+      credential: null,
+      modelSpec: 'broken-no-slash',
+    } as never);
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
+      budgetTier: 'STANDARD',
+      costUsdAccrued: 0,
+      id: 'wf-1',
+      tokensInputUsed: 0,
+      tokensOutputUsed: 0,
+    } as never);
+
+    // Must NOT reject — the workflow.update must still happen.
+    await recordLlmUsage('wf-temporal-1', 'implementer', {
+      inputTokens: 100_000,
+      outputTokens: 50_000,
+    });
+
+    expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          // Zero cost — unknown/unknown spec falls through to ZERO_PRICE.
+          costUsdAccrued: 0,
+          tokensInputUsed: 100_000,
+          tokensOutputUsed: 50_000,
+        }),
+      })
+    );
+  });
 });

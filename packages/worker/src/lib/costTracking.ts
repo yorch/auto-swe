@@ -141,11 +141,28 @@ export async function recordLlmUsage(
   usage: TokenUsage,
   spanName = 'llm.usage'
 ): Promise<void> {
-  const modelSpec = await getModelSpec(role);
+  // Resolve the spec defensively: if the DB row is corrupt (missing `/`,
+  // unknown provider, decrypt failure) we still need to debit the token
+  // counters for budget enforcement. Without this guard, malformed config
+  // would let an activity burn unlimited tokens (each retry re-spends at
+  // the provider but never updates the DB counter → BUDGET_EXCEEDED never
+  // fires).
+  let modelSpec: string;
+  let specResolutionError: unknown;
+  try {
+    modelSpec = await getModelSpec(role);
+  } catch (err) {
+    modelSpec = 'unknown/unknown';
+    specResolutionError = err;
+  }
   const { known } = getModelPrice(modelSpec);
 
   await tracer.startActiveSpan(spanName, async (span) => {
     try {
+      if (specResolutionError) {
+        span.setAttribute('llm.spec_resolution_failed', true);
+        span.recordException(specResolutionError as Error);
+      }
       const workflow = await prisma.activeWorkflow.findFirst({
         select: {
           budgetTier: true,

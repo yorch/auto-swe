@@ -10,7 +10,7 @@ import {
   type ModelRoleConfigRow,
   type ProviderCredentialRow,
   SUGGESTED_MODEL_SPECS,
-  useAdminCredentials,
+  useTeamAccessibleCredentials,
   useTeamCreateCredential,
   useTeamCredentials,
   useTeamDeleteCredential,
@@ -35,8 +35,10 @@ const ROLE_LABELS: Record<ModelRole, string> = {
 /// Team credentials may reference GLOBAL credentials owned by admins too.
 export function TeamModelConfigSection({ teamId }: { teamId: string }) {
   const { data: rows, isLoading } = useTeamModelConfig(teamId);
-  const { data: teamCreds } = useTeamCredentials(teamId);
-  const { data: globalCreds } = useAdminCredentials();
+  // Pin-credential picker pulls from the team-scoped accessible-credentials
+  // endpoint (TEAM + GLOBAL) — using the admin-only credentials list would
+  // 403 for non-platform-admin team owners.
+  const { data: accessibleCredsRaw } = useTeamAccessibleCredentials(teamId);
   const upsert = useTeamUpsertModelConfig(teamId);
   const del = useTeamDeleteModelConfig(teamId);
   const [editing, setEditing] = useState<{
@@ -45,11 +47,7 @@ export function TeamModelConfigSection({ teamId }: { teamId: string }) {
   } | null>(null);
 
   const byRole = new Map((rows ?? []).map((r) => [r.role, r] as const));
-  // Team owners can reference GLOBAL credentials or their own TEAM credentials.
-  const accessibleCreds = [
-    ...(globalCreds ?? []).filter((c) => c.scope === 'GLOBAL'),
-    ...(teamCreds ?? []),
-  ];
+  const accessibleCreds = accessibleCredsRaw ?? [];
 
   return (
     <Card>

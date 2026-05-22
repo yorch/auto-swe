@@ -981,6 +981,27 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  /// Returns every credential a team owner is allowed to PIN on a model
+  /// role config: their own TEAM-scope credentials plus all GLOBAL-scope
+  /// credentials. Lets the team dashboard populate its "Pin credential"
+  /// dropdown without hitting /api/v1/admin/credentials (which requires
+  /// platform-ADMIN role and returns 403 for team owners). The platform-
+  /// ADMIN gateway invariant — that team owners CAN pin GLOBAL credentials
+  /// — is enforced server-side in PUT /:id/model-config (modelConfig.ts).
+  app.get(
+    '/:id/accessible-credentials',
+    { onRequest: teamAdmin, schema: { params: IdParams } },
+    async (request) => {
+      const rows = await fastify.prisma.providerCredential.findMany({
+        orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
+        where: {
+          OR: [{ scope: 'GLOBAL' }, { scope: 'TEAM', teamId: request.params.id }],
+        },
+      });
+      return { data: rows.map(redactCredential) };
+    }
+  );
+
   app.post(
     '/:id/credentials',
     { onRequest: teamAdmin, schema: { body: TeamCredentialCreate, params: IdParams } },
