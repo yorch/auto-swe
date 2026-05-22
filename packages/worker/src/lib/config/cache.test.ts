@@ -16,7 +16,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = { ...originalEnv };
-  vi.useRealTimers();
+  _resetConfigCacheForTests();
 });
 
 describe('withCache', () => {
@@ -28,11 +28,13 @@ describe('withCache', () => {
   });
 
   it('re-fetches after TTL expires', async () => {
-    vi.useFakeTimers();
+    // Real timers with a tiny TTL — fake timers + async resolver can race on
+    // CI runners (we've seen unexplained intermittent failures under
+    // Node 24 + fake-timer-driven cache tests).
     const fetcher = vi.fn().mockResolvedValueOnce('v1').mockResolvedValueOnce('v2');
-    await withCache('k', 1_000, fetcher);
-    vi.advanceTimersByTime(1_500);
-    const r = await withCache('k', 1_000, fetcher);
+    await withCache('k', 10, fetcher);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const r = await withCache('k', 10, fetcher);
     expect(r).toBe('v2');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
@@ -80,18 +82,18 @@ describe('bounded cache (LRU + sweep)', () => {
   });
 
   it('sweeps expired entries on insert (lazy eviction)', async () => {
-    vi.useFakeTimers();
+    // Real timers — see comment in `re-fetches after TTL expires`.
     process.env.CONFIG_CACHE_MAX_ENTRIES = '100';
     _resetConfigCacheForTests();
 
-    // Insert 10 entries with a 1s TTL.
+    // Insert 10 entries with a tiny TTL.
     for (const k of Array.from({ length: 10 }, (_, i) => `k${i}`)) {
-      await withCache(k, 1_000, async () => k);
+      await withCache(k, 10, async () => k);
     }
     expect(_cacheSizeForTests()).toBe(10);
 
-    // Advance past TTL.
-    vi.advanceTimersByTime(2_000);
+    // Wait past TTL.
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
     // A fresh insert should sweep the 10 expired entries first.
     await withCache('fresh', 30_000, async () => 'fresh');
