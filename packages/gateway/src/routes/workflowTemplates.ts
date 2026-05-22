@@ -79,16 +79,17 @@ async function assertShellImagesAllowed(
   fastify: FastifyInstance,
   teamId: string | null,
   shellNodes: ShellNodeWithId[]
-): Promise<{ statusCode: number; body: unknown } | null> {
-  if (shellNodes.length === 0) return null;
-  const teamAllowlist = teamId
-    ? ((
-        await fastify.prisma.team.findUnique({
-          select: { shellImageAllowlist: true },
-          where: { id: teamId },
-        })
-      )?.shellImageAllowlist ?? [])
-    : [];
+): Promise<
+  { ok: true; egressAllowlist: string[] } | { ok: false; statusCode: number; body: unknown }
+> {
+  if (shellNodes.length === 0) return { egressAllowlist: [], ok: true };
+  const team = teamId
+    ? await fastify.prisma.team.findUnique({
+        select: { egressAllowlist: true, shellImageAllowlist: true },
+        where: { id: teamId },
+      })
+    : null;
+  const teamAllowlist = team?.shellImageAllowlist ?? [];
   for (const { id, node } of shellNodes) {
     try {
       assertShellImageAllowed(node.image, teamAllowlist);
@@ -101,13 +102,14 @@ async function assertShellImagesAllowed(
               message: `Node '${id}': ${err.message}`,
             },
           },
+          ok: false,
           statusCode: 400,
         };
       }
       throw err;
     }
   }
-  return null;
+  return { egressAllowlist: team?.egressAllowlist ?? [], ok: true };
 }
 
 /**
@@ -122,13 +124,15 @@ async function recordShellAudit(
   templateVersionId: string,
   teamId: string | null,
   authorUserId: string,
-  shellNodes: ShellNodeWithId[]
+  shellNodes: ShellNodeWithId[],
+  egressAllowlist: string[]
 ): Promise<void> {
   if (shellNodes.length === 0) return;
   await tx.workflowShellAudit.createMany({
     data: shellNodes.map(({ id, node }) => ({
       authorUserId,
       command: node.command,
+      egressAllowlistSnapshot: egressAllowlist,
       image: node.image,
       network: node.network ?? 'none',
       nodeId: id,
@@ -396,7 +400,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
       ]);
       if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+      if (!imgGate.ok) return reply.status(imgGate.statusCode).send(imgGate.body);
+      const { egressAllowlist } = imgGate;
 
       try {
         // Wrap the template + initial version + shell-audit insert in one
@@ -418,7 +423,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           });
           const initialVersion = created.versions[0];
           if (initialVersion) {
-            await recordShellAudit(tx, initialVersion.id, teamId ?? null, user.sub, shellNodes);
+            await recordShellAudit(
+              tx,
+              initialVersion.id,
+              teamId ?? null,
+              user.sub,
+              shellNodes,
+              egressAllowlist
+            );
           }
           return created;
         });
@@ -627,7 +639,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
       ]);
       if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      if (imgGate) return reply.status(imgGate.statusCode).send(imgGate.body);
+      if (!imgGate.ok) return reply.status(imgGate.statusCode).send(imgGate.body);
+      const { egressAllowlist } = imgGate;
 
       // SELECT max(version)+1 / INSERT is racy under concurrent saves — two
       // simultaneous POSTs would pick the same `next`, and Prisma's unique
@@ -656,7 +669,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 version: next,
               },
             });
-            await recordShellAudit(tx, row.id, tpl.teamId, user.sub, shellNodes);
+            await recordShellAudit(tx, row.id, tpl.teamId, user.sub, shellNodes, egressAllowlist);
             return row;
           });
           break;

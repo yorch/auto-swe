@@ -109,11 +109,12 @@ interface RepoMeta {
   defaultBranch: string;
   teamId: string;
   teamAllowlist: string[];
+  teamEgressAllowlist: string[];
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   const repo = await prisma.repository.findUniqueOrThrow({
-    include: { team: { select: { id: true, shellImageAllowlist: true } } },
+    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
     where: { id: request.repoId },
   });
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
@@ -126,6 +127,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     cloneUrl,
     defaultBranch: repo.defaultBranch,
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
+    teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
     teamId: repo.team?.id ?? '',
   };
 }
@@ -264,9 +266,11 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     cloneIntoVolume(volumeName, meta, branch);
 
     heartbeat('shell-step: running command');
-    const result = runEphemeralContainer({
+    const effectiveEgressAllowlist = meta.teamEgressAllowlist;
+    const result = await runEphemeralContainer({
       command: input.command,
       cpus: input.cpus,
+      egressAllowlist: effectiveEgressAllowlist,
       image: input.image,
       memory: input.memory,
       network: input.network ?? 'none',

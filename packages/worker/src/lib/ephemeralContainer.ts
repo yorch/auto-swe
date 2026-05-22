@@ -18,6 +18,7 @@
 
 import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { promises as dnsPromises } from 'node:dns';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { type CapturedResult, EXEC_OPTS, parseSpawnSyncResult } from './execUtils.js';
 
@@ -37,6 +38,8 @@ export interface EphemeralRunInput {
   workspaceMount: string;
   /** 'none' (default) or 'egress'. */
   network?: 'none' | 'egress';
+  /** Per-team allowlisted hostnames for DNS-based egress filtering (only used when network === 'egress'). */
+  egressAllowlist?: string[];
   /** Docker `--memory` literal, default "512m". */
   memory?: string;
   /** Docker `--cpus` value, default 1.0. */
@@ -75,11 +78,16 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
   }
   const network = input.network ?? 'none';
   const workdir = input.workdir ?? '/workspace';
-  // Use --network=host's negation: 'none' means no network namespace, 'egress'
-  // uses the default bridge (we don't whitelist destinations — Docker doesn't
-  // expose per-destination egress filtering without iptables, which we'd need
-  // to manage out-of-band on the host).
   const dockerNetwork = network === 'egress' ? 'bridge' : 'none';
+
+  // DNS-based egress filtering: when an allowlist is present, point DNS at an
+  // unreachable address so name-based lookups fail for non-allowlisted hosts.
+  // --add-host entries for resolved IPs are injected in runEphemeralContainer.
+  // Does not block IP-direct connections; wildcard entries are informational only.
+  const dnsArgs =
+    network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0
+      ? ['--dns=127.0.0.2']
+      : [];
 
   return [
     'run',
@@ -87,6 +95,7 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
     '--name',
     containerName,
     `--network=${dockerNetwork}`,
+    ...dnsArgs,
     `--memory=${memory}`,
     `--cpus=${cpus}`,
     '--pids-limit=256',
@@ -113,10 +122,26 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
  * try/finally only cleans up if the command starts but the host process is
  * killed before docker tears down (`docker rm -f` is idempotent).
  */
-export function runEphemeralContainer(input: EphemeralRunInput): EphemeralRunResult {
+export async function runEphemeralContainer(input: EphemeralRunInput): Promise<EphemeralRunResult> {
   const containerName = `shellstep-${crypto.randomBytes(8).toString('hex')}`;
   const args = buildDockerArgs(input, containerName);
   const timeoutMs = input.timeoutMs ?? 600_000;
+
+  // DNS-based egress filtering: blocks name-based lookups to non-allowlisted hosts.
+  // Does not block IP-direct connections; wildcard entries are informational only.
+  if (input.network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0) {
+    for (const hostname of input.egressAllowlist) {
+      if (hostname.startsWith('*')) continue;
+      try {
+        const { address } = await dnsPromises.lookup(hostname);
+        // Insert --add-host flags before the image argument (last 3 args are: image, sh, -c, command)
+        const imageIdx = args.indexOf('--');
+        args.splice(imageIdx, 0, `--add-host=${hostname}:${address}`);
+      } catch {
+        console.warn(`[egress-allowlist] DNS lookup failed for ${hostname}; skipping --add-host`);
+      }
+    }
+  }
 
   try {
     return parseSpawnSyncResult(

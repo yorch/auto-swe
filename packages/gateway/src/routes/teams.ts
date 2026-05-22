@@ -232,6 +232,77 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Phase-9: per-team egress allowlist ──────────────────────────────────
+  const HOSTNAME_RE =
+    /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  const EgressAllowlistBody = z.object({
+    egressAllowlist: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(256)
+          .regex(
+            HOSTNAME_RE,
+            'must be a valid hostname or wildcard hostname (e.g. registry.npmjs.org or *.github.com)'
+          )
+      )
+      .max(100),
+  });
+
+  app.get(
+    '/:id/egress-allowlist',
+    {
+      onRequest: requireAuth({
+        requiredRole: 'ENGINEER',
+        requiredTeamRole: 'ENGINEER',
+        teamIdParam: 'id',
+      }),
+      schema: { params: TeamParamsSchema },
+    },
+    async (request, reply) => {
+      const team = await fastify.prisma.team.findUnique({
+        select: { egressAllowlist: true },
+        where: { id: request.params.id },
+      });
+      if (!team) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+      }
+      return { data: { egressAllowlist: team.egressAllowlist } };
+    }
+  );
+
+  app.put(
+    '/:id/egress-allowlist',
+    {
+      onRequest: requireAuth({
+        requiredRole: 'ADMIN',
+        requiredTeamRole: 'ADMIN',
+        teamIdParam: 'id',
+      }),
+      schema: { body: EgressAllowlistBody, params: TeamParamsSchema },
+    },
+    async (request, reply) => {
+      const exists = await fastify.prisma.team.findUnique({
+        select: { id: true },
+        where: { id: request.params.id },
+      });
+      if (!exists) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+      }
+      const updated = await fastify.prisma.team.update({
+        data: { egressAllowlist: request.body.egressAllowlist },
+        select: { egressAllowlist: true },
+        where: { id: request.params.id },
+      });
+      return { data: { egressAllowlist: updated.egressAllowlist } };
+    }
+  );
+
   // DELETE /api/v1/teams/:id — Soft-delete team (ADMIN only)
   app.delete<{ Params: { id: string } }>(
     '/:id',
