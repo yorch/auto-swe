@@ -598,10 +598,10 @@ All folded into the squashed init migration per the repo convention.
 ### Known follow-ups
 
 - **PAT admin view.** Platform admins still can't inspect other users' tokens. A `/api/v1/admin/access-tokens` route would let admins prune stale or compromised tokens without involving the owning user.
-- **Inspector gaps.** The `TemplateEditor` canvas is fully shipped; the remaining JSON-only fields are: `onFail` policy on step/shell nodes, `fanOut` advanced fields (`concurrency`, `onBranchFail`, `exports`, `pluck`), step/shell `inputs` bindings, and shell options (`network`, `memory`, `cpus`).
+- **Inspector gaps.** ~~Done~~ — `onFail` policy (block/warn/retry) on step and shell nodes, `fanOut` advanced fields (`concurrency`, `onBranchFail`, `exports`, `pluck`), step/shell `inputs` bindings map, and shell options (`network`, `memory`, `cpus`) are all now editable in the inspector.
 - **A11y.** The DAG SVG nodes are focusable buttons but keyboard traversal between nodes (arrow keys) is not yet wired.
 - **Global analytics pagination.** The per-template table in `/analytics` lists every visible template without pagination. For organizations with many templates a client-side sort + filter bar would help; server-side pagination is overkill until the list exceeds ~50 rows.
-- **Egress filtering for shell steps.** `network: 'egress'` opens the full default Docker bridge; destination filtering would require iptables management on the Docker host, which is an ops concern outside the spec runtime.
+- **Egress filtering for shell steps.** ~~Done~~ — `Team.egressAllowlist` (hostname array) is stored in the DB, manageable via `GET/PUT /api/v1/teams/:id/egress-allowlist`. At container-run time the worker resolves each hostname to an IP and injects `--add-host` + `--dns=127.0.0.2` so DNS lookups to unlisted names fail. Limitation: IP-direct connections bypass DNS filtering; destination-based enforcement requires host iptables (out of scope for the spec runtime).
 
 ---
 
