@@ -43,6 +43,9 @@ import { DagNode, type DagNodeData, type HandleKind, handleKindsFor } from './da
 import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
 import { specToFlow } from './specToFlow';
 
+type OnFailValue = 'block' | 'warn' | { retry: number };
+type Binding = { from: string } | string | number | boolean | null;
+
 const NODE_TYPES = { dag: DagNode };
 
 interface Props {
@@ -452,12 +455,7 @@ function NodeInspector({
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {/* Step-specific schema-aware form */}
         {node.type === 'step' && (
-          <StepConfigSection
-            node={node}
-            onChange={(config) => onChangeNode({ ...node, config } as SpecNode)}
-            onStepChange={(step) => onChangeNode({ ...node, step } as SpecNode)}
-            stepMeta={stepMeta ?? null}
-          />
+          <StepConfigSection node={node} onChange={onChangeNode} stepMeta={stepMeta ?? null} />
         )}
         {node.type === 'cond' && (
           <CondSection expr={node.expr} onChange={(expr) => onChangeNode({ ...node, expr })} />
@@ -470,20 +468,12 @@ function NodeInspector({
             timeout={node.timeout}
           />
         )}
-        {node.type === 'fanOut' && (
-          <FanOutSection
-            itemKey={node.itemKey ?? 'subtask'}
-            onItemKeyChange={(itemKey) => onChangeNode({ ...node, itemKey })}
-            onOverFromChange={(from) => onChangeNode({ ...node, over: { from: from || '' } })}
-            overFrom={'from' in node.over ? node.over.from : ''}
-          />
-        )}
-        {node.type === 'shell' && (
-          <ShellSection
-            command={node.command ?? ''}
-            image={node.image ?? ''}
-            onCommandChange={(command) => onChangeNode({ ...node, command } as SpecNode)}
-            onImageChange={(image) => onChangeNode({ ...node, image } as SpecNode)}
+        {node.type === 'fanOut' && <FanOutSection node={node} onChange={onChangeNode} />}
+        {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
+        {(node.type === 'step' || node.type === 'shell') && (
+          <InputsBindingsSection
+            inputs={(node as { inputs?: Record<string, Binding> }).inputs}
+            onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
           />
         )}
         {node.type === 'terminate' && (
@@ -590,20 +580,18 @@ function EdgeConnectionsSection({
 function StepConfigSection({
   node,
   stepMeta,
-  onStepChange,
   onChange,
 }: {
   node: Extract<SpecNode, { type: 'step' }>;
   stepMeta: StepMetadata | null;
-  onStepChange: (name: string) => void;
-  onChange: (config: Record<string, unknown>) => void;
+  onChange: (next: SpecNode) => void;
 }) {
   return (
     <div className="space-y-4">
       <Input
         hint={stepMeta?.label ?? 'Reference a registered step name'}
         label="Step"
-        onChange={(e) => onStepChange(e.target.value)}
+        onChange={(e) => onChange({ ...node, step: e.target.value } as SpecNode)}
         value={node.step}
       />
       {stepMeta?.description && (
@@ -617,7 +605,7 @@ function StepConfigSection({
             const next = { ...cur };
             if (v === undefined) delete next[k];
             else next[k] = v;
-            onChange(next);
+            onChange({ ...node, config: next } as SpecNode);
           }}
           values={(node.config ?? {}) as Record<string, unknown>}
         />
@@ -632,6 +620,10 @@ function StepConfigSection({
           ! Step not in registry — config schema unknown
         </p>
       )}
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
     </div>
   );
 }
@@ -679,46 +671,124 @@ function SignalSection({
 }
 
 function FanOutSection({
-  itemKey,
-  overFrom,
-  onItemKeyChange,
-  onOverFromChange,
+  node,
+  onChange,
 }: {
-  itemKey: string;
-  overFrom: string;
-  onItemKeyChange: (v: string) => void;
-  onOverFromChange: (v: string) => void;
+  node: Extract<SpecNode, { type: 'fanOut' }>;
+  onChange: (next: SpecNode) => void;
 }) {
+  const overFrom = 'from' in node.over ? (node.over as { from: string }).from : '';
+  const [exportsText, setExportsText] = useState<string>(() =>
+    (node.exports ?? []).join('\n')
+  );
+  const prevExportsRef = useRef(node.exports);
+  useEffect(() => {
+    if (node.exports !== prevExportsRef.current) {
+      prevExportsRef.current = node.exports;
+      setExportsText((node.exports ?? []).join('\n'));
+    }
+  });
+
   return (
     <div className="space-y-3">
       <Input
         hint="Context path that yields the parallel items (array)"
         label="Over (from path)"
-        onChange={(e) => onOverFromChange(e.target.value)}
+        onChange={(e) => onChange({ ...node, over: { from: e.target.value } } as SpecNode)}
         placeholder="ctx.targets"
         value={overFrom}
       />
       <Input
         hint="Name each element is bound under inside the per-branch context"
         label="Item key"
-        onChange={(e) => onItemKeyChange(e.target.value)}
+        onChange={(e) => onChange({ ...node, itemKey: e.target.value } as SpecNode)}
         placeholder="subtask"
-        value={itemKey}
+        value={node.itemKey ?? 'subtask'}
       />
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="fanout-branch-fail"
+        >
+          On branch fail
+        </label>
+        <select
+          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+          id="fanout-branch-fail"
+          onChange={(e) =>
+            onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
+          }
+          value={node.onBranchFail ?? 'block'}
+        >
+          <option value="block">Block (default) — stop on first failure</option>
+          <option value="continue">Continue — collect all results</option>
+        </select>
+      </div>
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+          htmlFor="fanout-concurrency"
+        >
+          Max concurrency
+        </label>
+        <input
+          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+          id="fanout-concurrency"
+          max={20}
+          min={1}
+          onChange={(e) => {
+            const v = e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
+            onChange({ ...node, concurrency: v } as SpecNode);
+          }}
+          placeholder="4 (default)"
+          type="number"
+          value={node.concurrency ?? ''}
+        />
+      </div>
+      <Input
+        hint="Dot-path projected from each branch result into output.plucked — e.g. result.branch"
+        label="Pluck path"
+        onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined } as SpecNode)}
+        placeholder="result.branch"
+        value={node.pluck ?? ''}
+      />
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="fanout-exports"
+        >
+          Exports{' '}
+          <span className="normal-case text-paper-600">(one per line)</span>
+        </label>
+        <p className="mt-0.5 text-[10px] leading-snug text-paper-500">
+          Context paths that flow back to the parent scope after the fan-out joins.
+        </p>
+        <textarea
+          className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+          id="fanout-exports"
+          onBlur={() => {
+            const exports = exportsText
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean);
+            onChange({ ...node, exports: exports.length > 0 ? exports : undefined } as SpecNode);
+          }}
+          onChange={(e) => setExportsText(e.target.value)}
+          placeholder="ctx.result"
+          spellCheck={false}
+          value={exportsText}
+        />
+      </div>
     </div>
   );
 }
 
 function ShellSection({
-  image,
-  command,
-  onImageChange,
-  onCommandChange,
+  node,
+  onChange,
 }: {
-  image: string;
-  command: string;
-  onImageChange: (v: string) => void;
-  onCommandChange: (v: string) => void;
+  node: Extract<SpecNode, { type: 'shell' }>;
+  onChange: (next: SpecNode) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -728,9 +798,9 @@ function ShellSection({
       <Input
         hint="Must be on the team's image allowlist"
         label="Container image"
-        onChange={(e) => onImageChange(e.target.value)}
+        onChange={(e) => onChange({ ...node, image: e.target.value } as SpecNode)}
         placeholder="node:24-alpine"
-        value={image}
+        value={node.image ?? ''}
       />
       <div>
         <label
@@ -742,12 +812,79 @@ function ShellSection({
         <textarea
           className="mt-1.5 h-24 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
           id="shell-command"
-          onChange={(e) => onCommandChange(e.target.value)}
+          onChange={(e) => onChange({ ...node, command: e.target.value } as SpecNode)}
           placeholder="echo hello"
           spellCheck={false}
-          value={command}
+          value={node.command ?? ''}
         />
       </div>
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="shell-network"
+        >
+          Network
+        </label>
+        <select
+          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+          id="shell-network"
+          onChange={(e) => {
+            const v = e.target.value as 'none' | 'egress';
+            onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+          }}
+          value={node.network ?? 'none'}
+        >
+          <option value="none">None (default) — no outbound access</option>
+          <option value="egress">Egress — outbound via team allowlist</option>
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+            htmlFor="shell-memory"
+          >
+            Memory limit
+          </label>
+          <input
+            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            id="shell-memory"
+            onChange={(e) =>
+              onChange({ ...node, memory: e.target.value || undefined } as SpecNode)
+            }
+            placeholder="512m"
+            value={node.memory ?? ''}
+          />
+        </div>
+        <div>
+          <label
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+            htmlFor="shell-cpus"
+          >
+            CPUs
+          </label>
+          <input
+            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            id="shell-cpus"
+            max={8}
+            min={0.1}
+            onChange={(e) =>
+              onChange({
+                ...node,
+                cpus: e.target.value === '' ? undefined : Number(e.target.value),
+              } as SpecNode)
+            }
+            placeholder="1"
+            step={0.1}
+            type="number"
+            value={node.cpus ?? ''}
+          />
+        </div>
+      </div>
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
     </div>
   );
 }
@@ -951,6 +1088,156 @@ function SchemaField({
       {field.description && (
         <p className="text-[10px] leading-snug text-paper-500">{field.description}</p>
       )}
+    </div>
+  );
+}
+
+/* ─── onFail policy editor ───────────────────────────────────────────────── */
+
+function OnFailSection({
+  value,
+  onChange,
+}: {
+  value: OnFailValue | undefined;
+  onChange: (v: OnFailValue | undefined) => void;
+}) {
+  const mode =
+    value === undefined || value === 'block' ? 'block' : value === 'warn' ? 'warn' : 'retry';
+  const retryCount = typeof value === 'object' ? value.retry : 1;
+
+  return (
+    <div className="mt-4 space-y-2 border-t border-ink-600 pt-4">
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        On fail
+      </div>
+      <select
+        className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === 'block') onChange(undefined);
+          else if (v === 'warn') onChange('warn');
+          else onChange({ retry: retryCount });
+        }}
+        value={mode}
+      >
+        <option value="block">Block (default) — abort run on failure</option>
+        <option value="warn">Warn — record failure and continue</option>
+        <option value="retry">Retry</option>
+      </select>
+      {mode === 'retry' && (
+        <div className="space-y-1">
+          <label className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500">
+            Retry attempts (max 10)
+          </label>
+          <input
+            className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            max={10}
+            min={1}
+            onChange={(e) =>
+              onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })
+            }
+            type="number"
+            value={retryCount}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Inputs bindings editor ─────────────────────────────────────────────── */
+
+function InputsBindingsSection({
+  inputs,
+  onChange,
+}: {
+  inputs: Record<string, Binding> | undefined;
+  onChange: (v: Record<string, Binding> | undefined) => void;
+}) {
+  const entries = Object.entries(inputs ?? {});
+
+  const setEntry = (key: string, val: Binding) => onChange({ ...(inputs ?? {}), [key]: val });
+  const removeEntry = (key: string) => {
+    const next = { ...(inputs ?? {}) };
+    delete next[key];
+    onChange(Object.keys(next).length > 0 ? next : undefined);
+  };
+  const addEntry = () => {
+    let k = 'input';
+    let n = 2;
+    const existing = inputs ?? {};
+    while (existing[k] !== undefined) k = `input_${n++}`;
+    onChange({ ...existing, [k]: '' });
+  };
+
+  return (
+    <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
+      <div className="flex items-center justify-between">
+        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          Input bindings
+        </div>
+        <button
+          className="font-mono text-[10px] uppercase tracking-wider text-ember-400 hover:text-ember-300"
+          onClick={addEntry}
+          type="button"
+        >
+          + add
+        </button>
+      </div>
+      {entries.length === 0 && (
+        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">— none —</p>
+      )}
+      {entries.map(([key, val]) => {
+        const isFrom = typeof val === 'object' && val !== null && 'from' in val;
+        const displayVal = isFrom ? (val as { from: string }).from : String(val ?? '');
+
+        return (
+          <div className="space-y-1" key={key}>
+            <div className="flex items-center gap-1">
+              <input
+                className="h-7 min-w-0 flex-1 rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
+                defaultValue={key}
+                onBlur={(e) => {
+                  const newKey = e.target.value.trim();
+                  if (!newKey || newKey === key) return;
+                  const next = { ...(inputs ?? {}) };
+                  delete next[key];
+                  next[newKey] = val;
+                  onChange(next);
+                }}
+                placeholder="key"
+              />
+              <select
+                className="h-7 rounded-sm border border-ink-500 bg-ink-900/60 px-1 font-mono text-[10px] text-paper-100 outline-none focus:border-ember-400"
+                onChange={(e) => {
+                  if (e.target.value === 'from') setEntry(key, { from: displayVal });
+                  else setEntry(key, displayVal);
+                }}
+                value={isFrom ? 'from' : 'literal'}
+              >
+                <option value="from">path</option>
+                <option value="literal">literal</option>
+              </select>
+              <button
+                className="font-mono text-[10px] text-brick-400 hover:text-brick-300"
+                onClick={() => removeEntry(key)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <input
+              className="h-7 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
+              onChange={(e) => {
+                const v = e.target.value;
+                setEntry(key, isFrom ? { from: v } : v);
+              }}
+              placeholder={isFrom ? 'ctx.nodes.step.output.value' : 'literal value'}
+              value={displayVal}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
