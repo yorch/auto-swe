@@ -1,10 +1,45 @@
 'use client';
 
 import { useState } from 'react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useWorkflows';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
+
+function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
+  return (
+    <span
+      className={cn(
+        'font-mono text-[10px] uppercase tracking-[0.14em]',
+        status === 'ACTIVE' && 'text-emerald-400',
+        status === 'EXPIRED' && 'text-amber-400',
+        status === 'REVOKED' && 'text-paper-500 line-through'
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
+function Th({
+  children,
+  align = 'left',
+}: {
+  children?: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
+  return (
+    <th
+      className={cn(
+        'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
+        align === 'right' ? 'text-right' : 'text-left'
+      )}
+    >
+      {children}
+    </th>
+  );
+}
 
 export default function AdminAccessTokensPage() {
   const { data: tokens, isLoading } = useAdminTokens();
@@ -29,93 +64,102 @@ export default function AdminAccessTokensPage() {
   };
 
   const now = new Date();
+  const rows = tokens ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
+        loading tokens…
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Admin — Access Tokens</h2>
-        <div className="flex gap-3">
-          {pruneResult && (
-            <span className="text-sm text-[var(--muted-foreground)] self-center">
-              Pruned {pruneResult.deleted} shell-audit rows
-            </span>
-          )}
-          <button
-            className="text-sm px-3 py-1.5 rounded border border-[var(--border)] hover:bg-[var(--muted)] disabled:opacity-50"
-            disabled={pruneAudit.isPending}
-            onClick={handlePrune}
-            type="button"
-          >
-            {pruneAudit.isPending ? 'Pruning…' : 'Prune shell audit (>90d)'}
-          </button>
-        </div>
+    <div className="space-y-10">
+      <div className="fade-up">
+        <PageHeader
+          chapter={`§ Admin · Access Tokens · ${rows.length} issued`}
+          subtitle="Platform admins can view and revoke any user's personal access token. Plaintexts are never stored — only the non-secret prefix is shown."
+          title="Personal access tokens."
+        />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All personal access tokens</CardTitle>
-        </CardHeader>
-        <p className="text-xs text-[var(--muted-foreground)] px-4 pb-3">
-          Platform admins can view and revoke any user's PAT. Token plaintexts are never stored —
-          only the non-secret prefix and hash are shown.
-        </p>
+      <section className="fade-up stagger-1">
+        <div className="mb-4 flex items-center justify-between">
+          <SectionHeader hint="newest first" number="01" title="All tokens" />
+          <div className="flex items-center gap-3">
+            {pruneResult && (
+              <span className="font-mono text-[11px] text-paper-500">
+                pruned {pruneResult.deleted} shell-audit rows
+              </span>
+            )}
+            <Button
+              disabled={pruneAudit.isPending}
+              onClick={handlePrune}
+              size="sm"
+              variant="secondary"
+            >
+              {pruneAudit.isPending ? 'Pruning…' : 'Prune shell audit (>90d)'}
+            </Button>
+          </div>
+        </div>
 
-        {isLoading ? (
-          <div className="text-center py-8 text-[var(--muted-foreground)]">Loading…</div>
-        ) : !tokens || tokens.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-[var(--muted-foreground)]">No tokens issued yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
+        <Card className="overflow-hidden p-0" variant="inset">
+          {rows.length === 0 ? (
+            <p className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+              no tokens issued yet
+            </p>
+          ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted-foreground)]">
-                  <th className="px-4 py-2 font-medium">User</th>
-                  <th className="px-4 py-2 font-medium">Name</th>
-                  <th className="px-4 py-2 font-medium">Prefix</th>
-                  <th className="px-4 py-2 font-medium">Created</th>
-                  <th className="px-4 py-2 font-medium">Last used</th>
-                  <th className="px-4 py-2 font-medium">Expires</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium" />
+                <tr className="border-b border-ink-600">
+                  <Th>User</Th>
+                  <Th>Name</Th>
+                  <Th>Prefix</Th>
+                  <Th>Created</Th>
+                  <Th>Last used</Th>
+                  <Th>Expires</Th>
+                  <Th>Status</Th>
+                  <Th align="right">Actions</Th>
                 </tr>
               </thead>
               <tbody>
-                {tokens.map((t) => {
-                  const status = t.revokedAt
+                {rows.map((t) => {
+                  const status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' = t.revokedAt
                     ? 'REVOKED'
                     : t.expiresAt && new Date(t.expiresAt) < now
                       ? 'EXPIRED'
                       : 'ACTIVE';
                   return (
-                    <tr
-                      className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]"
-                      key={t.id}
-                    >
-                      <td className="px-4 py-2 text-xs">{t.user.email}</td>
-                      <td className="px-4 py-2">{t.name}</td>
-                      <td className="px-4 py-2 font-mono text-xs">{t.prefix}</td>
-                      <td className="px-4 py-2 text-xs text-[var(--muted-foreground)]">
+                    <tr className="border-b border-ink-600 last:border-b-0" key={t.id}>
+                      <td className="px-4 py-3 text-sm text-paper-100">{t.user.email}</td>
+                      <td className="px-4 py-3 text-sm text-paper-200">{t.name}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-paper-400">
+                        {t.prefix}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {formatRelativeTime(t.createdAt)}
                       </td>
-                      <td className="px-4 py-2 text-xs text-[var(--muted-foreground)]">
+                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {t.lastUsedAt ? formatRelativeTime(t.lastUsedAt) : '—'}
                       </td>
-                      <td className="px-4 py-2 text-xs text-[var(--muted-foreground)]">
+                      <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {t.expiresAt ? formatDate(t.expiresAt) : 'never'}
                       </td>
-                      <td className="px-4 py-2">
-                        <StatusBadge status={status} />
+                      <td className="px-4 py-3">
+                        <StatusChip status={status} />
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-3 text-right">
                         {!t.revokedAt && (
-                          <button
-                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                          <Button
                             disabled={revokeToken.isPending}
                             onClick={() => handleRevoke(t.id, t.name)}
-                            type="button"
+                            size="sm"
+                            variant="danger"
                           >
                             Revoke
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -123,9 +167,9 @@ export default function AdminAccessTokensPage() {
                 })}
               </tbody>
             </table>
-          </div>
-        )}
-      </Card>
+          )}
+        </Card>
+      </section>
     </div>
   );
 }
