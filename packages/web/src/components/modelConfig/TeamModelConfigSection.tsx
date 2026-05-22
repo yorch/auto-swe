@@ -298,7 +298,8 @@ function TeamCredentialModal({
 }: {
   existing: ProviderCredentialRow | null;
   onClose: () => void;
-  onSave: (body: { provider?: string; apiBase?: string; apiKey?: string }) => Promise<void>;
+  // null clears the apiBase column on the server; undefined keeps it.
+  onSave: (body: { provider?: string; apiBase?: string | null; apiKey?: string }) => Promise<void>;
 }) {
   const [provider, setProvider] = useState(existing?.provider ?? '');
   const [apiBase, setApiBase] = useState(existing?.apiBase ?? '');
@@ -311,7 +312,9 @@ function TeamCredentialModal({
     try {
       if (existing) {
         await onSave({
-          ...(apiBase !== (existing.apiBase ?? '') && { apiBase: apiBase || undefined }),
+          // Send null explicitly to clear; undefined would be JSON-stripped
+          // and the stale URL would persist.
+          ...(apiBase !== (existing.apiBase ?? '') && { apiBase: apiBase || null }),
           ...(apiKey && { apiKey }),
         });
       } else {

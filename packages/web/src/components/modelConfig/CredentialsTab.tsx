@@ -167,7 +167,8 @@ function CredentialModal({
     provider?: string;
     scope?: 'GLOBAL' | 'TEAM';
     teamId?: string;
-    apiBase?: string;
+    // null clears the column on the server; undefined keeps the existing value.
+    apiBase?: string | null;
     apiKey?: string;
   }) => Promise<void>;
 }) {
@@ -185,9 +186,12 @@ function CredentialModal({
     setError(null);
     try {
       if (existing) {
-        // Update: only apiBase + apiKey are editable.
+        // Update: only apiBase + apiKey are editable. When the user clears
+        // apiBase, send `null` explicitly so the gateway nulls the column —
+        // omitting the key entirely would leave the stale URL in place.
+        const apiBaseChanged = apiBase !== (existing.apiBase ?? '');
         await onSave({
-          ...(apiBase !== (existing.apiBase ?? '') && { apiBase: apiBase || undefined }),
+          ...(apiBaseChanged && { apiBase: apiBase || null }),
           ...(apiKey && { apiKey }),
         });
       } else {

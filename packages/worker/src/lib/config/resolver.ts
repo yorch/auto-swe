@@ -175,12 +175,25 @@ async function materializeRow(
 }
 
 function decryptRow(row: ProviderCredentialRow): { apiBase?: string; apiKey: string } {
-  const apiKey = decryptSecret({
-    authTag: row.apiKeyAuthTag,
-    ciphertext: row.apiKeyCiphertext,
-    keyVersion: row.keyVersion,
-    nonce: row.apiKeyNonce,
-  });
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret({
+      authTag: row.apiKeyAuthTag,
+      ciphertext: row.apiKeyCiphertext,
+      keyVersion: row.keyVersion,
+      nonce: row.apiKeyNonce,
+    });
+  } catch (err) {
+    // Corrupt ciphertext, rotated CONFIG_ENCRYPTION_KEY, or keyVersion drift.
+    // Surface as ConfigMissingError so the calling activity sees the same
+    // "fix it in the dashboard" affordance as a missing row, and the OTel
+    // span attribution still reports a config failure rather than a generic
+    // SDK error. Include the credential id + lastFour so the operator can
+    // find the row to delete/recreate.
+    throw new ConfigMissingError(
+      `Failed to decrypt ProviderCredential id=${row.id} (provider='${row.provider}', lastFour='${row.lastFour}'): ${err instanceof Error ? err.message : err}. Delete and re-create the credential via /admin/model-config.`
+    );
+  }
   return { apiBase: row.apiBase ?? undefined, apiKey };
 }
 
