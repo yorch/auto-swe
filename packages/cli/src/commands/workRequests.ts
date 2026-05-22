@@ -4,12 +4,13 @@ import type { CliEnv } from '../lib/env.js';
 
 const SUB_HELP = `auto-swe run — submit a work request
 
-  run --ticket=<id> --description=<text> --repo=<org/name> [--workflow=<template-name>]
+  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--workflow=<template-name>]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
     --description=<text>    What the agent should implement
     --repo=<org/name>       Target repository in "org/name" format
+    --repo-id=<uuid>        Target repository UUID (bypasses name-resolution lookup)
     --workflow=<name>       Workflow template name (uses team default when omitted)
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
@@ -26,6 +27,7 @@ interface ParsedRunFlags {
   ticket: string | undefined;
   description: string | undefined;
   repo: string | undefined;
+  repoId: string | undefined;
   workflow: string | undefined;
   budget: string | undefined;
 }
@@ -35,6 +37,7 @@ function parseRunFlags(args: string[]): ParsedRunFlags {
     budget: undefined,
     description: undefined,
     repo: undefined,
+    repoId: undefined,
     ticket: undefined,
     workflow: undefined,
   };
@@ -52,6 +55,9 @@ function parseRunFlags(args: string[]): ParsedRunFlags {
       if (eqIdx === -1) i++;
     } else if (key === 'repo') {
       flags.repo = val;
+      if (eqIdx === -1) i++;
+    } else if (key === 'repo-id') {
+      flags.repoId = val;
       if (eqIdx === -1) i++;
     } else if (key === 'workflow') {
       flags.workflow = val;
@@ -100,14 +106,8 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Missing required flag: --description=<text>\n');
     return 1;
   }
-  if (!flags.repo) {
-    process.stderr.write('Missing required flag: --repo=<org/name>\n');
-    return 1;
-  }
-
-  const [org, repoName] = flags.repo.split('/');
-  if (!org || !repoName) {
-    process.stderr.write('--repo must be in "org/name" format (e.g. acme/payments-api)\n');
+  if (!flags.repo && !flags.repoId) {
+    process.stderr.write('Missing required flag: --repo=<org/name> or --repo-id=<uuid>\n');
     return 1;
   }
 
@@ -118,18 +118,29 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
 
-  // Resolve the repo ID
-  const repos = await apiRequest<RepositorySummary[]>(env, 'GET', '/api/v1/repositories');
-  const repo = repos.find(
-    (r) =>
-      r.organizationName.toLowerCase() === org.toLowerCase() &&
-      r.repoName.toLowerCase() === repoName.toLowerCase()
-  );
-  if (!repo) {
-    process.stderr.write(
-      `Repository "${flags.repo}" not found. Check the /repositories page in the web UI for configured repos.\n`
+  // Resolve the repo ID — skip the lookup when --repo-id is already a UUID.
+  let resolvedRepoId: string;
+  if (flags.repoId) {
+    resolvedRepoId = flags.repoId;
+  } else {
+    const [org, repoName] = (flags.repo as string).split('/');
+    if (!org || !repoName) {
+      process.stderr.write('--repo must be in "org/name" format (e.g. acme/payments-api)\n');
+      return 1;
+    }
+    const repos = await apiRequest<RepositorySummary[]>(env, 'GET', '/api/v1/repositories');
+    const repo = repos.find(
+      (r) =>
+        r.organizationName.toLowerCase() === org.toLowerCase() &&
+        r.repoName.toLowerCase() === repoName.toLowerCase()
     );
-    return 1;
+    if (!repo) {
+      process.stderr.write(
+        `Repository "${flags.repo}" not found. Check the /repositories page in the web UI for configured repos.\n`
+      );
+      return 1;
+    }
+    resolvedRepoId = repo.id;
   }
 
   // Optionally resolve a specific workflow template ID
@@ -152,7 +163,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     budgetTier: budget,
     description: flags.description,
     externalTicketId: flags.ticket,
-    repoIds: [repo.id],
+    repoIds: [resolvedRepoId],
   };
   if (templateId) body.templateId = templateId;
 

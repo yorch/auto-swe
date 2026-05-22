@@ -4,14 +4,16 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     team: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
+    workRequest: { findUnique: vi.fn() },
   },
 }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { notifySlackRunComplete, notifySlackStepFailure } from './slackNotify.js';
+import { notifySlackPrReady, notifySlackRunComplete, notifySlackStepFailure } from './slackNotify.js';
 
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
 const findTeam = vi.mocked(prisma.team.findUnique);
+const findWorkRequest = vi.mocked(prisma.workRequest.findUnique);
 
 const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; body: unknown }>;
@@ -30,6 +32,7 @@ afterEach(() => {
   delete process.env.SLACK_BOT_TOKEN;
   findRun.mockReset();
   findTeam.mockReset();
+  findWorkRequest.mockReset();
 });
 
 describe('notifySlackStepFailure', () => {
@@ -139,6 +142,77 @@ describe('notifySlackStepFailure', () => {
     await expect(
       notifySlackStepFailure({ attempt: 1, nodeId: 'runTests', runId: 'r1' })
     ).resolves.toBeUndefined();
+    expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe('notifySlackPrReady (phase 7)', () => {
+  it('no-ops when SLACK_BOT_TOKEN is unset', async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    await notifySlackPrReady({ prNumber: 1, prUrl: 'https://github.com/pr/1', workRequestId: 'wr-1' });
+    expect(fetchCalls).toHaveLength(0);
+    expect(findWorkRequest).not.toHaveBeenCalled();
+  });
+
+  it('posts to originating channel with PR link', async () => {
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [],
+      externalTicketId: 'JIRA-42',
+      slackChannelId: 'C-origin',
+      slackMessageTs: '1700.5',
+    } as never);
+
+    await notifySlackPrReady({
+      prNumber: 7,
+      prUrl: 'https://github.com/acme/svc/pull/7',
+      workRequestId: 'wr-1',
+    });
+
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts?: string; text: string };
+    expect(body.channel).toBe('C-origin');
+    expect(body.thread_ts).toBe('1700.5');
+    expect(body.text).toContain('JIRA-42');
+    expect(body.text).toContain('#7');
+    expect(body.text).toContain('https://github.com/acme/svc/pull/7');
+  });
+
+  it('falls back to team channel when no originating channel', async () => {
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+      externalTicketId: 'JIRA-43',
+      slackChannelId: null,
+      slackMessageTs: null,
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: 'C-team' } as never);
+
+    await notifySlackPrReady({
+      prNumber: 8,
+      prUrl: 'https://github.com/acme/svc/pull/8',
+      workRequestId: 'wr-2',
+    });
+
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts?: string };
+    expect(body.channel).toBe('C-team');
+    expect(body.thread_ts).toBeUndefined();
+  });
+
+  it('silently skips when no channel is resolvable', async () => {
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [{ repository: { teamId: 'team-1' } }],
+      externalTicketId: 'JIRA-44',
+      slackChannelId: null,
+      slackMessageTs: null,
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: null } as never);
+
+    await notifySlackPrReady({
+      prNumber: 9,
+      prUrl: 'https://github.com/acme/svc/pull/9',
+      workRequestId: 'wr-3',
+    });
+
     expect(fetchCalls).toHaveLength(0);
   });
 });

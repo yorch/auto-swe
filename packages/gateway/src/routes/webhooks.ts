@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { postSlackMessage } from '../lib/slack.js';
 import { verifyGitHubSignature } from '../lib/github.js';
 
 interface PullRequestWebhookPayload {
@@ -63,9 +64,18 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const repoFullName = payload.repository.full_name;
       const [org, repoName] = repoFullName.split('/');
 
-      // Find the tracked PR
+      // Find the tracked PR (include Slack context for the merge notification)
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
-        include: { workflow: true },
+        include: {
+          workflow: {
+            include: {
+              repository: { include: { team: { select: { slackNotifyChannel: true } } } },
+              workRequest: {
+                select: { externalTicketId: true, slackChannelId: true, slackMessageTs: true },
+              },
+            },
+          },
+        },
         where: {
           prNumber,
           repository: { organizationName: org, repoName },
@@ -89,6 +99,19 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         'humanMergeSignal',
         [true]
       );
+
+      // Best-effort Slack "merged" notification back to the originating channel.
+      const wr = pullRequest.workflow.workRequest;
+      const originChannel = wr?.slackChannelId ?? null;
+      const teamChannel = pullRequest.workflow.repository?.team?.slackNotifyChannel ?? null;
+      const slackChannel = originChannel ?? teamChannel;
+      if (slackChannel) {
+        await postSlackMessage({
+          channel: slackChannel,
+          text: `:merged: *[${wr?.externalTicketId ?? 'unknown'}]* PR #${prNumber} was merged`,
+          ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
+        }).catch(() => null);
+      }
 
       return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };
     }
