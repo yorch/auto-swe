@@ -38,25 +38,35 @@ export const PRISMA_TO_ROLE: Record<PrismaAgentRole, AgentRole> = {
   VALIDATE_CONTEXT: 'validateContext',
 };
 
+/// Canonical iteration order for the 6 agent roles. Used by the worker
+/// startup check, the seed helpers (where they still exist), and any test
+/// that wants to assert behavior across every role.
+export const ALL_ROLES: readonly AgentRole[] = [
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
+] as const;
+
 /// Optional scoping context for config resolution. When unset, only the
-/// GLOBAL row is consulted (or, in tests with no DB row, env vars fall back).
+/// GLOBAL row is consulted.
 export interface ResolveCtx {
   teamId?: string;
   workflowTemplateId?: string;
 }
 
-/// Resolved model + (optional) credential override for a single role lookup.
-/// Returned by `resolveModelConfig`. `apiKey` is the decrypted plaintext;
-/// callers should pass it straight into the provider client and not log it.
+/// Resolved model + credential for a single role lookup. Returned by
+/// `resolveModelConfig`. `apiKey` is the decrypted plaintext; callers should
+/// pass it straight into the provider client and not log it.
 export interface ResolvedModelConfig {
   /** `<provider>/<model-id>` spec the agent should bind to. */
   spec: string;
   /** Which scope row supplied the spec — for OTel attribution. */
-  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL' | 'ENV_FALLBACK';
-  /** Plaintext API key from the resolved credential. Undefined if no
-   *  credential is configured for this provider (caller may fall back to
-   *  the built-in env-driven provider client). */
-  apiKey?: string;
+  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL';
+  /** Plaintext API key from the resolved credential. */
+  apiKey: string;
   /** Base URL override from the resolved credential. */
   apiBase?: string;
 }

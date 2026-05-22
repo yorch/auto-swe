@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
-import { seedConfigFromEnv } from './lib/config/seed.js';
+import { assertConfigReady } from './lib/config/assertReady.js';
 
 async function run() {
   // Install Temporal runtime with OTel metrics if endpoint is available
@@ -23,19 +23,13 @@ async function run() {
     });
   }
 
-  // Bootstrap LLM model + credential configuration from env vars into the DB.
-  // Idempotent and concurrent-worker-safe; failures are logged but non-fatal
-  // (the resolver's env fallback keeps activities running until the DB is reachable).
-  try {
-    const seedResult = await seedConfigFromEnv();
-    if (seedResult.rolesSeeded > 0 || seedResult.credentialsSeeded > 0) {
-      console.log(
-        `[config] seeded ${seedResult.rolesSeeded} model role(s) and ${seedResult.credentialsSeeded} provider credential(s) from env`
-      );
-    }
-  } catch (err) {
-    console.error('[config] env→DB seed failed (non-fatal, resolver will use env fallback):', err);
-  }
+  // Refuse to start if the DB doesn't have every required config row. The
+  // dashboard at /admin/model-config is the bootstrap path — bring up the
+  // gateway + web first, sign in as admin, add the rows, then start the
+  // worker. If this throws the process exits non-zero so an orchestrator
+  // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the
+  // rotation until config is complete.
+  await assertConfigReady();
 
   const connection = await NativeConnection.connect({
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',

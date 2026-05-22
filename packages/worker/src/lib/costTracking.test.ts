@@ -1,21 +1,51 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock prisma before importing the module under test. `modelRoleConfig` and
-// `providerCredential` are stubbed to return null so `recordLlmUsage`'s
-// `getModelSpec` call falls through to env-var defaults.
+// Hoisted setup: vi.mock factories run before top-level code, so anything they
+// reference must come from a vi.hoisted block. We pre-seal a credential here
+// with a synthesized key, so the providerCredential.findFirst mock returns
+// valid ciphertext that the resolver can decrypt.
+const { sealedCred } = vi.hoisted(() => {
+  const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
+  process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+  // Defer the encryption itself to after the mock is registered — it needs
+  // the encryptSecret function which lives in a non-mocked module, so we can
+  // require() it here lazily.
+  const { encryptSecret } =
+    require('@auto-swe/shared/lib/crypto') as typeof import('@auto-swe/shared/lib/crypto');
+  return { sealedCred: encryptSecret('sk-test-fixture') };
+});
+
+// Mock prisma before importing the module under test. modelRoleConfig +
+// providerCredential return a healthy GLOBAL row + credential so
+// recordLlmUsage's getModelSpec call resolves cleanly.
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: {
       findFirst: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
     },
-    modelRoleConfig: { findFirst: vi.fn().mockResolvedValue(null) },
-    providerCredential: { findFirst: vi.fn().mockResolvedValue(null) },
+    embeddingConfig: { findUnique: vi.fn() },
+    modelRoleConfig: {
+      findFirst: vi.fn().mockResolvedValue({
+        credential: null,
+        modelSpec: 'anthropic/claude-opus-4-7',
+      }),
+    },
+    providerCredential: {
+      findFirst: vi.fn().mockResolvedValue({
+        apiBase: null,
+        apiKeyAuthTag: sealedCred.authTag,
+        apiKeyCiphertext: sealedCred.ciphertext,
+        apiKeyNonce: sealedCred.nonce,
+        keyVersion: sealedCred.keyVersion,
+      }),
+    },
   },
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { _resetConfigCacheForTests } from './config/cache.js';
 import {
   BUDGET_LIMITS,
   calculateCostUsd,
@@ -25,6 +55,12 @@ import {
 } from './costTracking.js';
 
 const originalEnv = { ...process.env };
+
+beforeEach(() => {
+  // Drop resolved-config cache so each test's mock overrides take effect
+  // instead of being shadowed by the previous test's resolution.
+  _resetConfigCacheForTests();
+});
 
 afterEach(() => {
   process.env = { ...originalEnv };
@@ -146,7 +182,11 @@ describe('recordLlmUsage', () => {
   });
 
   it('still records usage for unknown models, just at zero cost', async () => {
-    process.env.IMPLEMENTER_MODEL = 'mystery/unreleased';
+    // Swap the GLOBAL ModelRoleConfig row to a spec not in MODEL_PRICES.
+    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
+      credential: null,
+      modelSpec: 'mystery/unreleased',
+    } as never);
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       budgetTier: 'STANDARD',
       costUsdAccrued: 0,

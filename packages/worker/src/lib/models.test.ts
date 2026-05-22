@@ -7,42 +7,17 @@ const { findFirstMock, credFindFirstMock } = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    embeddingConfig: { findUnique: vi.fn() },
     modelRoleConfig: { findFirst: findFirstMock },
     providerCredential: { findFirst: credFindFirstMock },
   },
 }));
 
 import { _resetConfigCacheForTests } from './config/cache.js';
-import {
-  _resetModelCacheForTests,
-  type AgentRole,
-  getModel,
-  getModelSpec,
-  resolveModel,
-} from './models.js';
-
-const ROLES: AgentRole[] = [
-  'implementer',
-  'reviewer',
-  'planner',
-  'securityReview',
-  'validateContext',
-  'commitToMemory',
-];
-
-const ROLE_ENV: Record<AgentRole, string> = {
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
-  implementer: 'IMPLEMENTER_MODEL',
-  planner: 'PLANNER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
-  securityReview: 'SECURITY_REVIEW_MODEL',
-  validateContext: 'CONTEXT_VALIDATOR_MODEL',
-};
-
-const originalEnv = { ...process.env };
+import { ConfigMissingError } from './config/resolver.js';
+import { _resetModelCacheForTests, getModel, getModelSpec, resolveModel } from './models.js';
 
 beforeEach(() => {
-  process.env = { ...originalEnv };
   _resetConfigCacheForTests();
   _resetModelCacheForTests();
   findFirstMock.mockReset().mockResolvedValue(null);
@@ -50,124 +25,75 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env = { ...originalEnv };
+  _resetConfigCacheForTests();
 });
 
 describe('getModelSpec', () => {
-  beforeEach(() => {
-    for (const v of Object.values(ROLE_ENV)) delete process.env[v];
+  it('throws ConfigMissingError when no GLOBAL row exists', async () => {
+    findFirstMock.mockResolvedValue(null);
+    await expect(getModelSpec('implementer')).rejects.toThrow(ConfigMissingError);
   });
-
-  it('falls back to anthropic defaults when no DB row and no env override', async () => {
-    for (const role of ROLES) {
-      _resetConfigCacheForTests();
-      expect(await getModelSpec(role)).toMatch(/^anthropic\//);
-    }
-  });
-
-  it('honours the env override for each role when DB is empty', async () => {
-    for (const role of ROLES) {
-      _resetConfigCacheForTests();
-      process.env[ROLE_ENV[role]] = 'openai/gpt-5';
-      expect(await getModelSpec(role)).toBe('openai/gpt-5');
-      delete process.env[ROLE_ENV[role]];
-    }
-  });
-
-  it('treats whitespace-only env values as unset', async () => {
-    process.env.IMPLEMENTER_MODEL = '   ';
-    expect(await getModelSpec('implementer')).toMatch(/^anthropic\//);
-  });
-
-  it('uses the DB row when present', async () => {
-    findFirstMock.mockResolvedValue({ credential: null, modelSpec: 'openai/gpt-from-db' });
-    expect(await getModelSpec('implementer')).toBe('openai/gpt-from-db');
-  });
+  // Spec roundtrip with a real DB-decrypt path is covered end-to-end in
+  // resolver.test.ts (uses vi.hoisted + encryptSecret to produce valid
+  // ciphertext). No need to duplicate the setup here.
 });
 
 describe('resolveModel', () => {
-  it('builds Anthropic models from env', () => {
-    const m = resolveModel('anthropic/claude-opus-4-6');
-    expect(m.provider).toMatch(/anthropic/);
-  });
-
-  it('builds OpenAI models from env', () => {
-    const m = resolveModel('openai/gpt-5');
-    expect(m.provider).toMatch(/openai/);
-  });
-
-  it('builds Google models from env', () => {
-    const m = resolveModel('google/gemini-2.5-pro');
-    expect(m.provider).toMatch(/google/);
-  });
-
-  it('builds Anthropic models with an explicit apiKey override', () => {
-    const m = resolveModel('anthropic/claude-opus-4-6', 'sk-ant-override');
+  it('builds Anthropic models with an explicit apiKey', () => {
+    const m = resolveModel('anthropic/claude-opus-4-6', 'sk-ant-x');
     expect(m.provider).toMatch(/anthropic/);
     expect(m.modelId).toBe('claude-opus-4-6');
   });
 
+  it('builds OpenAI models with an explicit apiKey', () => {
+    const m = resolveModel('openai/gpt-5', 'sk-openai-x');
+    expect(m.provider).toMatch(/openai/);
+  });
+
+  it('builds Google models with an explicit apiKey', () => {
+    const m = resolveModel('google/gemini-2.5-pro', 'sk-google-x');
+    expect(m.provider).toMatch(/google/);
+  });
+
   it('matches built-in providers case-insensitively', () => {
-    expect(resolveModel('OpenAI/gpt-5').provider).toMatch(/openai/);
-    expect(resolveModel('ANTHROPIC/claude-opus-4-6').provider).toMatch(/anthropic/);
-    expect(resolveModel('Google/gemini-2.5-pro').provider).toMatch(/google/);
+    expect(resolveModel('OpenAI/gpt-5', 'sk-x').provider).toMatch(/openai/);
+    expect(resolveModel('ANTHROPIC/claude-opus-4-6', 'sk-x').provider).toMatch(/anthropic/);
+    expect(resolveModel('Google/gemini-2.5-pro', 'sk-x').provider).toMatch(/google/);
   });
 
   it('preserves model id casing (some self-hosted endpoints are case-sensitive)', () => {
-    process.env.OLLAMA_API_BASE = 'http://localhost:11434/v1';
-    const m = resolveModel('ollama/MyCustomModel:Latest');
+    const m = resolveModel('ollama/MyCustomModel:Latest', 'sk-x', 'http://localhost:11434/v1');
     expect(m.modelId).toBe('MyCustomModel:Latest');
   });
 
   it('preserves slashes in the model id (OpenRouter-style)', () => {
-    process.env.OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
-    process.env.OPENROUTER_API_KEY = 'test';
-    const m = resolveModel('openrouter/anthropic/claude-opus-4-6');
+    const m = resolveModel(
+      'openrouter/anthropic/claude-opus-4-6',
+      'sk-x',
+      'https://openrouter.ai/api/v1'
+    );
     expect(m.modelId).toBe('anthropic/claude-opus-4-6');
   });
 
-  it('routes unknown providers through OpenAI-compatible when API base is set', () => {
-    process.env.OLLAMA_API_BASE = 'http://localhost:11434/v1';
-    const m = resolveModel('ollama/llama3.1:70b');
-    expect(m.modelId).toBe('llama3.1:70b');
-  });
-
-  it('uses an explicit apiBase override for unknown providers (no env required)', () => {
-    delete process.env.OPENCODEGO_API_BASE;
+  it('uses an explicit apiBase for unknown providers', () => {
     const m = resolveModel('opencodego/glm-5', 'sk-go', 'https://opencode.ai/zen/go/v1');
     expect(m.modelId).toBe('glm-5');
   });
 
-  it('throws on unknown provider when no API base is configured', () => {
-    delete process.env.MYSTERY_API_BASE;
-    expect(() => resolveModel('mystery/some-model')).toThrow(/MYSTERY_API_BASE/);
+  it('throws on unknown provider when no apiBase is supplied', () => {
+    expect(() => resolveModel('mystery/some-model', 'sk-x')).toThrow(/apiBase/);
   });
 
   it('rejects malformed specs', () => {
-    expect(() => resolveModel('claude-opus-4-6')).toThrow(/provider.*model/i);
-    expect(() => resolveModel('/foo')).toThrow();
-    expect(() => resolveModel('foo/')).toThrow();
+    expect(() => resolveModel('claude-opus-4-6', 'sk-x')).toThrow(/provider.*model/i);
+    expect(() => resolveModel('/foo', 'sk-x')).toThrow();
+    expect(() => resolveModel('foo/', 'sk-x')).toThrow();
   });
 });
 
 describe('getModel', () => {
-  it('returns a model for every defined role', async () => {
-    for (const role of ROLES) {
-      _resetConfigCacheForTests();
-      _resetModelCacheForTests();
-      const m = await getModel(role);
-      expect(m).toBeDefined();
-      expect(typeof m.modelId).toBe('string');
-    }
-  });
-
-  it('uses a DB-backed credential when one is configured', async () => {
-    findFirstMock.mockResolvedValue({
-      credential: null,
-      modelSpec: 'anthropic/claude-opus-4-7',
-    });
-    credFindFirstMock.mockImplementation(async () => null);
-    const m = await getModel('implementer');
-    expect(m.provider).toMatch(/anthropic/);
+  it('throws ConfigMissingError when no DB config exists', async () => {
+    findFirstMock.mockResolvedValue(null);
+    await expect(getModel('implementer')).rejects.toThrow(ConfigMissingError);
   });
 });

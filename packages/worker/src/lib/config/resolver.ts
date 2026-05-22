@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
-import { parseProviderModelSpec, providerEnvPrefix } from '../providerUtils.js';
+import { parseProviderModelSpec } from '../providerUtils.js';
 import { configCacheTtlMs, invalidate, withCache } from './cache.js';
 import {
   type AgentRole,
@@ -9,26 +9,26 @@ import {
   ROLE_TO_PRISMA,
 } from './types.js';
 
-/// Resolves the model spec + (optional) credential override for a role at a
-/// given scope. Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → env-var fallback.
-/// The env fallback exists so tests and pre-seed worker boots don't crash;
-/// in normal operation `seedConfigFromEnv` populates the GLOBAL row on first
-/// boot and the env path is no longer hit. If the seed fails (DB unreachable
-/// at boot), env continues to serve as a degraded fallback until a real
-/// GLOBAL row exists. Env-fallback results are NOT cached so a freshly-seeded
-/// row takes effect on the next call rather than after the TTL window.
+/// Thrown when a required configuration row is missing. The worker boot
+/// `assertConfigReady()` check catches this before activities run; if
+/// somebody deletes a row at runtime, the activity itself will throw.
+export class ConfigMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigMissingError';
+  }
+}
+
+/// Resolves the model spec + credential for a role at the given scope.
+/// Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL. There is no env-var fallback;
+/// the GLOBAL row is required and must be present before any activity runs
+/// (enforced by `assertConfigReady()` at worker startup).
 export async function resolveModelConfig(
   role: AgentRole,
   ctx?: ResolveCtx
 ): Promise<ResolvedModelConfig> {
   const cacheKey = `model:${role}:${ctx?.workflowTemplateId ?? ''}:${ctx?.teamId ?? ''}`;
-  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
-    resolveModelConfigUncached(role, ctx)
-  );
-  // Don't let the cache pin an env-fallback result — a freshly-seeded DB row
-  // should take effect immediately, not after the next 30s TTL window.
-  if (resolved.scope === 'ENV_FALLBACK') invalidate(cacheKey);
-  return resolved;
+  return withCache(cacheKey, configCacheTtlMs(), () => resolveModelConfigUncached(role, ctx));
 }
 
 async function resolveModelConfigUncached(
@@ -66,32 +66,32 @@ async function resolveModelConfigUncached(
   });
   if (globalRow) return materializeRow(globalRow, 'GLOBAL', ctx);
 
-  // 4. Env-var fallback (only hit before the seed has run, or in unit tests).
-  const envSpec = process.env[ROLE_ENV_VAR[role]]?.trim() || DEFAULT_MODELS[role];
-  return { scope: 'ENV_FALLBACK', spec: envSpec };
+  // No fallback. The worker's startup check should have refused to start
+  // without a GLOBAL row for every role; reaching this branch means an
+  // operator deleted it after boot.
+  throw new ConfigMissingError(
+    `No GLOBAL ModelRoleConfig row for role '${role}'. Restore it via the admin dashboard at /admin/model-config.`
+  );
 }
 
-/// Look up the credential for `<provider>` at the given scope. Cascade is
+/// Look up the credential for a provider at the given scope. Cascade is
 /// TEAM → GLOBAL (templates intentionally don't have their own credentials —
 /// they reference an existing one via `ModelRoleConfig.credentialId`).
+/// Throws `ConfigMissingError` when no credential exists for the provider.
 export async function resolveProviderCredential(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string } | undefined> {
+): Promise<{ apiBase?: string; apiKey: string }> {
   const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}`;
-  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
+  return withCache(cacheKey, configCacheTtlMs(), () =>
     resolveProviderCredentialUncached(provider, ctx)
   );
-  // Don't pin a "no credential" miss — operators frequently add a credential
-  // in response to a startup failure and shouldn't wait out a 30s TTL.
-  if (!resolved) invalidate(cacheKey);
-  return resolved;
 }
 
 async function resolveProviderCredentialUncached(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string } | undefined> {
+): Promise<{ apiBase?: string; apiKey: string }> {
   if (ctx?.teamId) {
     const row = await prisma.providerCredential.findFirst({
       where: { provider, scope: 'TEAM', teamId: ctx.teamId },
@@ -102,7 +102,49 @@ async function resolveProviderCredentialUncached(
     where: { provider, scope: 'GLOBAL' },
   });
   if (globalRow) return decryptRow(globalRow);
-  return undefined;
+
+  throw new ConfigMissingError(
+    `No ProviderCredential for provider '${provider}'. Add one via the admin dashboard at /admin/model-config.`
+  );
+}
+
+/// Embedding-model spec + credential. The system has exactly one embedding
+/// role (semantic memory commit), backed by the singleton `EmbeddingConfig`
+/// row. Output must be 1536-dim or `generateEmbedding` throws.
+export interface ResolvedEmbeddingConfig {
+  spec: string;
+  apiKey: string;
+  apiBase?: string;
+}
+
+export async function resolveEmbeddingConfig(): Promise<ResolvedEmbeddingConfig> {
+  // No scope cascade — embedding is system-wide. Per-call DB hit is cheap
+  // (single-row table), but cache it anyway so the embedding cache in
+  // embeddings.ts can short-circuit when nothing changed.
+  return withCache('embedding-config', configCacheTtlMs(), resolveEmbeddingConfigUncached);
+}
+
+async function resolveEmbeddingConfigUncached(): Promise<ResolvedEmbeddingConfig> {
+  const row = await prisma.embeddingConfig.findUnique({
+    include: { credential: true },
+    where: { id: 'default' },
+  });
+  if (!row) {
+    throw new ConfigMissingError(
+      'No EmbeddingConfig row. Set the embedding model at /admin/model-config (Embeddings tab) before starting the worker.'
+    );
+  }
+
+  // Pinned credential first; otherwise resolve by the provider parsed from
+  // the spec. Embeddings have no team/template scope.
+  let credSource: { apiKey: string; apiBase?: string };
+  if (row.credential) {
+    credSource = decryptRow(row.credential);
+  } else {
+    const { provider } = parseProviderModelSpec(row.modelSpec);
+    credSource = await resolveProviderCredential(provider);
+  }
+  return { apiBase: credSource.apiBase, apiKey: credSource.apiKey, spec: row.modelSpec };
 }
 
 type ProviderCredentialRow = NonNullable<
@@ -129,7 +171,7 @@ async function materializeRow(
     return { apiBase: decrypted.apiBase, apiKey: decrypted.apiKey, scope, spec };
   }
   const cred = await resolveProviderCredential(provider, ctx);
-  return { apiBase: cred?.apiBase, apiKey: cred?.apiKey, scope, spec };
+  return { apiBase: cred.apiBase, apiKey: cred.apiKey, scope, spec };
 }
 
 function decryptRow(row: ProviderCredentialRow): { apiBase?: string; apiKey: string } {
@@ -142,104 +184,5 @@ function decryptRow(row: ProviderCredentialRow): { apiBase?: string; apiKey: str
   return { apiBase: row.apiBase ?? undefined, apiKey };
 }
 
-// ── Env-fallback defaults (mirrors the table in packages/worker/src/lib/models.ts) ──
-
-const DEFAULT_MODELS: Record<AgentRole, string> = {
-  commitToMemory: 'anthropic/claude-opus-4-7',
-  implementer: 'anthropic/claude-opus-4-7',
-  planner: 'anthropic/claude-sonnet-4-6',
-  reviewer: 'anthropic/claude-opus-4-7',
-  securityReview: 'anthropic/claude-sonnet-4-6',
-  validateContext: 'anthropic/claude-sonnet-4-6',
-};
-
-const ROLE_ENV_VAR: Record<AgentRole, string> = {
-  commitToMemory: 'MEMORY_SUMMARIZER_MODEL',
-  implementer: 'IMPLEMENTER_MODEL',
-  planner: 'PLANNER_MODEL',
-  reviewer: 'REVIEWER_MODEL',
-  securityReview: 'SECURITY_REVIEW_MODEL',
-  validateContext: 'CONTEXT_VALIDATOR_MODEL',
-};
-
-/// Exposed for the seed routine so the env→DB migration uses the same defaults.
-export function envFallbackSpec(role: AgentRole): string {
-  return process.env[ROLE_ENV_VAR[role]]?.trim() || DEFAULT_MODELS[role];
-}
-
-/// Exposed so the seed can iterate the role list without hardcoding it again.
-export const ALL_ROLES: readonly AgentRole[] = [
-  'implementer',
-  'reviewer',
-  'planner',
-  'securityReview',
-  'validateContext',
-  'commitToMemory',
-] as const;
-
-/// Env-var prefixes that we KNOW are not LLM providers and should never be
-/// auto-seeded as credentials even if they happen to expose `<X>_API_BASE` +
-/// `<X>_API_KEY` pairs. Conservative list; ops can disable auto-discovery
-/// entirely with `LLM_PROVIDER_AUTODISCOVER=false`.
-const AUTODISCOVER_BLOCKLIST = new Set([
-  'ANTHROPIC',
-  'OPENAI',
-  'GOOGLE_GENERATIVE_AI',
-  'CONFIG',
-  'DATABASE',
-  'GITHUB',
-  'SLACK',
-  'TEMPORAL',
-  'AWS',
-  'S3',
-  'OTEL',
-  'OTEL_EXPORTER_OTLP',
-  'NEXTAUTH',
-  'BETTER_AUTH',
-  'JWT',
-]);
-
-/// Tells the resolver/env-fallback machinery which env-var names to seed from.
-/// Returns built-in provider keys plus, optionally, any `<X>_API_BASE` /
-/// `<X>_API_KEY` pairs discovered in the environment (opt-out via
-/// `LLM_PROVIDER_AUTODISCOVER=false`).
-export function envCredentialsFromProcess(): {
-  provider: string;
-  apiKey: string;
-  apiBase?: string;
-}[] {
-  const out: { provider: string; apiKey: string; apiBase?: string }[] = [];
-
-  // Built-in providers — Vercel AI SDK defaults
-  if (process.env.ANTHROPIC_API_KEY) {
-    out.push({ apiKey: process.env.ANTHROPIC_API_KEY, provider: 'anthropic' });
-  }
-  if (process.env.OPENAI_API_KEY) {
-    out.push({ apiKey: process.env.OPENAI_API_KEY, provider: 'openai' });
-  }
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    out.push({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, provider: 'google' });
-  }
-
-  // OpenAI-compatible providers — discover by `<X>_API_BASE` and pair with
-  // `<X>_API_KEY`. Opt-out for ops worried about coincidental prefix matches
-  // (e.g. an unrelated `FOO_API_BASE` + `FOO_API_KEY` pair from a different service).
-  if (process.env.LLM_PROVIDER_AUTODISCOVER === 'false') return out;
-
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.endsWith('_API_BASE') || !value) continue;
-    const prefix = key.slice(0, -'_API_BASE'.length);
-    if (AUTODISCOVER_BLOCKLIST.has(prefix)) continue;
-    // Block any prefix that starts with a known reserved word (e.g.
-    // `OTEL_EXPORTER_OTLP_API_BASE` shouldn't seed an "otel-exporter-otlp" provider).
-    if ([...AUTODISCOVER_BLOCKLIST].some((reserved) => prefix.startsWith(`${reserved}_`))) continue;
-    const provider = prefix.toLowerCase().replace(/_/g, '-');
-    const apiKey = process.env[`${prefix}_API_KEY`];
-    if (!apiKey) continue;
-    out.push({ apiBase: value, apiKey, provider });
-  }
-
-  return out;
-}
-
-export { providerEnvPrefix };
+/// Test-only helper. Forces the next call past the cache.
+export { invalidate as _invalidateConfigCache };

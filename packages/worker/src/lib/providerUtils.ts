@@ -1,5 +1,3 @@
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-
 export interface ProviderModelSpec {
   provider: string;
   modelId: string;
@@ -28,35 +26,4 @@ export function parseProviderModelSpec(spec: string): ProviderModelSpec {
     throw new Error(`Invalid model spec '${spec}'. Both provider and model must be non-empty.`);
   }
   return { modelId, provider };
-}
-
-/**
- * Normalises a provider name to its env-var prefix: uppercased, hyphens → underscores.
- * Example: `my-gateway` → `MY_GATEWAY`.
- */
-export function providerEnvPrefix(provider: string): string {
-  return provider.toUpperCase().replace(/-/g, '_');
-}
-
-/**
- * Builds an OpenAI-compatible client for any provider name not built into the
- * Vercel AI SDK. Reads `<PROVIDER>_API_BASE` (required) and `<PROVIDER>_API_KEY`
- * (optional) from the environment.
- *
- * Used as the fallback path for both chat models (in `models.ts`) and embeddings
- * (in `embeddings.ts`) — covers OpenRouter, Ollama, vLLM, Groq, Cerebras,
- * Inflection Pi, etc.
- */
-export function createOpenAICompatibleClient(
-  provider: string
-): ReturnType<typeof createOpenAICompatible> {
-  const prefix = providerEnvPrefix(provider);
-  const baseURL = process.env[`${prefix}_API_BASE`];
-  if (!baseURL) {
-    throw new Error(
-      `Unknown provider '${provider}'. Set ${prefix}_API_BASE to use it as an OpenAI-compatible endpoint.`
-    );
-  }
-  const apiKey = process.env[`${prefix}_API_KEY`];
-  return createOpenAICompatible({ apiKey, baseURL, name: provider });
 }
