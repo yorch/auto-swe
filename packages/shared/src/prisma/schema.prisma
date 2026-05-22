@@ -523,9 +523,32 @@ model ProviderCredential {
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   modelRoleConfigs ModelRoleConfig[]
+  embeddingConfigs EmbeddingConfig[]
 
   @@index([provider, scope, teamId])
   @@map("provider_credentials")
+}
+
+/// System-wide embedding-model selection. Singleton — exactly one row is
+/// permitted (enforced by a CHECK constraint on the `id` column in the
+/// migration alongside this model). The semantic-memory pipeline reads this
+/// row at every `generateEmbedding` call; mutations go through
+/// `/api/v1/admin/embedding-config`.
+///
+/// `credentialId` pins a specific ProviderCredential when set, otherwise the
+/// resolver looks up the credential by the provider parsed from `modelSpec`.
+/// pgvector storage is fixed at vector(1536), so the chosen model MUST
+/// produce 1536-dim embeddings (worker throws if it doesn't).
+model EmbeddingConfig {
+  id           String              @id @default("default")
+  modelSpec    String              @map("model_spec")
+  credentialId String?             @map("credential_id") @db.Uuid
+  credential   ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  updatedById  String?             @map("updated_by_id") @db.Uuid
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("embedding_configs")
 }
 
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.
