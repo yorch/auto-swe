@@ -204,6 +204,7 @@ model Team {
   /// always allowed; entries here grant additional `image:tag` strings.
   /// Managed by team admins via the gateway.
   shellImageAllowlist String[] @default([]) @map("shell_image_allowlist")
+  egressAllowlist  String[]  @default([]) @map("egress_allowlist")
   /// Phase-7 optional Slack channel ID (e.g. `C0123456`) for per-step failure
   /// notifications. When set + SLACK_BOT_TOKEN is configured, the worker posts
   /// a message on FAILED step records that aren't expected to retry. Null disables.
@@ -582,6 +583,7 @@ model WorkflowShellAudit {
   image             String
   command           String
   network           String                  @default("none")
+  egressAllowlistSnapshot  String[]  @default([]) @map("egress_allowlist_snapshot")
   authorUserId      String?                 @map("author_user_id") @db.Uuid
   createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz
 

@@ -95,6 +95,7 @@ function buildApp(state: {
           // For the shell allowlist check; tests can override via state.teamAllowlist
           return where.id
             ? {
+                egressAllowlist: (state as { egressAllowlist?: string[] }).egressAllowlist ?? [],
                 id: where.id as string,
                 shellImageAllowlist: (state as { teamAllowlist?: string[] }).teamAllowlist ?? [],
               }

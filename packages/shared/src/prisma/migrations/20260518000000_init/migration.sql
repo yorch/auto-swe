@@ -130,6 +130,7 @@ CREATE TABLE "teams" (
     "description" TEXT NOT NULL DEFAULT '',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "shell_image_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "egress_allowlist" TEXT[] NOT NULL DEFAULT '{}',
     "slack_notify_channel" TEXT,
     "slack_notify_success" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -314,6 +315,7 @@ CREATE TABLE "workflow_shell_audit" (
     "image" TEXT NOT NULL,
     "command" TEXT NOT NULL,
     "network" TEXT NOT NULL DEFAULT 'none',
+    "egress_allowlist_snapshot" TEXT[] NOT NULL DEFAULT '{}',
     "author_user_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
