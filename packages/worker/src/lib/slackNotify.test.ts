@@ -9,7 +9,11 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { notifySlackPrReady, notifySlackRunComplete, notifySlackStepFailure } from './slackNotify.js';
+import {
+  notifySlackPrReady,
+  notifySlackRunComplete,
+  notifySlackStepFailure,
+} from './slackNotify.js';
 
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
 const findTeam = vi.mocked(prisma.team.findUnique);
@@ -149,7 +153,11 @@ describe('notifySlackStepFailure', () => {
 describe('notifySlackPrReady (phase 7)', () => {
   it('no-ops when SLACK_BOT_TOKEN is unset', async () => {
     delete process.env.SLACK_BOT_TOKEN;
-    await notifySlackPrReady({ prNumber: 1, prUrl: 'https://github.com/pr/1', workRequestId: 'wr-1' });
+    await notifySlackPrReady({
+      prNumber: 1,
+      prUrl: 'https://github.com/pr/1',
+      workRequestId: 'wr-1',
+    });
     expect(fetchCalls).toHaveLength(0);
     expect(findWorkRequest).not.toHaveBeenCalled();
   });

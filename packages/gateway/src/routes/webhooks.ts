@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { postSlackMessage } from '../lib/slack.js';
 import { verifyGitHubSignature } from '../lib/github.js';
+import { postSlackMessage } from '../lib/slack.js';
 
 interface PullRequestWebhookPayload {
   action: string;

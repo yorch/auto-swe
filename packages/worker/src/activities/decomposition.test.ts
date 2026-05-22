@@ -326,7 +326,8 @@ describe('resolveMergeConflict', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return conflictResolved ? '' : 'foo.ts\n';
+      if (cmd.startsWith('git diff --name-only --diff-filter=U'))
+        return conflictResolved ? '' : 'foo.ts\n';
       if (cmd.startsWith('git diff --check')) {
         if (conflictResolved) return '';
         throw new Error('markers present');
