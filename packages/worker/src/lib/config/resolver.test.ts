@@ -220,4 +220,39 @@ describe('resolver cache', () => {
 
     expect(findFirstMock).toHaveBeenCalledTimes(2);
   });
+
+  it('busts the team-scope credential cache when GLOBAL was used as fallback', async () => {
+    // Initially no TEAM credential — the resolver falls back to GLOBAL and
+    // caches the result under 'cred:anthropic:t1'.
+    let teamHasCred = false;
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'TEAM') return teamHasCred ? credRow('sk-team-new') : null;
+      return credRow('sk-global');
+    });
+
+    const r1 = await resolveProviderCredential('anthropic', { teamId: 't1' });
+    expect(r1.apiKey).toBe('sk-global');
+
+    // Operator now inserts a TEAM-scoped credential. Without cache busting,
+    // the GLOBAL value would still be served for up to the TTL — billing
+    // would go to the wrong account. The wrapper detects the cross-scope
+    // fallback at write time and invalidates immediately.
+    teamHasCred = true;
+    const r2 = await resolveProviderCredential('anthropic', { teamId: 't1' });
+    expect(r2.apiKey).toBe('sk-team-new');
+  });
+
+  it('keeps caching when the team-scope row WAS the one returned', async () => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'TEAM') return credRow('sk-team');
+      return credRow('sk-global');
+    });
+
+    await resolveProviderCredential('anthropic', { teamId: 't1' });
+    await resolveProviderCredential('anthropic', { teamId: 't1' });
+    // Only one team-credential lookup — the second call hits the cache,
+    // because no cross-scope fallback happened.
+    const teamCalls = credFindFirstMock.mock.calls.filter((c) => c[0].where.scope === 'TEAM');
+    expect(teamCalls).toHaveLength(1);
+  });
 });

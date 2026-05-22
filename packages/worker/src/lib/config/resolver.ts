@@ -83,25 +83,47 @@ export async function resolveProviderCredential(
   ctx?: ResolveCtx
 ): Promise<{ apiBase?: string; apiKey: string }> {
   const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}`;
-  return withCache(cacheKey, configCacheTtlMs(), () =>
+  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
     resolveProviderCredentialUncached(provider, ctx)
   );
+  // When a team-scoped request fell through to the GLOBAL row, we cached
+  // the GLOBAL credential under the team's cache key. That would mask a
+  // subsequent TEAM-scope insert for the full TTL — bust the cache now so
+  // the next call re-queries and picks up the new row. (Same idea as the
+  // ENV_FALLBACK invalidate in resolveModelConfig — don't pin a stale
+  // fallback while an operator might be adding the row they expect to win.)
+  if (ctx?.teamId && resolved._scope === 'GLOBAL') invalidate(cacheKey);
+  return { apiBase: resolved.apiBase, apiKey: resolved.apiKey };
+}
+
+interface ResolvedCredentialInternal {
+  apiKey: string;
+  apiBase?: string;
+  /// Which scope the row came from — used by the wrapper above to detect
+  /// cross-scope GLOBAL fallback. Not exposed to callers.
+  _scope: 'TEAM' | 'GLOBAL';
 }
 
 async function resolveProviderCredentialUncached(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string }> {
+): Promise<ResolvedCredentialInternal> {
   if (ctx?.teamId) {
     const row = await prisma.providerCredential.findFirst({
       where: { provider, scope: 'TEAM', teamId: ctx.teamId },
     });
-    if (row) return decryptRow(row);
+    if (row) {
+      const decrypted = decryptRow(row);
+      return { _scope: 'TEAM', apiBase: decrypted.apiBase, apiKey: decrypted.apiKey };
+    }
   }
   const globalRow = await prisma.providerCredential.findFirst({
     where: { provider, scope: 'GLOBAL' },
   });
-  if (globalRow) return decryptRow(globalRow);
+  if (globalRow) {
+    const decrypted = decryptRow(globalRow);
+    return { _scope: 'GLOBAL', apiBase: decrypted.apiBase, apiKey: decrypted.apiKey };
+  }
 
   throw new ConfigMissingError(
     `No ProviderCredential for provider '${provider}'. Add one via the admin dashboard at /admin/model-config.`
