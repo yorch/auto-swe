@@ -63,6 +63,8 @@ interface SlackChatPostMessageResponse {
  * No-ops (and returns null) when `SLACK_BOT_TOKEN` is not set. This lets the
  * notification path stay enabled without configuration.
  */
+const SLACK_POST_TIMEOUT_MS = 2_000;
+
 export async function postSlackMessage(
   options: SlackPostMessageOptions,
   token: string | undefined = process.env.SLACK_BOT_TOKEN
@@ -75,6 +77,8 @@ export async function postSlackMessage(
   if (options.threadTs) body.thread_ts = options.threadTs;
   if (options.blocks) body.blocks = options.blocks;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
   try {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       body: JSON.stringify(body),
@@ -83,11 +87,14 @@ export async function postSlackMessage(
         'Content-Type': 'application/json; charset=utf-8',
       },
       method: 'POST',
+      signal: controller.signal,
     });
     const data = (await res.json()) as SlackChatPostMessageResponse;
     return data.ok && data.ts ? data.ts : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

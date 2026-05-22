@@ -147,6 +147,7 @@ async function resolveSlackChannelByWorkRequest(
     include: {
       activeWorkflows: {
         include: { repository: { select: { teamId: true } } },
+        orderBy: { updatedAt: 'desc' },
         take: 1,
       },
     },

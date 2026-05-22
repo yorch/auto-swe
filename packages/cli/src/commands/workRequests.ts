@@ -110,6 +110,10 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Missing required flag: --repo=<org/name> or --repo-id=<uuid>\n');
     return 1;
   }
+  if (flags.repo && flags.repoId) {
+    process.stderr.write('--repo and --repo-id are mutually exclusive; provide only one.\n');
+    return 1;
+  }
 
   const validBudgets = ['STANDARD', 'LARGE', 'EPIC'];
   const budget = flags.budget?.toUpperCase() ?? 'STANDARD';
@@ -119,8 +123,15 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   }
 
   // Resolve the repo ID — skip the lookup when --repo-id is already a UUID.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let resolvedRepoId: string;
   if (flags.repoId) {
+    if (!UUID_RE.test(flags.repoId)) {
+      process.stderr.write(
+        '--repo-id must be a valid UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)\n'
+      );
+      return 1;
+    }
     resolvedRepoId = flags.repoId;
   } else {
     const [org, repoName] = (flags.repo as string).split('/');
