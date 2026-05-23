@@ -23,7 +23,7 @@ describe('EgressAllowlistEditor', () => {
     render(withQuery(<EgressAllowlistEditor teamId="t1" />));
 
     const textarea = await waitFor(() => {
-      const ta = screen.getByPlaceholderText(/registry.npmjs.org/) as HTMLTextAreaElement;
+      const ta = screen.getByPlaceholderText(/registry\.npmjs\.org/) as HTMLTextAreaElement;
       expect(ta.value).toBe('registry.npmjs.org');
       return ta;
     });

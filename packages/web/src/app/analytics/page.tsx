@@ -137,7 +137,10 @@ export default function GlobalAnalyticsPage() {
                   : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
               }`}
               key={w.days}
-              onClick={() => setWindowDays(w.days)}
+              onClick={() => {
+                setWindowDays(w.days);
+                setPage(0);
+              }}
               type="button"
             >
               {w.label}

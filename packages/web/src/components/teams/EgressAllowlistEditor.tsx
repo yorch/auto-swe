@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useTeamEgressAllowlist, useUpdateTeamEgressAllowlist } from '@/hooks/useWorkflows';
@@ -11,10 +11,21 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // true while the user has unsaved edits; prevents server refetch from overwriting the textarea
+  const isDirtyRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (data) setText(data.egressAllowlist.join('\n'));
+    if (data && !isDirtyRef.current) {
+      setText(data.egressAllowlist.join('\n'));
+    }
   }, [data]);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
 
   async function handleSave() {
     setError(null);
@@ -25,8 +36,10 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
       .filter(Boolean);
     try {
       await update.mutateAsync(list);
+      isDirtyRef.current = false;
       setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update allowlist');
     }
@@ -50,7 +63,10 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
         <>
           <textarea
             className="min-h-[120px] w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none transition-colors focus:border-ember-400"
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              isDirtyRef.current = true;
+              setText(e.target.value);
+            }}
             placeholder="registry.npmjs.org"
             value={text}
           />

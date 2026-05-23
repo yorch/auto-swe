@@ -174,8 +174,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {canManage && <ShellAllowlistEditor teamId={id} />}
-      {canManage && <EgressAllowlistEditor teamId={id} />}
+      {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
+      {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
       {canManageTeamConfig && <TeamModelConfigSection teamId={id} />}
 
       <TeamFormModal
