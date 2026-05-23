@@ -29,6 +29,7 @@ interface TeamRow {
   name: string;
   slug: string;
   shellImageAllowlist: string[];
+  egressAllowlist: string[];
 }
 
 interface State {
@@ -63,6 +64,7 @@ function freshState(overrides?: Partial<State>): State {
     ],
     teams: [
       {
+        egressAllowlist: [],
         id: TEAM_ID,
         name: 'platform',
         shellImageAllowlist: [],
@@ -101,12 +103,15 @@ function buildApp(state: State): FastifyInstance {
         data,
       }: {
         where: { id: string };
-        data: { shellImageAllowlist?: string[] };
+        data: { shellImageAllowlist?: string[]; egressAllowlist?: string[] };
       }) => {
         const row = state.teams.find((t) => t.id === where.id);
         if (!row) throw new Error('team not found');
         if (data.shellImageAllowlist !== undefined) {
           row.shellImageAllowlist = data.shellImageAllowlist;
+        }
+        if (data.egressAllowlist !== undefined) {
+          row.egressAllowlist = data.egressAllowlist;
         }
         return row;
       },
@@ -267,5 +272,107 @@ describe('PUT /api/v1/teams/:id/shell-image-allowlist', () => {
 
     expect(res.statusCode).toBe(200);
     expect(state.teams[0].shellImageAllowlist).toEqual([]);
+  });
+});
+
+describe('GET /api/v1/teams/:id/egress-allowlist', () => {
+  it('returns the current egress allowlist for a team member', async () => {
+    const state = freshState({
+      teams: [{ ...freshState().teams[0], egressAllowlist: ['registry.npmjs.org'] }],
+    });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { egressAllowlist: ['registry.npmjs.org'] } });
+  });
+
+  it('404s when the team does not exist (platform ADMIN bypasses team-RBAC)', async () => {
+    // A non-admin hits 403 (no membership) before the handler can return 404,
+    // so we use platform ADMIN who skips the team-role check.
+    const state = adminState();
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'GET',
+      url: '/api/v1/teams/00000000-0000-4000-8000-000000000999/egress-allowlist',
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TEAM_NOT_FOUND');
+  });
+});
+
+describe('PUT /api/v1/teams/:id/egress-allowlist', () => {
+  it('persists the new egress allowlist and returns it', async () => {
+    const state = adminState();
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PUT',
+      payload: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
+    });
+    expect(state.teams[0].egressAllowlist).toEqual(['registry.npmjs.org', 'api.github.com']);
+  });
+
+  it('rejects invalid hostnames (shell metacharacters)', async () => {
+    const state = adminState();
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PUT',
+      payload: { egressAllowlist: ['registry.npmjs.org; rm -rf /'] },
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(state.teams[0].egressAllowlist).toEqual([]);
+  });
+
+  it('clears the allowlist when given an empty array', async () => {
+    const state = adminState({
+      teams: [{ ...freshState().teams[0], egressAllowlist: ['registry.npmjs.org'] }],
+    });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PUT',
+      payload: { egressAllowlist: [] },
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(state.teams[0].egressAllowlist).toEqual([]);
+  });
+
+  it('403s when the caller is not a team ADMIN', async () => {
+    // PUT requires requiredTeamRole: 'ADMIN'; a LEAD is rejected.
+    const state = freshState({ userRole: 'LEAD' });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PUT',
+      payload: { egressAllowlist: ['registry.npmjs.org'] },
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.teams[0].egressAllowlist).toEqual([]);
   });
 });

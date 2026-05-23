@@ -71,11 +71,14 @@ function SortHeader({
   );
 }
 
+const PAGE_SIZE = 25;
+
 export default function GlobalAnalyticsPage() {
   const [windowDays, setWindowDays] = useState(30);
   const [filter, setFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(0);
   const { data, isLoading } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
@@ -84,6 +87,12 @@ export default function GlobalAnalyticsPage() {
       setSortKey(k);
       setSortDir('desc');
     }
+    setPage(0);
+  };
+
+  const handleFilter = (v: string) => {
+    setFilter(v);
+    setPage(0);
   };
 
   const rows = useMemo(() => {
@@ -112,6 +121,9 @@ export default function GlobalAnalyticsPage() {
     });
   }, [data, filter, sortKey, sortDir]);
 
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -125,7 +137,10 @@ export default function GlobalAnalyticsPage() {
                   : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
               }`}
               key={w.days}
-              onClick={() => setWindowDays(w.days)}
+              onClick={() => {
+                setWindowDays(w.days);
+                setPage(0);
+              }}
               type="button"
             >
               {w.label}
@@ -151,7 +166,7 @@ export default function GlobalAnalyticsPage() {
                 <CardTitle>Templates — ranked by traffic</CardTitle>
                 <input
                   className="text-sm border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] w-48"
-                  onChange={(e) => setFilter(e.target.value)}
+                  onChange={(e) => handleFilter(e.target.value)}
                   placeholder="Filter templates…"
                   type="text"
                   value={filter}
@@ -165,88 +180,130 @@ export default function GlobalAnalyticsPage() {
                   : `No runs in the last ${windowDays} days.`}
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted-foreground)]">
-                      <th className="px-4 py-2 font-medium">Template</th>
-                      <SortHeader
-                        col="runs"
-                        label="Runs"
-                        onSort={handleSort}
-                        sortDir={sortDir}
-                        sortKey={sortKey}
-                      />
-                      <SortHeader
-                        col="successRate"
-                        label="Success rate"
-                        onSort={handleSort}
-                        sortDir={sortDir}
-                        sortKey={sortKey}
-                      />
-                      <SortHeader
-                        col="totalCost"
-                        label="Total cost"
-                        onSort={handleSort}
-                        sortDir={sortDir}
-                        sortKey={sortKey}
-                      />
-                      <SortHeader
-                        col="avgCost"
-                        label="Avg cost/run"
-                        onSort={handleSort}
-                        sortDir={sortDir}
-                        sortKey={sortKey}
-                      />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => {
-                      const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
-                      const srPct = row.successRate !== null ? row.successRate * 100 : null;
-                      return (
-                        <tr
-                          className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]"
-                          key={row.templateId}
-                        >
-                          <td className="px-4 py-2">
-                            <Link
-                              className="text-[var(--primary)] hover:underline"
-                              href={`/templates/${row.templateId}`}
-                            >
-                              {row.templateName}
-                            </Link>
-                          </td>
-                          <td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">
-                            {srPct !== null ? (
-                              <span
-                                className={
-                                  srPct >= 80
-                                    ? 'text-green-700'
-                                    : srPct >= 50
-                                      ? 'text-amber-600'
-                                      : 'text-red-600'
-                                }
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted-foreground)]">
+                        <th className="px-4 py-2 font-medium">Template</th>
+                        <SortHeader
+                          col="runs"
+                          label="Runs"
+                          onSort={handleSort}
+                          sortDir={sortDir}
+                          sortKey={sortKey}
+                        />
+                        <SortHeader
+                          col="successRate"
+                          label="Success rate"
+                          onSort={handleSort}
+                          sortDir={sortDir}
+                          sortKey={sortKey}
+                        />
+                        <SortHeader
+                          col="totalCost"
+                          label="Total cost"
+                          onSort={handleSort}
+                          sortDir={sortDir}
+                          sortKey={sortKey}
+                        />
+                        <SortHeader
+                          col="avgCost"
+                          label="Avg cost/run"
+                          onSort={handleSort}
+                          sortDir={sortDir}
+                          sortKey={sortKey}
+                        />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((row) => {
+                        const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
+                        const srPct = row.successRate !== null ? row.successRate * 100 : null;
+                        return (
+                          <tr
+                            className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]"
+                            key={row.templateId}
+                          >
+                            <td className="px-4 py-2">
+                              <Link
+                                className="text-[var(--primary)] hover:underline"
+                                href={`/templates/${row.templateId}`}
                               >
-                                {fmt(srPct)}%
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td className="px-4 py-2 text-right tabular-nums">
-                            {fmtCost(row.totalCost)}
-                          </td>
-                          <td className="px-4 py-2 text-right tabular-nums">
-                            {avgCost !== null ? fmtCost(avgCost) : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                                {row.templateName}
+                              </Link>
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">
+                              {srPct !== null ? (
+                                <span
+                                  className={
+                                    srPct >= 80
+                                      ? 'text-green-700'
+                                      : srPct >= 50
+                                        ? 'text-amber-600'
+                                        : 'text-red-600'
+                                  }
+                                >
+                                  {fmt(srPct)}%
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums">
+                              {fmtCost(row.totalCost)}
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums">
+                              {avgCost !== null ? fmtCost(avgCost) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)] text-sm text-[var(--muted-foreground)]">
+                    <span>
+                      {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of{' '}
+                      {rows.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={page === 0}
+                        onClick={() => setPage((p) => p - 1)}
+                        type="button"
+                      >
+                        ←
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                        <button
+                          className={`px-2 py-1 rounded text-xs ${
+                            pageNum - 1 === page
+                              ? 'bg-[var(--primary)] text-white'
+                              : 'hover:bg-[var(--muted)]'
+                          }`}
+                          key={pageNum}
+                          onClick={() => setPage(pageNum - 1)}
+                          type="button"
+                        >
+                          {pageNum}
+                        </button>
+                      ))}
+                      <button
+                        className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={page === totalPages - 1}
+                        onClick={() => setPage((p) => p + 1)}
+                        type="button"
+                      >
+                        →
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </Card>
         </>

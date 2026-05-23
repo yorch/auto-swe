@@ -12,8 +12,8 @@
 > - **Dashboard** now ships an onboarding panel (3-step "get started" + collapsible API example) that replaces the empty-state when the user has no runs, plus a persistent `+ Submit work request` button in the header that opens a modal form.
 > - **`/runs`** (not in this doc) is a global workflow-run history with status + template filters and offset pagination — distinct from `/workflows` which lists `ActiveWorkflow` rows.
 > - **Settings** has an "API tokens" section (create / list / revoke personal access tokens with a one-time secret-reveal modal) — used by the CLI via `AUTO_SWE_TOKEN`.
-> - **Team detail** has a shell-image allowlist editor (one image per line, validated against `DOCKER_IMAGE_REF_RE`) gated to admin/lead.
-> - **Team member remove** (DELETE `/teams/:id/members/:userId`) referenced below has no backend endpoint; the UI exposes add + role-change only.
+> - **Team detail** has a shell-image allowlist editor (one image per line, validated against `DOCKER_IMAGE_REF_RE`) and an egress hostname allowlist editor, both gated to platform ADMIN or team-ADMIN (`canManageTeamConfig`). Platform LEAD without a team-ADMIN membership does not see these editors.
+> - **Team member remove** (DELETE `/teams/:id/members/:userId`) is implemented and exposed in the UI. Remove + add + role-change all require platform LEAD + team LEAD+.
 > - **Epics** is a real form (multi-repo selector) that routes to the epic workflow on submit; the doc's "dependency graph builder" is not built — dependencies come from the Planner agent's decomposition.
 
 ---
@@ -727,21 +727,31 @@ mobile to a hamburger menu.
 
 ## Route Summary
 
-| Route                    | Page              | Min Role               |
-| ------------------------ | ----------------- | ---------------------- |
-| `/login`                 | Login             | —                      |
-| `/`                      | Dashboard Home    | ENGINEER               |
-| `/workflows`             | Workflow List     | ENGINEER               |
-| `/workflows/:id`         | Workflow Detail   | ENGINEER               |
-| `/workflows/:id/context` | Context Inspector | ENGINEER               |
-| `/epics`                 | Epic List         | LEAD                   |
-| `/epics/:id`             | Epic Visualizer   | LEAD                   |
-| `/teams`                 | Teams List        | ENGINEER               |
-| `/teams/:id`             | Team Detail       | ENGINEER (team member) |
-| `/lessons`               | Lessons Browser   | ENGINEER               |
-| `/repositories`          | Repositories      | ENGINEER               |
-| `/users`                 | RBAC / Users      | ADMIN                  |
-| `/settings`              | Settings          | ENGINEER               |
+| Route                         | Page                    | Min Role               |
+| ----------------------------- | ----------------------- | ---------------------- |
+| `/login`                      | Login                   | —                      |
+| `/reset-password`             | Reset Password          | —                      |
+| `/`                           | Dashboard Home          | ENGINEER               |
+| `/workflows`                  | Active Runs             | ENGINEER               |
+| `/workflows/:id`              | Workflow Detail         | ENGINEER               |
+| `/runs/:id`                   | WorkflowRun Detail      | ENGINEER               |
+| `/epics`                      | Epic List               | LEAD                   |
+| `/epics/:id`                  | Epic Visualizer         | LEAD                   |
+| `/templates`                  | Template List           | ENGINEER               |
+| `/templates/:id`              | Template Editor / DAG   | ENGINEER               |
+| `/templates/:id/runs`         | Template Run History    | ENGINEER               |
+| `/templates/:id/analytics`    | Template Analytics      | ENGINEER               |
+| `/templates/:id/diff`         | Version Diff            | ENGINEER               |
+| `/analytics`                  | Platform Analytics      | ENGINEER               |
+| `/teams`                      | Teams List              | ENGINEER               |
+| `/teams/:id`                  | Team Detail             | ENGINEER (team member) |
+| `/lessons`                    | Lessons Browser         | ENGINEER               |
+| `/repositories`               | Repositories            | ENGINEER               |
+| `/users`                      | RBAC / Users            | ADMIN                  |
+| `/settings`                   | Settings                | ENGINEER               |
+| `/admin/model-config`         | Model Configuration     | ADMIN                  |
+| `/admin/access-tokens`        | Admin Access Tokens     | ADMIN                  |
+| `/admin/sessions`             | Admin Sessions          | ADMIN                  |
 
 ---
 
@@ -749,20 +759,21 @@ mobile to a hamburger menu.
 
 ### Package Dependencies (`packages/web/package.json`)
 
-| Category              | Library               | Version               | Purpose                                                                                                                         |
-| --------------------- | --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Framework**         | Next.js               | `^16.1.0`             | App Router, RSC, API route proxying, middleware for auth redirect                                                               |
-| **Runtime**           | React                 | `^19.2.0`             | UI rendering, Server Components, `use` hook for data streaming                                                                  |
-| **Styling**           | Tailwind CSS          | `^4.2.0`              | Utility-first CSS with CSS-first `@theme` configuration (v4)                                                                    |
-| **UI Primitives**     | Radix UI              | `^1.4.0`              | Accessible, unstyled headless components (unified `radix-ui` package)                                                           |
-| **Component Library** | shadcn/ui             | (copy-paste)          | Pre-styled Radix-based components — not an npm dependency; components are copied into `src/components/ui/` via `npx shadcn add` |
-| **Server State**      | TanStack Query        | `^5.90.0`             | Server-state caching, background refetch, optimistic updates for all Gateway API calls                                          |
-| **Client State**      | Zustand               | `^5.0.0`              | Lightweight client-side state (team selector, sidebar collapse, theme preference)                                               |
-| **URL State**         | nuqs                  | `^2.8.0`              | Type-safe URL search params (`?status=FAILED&teamId=xxx`) synced with React state                                               |
-| **Charts**            | Recharts              | `^3.7.0`              | Declarative SVG charts for dashboard status cards, workflow timelines, cost breakdowns                                          |
-| **Forms**             | React Hook Form + Zod | `^7.54.0` / `^3.24.0` | Form state management with Zod schema validation (shared with Gateway)                                                          |
-| **Icons**             | Lucide React          | `^0.475.0`            | Tree-shakable SVG icon set (default for shadcn/ui)                                                                              |
-| **Date Formatting**   | date-fns              | `^4.1.0`              | Lightweight date utilities ("2m ago", "Jan 15, 2026")                                                                           |
+| Category          | Library            | Version    | Purpose                                                                                           |
+| ----------------- | ------------------ | ---------- | ------------------------------------------------------------------------------------------------- |
+| **Framework**     | Next.js            | `16.2.6`   | App Router, RSC, API route proxying, middleware for auth redirect                                 |
+| **Runtime**       | React              | `19.2.6`   | UI rendering, `use` hook for params                                                               |
+| **Styling**       | Tailwind CSS       | `4.3.0`    | Utility-first CSS with CSS-first `@theme` configuration (v4)                                      |
+| **UI Primitives** | Custom components  | —          | Bespoke "Workshop Telemetry" design system under `src/components/ui/` (Button, Card, Input, Modal, Stat, StatusBadge, PageHeader) — no Radix/shadcn |
+| **Server State**  | TanStack Query     | `5.100.10` | Server-state caching, background refetch, optimistic updates for all Gateway API calls             |
+| **Client State**  | Zustand            | `5.0.13`   | Lightweight client-side state (auth store, sidebar, theme preference)                             |
+| **Auth**          | better-auth        | `1.6.11`   | Session cookie management; JWT bearer path still handled by the gateway's own auth plugin         |
+| **DAG Canvas**    | @xyflow/react      | `12.10.2`  | React Flow canvas for read-only workflow DAG viewer and drag-edit template editor                 |
+| **DAG Layout**    | dagre              | `0.8.5`    | Automatic layered graph layout for the DAG renderer (`src/lib/workflowLayout.ts`)                 |
+| **Charts**        | Recharts           | `3.8.1`    | SVG charts for analytics KPI tiles and per-step failure rates                                     |
+| **Validation**    | Zod                | `4.4.3`    | Schema validation shared with Gateway (spec schemas, form schemas)                                |
+| **CSS helpers**   | clsx + tailwind-merge | `2.1.1` / `3.6.0` | Conditional class names with Tailwind deduplication                              |
+| **Markdown**      | react-markdown + remark-gfm | `10.1.0` | Renders agent lesson content and PR body previews                               |
 
 ### Architecture Decisions
 

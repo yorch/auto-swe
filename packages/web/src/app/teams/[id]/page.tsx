@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { TeamModelConfigSection } from '@/components/modelConfig/TeamModelConfigSection';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
+import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
@@ -173,7 +174,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {canManage && <ShellAllowlistEditor teamId={id} />}
+      {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
+      {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
       {canManageTeamConfig && <TeamModelConfigSection teamId={id} />}
 
       <TeamFormModal
