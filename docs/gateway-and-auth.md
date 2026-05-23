@@ -467,7 +467,11 @@ The system uses a dual-layer permission model. **Platform role** (`User.role`) g
 | Onboard repository         | `POST /api/v1/repositories`           | —              | ADMIN in target team     |
 | Manage users/roles         | `POST /api/v1/users`                  | ADMIN          | —                        |
 | Create team                | `POST /api/v1/teams`                  | ADMIN          | —                        |
-| Manage team members        | `POST /api/v1/teams/:id/members`      | —              | ADMIN in team            |
+| Manage team members        | `POST/PATCH/DELETE /api/v1/teams/:id/members` | LEAD   | LEAD+ in team            |
+| View shell-image allowlist | `GET /api/v1/teams/:id/shell-image-allowlist` | —      | ENGINEER+ in team        |
+| Edit shell-image allowlist | `PUT /api/v1/teams/:id/shell-image-allowlist` | ADMIN  | ADMIN in team            |
+| View egress allowlist      | `GET /api/v1/teams/:id/egress-allowlist`      | —      | ENGINEER+ in team        |
+| Edit egress allowlist      | `PUT /api/v1/teams/:id/egress-allowlist`      | ADMIN  | ADMIN in team            |
 | Delete memory embeddings   | `DELETE /api/v1/lessons/:id`          | ADMIN          | —                        |
 | View agent lessons         | `GET /api/v1/lessons`                 | —              | Filtered to user's teams |
 
@@ -519,16 +523,45 @@ GET    /api/v1/teams/:id/members
 POST   /api/v1/teams/:id/members
   Body: { userId: string, role?: 'ADMIN' | 'LEAD' | 'ENGINEER' }
   Response: ApiResponse<TeamMembership>
-  RBAC: Team ADMIN
+  RBAC: Platform LEAD + Team LEAD+
 
 PATCH  /api/v1/teams/:id/members/:userId
   Body: { role: 'ADMIN' | 'LEAD' | 'ENGINEER' }
   Response: ApiResponse<TeamMembership>
-  RBAC: Team ADMIN
+  RBAC: Platform LEAD + Team LEAD+
 
 DELETE /api/v1/teams/:id/members/:userId
   Response: ApiResponse<{ removed: true }>
-  RBAC: Team ADMIN
+  RBAC: Platform LEAD + Team LEAD+
+```
+
+**Team Shell-Image Allowlist:**
+
+```
+GET    /api/v1/teams/:id/shell-image-allowlist
+  Response: ApiResponse<{ shellImageAllowlist: string[] }>
+  RBAC: Team ENGINEER+
+
+PUT    /api/v1/teams/:id/shell-image-allowlist
+  Body: { shellImageAllowlist: string[] }   (each entry validated against DOCKER_IMAGE_REF_RE)
+  Response: ApiResponse<{ shellImageAllowlist: string[] }>
+  RBAC: Platform ADMIN + Team ADMIN
+```
+
+**Team Egress Allowlist:**
+
+```
+GET    /api/v1/teams/:id/egress-allowlist
+  Response: ApiResponse<{ egressAllowlist: string[] }>
+  RBAC: Team ENGINEER+
+
+PUT    /api/v1/teams/:id/egress-allowlist
+  Body: { egressAllowlist: string[] }   (each entry validated against HOSTNAME_RE)
+  Response: ApiResponse<{ egressAllowlist: string[] }>
+  RBAC: Platform ADMIN + Team ADMIN
+  Note: Controls which hostnames shell steps with network:egress may reach via DNS.
+        Wildcard entries (e.g. *.github.com) are stored but informational only —
+        DNS filtering uses exact lookups. IP-direct connections are not blocked.
 ```
 
 **Work Requests:**
