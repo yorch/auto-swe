@@ -427,7 +427,7 @@ Phase 6 additions:
 ### Known follow-ups
 
 - **Egress filtering.** `network: 'egress'` opens the full default bridge; we don't filter by destination. If a team needs SBOM uploads to one specific host, that's an iptables/proxy-shim concern outside the spec runtime.
-- **Audit retention.** `WorkflowShellAudit` grows monotonically and the table has no TTL. A 90d-window cleanup job (or partition-by-month) is a candidate once production usage clarifies retention needs.
+- **Audit retention.** ~~Done~~ — `POST /api/v1/admin/shell-audit/prune?days=N` deletes rows older than N days (default 90). Exposed as a button on the `/admin/access-tokens` dashboard page alongside the token list.
 - **Shell-step memory.** Successful shell-step outcomes (especially ones that fix a gate) are the kind of thing `commitToMemory` could capture, but the activity doesn't yet hook into the memory pipeline. Same shape as the phase-3.5 resolver-memory follow-up.
 
 ---
@@ -531,7 +531,7 @@ All folded into the squashed init migration per the repo convention.
 
 - **Web UI for the new analytics surfaces.** The phase-8 gateway endpoints (`/workflow-templates/analytics` global rollup, `significanceHint` on per-template analytics) are wired but `/templates/[id]/analytics` only renders the per-template view today. A `/analytics` page and a "winner detected" badge on the template detail page are the natural next slice.
 - **CLI `run` subcommand.** Kicking off a work request from the terminal would close the loop with the Slack `/auto-swe run` modal. Same shape as the workflow-templates pickers — just JSON-Lined to stdout.
-- **PAT admin view.** Platform admins can't currently see other users' tokens. A future `/api/v1/admin/access-tokens` would let an admin prune compromised or stale tokens for a team without involving the owning user.
+- **PAT admin view.** ~~Done~~ — `GET /api/v1/admin/access-tokens` (list all users' tokens with owning user email) and `DELETE /api/v1/admin/access-tokens/:id` (revoke any token) shipped in PR #23. Web page at `/admin/access-tokens`; sidebar link visible to ADMIN role.
 - **Cancellation surface area.** Phase 8d wires cancellation into fan-out block-mode. A natural follow-up: workflow-level "cancel run" from the web UI uses the same plumbing to abort an in-flight run end-to-end.
 
 ### Files touched (recap)
@@ -597,7 +597,7 @@ All folded into the squashed init migration per the repo convention.
 
 ### Known follow-ups
 
-- **PAT admin view.** Platform admins still can't inspect other users' tokens. A `/api/v1/admin/access-tokens` route would let admins prune stale or compromised tokens without involving the owning user.
+- **PAT admin view.** ~~Done~~ — `GET /api/v1/admin/access-tokens` + `DELETE /api/v1/admin/access-tokens/:id` shipped in PR #23. See Phase 8 follow-up for full details.
 - **Inspector gaps.** ~~Done~~ — `onFail` policy (block/warn/retry) on step and shell nodes, `fanOut` advanced fields (`concurrency`, `onBranchFail`, `exports`, `pluck`), step/shell `inputs` bindings map, and shell options (`network`, `memory`, `cpus`) are all now editable in the inspector.
 - **A11y.** The DAG SVG nodes are focusable buttons but keyboard traversal between nodes (arrow keys) is not yet wired.
 - **Global analytics pagination.** The per-template table in `/analytics` lists every visible template without pagination. For organizations with many templates a client-side sort + filter bar would help; server-side pagination is overkill until the list exceeds ~50 rows.
