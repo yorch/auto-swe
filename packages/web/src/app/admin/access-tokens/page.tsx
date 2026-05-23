@@ -68,7 +68,9 @@ export default function AdminAccessTokensPage() {
 
   const now = Date.now();
   const rows = tokens ?? [];
-  const activeCount = rows.filter((t) => !t.revokedAt && !(t.expiresAt && new Date(t.expiresAt).getTime() < now)).length;
+  const activeCount = rows.filter(
+    (t) => !t.revokedAt && !(t.expiresAt && new Date(t.expiresAt).getTime() < now)
+  ).length;
 
   if (isLoading) {
     return (
@@ -93,9 +95,7 @@ export default function AdminAccessTokensPage() {
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader hint="newest first" number="01" title="All tokens" />
           <div className="flex items-center gap-3">
-            {pruneError && (
-              <span className="font-mono text-[11px] text-red-400">{pruneError}</span>
-            )}
+            {pruneError && <span className="font-mono text-[11px] text-red-400">{pruneError}</span>}
             {pruneResult && !pruneError && (
               <span className="font-mono text-[11px] text-paper-500">
                 pruned {pruneResult.deleted} shell-audit rows
@@ -149,9 +149,7 @@ export default function AdminAccessTokensPage() {
                     <tr className="border-b border-ink-600 last:border-b-0" key={t.id}>
                       <td className="px-4 py-3 text-sm text-paper-100">{t.user.email}</td>
                       <td className="px-4 py-3 text-sm text-paper-200">{t.name}</td>
-                      <td className="px-4 py-3 font-mono text-[10px] text-paper-400">
-                        {t.prefix}
-                      </td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-paper-400">{t.prefix}</td>
                       <td className="px-4 py-3 font-mono text-[11px] text-paper-400">
                         {formatRelativeTime(t.createdAt)}
                       </td>
