@@ -597,7 +597,7 @@ All folded into the squashed init migration per the repo convention.
 
 ### Known follow-ups
 
-- **PAT admin view.** ~~Done~~ — `GET/DELETE /api/v1/admin/access-tokens` shipped in PR #23. See Phase 8 follow-up for full details.
+- **PAT admin view.** ~~Done~~ — `GET /api/v1/admin/access-tokens` + `DELETE /api/v1/admin/access-tokens/:id` shipped in PR #23. See Phase 8 follow-up for full details.
 - **Inspector gaps.** ~~Done~~ — `onFail` policy (block/warn/retry) on step and shell nodes, `fanOut` advanced fields (`concurrency`, `onBranchFail`, `exports`, `pluck`), step/shell `inputs` bindings map, and shell options (`network`, `memory`, `cpus`) are all now editable in the inspector.
 - **A11y.** The DAG SVG nodes are focusable buttons but keyboard traversal between nodes (arrow keys) is not yet wired.
 - **Global analytics pagination.** The per-template table in `/analytics` lists every visible template without pagination. For organizations with many templates a client-side sort + filter bar would help; server-side pagination is overkill until the list exceeds ~50 rows.
