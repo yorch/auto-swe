@@ -71,11 +71,14 @@ function SortHeader({
   );
 }
 
+const PAGE_SIZE = 25;
+
 export default function GlobalAnalyticsPage() {
   const [windowDays, setWindowDays] = useState(30);
   const [filter, setFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(0);
   const { data, isLoading } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
@@ -84,6 +87,12 @@ export default function GlobalAnalyticsPage() {
       setSortKey(k);
       setSortDir('desc');
     }
+    setPage(0);
+  };
+
+  const handleFilter = (v: string) => {
+    setFilter(v);
+    setPage(0);
   };
 
   const rows = useMemo(() => {
@@ -111,6 +120,9 @@ export default function GlobalAnalyticsPage() {
       return sortDir === 'desc' ? bv - av : av - bv;
     });
   }, [data, filter, sortKey, sortDir]);
+
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+  const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -151,7 +163,7 @@ export default function GlobalAnalyticsPage() {
                 <CardTitle>Templates — ranked by traffic</CardTitle>
                 <input
                   className="text-sm border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] w-48"
-                  onChange={(e) => setFilter(e.target.value)}
+                  onChange={(e) => handleFilter(e.target.value)}
                   placeholder="Filter templates…"
                   type="text"
                   value={filter}
@@ -165,6 +177,7 @@ export default function GlobalAnalyticsPage() {
                   : `No runs in the last ${windowDays} days.`}
               </p>
             ) : (
+              <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -201,7 +214,7 @@ export default function GlobalAnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row) => {
+                    {pageRows.map((row) => {
                       const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
                       const srPct = row.successRate !== null ? row.successRate * 100 : null;
                       return (
@@ -247,6 +260,47 @@ export default function GlobalAnalyticsPage() {
                   </tbody>
                 </table>
               </div>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)] text-sm text-[var(--muted-foreground)]">
+                  <span>
+                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of{' '}
+                    {rows.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={page === 0}
+                      onClick={() => setPage((p) => p - 1)}
+                      type="button"
+                    >
+                      ←
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => (
+                      <button
+                        className={`px-2 py-1 rounded text-xs ${
+                          i === page
+                            ? 'bg-[var(--primary)] text-white'
+                            : 'hover:bg-[var(--muted)]'
+                        }`}
+                        key={i}
+                        onClick={() => setPage(i)}
+                        type="button"
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                    <button
+                      className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={page === totalPages - 1}
+                      onClick={() => setPage((p) => p + 1)}
+                      type="button"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </Card>
         </>
