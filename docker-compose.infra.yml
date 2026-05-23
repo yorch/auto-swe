@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:${PGVECTOR_TAG:-pg17}
+    image: pgvector/pgvector:${PGVECTOR_TAG:-pg18}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-engineering_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -8,7 +8,8 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      # pg18 stores data under /var/lib/postgresql/18/docker; mount the parent.
+      - ./data/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
@@ -17,12 +18,13 @@ services:
 
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:
-    image: postgres:${POSTGRES_TEMPORAL_TAG:-17-alpine}
+    image: postgres:${POSTGRES_TEMPORAL_TAG:-18-alpine}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     volumes:
-      - ./data/postgres-temporal:/var/lib/postgresql/data
+      # pg18 stores data under /var/lib/postgresql/18/docker; mount the parent.
+      - ./data/postgres-temporal:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
