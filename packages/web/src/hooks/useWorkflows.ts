@@ -544,6 +544,28 @@ export function useUpdateTeamShellAllowlist(teamId: string) {
   });
 }
 
+export function useTeamEgressAllowlist(teamId: string) {
+  return useQuery({
+    enabled: !!teamId,
+    queryFn: () =>
+      api
+        .get<{ data: { egressAllowlist: string[] } }>(`/api/v1/teams/${teamId}/egress-allowlist`)
+        .then((r) => r.data),
+    queryKey: ['team-egress-allowlist', teamId],
+  });
+}
+
+export function useUpdateTeamEgressAllowlist(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (egressAllowlist: string[]) =>
+      api.put<{ data: { egressAllowlist: string[] } }>(`/api/v1/teams/${teamId}/egress-allowlist`, {
+        egressAllowlist,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-egress-allowlist', teamId] }),
+  });
+}
+
 // ── Epics ────────────────────────────────────────────────────────────────
 
 export function useCreateEpic() {
