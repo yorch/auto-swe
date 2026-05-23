@@ -46,6 +46,7 @@ export default function AdminAccessTokensPage() {
   const revokeToken = useAdminRevokeToken();
   const pruneAudit = useAdminPruneShellAudit(90);
   const [pruneResult, setPruneResult] = useState<{ deleted: number } | null>(null);
+  const [pruneError, setPruneError] = useState<string | null>(null);
 
   const handleRevoke = (id: string, name: string) => {
     if (!window.confirm(`Revoke token "${name}"? This cannot be undone.`)) return;
@@ -55,16 +56,19 @@ export default function AdminAccessTokensPage() {
   const handlePrune = async () => {
     if (!window.confirm('Delete shell-audit rows older than 90 days? This cannot be undone.'))
       return;
+    setPruneError(null);
+    setPruneResult(null);
     try {
       const res = (await pruneAudit.mutateAsync()) as { data: { deleted: number } };
       setPruneResult(res.data);
-    } catch {
-      // error surfaces in pruneAudit.error
+    } catch (err) {
+      setPruneError(err instanceof Error ? err.message : 'Prune failed');
     }
   };
 
-  const now = new Date();
+  const now = Date.now();
   const rows = tokens ?? [];
+  const activeCount = rows.filter((t) => !t.revokedAt && !(t.expiresAt && new Date(t.expiresAt).getTime() < now)).length;
 
   if (isLoading) {
     return (
@@ -79,7 +83,7 @@ export default function AdminAccessTokensPage() {
     <div className="space-y-10">
       <div className="fade-up">
         <PageHeader
-          chapter={`§ Admin · Access Tokens · ${rows.length} issued`}
+          chapter={`§ Admin · Access Tokens · ${activeCount} active / ${rows.length} total`}
           subtitle="Platform admins can view and revoke any user's personal access token. Plaintexts are never stored — only the non-secret prefix is shown."
           title="Personal access tokens."
         />
@@ -89,7 +93,10 @@ export default function AdminAccessTokensPage() {
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader hint="newest first" number="01" title="All tokens" />
           <div className="flex items-center gap-3">
-            {pruneResult && (
+            {pruneError && (
+              <span className="font-mono text-[11px] text-red-400">{pruneError}</span>
+            )}
+            {pruneResult && !pruneError && (
               <span className="font-mono text-[11px] text-paper-500">
                 pruned {pruneResult.deleted} shell-audit rows
               </span>
@@ -104,6 +111,13 @@ export default function AdminAccessTokensPage() {
             </Button>
           </div>
         </div>
+
+        {revokeToken.isError && (
+          <p className="mb-3 font-mono text-[11px] text-red-400">
+            Revoke failed:{' '}
+            {revokeToken.error instanceof Error ? revokeToken.error.message : 'unknown error'}
+          </p>
+        )}
 
         <Card className="overflow-hidden p-0" variant="inset">
           {rows.length === 0 ? (
@@ -128,7 +142,7 @@ export default function AdminAccessTokensPage() {
                 {rows.map((t) => {
                   const status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' = t.revokedAt
                     ? 'REVOKED'
-                    : t.expiresAt && new Date(t.expiresAt) < now
+                    : t.expiresAt && new Date(t.expiresAt).getTime() < now
                       ? 'EXPIRED'
                       : 'ACTIVE';
                   return (
