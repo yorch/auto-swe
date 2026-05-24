@@ -5,7 +5,8 @@ import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { getExecErrorStdout } from '../lib/errors.js';
+import { getGitHubToken } from '../lib/githubAuth.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -19,7 +20,7 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
   const response = await fetch(logsUrl, {
     headers: {
       Accept: 'application/vnd.github.v3+json',
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      Authorization: `Bearer ${await getGitHubToken()}`,
     },
   });
 
@@ -52,7 +53,7 @@ export async function executeCIFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const githubToken = await getGitHubToken(repo.githubAppInstallationId);
 
   // Provision workspace and checkout the existing branch
   const workspace = createWorkspace(
@@ -158,7 +159,7 @@ export async function executeReviewFixImplementation(
   const repo = workflow.repository;
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const githubToken = await getGitHubToken(repo.githubAppInstallationId);
 
   const workspace = createWorkspace(
     repoUrl,

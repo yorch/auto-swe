@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
+import { getGitHubToken } from '../lib/githubAuth.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -15,7 +16,7 @@ export async function createOrUpdatePullRequest(
 
   const githubApiUrl = repo.githubApiUrl ?? process.env.GITHUB_API_URL ?? undefined;
   const octokit = new Octokit({
-    auth: process.env.GITHUB_TOKEN,
+    auth: await getGitHubToken(repo.githubAppInstallationId),
     ...(githubApiUrl && { baseUrl: githubApiUrl }),
   });
 

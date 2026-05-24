@@ -173,9 +173,10 @@ model Repository {
   defaultBranch    String           @default("main") @map("default_branch")
   language         String?          @map("language")
   description      String?          @map("description")
-  githubUrl        String?          @map("github_url")
-  githubApiUrl     String?          @map("github_api_url")
-  mcpServerRef     String?          @map("mcp_server_ref")
+  githubUrl                String?          @map("github_url")
+  githubApiUrl             String?          @map("github_api_url")
+  githubAppInstallationId  Int?             @map("github_app_installation_id")
+  mcpServerRef             String?          @map("mcp_server_ref")
   teamId           String           @map("team_id") @db.Uuid
   team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")

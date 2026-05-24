@@ -11,7 +11,8 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { getExecErrorStdout } from '../lib/errors.js';
+import { getGitHubToken } from '../lib/githubAuth.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -42,7 +43,7 @@ export async function executeImplementation(
   const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
   const featureBranch = `${branchPrefix}/${request.externalTicketId}`;
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const githubToken = await getGitHubToken(repo.githubAppInstallationId);
 
   const workspace = createWorkspace(
     repoUrl,

@@ -22,7 +22,8 @@ import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
+import { getExecErrorOutput } from '../lib/errors.js';
+import { getGitHubToken } from '../lib/githubAuth.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -284,7 +285,7 @@ async function provisionMergeWorkspace(
   const repo = await prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } });
   const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const githubToken = await getGitHubToken(repo.githubAppInstallationId);
 
   const workspace = createWorkspace(
     repoUrl,

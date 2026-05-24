@@ -24,7 +24,10 @@ vi.mock('../lib/errors.js', () => ({
       String(err)
   ),
   getExecErrorStdout: vi.fn(),
-  requireEnv: vi.fn().mockReturnValue('fake-token'),
+}));
+
+vi.mock('../lib/githubAuth.js', () => ({
+  getGitHubToken: vi.fn().mockResolvedValue('fake-token'),
 }));
 
 vi.mock('../lib/activityContext.js', () => ({
