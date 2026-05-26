@@ -8,6 +8,7 @@ services:
     build:
       context: .
       dockerfile: packages/gateway/Dockerfile
+    init: true
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
     depends_on:
@@ -30,6 +31,7 @@ services:
     build:
       context: .
       dockerfile: packages/worker/Dockerfile
+    init: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +70,7 @@ services:
     build:
       context: .
       dockerfile: packages/web/Dockerfile
+    init: true
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
