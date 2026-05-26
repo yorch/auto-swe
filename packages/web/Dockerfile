@@ -46,4 +46,7 @@ COPY --from=builder /app/packages/web/public ./packages/web/public
 
 EXPOSE 3000
 
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD ["node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+
 CMD ["node", "packages/web/server.js"]

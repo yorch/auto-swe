@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/api', '/reset-password'];
+const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health'];
 
 /**
  * Two cookies can signal an authenticated session to this proxy:
