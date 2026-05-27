@@ -8,3 +8,5 @@ RUN apk add --no-cache git
 RUN npm install -g typescript
 
 WORKDIR /workspace/target-repo
+
+USER node
