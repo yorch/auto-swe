@@ -38,8 +38,11 @@ RUN corepack enable && yarn workspaces focus @auto-swe/worker --production \
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine
-# Worker needs Docker CLI to manage workspace containers (DinD)
-RUN apk add --no-cache docker-cli
+# Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
+# the host Docker socket group at runtime with DOCKER_GID.
+RUN apk add --no-cache docker-cli && \
+    addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs
 WORKDIR /app
 
 # Production node_modules (hoisted root deps)
@@ -64,5 +67,5 @@ COPY --from=prod-deps /app/packages/worker/node_modules ./packages/worker/node_m
 # Root package.json (for workspace symlink resolution)
 COPY package.json ./
 
-USER node
+USER nodejs
 CMD ["node", "packages/worker/dist/index.js"]

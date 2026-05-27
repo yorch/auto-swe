@@ -1,0 +1,59 @@
+services:
+  gateway:
+    image: ${APP_IMAGE_GATEWAY:-ghcr.io/yorch/auto-swe/gateway:main}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    ports:
+      - ${GATEWAY_PORT:-8080}:8080
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}}
+      TEMPORAL_ADDRESS: temporal:7233
+      PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+
+  worker:
+    image: ${APP_IMAGE_WORKER:-ghcr.io/yorch/auto-swe/worker:main}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}}
+      TEMPORAL_ADDRESS: temporal:7233
+      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      ARTIFACT_S3_FORCE_PATH_STYLE: ${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    group_add:
+      - "${DOCKER_GID:-999}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  web:
+    image: ${APP_IMAGE_WEB:-ghcr.io/yorch/auto-swe/web:main}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    ports:
+      - ${WEB_PORT:-3000}:3000
+    env_file:
+      - .env
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://gateway:8080}
+    depends_on:
+      - gateway

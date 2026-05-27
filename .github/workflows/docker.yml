@@ -1,0 +1,166 @@
+name: Build and Publish Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  GHCR_PREFIX: ghcr.io/${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        run: |
+          MATRIX=$(echo '{"include":[
+            {"component":"gateway","dockerfile":"packages/gateway/Dockerfile"},
+            {"component":"web","dockerfile":"packages/web/Dockerfile"},
+            {"component":"worker","dockerfile":"packages/worker/Dockerfile"}
+          ]}' | tr -d '\n')
+          echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: setup
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.component }} (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  publish:
+    needs: setup
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to external registry
+        if: vars.EXTERNAL_REGISTRY_URL != ''
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.EXTERNAL_REGISTRY_URL }}
+          username: ${{ secrets.EXTERNAL_REGISTRY_USERNAME }}
+          password: ${{ secrets.EXTERNAL_REGISTRY_PASSWORD }}
+
+      - name: Build image list
+        id: images
+        env:
+          GHCR_PREFIX: ${{ env.GHCR_PREFIX }}
+          COMPONENT: ${{ matrix.component }}
+          EXTERNAL_REGISTRY_URL: ${{ vars.EXTERNAL_REGISTRY_URL }}
+          EXTERNAL_REGISTRY_IMAGE: ${{ vars.EXTERNAL_REGISTRY_IMAGE }}
+        run: |
+          IMAGES="${GHCR_PREFIX}/${COMPONENT}"
+          if [[ -n "${EXTERNAL_REGISTRY_URL}" ]]; then
+            BASE="${EXTERNAL_REGISTRY_IMAGE:-${GITHUB_REPOSITORY##*/}}"
+            IMAGES="${IMAGES}"$'\n'"${EXTERNAL_REGISTRY_URL}/${BASE}-${COMPONENT}"
+          fi
+          {
+            echo 'list<<EOF'
+            echo "${IMAGES}"
+            echo 'EOF'
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Get build info
+        id: build-info
+        run: |
+          echo "branch=${GITHUB_REF_NAME}"                                                >> "${GITHUB_OUTPUT}"
+          echo "build_number=${{ github.run_number }}"                                    >> "${GITHUB_OUTPUT}"
+          echo "commit=$(git rev-parse --short HEAD)"                                     >> "${GITHUB_OUTPUT}"
+          echo "tag=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}" >> "${GITHUB_OUTPUT}"
+          echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"                                      >> "${GITHUB_OUTPUT}"
+          echo "timestamp=$(git show -s --date=format:'%Y%m%d%H%M' --format=%cd)"         >> "${GITHUB_OUTPUT}"
+          echo "version=$(git describe --tags --always)"                                  >> "${GITHUB_OUTPUT}"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.images.outputs.list }}
+          tags: |
+            type=raw,value=${{ steps.build-info.outputs.timestamp }}-${{ steps.build-info.outputs.commit }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push ${{ matrix.component }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.build-info.outputs.version }}
+            BUILD_NUMBER=${{ steps.build-info.outputs.build_number }}
+            BUILD_TIME=${{ steps.build-info.outputs.time }}
+            COMMIT_HASH=${{ steps.build-info.outputs.commit }}
+            GIT_BRANCH=${{ steps.build-info.outputs.branch }}
+            GIT_TAG=${{ steps.build-info.outputs.tag }}
+            GIT_TIMESTAMP=${{ steps.build-info.outputs.timestamp }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}

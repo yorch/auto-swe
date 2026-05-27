@@ -1,0 +1,32 @@
+services:
+  gateway:
+    ports: !reset []
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.rule=Host(`${DOMAIN_API}`)"
+      - "traefik.http.routers.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.tls=true"
+      - "traefik.http.routers.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.tls.certResolver=webcert"
+      - "traefik.http.routers.${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}.service=${TRAEFIK_NAME_GATEWAY:-auto-swe-gateway}"
+
+  web:
+    ports: !reset []
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.${TRAEFIK_NAME_WEB:-auto-swe}.loadbalancer.server.port=3000"
+      - "traefik.http.routers.${TRAEFIK_NAME_WEB:-auto-swe}.rule=Host(`${DOMAIN_APP}`)"
+      - "traefik.http.routers.${TRAEFIK_NAME_WEB:-auto-swe}.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_NAME_WEB:-auto-swe}.tls=true"
+      - "traefik.http.routers.${TRAEFIK_NAME_WEB:-auto-swe}.tls.certResolver=webcert"
+      - "traefik.http.routers.${TRAEFIK_NAME_WEB:-auto-swe}.service=${TRAEFIK_NAME_WEB:-auto-swe}"
+
+networks:
+  traefik:
+    external: true

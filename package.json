@@ -17,11 +17,6 @@
     "db:seed": "yarn workspace @auto-swe/shared prisma db seed && yarn db:seed:auth",
     "db:seed:auth": "yarn workspace @auto-swe/gateway exec tsx src/scripts/provisionAuthAdmin.ts",
     "db:studio": "yarn workspace @auto-swe/shared prisma studio",
-    "docker": "docker compose -f docker-compose.infra.yml -f docker-compose.yml",
-    "docker:up": "yarn docker up -d",
-    "docker:down": "yarn docker down",
-    "docker:logs": "yarn docker logs -f",
-    "docker:build": "yarn docker build",
     "docker:infra": "docker compose -f docker-compose.infra.yml",
     "docker:infra:ps": "run docker:infra ps",
     "docker:infra:up": "run docker:infra up -d",
@@ -30,7 +25,12 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
-    "format": "biome format . --write"
+    "format": "biome format . --write",
+    "docker:app": "docker compose -f docker-compose.app.yml -f docker-compose.infra.yml",
+    "docker:app:up": "run docker:app up -d",
+    "docker:app:down": "run docker:app down",
+    "docker:app:logs": "run docker:app logs -f",
+    "docker:app:build": "run docker:app build"
   },
   "engines": {
     "node": ">=24.0.0"
