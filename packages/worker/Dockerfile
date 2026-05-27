@@ -43,6 +43,22 @@ FROM node:24-alpine
 RUN apk add --no-cache docker-cli
 WORKDIR /app
 
+ARG APP_VERSION=unknown
+ARG COMMIT_HASH=unknown
+ARG BUILD_TIME=unknown
+ARG GIT_BRANCH=unknown
+ARG GIT_TAG=unknown
+ARG GIT_TIMESTAMP=unknown
+ARG BUILD_NUMBER=unknown
+
+ENV APP_VERSION=${APP_VERSION} \
+    COMMIT_HASH=${COMMIT_HASH} \
+    BUILD_TIME=${BUILD_TIME} \
+    GIT_BRANCH=${GIT_BRANCH} \
+    GIT_TAG=${GIT_TAG} \
+    GIT_TIMESTAMP=${GIT_TIMESTAMP} \
+    BUILD_NUMBER=${BUILD_NUMBER}
+
 # Production node_modules (hoisted root deps)
 COPY --from=prod-deps /app/node_modules ./node_modules
 
@@ -65,5 +81,6 @@ COPY --from=prod-deps /app/packages/worker/node_modules ./packages/worker/node_m
 # Root package.json (for workspace symlink resolution)
 COPY package.json ./
 
+RUN chown -R node:node /app
 USER node
 CMD ["node", "packages/worker/dist/index.js"]

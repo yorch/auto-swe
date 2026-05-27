@@ -39,6 +39,22 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+ARG APP_VERSION=unknown
+ARG COMMIT_HASH=unknown
+ARG BUILD_TIME=unknown
+ARG GIT_BRANCH=unknown
+ARG GIT_TAG=unknown
+ARG GIT_TIMESTAMP=unknown
+ARG BUILD_NUMBER=unknown
+
+ENV APP_VERSION=${APP_VERSION} \
+    COMMIT_HASH=${COMMIT_HASH} \
+    BUILD_TIME=${BUILD_TIME} \
+    GIT_BRANCH=${GIT_BRANCH} \
+    GIT_TAG=${GIT_TAG} \
+    GIT_TIMESTAMP=${GIT_TIMESTAMP} \
+    BUILD_NUMBER=${BUILD_NUMBER}
+
 # Next.js standalone output includes everything needed
 COPY --from=builder /app/packages/web/.next/standalone ./
 COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static
@@ -49,5 +65,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD ["node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
 
+RUN chown -R node:node /app
 USER node
 CMD ["node", "packages/web/server.js"]
