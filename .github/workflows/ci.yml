@@ -6,78 +6,45 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
-  # Prisma 7 eagerly resolves env('DATABASE_URL') in prisma.config.ts when
-  # `prisma generate` loads. Generation never connects, so a placeholder is
-  # sufficient; jobs needing a real DB must override.
   DATABASE_URL: postgresql://ci:ci@invalid.local:5432/ci
 
 jobs:
-  lint:
-    name: Lint
+  ci:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: '.node-version'
-          cache: yarn
-      - run: yarn install --immutable
-      - run: yarn lint
+    timeout-minutes: 15
 
-  typecheck:
-    name: Typecheck
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: '.node-version'
-          cache: yarn
-      - run: yarn install --immutable
-      - run: yarn db:generate
-      - run: yarn typecheck
+      - name: Checkout
+        uses: actions/checkout@v6
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version-file: '.node-version'
           cache: yarn
-      - run: yarn install --immutable
-      - run: yarn db:generate
-      # Verbose reporter prints "✓ / ✗ <test name>" lines for every case so
-      # the failing test is identifiable from the Actions log. JUnit reporter
-      # writes machine-readable results that the artifact upload below makes
-      # available even when the step's stdout is truncated.
-      - run: yarn vitest run --reporter=verbose --reporter=junit --outputFile.junit=./test-results/junit.xml
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results
-          path: test-results/junit.xml
-          if-no-files-found: warn
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: '.node-version'
-          cache: yarn
-      - run: yarn install --immutable
-      - run: yarn db:generate
-      - run: yarn build
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      - name: Type check
+        run: yarn typecheck
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Test
+        run: yarn test
+
+      - name: Build
+        run: yarn build
