@@ -26,6 +26,7 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       - PORT=8080
+      - HOSTNAME=0.0.0.0
 
   worker:
     build:
@@ -79,3 +80,5 @@ services:
       - gateway
     environment:
       - NEXT_PUBLIC_API_URL=http://gateway:8080
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
