@@ -40,8 +40,6 @@ RUN corepack enable && yarn workspaces focus @auto-swe/gateway --production \
 FROM node:24-alpine
 WORKDIR /app
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 -G nodejs
-
 # Production node_modules (hoisted root deps)
 COPY --from=prod-deps /app/node_modules ./node_modules
 
@@ -63,8 +61,6 @@ COPY --from=prod-deps /app/packages/gateway/node_modules ./packages/gateway/node
 
 # Root package.json (for workspace symlink resolution)
 COPY package.json ./
-
-USER nodejs
 
 EXPOSE 8080
 

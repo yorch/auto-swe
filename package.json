@@ -21,16 +21,16 @@
     "docker:infra:ps": "run docker:infra ps",
     "docker:infra:up": "run docker:infra up -d",
     "docker:infra:down": "run docker:infra down",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "lint": "biome check .",
-    "lint:fix": "biome check . --write",
-    "format": "biome format . --write",
     "docker:app": "docker compose -f docker-compose.app.yml -f docker-compose.infra.yml",
     "docker:app:up": "run docker:app up -d",
     "docker:app:down": "run docker:app down",
     "docker:app:logs": "run docker:app logs -f",
-    "docker:app:build": "run docker:app build"
+    "docker:app:build": "run docker:app build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "format": "biome format . --write"
   },
   "engines": {
     "node": ">=24.0.0"

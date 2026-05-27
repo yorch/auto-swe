@@ -37,16 +37,12 @@ FROM node:24-alpine AS runtime
 
 WORKDIR /app
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 -G nodejs
-
 ENV NODE_ENV=production
 
 # Next.js standalone output includes everything needed
 COPY --from=builder /app/packages/web/.next/standalone ./
 COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static
 COPY --from=builder /app/packages/web/public ./packages/web/public
-
-USER nodejs
 
 EXPOSE 3000
 
