@@ -66,7 +66,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 Top-level files that matter:
 
 - `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + setup containers
-- `docker-compose.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
+- `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
 - `vitest.config.ts` — root test runner; subpath aliases for `@auto-swe/shared/*` use array form (Vite prefix matching is order-sensitive)
@@ -130,10 +130,10 @@ yarn format               # Format only (biome format --write)
 # Docker (infra = postgres + postgres-temporal + temporal (server + admin + ui); app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
-yarn docker:up            # Start everything (infra + app)
-yarn docker:down          # Stop everything
-yarn docker:logs          # Tail logs (infra + app)
-yarn docker:build         # Rebuild app images
+yarn docker:app:up            # Start everything (infra + app)
+yarn docker:app:down          # Stop everything
+yarn docker:app:logs          # Tail logs (infra + app)
+yarn docker:app:build         # Rebuild app images
 ```
 
 ### Git Workflow

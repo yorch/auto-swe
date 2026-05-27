@@ -1,7 +1,7 @@
 # Application stack — NOT runnable standalone.
 # Services here reference infra (postgres, temporal) defined in docker-compose.infra.yml.
-# Always overlay both files: `docker compose -f docker-compose.infra.yml -f docker-compose.yml ...`
-# Use the `yarn docker:up` / `docker:down` / `docker:logs` / `docker:build` scripts for the
+# Always overlay both files: `docker compose -f docker-compose.app.yml -f docker-compose.infra.yml ...`
+# Use the `yarn docker:app:up` / `docker:app:down` / `docker:app:logs` / `docker:app:build` scripts for the
 # full stack, or `yarn docker:infra:up` for infra only.
 services:
   gateway:
@@ -26,6 +26,7 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       - PORT=8080
+      - HOSTNAME=0.0.0.0
 
   worker:
     build:
@@ -54,6 +55,8 @@ services:
       - ARTIFACT_S3_PREFIX=${ARTIFACT_S3_PREFIX:-workflow-artifacts}
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    group_add:
+      - "${DOCKER_GID:-999}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DinD access
 
@@ -77,3 +80,5 @@ services:
       - gateway
     environment:
       - NEXT_PUBLIC_API_URL=http://gateway:8080
+      - PORT=3000
+      - HOSTNAME=0.0.0.0

@@ -38,7 +38,8 @@ RUN corepack enable && yarn workspaces focus @auto-swe/worker --production \
 
 # ── Stage 3: Runtime ──
 FROM node:24-alpine
-# Worker needs Docker CLI to manage workspace containers (DinD)
+# Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
+# the host Docker socket group at runtime with DOCKER_GID.
 RUN apk add --no-cache docker-cli
 WORKDIR /app
 
