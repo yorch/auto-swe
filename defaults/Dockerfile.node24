@@ -9,4 +9,8 @@ RUN npm install -g typescript
 
 WORKDIR /workspace/target-repo
 
+# Hand ownership of the workspace tree to `node` so the executor can write files
+# at runtime (clone, build artifacts, etc.) without hitting EACCES.
+RUN mkdir -p /workspace && chown -R node:node /workspace
+
 USER node
