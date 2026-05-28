@@ -1,4 +1,3 @@
-
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -16,6 +15,15 @@ CREATE TYPE "WorkflowStepStatus" AS ENUM ('PENDING', 'RUNNING', 'PASSED', 'FAILE
 
 -- CreateEnum
 CREATE TYPE "WorkflowTemplateStatus" AS ENUM ('DRAFT', 'ACTIVE', 'ARCHIVED');
+
+-- CreateEnum
+CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE');
+
+-- CreateEnum
+CREATE TYPE "AgentRole" AS ENUM ('IMPLEMENTER', 'REVIEWER', 'PLANNER', 'SECURITY_REVIEW', 'VALIDATE_CONTEXT', 'COMMIT_TO_MEMORY');
+
+-- CreateEnum
+CREATE TYPE "ConfigAuditAction" AS ENUM ('CREATE', 'UPDATE', 'DELETE');
 
 -- CreateTable
 CREATE TABLE "active_workflows" (
@@ -130,7 +138,7 @@ CREATE TABLE "teams" (
     "description" TEXT NOT NULL DEFAULT '',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "shell_image_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "egress_allowlist" TEXT[] NOT NULL DEFAULT '{}',
+    "egress_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "slack_notify_channel" TEXT,
     "slack_notify_success" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -307,6 +315,67 @@ CREATE TABLE "workflow_template_versions" (
 );
 
 -- CreateTable
+CREATE TABLE "model_role_configs" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "role" "AgentRole" NOT NULL,
+    "scope" "ConfigScope" NOT NULL,
+    "team_id" UUID,
+    "workflow_template_id" UUID,
+    "model_spec" TEXT NOT NULL,
+    "credential_id" UUID,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "model_role_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "provider_credentials" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "provider" TEXT NOT NULL,
+    "scope" "ConfigScope" NOT NULL,
+    "team_id" UUID,
+    "api_base" TEXT,
+    "api_key_ciphertext" BYTEA NOT NULL,
+    "api_key_nonce" BYTEA NOT NULL,
+    "api_key_auth_tag" BYTEA NOT NULL,
+    "key_version" INTEGER NOT NULL DEFAULT 1,
+    "last_four" TEXT NOT NULL,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "provider_credentials_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "embedding_configs" (
+    "id" TEXT NOT NULL DEFAULT 'default',
+    "model_spec" TEXT NOT NULL,
+    "credential_id" UUID,
+    "updated_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "embedding_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "config_audit_log" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "entity_type" TEXT NOT NULL,
+    "entity_id" UUID NOT NULL,
+    "action" "ConfigAuditAction" NOT NULL,
+    "actor_id" UUID,
+    "before_json" JSONB,
+    "after_json" JSONB,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "config_audit_log_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "workflow_shell_audit" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "template_version_id" UUID NOT NULL,
@@ -315,7 +384,7 @@ CREATE TABLE "workflow_shell_audit" (
     "image" TEXT NOT NULL,
     "command" TEXT NOT NULL,
     "network" TEXT NOT NULL DEFAULT 'none',
-    "egress_allowlist_snapshot" TEXT[] NOT NULL DEFAULT '{}',
+    "egress_allowlist_snapshot" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "author_user_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -407,6 +476,21 @@ CREATE UNIQUE INDEX "workflow_templates_team_id_name_key" ON "workflow_templates
 CREATE UNIQUE INDEX "workflow_template_versions_template_id_version_key" ON "workflow_template_versions"("template_id", "version");
 
 -- CreateIndex
+CREATE INDEX "model_role_configs_scope_team_id_idx" ON "model_role_configs"("scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "model_role_configs_scope_workflow_template_id_idx" ON "model_role_configs"("scope", "workflow_template_id");
+
+-- CreateIndex
+CREATE INDEX "provider_credentials_provider_scope_team_id_idx" ON "provider_credentials"("provider", "scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"("entity_type", "entity_id");
+
+-- CreateIndex
+CREATE INDEX "config_audit_log_actor_id_idx" ON "config_audit_log"("actor_id");
+
+-- CreateIndex
 CREATE INDEX "workflow_shell_audit_template_version_id_idx" ON "workflow_shell_audit"("template_version_id");
 
 -- CreateIndex
@@ -473,8 +557,22 @@ ALTER TABLE "workflow_templates" ADD CONSTRAINT "workflow_templates_team_id_fkey
 ALTER TABLE "workflow_template_versions" ADD CONSTRAINT "workflow_template_versions_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "embedding_configs" ADD CONSTRAINT "embedding_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template_version_id_fkey" FOREIGN KEY ("template_version_id") REFERENCES "workflow_template_versions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
