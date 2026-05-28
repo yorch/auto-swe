@@ -1,0 +1,33 @@
+.git
+.gitignore
+
+# Node (yarn-4 monorepo: gateway / web / worker / defaults)
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Tooling / OS
+.DS_Store
+*.log
+coverage
+.idea
+.vscode
+
+# Docker / docs
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md
+docs
