@@ -56,16 +56,32 @@ ENV APP_VERSION=${APP_VERSION} \
     GIT_TIMESTAMP=${GIT_TIMESTAMP} \
     BUILD_NUMBER=${BUILD_NUMBER}
 
-# Production node_modules (hoisted root deps)
-COPY --from=prod-deps /app/node_modules ./node_modules
+# Full builder node_modules. Prisma 7's CLI has internal deps (@prisma/config,
+# effect, etc.) that the prod-deps focus excludes — a targeted COPY of just
+# node_modules/prisma fails with "Cannot find module 'effect'" at runtime. We
+# overlay the slimmer prod-deps tree with the full builder tree, trading
+# image size for a working `migrate deploy` step. This is the workspace
+# canonical pattern (mirrors nextjs-mvp-super-template, cierre-app, etc.).
+COPY --from=builder /app/node_modules ./node_modules
 
-# Prisma generated client (lives inside node_modules)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Prisma generated client. The `prisma-client` provider in
+# packages/shared/src/prisma/schema.prisma outputs to a CUSTOM path
+# (`output = "../generated/prisma"` → resolves to packages/shared/src/generated/prisma)
+# — NOT `node_modules/.prisma` (which is where the older `prisma-client-js`
+# provider puts it). The shared package's compiled dist imports from
+# `./src/generated/prisma`, so that path must exist at runtime.
+COPY --from=builder /app/packages/shared/src/generated ./packages/shared/src/generated
 
 # Workspace package.json files (for symlink resolution)
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/
 COPY --from=builder /app/packages/gateway/package.json ./packages/gateway/
+
+# Prisma schema + migrations + config (lives in @auto-swe/shared); required at
+# runtime for `prisma migrate deploy` from docker-entrypoint.sh. The config
+# uses relative paths (`src/prisma/schema.prisma`, `src/prisma/migrations`),
+# so the entrypoint cd's into packages/shared before running prisma.
+COPY --from=builder /app/packages/shared/prisma.config.ts ./packages/shared/
+COPY --from=builder /app/packages/shared/src/prisma ./packages/shared/src/prisma
 
 # Built output
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
@@ -78,6 +94,10 @@ COPY --from=prod-deps /app/packages/gateway/node_modules ./packages/gateway/node
 # Root package.json (for workspace symlink resolution)
 COPY package.json ./
 
+# Migrate-on-boot entrypoint
+COPY packages/gateway/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -85,4 +105,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 RUN chown -R node:node /app
 USER node
+
+# Runs `prisma migrate deploy` (idempotent), then the command below.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
 CMD ["node", "packages/gateway/dist/index.js"]
