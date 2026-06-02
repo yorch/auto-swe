@@ -66,6 +66,17 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // slackId must be unique — a collision would make the Slack webhook/slash
+      // handlers (which resolve users by slackId) ambiguous.
+      if (slackId) {
+        const slackTaken = await fastify.prisma.user.findFirst({ where: { slackId } });
+        if (slackTaken) {
+          return reply.status(409).send({
+            error: { code: 'SLACK_ID_TAKEN', message: 'This Slack ID is linked to another user' },
+          });
+        }
+      }
+
       const plainPassword = password ?? crypto.randomBytes(16).toString('base64url');
       const passwordHash = await bcrypt.hash(plainPassword, 12);
 
@@ -180,6 +191,18 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'USER_NOT_FOUND', message: 'User not found' },
         });
+      }
+
+      // Guard slackId uniqueness on reassignment (see POST handler note).
+      if (request.body.slackId) {
+        const slackTaken = await fastify.prisma.user.findFirst({
+          where: { id: { not: request.params.id }, slackId: request.body.slackId },
+        });
+        if (slackTaken) {
+          return reply.status(409).send({
+            error: { code: 'SLACK_ID_TAKEN', message: 'This Slack ID is linked to another user' },
+          });
+        }
       }
 
       const updated = await fastify.prisma.user.update({

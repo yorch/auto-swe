@@ -42,13 +42,22 @@ async function buildApp() {
   await app.register(cookie);
 
   const mockPrisma = {
-    $transaction: vi.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    // Support both forms of Prisma's $transaction: the array form (Promise.all)
+    // and the interactive callback form (refresh rotation uses the latter, with
+    // a conditional updateMany as the concurrency gate).
+    $transaction: vi
+      .fn()
+      .mockImplementation((arg: Promise<unknown>[] | ((tx: unknown) => unknown)) =>
+        typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg)
+      ),
     refreshToken: {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
-      updateMany: vi.fn().mockResolvedValue({}),
+      // count: 1 → the rotation gate sees the token as freshly revoked (won the
+      // race) and proceeds to mint the replacement.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     user: {
       findUnique: vi.fn(),

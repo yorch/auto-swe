@@ -1,7 +1,14 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+
+const LessonSearchQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  q: z.string().min(1),
+  repoId: z.string().uuid(),
+});
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -48,15 +55,10 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     '/search',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: LessonSearchQuery },
     },
     async (request, reply) => {
-      const { q, repoId, limit } = request.query as { q?: string; repoId?: string; limit?: string };
-
-      if (!q || !repoId) {
-        return reply.status(400).send({
-          error: { code: 'MISSING_PARAMS', message: 'q and repoId query parameters are required' },
-        });
-      }
+      const { q, repoId, limit } = request.query;
 
       // Non-admins must be a member of the team that owns the repo they're searching
       const user = requireUser(request);
@@ -86,7 +88,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           lessonSummary: true,
           rationale: true,
         },
-        take: Math.min(Math.max(parseInt(limit ?? '10', 10) || 10, 1), 100),
+        take: limit,
         where: {
           OR: [
             { lessonSummary: { contains: q, mode: 'insensitive' } },

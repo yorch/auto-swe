@@ -1,8 +1,8 @@
 import type { Prisma } from '@auto-swe/shared';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
   defaultBranch: z.string().default('main'),
@@ -30,6 +30,25 @@ const UpdateRepoSchema = z.object({
   mcpServerRef: z.string().nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
+
+/**
+ * Whether a user may manage repositories owned by `teamId`. Platform ADMINs can
+ * manage any team's repos; everyone else must be a LEAD (or higher) member of
+ * that specific team. The route-level `requiredRole: 'LEAD'` gate only checks
+ * the *platform* role, so this team-scoped check is what stops a LEAD on team A
+ * from onboarding/reassigning repos into team B.
+ */
+async function canManageTeamRepos(
+  prisma: FastifyInstance['prisma'],
+  user: { sub: string; role: string },
+  teamId: string
+): Promise<boolean> {
+  if (user.role === 'ADMIN') return true;
+  const membership = await prisma.teamMembership.findUnique({
+    where: { userId_teamId: { teamId, userId: user.sub } },
+  });
+  return !!membership && hasRole(membership.role, 'LEAD');
+}
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -70,6 +89,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
+      const user = requireUser(request);
       const { organizationName, repoName, teamId, ...rest } = request.body;
 
       // Verify team exists
@@ -77,6 +97,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!team?.isActive) {
         return reply.status(404).send({
           error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' },
+        });
+      }
+
+      // Non-admins may only onboard repos into teams they lead.
+      if (!(await canManageTeamRepos(fastify.prisma, user, teamId))) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'Requires LEAD role in the target team' },
         });
       }
 
@@ -107,6 +134,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
+      const user = requireUser(request);
       const repo = await fastify.prisma.repository.findUnique({
         where: { id: request.params.id },
       });
@@ -114,6 +142,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
         });
+      }
+
+      // Non-admins must lead the repo's current team to edit it...
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
+        });
+      }
+      // ...and, when reassigning to a different team, also lead the destination.
+      const newTeamId = request.body.teamId;
+      if (newTeamId && newTeamId !== repo.teamId) {
+        const destTeam = await fastify.prisma.team.findUnique({ where: { id: newTeamId } });
+        if (!destTeam?.isActive) {
+          return reply.status(404).send({
+            error: { code: 'TEAM_NOT_FOUND', message: 'Target team not found or inactive' },
+          });
+        }
+        if (!(await canManageTeamRepos(fastify.prisma, user, newTeamId))) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Requires LEAD role in the target team' },
+          });
+        }
       }
 
       const updated = await fastify.prisma.repository.update({

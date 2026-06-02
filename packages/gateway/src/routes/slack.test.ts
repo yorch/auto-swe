@@ -40,7 +40,9 @@ function buildApp(state: FakeState): FastifyInstance {
 
   app.decorate('auth', {
     signAccessToken: () => 'fake-jwt',
+    signOAuthState: () => 'fake-state',
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: 'u1' }),
+    verifyOAuthState: () => ({ sub: 'u1' }),
   } as unknown as never);
   app.decorate('temporal', {
     cancelWorkflow: async () => undefined,
