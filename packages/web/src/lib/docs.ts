@@ -33,10 +33,6 @@ const TITLE_OVERRIDES: Record<string, { title: string; description: string }> = 
     description: 'Core architecture, component design, data flow',
     title: 'MVP Architecture',
   },
-  'mvp-implementation': {
-    description: 'Build guide with project structure and build order',
-    title: 'MVP Implementation',
-  },
   README: { description: 'Index of design documents', title: 'Overview' },
   wireframes: {
     description: 'Web dashboard wireframes and page layouts',
