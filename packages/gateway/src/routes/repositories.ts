@@ -34,9 +34,11 @@ const UpdateRepoSchema = z.object({
 /**
  * Whether a user may manage repositories owned by `teamId`. Platform ADMINs can
  * manage any team's repos; everyone else must be a LEAD (or higher) member of
- * that specific team. The route-level `requiredRole: 'LEAD'` gate only checks
- * the *platform* role, so this team-scoped check is what stops a LEAD on team A
- * from onboarding/reassigning repos into team B.
+ * that specific team AND the team must be active. The route-level
+ * `requiredRole: 'LEAD'` gate only checks the *platform* role, so this
+ * team-scoped check is what stops a LEAD on team A from onboarding/reassigning
+ * repos into team B — and the isActive check keeps it consistent with the
+ * create path (a LEAD of a deactivated team can't keep editing its repos).
  */
 async function canManageTeamRepos(
   prisma: FastifyInstance['prisma'],
@@ -45,9 +47,10 @@ async function canManageTeamRepos(
 ): Promise<boolean> {
   if (user.role === 'ADMIN') return true;
   const membership = await prisma.teamMembership.findUnique({
+    include: { team: { select: { isActive: true } } },
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  return !!membership && hasRole(membership.role, 'LEAD');
+  return !!membership && membership.team.isActive && hasRole(membership.role, 'LEAD');
 }
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {

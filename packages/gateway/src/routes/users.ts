@@ -21,6 +21,22 @@ const UpdateUserSchema = z.object({
   slackId: z.string().nullable().optional(),
 });
 
+/**
+ * If `err` is a Prisma unique-constraint violation (P2002), return the joined
+ * target column(s); otherwise null. Used to map a race that slips past the
+ * application-level pre-check into the right 409 rather than a generic 500 —
+ * the DB `@unique` constraints on email + slackId are the real guarantee.
+ */
+function uniqueViolationTarget(err: unknown): string | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const e = err as { code?: string; meta?: { target?: unknown } };
+  if (e.code !== 'P2002') return null;
+  const t = e.meta?.target;
+  if (Array.isArray(t)) return t.join(',');
+  if (typeof t === 'string') return t;
+  return '';
+}
+
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -80,17 +96,39 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       const plainPassword = password ?? crypto.randomBytes(16).toString('base64url');
       const passwordHash = await bcrypt.hash(plainPassword, 12);
 
-      const user = await fastify.prisma.user.create({
-        data: { email, passwordHash, role, slackId },
-        select: {
-          createdAt: true,
-          email: true,
-          id: true,
-          isActive: true,
-          role: true,
-          slackId: true,
-        },
-      });
+      let user: {
+        createdAt: Date;
+        email: string;
+        id: string;
+        isActive: boolean;
+        role: string;
+        slackId: string | null;
+      };
+      try {
+        user = await fastify.prisma.user.create({
+          data: { email, passwordHash, role, slackId },
+          select: {
+            createdAt: true,
+            email: true,
+            id: true,
+            isActive: true,
+            role: true,
+            slackId: true,
+          },
+        });
+      } catch (err) {
+        // The pre-checks above cover the common case; this maps a concurrent
+        // collision (caught by the DB @unique constraints) to the right 409.
+        const target = uniqueViolationTarget(err);
+        if (target !== null) {
+          const code = target.includes('slack') ? 'SLACK_ID_TAKEN' : 'USER_EXISTS';
+          const message = target.includes('slack')
+            ? 'This Slack ID is linked to another user'
+            : 'User with this email already exists';
+          return reply.status(409).send({ error: { code, message } });
+        }
+        throw err;
+      }
 
       return reply.status(201).send({
         data: {
@@ -205,13 +243,24 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const updated = await fastify.prisma.user.update({
-        data: request.body,
-        select: { email: true, id: true, isActive: true, role: true, slackId: true },
-        where: { id: request.params.id },
-      });
-
-      return { data: updated };
+      try {
+        const updated = await fastify.prisma.user.update({
+          data: request.body,
+          select: { email: true, id: true, isActive: true, role: true, slackId: true },
+          where: { id: request.params.id },
+        });
+        return { data: updated };
+      } catch (err) {
+        const target = uniqueViolationTarget(err);
+        if (target !== null) {
+          const code = target.includes('slack') ? 'SLACK_ID_TAKEN' : 'USER_EXISTS';
+          const message = target.includes('slack')
+            ? 'This Slack ID is linked to another user'
+            : 'User with this email already exists';
+          return reply.status(409).send({ error: { code, message } });
+        }
+        throw err;
+      }
     }
   );
 };

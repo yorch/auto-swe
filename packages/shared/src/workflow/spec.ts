@@ -29,19 +29,18 @@ export const SPEC_SCHEMA_VERSION = 4 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
-/** A binding reads a value from the run context. Exactly one of `from` /
- *  `literal` / `expr` may be present — the members are `.strict()` so an
- *  ambiguous object like `{ from, literal }` is rejected at parse time rather
- *  than silently resolving to whichever member zod tried first. */
+/** A binding reads a value from the run context. Conventionally exactly one of
+ *  `from` / `literal` / `expr` is present; an ambiguous object resolves to
+ *  whichever union member zod matches first. Kept non-strict on purpose so
+ *  already-stored specs (re-parsed at run time) with incidental extra keys
+ *  don't fail to load. */
 export const BindingSchema = z.union([
-  z
-    .object({
-      default: z.unknown().optional(),
-      from: z.string().min(1),
-    })
-    .strict(),
-  z.object({ literal: z.unknown() }).strict(),
-  z.object({ expr: z.string().min(1) }).strict(),
+  z.object({
+    default: z.unknown().optional(),
+    from: z.string().min(1),
+  }),
+  z.object({ literal: z.unknown() }),
+  z.object({ expr: z.string().min(1) }),
 ]);
 export type Binding = z.infer<typeof BindingSchema>;
 

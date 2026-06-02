@@ -150,8 +150,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       // token can both pass it. The conditional updateMany is the real gate:
       // `UPDATE ... WHERE revokedAt IS NULL` takes a row lock and re-evaluates the
       // predicate under READ COMMITTED, so exactly one request flips the row
-      // (count === 1) and mints a replacement; the loser sees count === 0 and is
-      // treated as token reuse — the whole family is revoked. This preserves the
+      // (count === 1) and mints a replacement. This preserves the
       // one-live-token-per-family invariant under concurrency.
       const newRefreshToken = fastify.auth.generateRefreshToken();
       const newTokenHash = fastify.auth.hashToken(newRefreshToken);
@@ -177,16 +176,17 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (!rotated) {
-        // Lost the rotation race: the token was already consumed by a concurrent
-        // refresh (or reused after revocation). Revoke the entire family.
-        await fastify.prisma.refreshToken.updateMany({
-          data: { revokedAt: new Date() },
-          where: { family: stored.family },
-        });
+        // Lost the rotation race: a concurrent refresh already consumed this
+        // token and minted the replacement. This is a benign double-submit
+        // (client retry / double-effect), NOT theft — so we just reject this
+        // request and leave the family intact; the winner's new token stays
+        // valid. Genuine reuse (a token presented *after* it was rotated) is
+        // still caught by the `stored.revokedAt` branch above, which revokes
+        // the whole family.
         return reply.status(401).send({
           error: {
-            code: 'TOKEN_REUSE_DETECTED',
-            message: 'Token reuse detected — family revoked',
+            code: 'TOKEN_ROTATED',
+            message: 'Refresh token already rotated — use the latest token',
           },
         });
       }
