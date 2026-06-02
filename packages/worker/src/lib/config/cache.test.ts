@@ -27,6 +27,28 @@ describe('withCache', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('does not cache when shouldCache returns false (re-fetches each call)', async () => {
+    const fetcher = vi.fn().mockResolvedValue('');
+    const shouldCache = (v: string) => v.length > 0;
+    const r1 = await withCache('k', 30_000, fetcher, shouldCache);
+    const r2 = await withCache('k', 30_000, fetcher, shouldCache);
+    expect(r1).toBe('');
+    expect(r2).toBe('');
+    // Empty result was returned but never stored, so both calls hit the fetcher.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(_cacheSizeForTests()).toBe(0);
+  });
+
+  it('caches when shouldCache returns true', async () => {
+    const fetcher = vi.fn().mockResolvedValue('v1');
+    const shouldCache = (v: string) => v.length > 0;
+    await withCache('k', 30_000, fetcher, shouldCache);
+    const r = await withCache('k', 30_000, fetcher, shouldCache);
+    expect(r).toBe('v1');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(_cacheSizeForTests()).toBe(1);
+  });
+
   it('re-fetches after TTL expires', async () => {
     // Real timers with a tiny TTL — fake timers + async resolver can race on
     // CI runners (we've seen unexplained intermittent failures under

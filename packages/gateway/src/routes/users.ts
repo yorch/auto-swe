@@ -9,7 +9,8 @@ const CreateUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).optional(), // Auto-generated if not provided
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
-  slackId: z.string().optional(),
+  // Non-empty so the truthiness guards on slackId can't be bypassed with "".
+  slackId: z.string().min(1).optional(),
 });
 
 const UserParamsSchema = z.object({ id: z.string().uuid() });
@@ -18,7 +19,9 @@ const UpdateUserSchema = z.object({
   email: z.string().email().optional(),
   isActive: z.boolean().optional(),
   role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).optional(),
-  slackId: z.string().nullable().optional(),
+  // Non-empty when present; null explicitly unlinks. "" can't slip past the
+  // truthiness guard on the uniqueness pre-check.
+  slackId: z.string().min(1).nullable().optional(),
 });
 
 /**
