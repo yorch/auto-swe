@@ -42,13 +42,22 @@ async function buildApp() {
   await app.register(cookie);
 
   const mockPrisma = {
-    $transaction: vi.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    // Support both forms of Prisma's $transaction: the array form (Promise.all)
+    // and the interactive callback form (refresh rotation uses the latter, with
+    // a conditional updateMany as the concurrency gate).
+    $transaction: vi
+      .fn()
+      .mockImplementation((arg: Promise<unknown>[] | ((tx: unknown) => unknown)) =>
+        typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg)
+      ),
     refreshToken: {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
-      updateMany: vi.fn().mockResolvedValue({}),
+      // count: 1 → the rotation gate sees the token as freshly revoked (won the
+      // race) and proceeds to mint the replacement.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     user: {
       findUnique: vi.fn(),
@@ -228,5 +237,28 @@ describe('POST /api/v1/auth/refresh', () => {
     expect(setCookie).toContain('refreshToken=new-refresh-token');
     expect(setCookie).toContain('HttpOnly');
     expect(setCookie).toContain('Path=/api/v1/auth/refresh');
+  });
+
+  it('returns 401 TOKEN_ROTATED without revoking the family when it loses the rotation race', async () => {
+    ctx.mockPrisma.refreshToken.findUnique.mockResolvedValue(makeRefreshToken());
+    ctx.mockPrisma.refreshToken.create.mockClear();
+    ctx.mockPrisma.refreshToken.updateMany.mockClear();
+    // Conditional revoke flips zero rows → a concurrent refresh already rotated
+    // this token (benign double-submit), not theft.
+    ctx.mockPrisma.refreshToken.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await ctx.app.inject({
+      cookies: { refreshToken: 'valid-token' },
+      method: 'POST',
+      url: '/api/v1/auth/refresh',
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ROTATED');
+    // No replacement minted, and the family is left intact (no family revoke).
+    expect(ctx.mockPrisma.refreshToken.create).not.toHaveBeenCalled();
+    expect(ctx.mockPrisma.refreshToken.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { family: 'family-1' } })
+    );
   });
 });

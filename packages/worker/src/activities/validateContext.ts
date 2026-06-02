@@ -5,6 +5,8 @@ import { trace } from '@opentelemetry/api';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
+import { currentWorkflowId } from '../lib/activityContext.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -50,6 +52,15 @@ export async function validateContext(
           ],
           { structuredOutput: { schema: ContextValidationSchema } }
         );
+
+        if (result.usage) {
+          await recordLlmUsage(
+            currentWorkflowId(),
+            'validateContext',
+            result.usage,
+            'llm.context_validation'
+          );
+        }
 
         if (!result.object) return [];
         const parsed = result.object as z.infer<typeof ContextValidationSchema>;

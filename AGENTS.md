@@ -221,7 +221,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 
 ### Embeddings
 
-`packages/worker/src/lib/embeddings.ts` follows the same `<provider>/<model>` config pattern via the `EMBEDDING_MODEL` env var (default `openai/text-embedding-3-large`). Built-in: `openai`. Any other provider name is treated as an OpenAI-compatible endpoint and requires `<PROVIDER>_API_BASE`. Output **must** be 1536-dimensional — the `agent_lessons.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
+`packages/worker/src/lib/embeddings.ts` resolves its `<provider>/<model>` spec, API key, and (for OpenAI-compatible providers) `apiBase` entirely from the DB-backed `EmbeddingConfig` singleton via `resolveEmbeddingConfig()` — there are no `EMBEDDING_MODEL` / `<PROVIDER>_API_BASE` env vars (model + credential config is fully DB-driven; see `docs/model-configuration.md`). Built-in: `openai`; any other provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase` on the credential row. Output **must** be 1536-dimensional — the `agent_lessons.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
 
 ### Temporal Workflow Constraints
 

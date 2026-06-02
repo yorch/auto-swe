@@ -29,7 +29,16 @@ export function registerCodemod(mod: Codemod): void {
   codemods.push(mod);
 }
 
-/** Apply codemods in order until reaching `targetVersion`. */
+/**
+ * Apply codemods in order until reaching `targetVersion`.
+ *
+ * Contract: this validates only that each transform output is a versioned
+ * object at the expected `schemaVersion` — it does NOT validate the result
+ * against `WorkflowSpecSchema`. Callers MUST run `parseWorkflowSpec` on the
+ * output before treating it as a `WorkflowSpec` (the runtime consumer in
+ * `worker/activities/templates.ts` does). A future structural codemod that
+ * returns a malformed blob will therefore surface at that parse, not here.
+ */
 export function migrateSpec(input: unknown, targetVersion: number): unknown {
   if (!isVersionedObject(input)) {
     throw new Error('spec is missing schemaVersion');

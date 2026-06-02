@@ -59,12 +59,18 @@ ENV APP_VERSION=${APP_VERSION} \
     GIT_TIMESTAMP=${GIT_TIMESTAMP} \
     BUILD_NUMBER=${BUILD_NUMBER}
 
-# Production node_modules (hoisted root deps)
+# Production node_modules (hoisted root deps). Includes the @prisma/client +
+# @prisma/adapter-pg runtime (both are prod deps of @auto-swe/shared); the
+# `prisma` CLI is dev-only and not needed here (the worker doesn't migrate).
 COPY --from=prod-deps /app/node_modules ./node_modules
 
-# Prisma generated client (lives inside node_modules)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Prisma generated client. The `prisma-client` provider in
+# packages/shared/src/prisma/schema.prisma outputs to a CUSTOM path
+# (`output = "../generated/prisma"` → resolves to packages/shared/src/generated/prisma)
+# — NOT `node_modules/.prisma` (the older `prisma-client-js` location). The
+# shared package's compiled dist imports from `./src/generated/prisma`, so that
+# path must exist at runtime.
+COPY --from=builder /app/packages/shared/src/generated ./packages/shared/src/generated
 
 # Workspace package.json files (for symlink resolution)
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/

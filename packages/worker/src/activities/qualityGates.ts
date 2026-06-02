@@ -373,7 +373,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
 
     workspace.exec('git add -A');
     workspace.exec(
-      `git diff --cached --quiet || git commit -m "auto: fix ${gateName} for ${previousCodeResult.branch}"`
+      `git diff --cached --quiet || git commit -m ${shellQuote(`auto: fix ${gateName} for ${previousCodeResult.branch}`)}`
     );
     workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 

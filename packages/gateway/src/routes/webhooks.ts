@@ -1,18 +1,24 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { verifyGitHubSignature } from '../lib/github.js';
 import { postSlackMessage } from '../lib/slack.js';
 
-interface PullRequestWebhookPayload {
-  action: string;
-  pull_request: { number: number; merged: boolean };
-  repository: { full_name: string };
-}
+// GitHub payloads are HMAC-verified before we get here, but a shape change or a
+// non-PR/non-check event can still arrive. Validate the fields we touch so a
+// malformed-but-signed body is ignored gracefully instead of throwing a 500.
+const PullRequestWebhookSchema = z.object({
+  action: z.string(),
+  pull_request: z.object({ merged: z.boolean(), number: z.number() }),
+  repository: z.object({ full_name: z.string() }),
+});
 
-interface CheckRunWebhookPayload {
-  action: string;
-  check_run?: { head_sha: string; conclusion: string; html_url: string };
-  repository: { full_name: string };
-}
+const CheckRunWebhookSchema = z.object({
+  action: z.string(),
+  check_run: z
+    .object({ conclusion: z.string(), head_sha: z.string(), html_url: z.string() })
+    .optional(),
+  repository: z.object({ full_name: z.string() }),
+});
 
 function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
@@ -53,10 +59,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!verifyWebhookOrReject(request, reply)) return;
 
-      const payload = request.body as PullRequestWebhookPayload;
+      const parsed = PullRequestWebhookSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
+      }
+      const payload = parsed.data;
 
       // Only handle merged pull_request events
-      if (payload.action !== 'closed' || !payload.pull_request?.merged) {
+      if (payload.action !== 'closed' || !payload.pull_request.merged) {
         return { data: { ignored: true } };
       }
 
@@ -126,7 +136,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!verifyWebhookOrReject(request, reply)) return;
 
-      const payload = request.body as CheckRunWebhookPayload;
+      const parsed = CheckRunWebhookSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
+      }
+      const payload = parsed.data;
 
       // Handle check_run completed events
       const checkRun = payload.check_run;

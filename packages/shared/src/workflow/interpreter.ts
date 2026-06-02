@@ -740,6 +740,10 @@ async function safeRecord(
 const RESERVED_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function setPath(ctx: Context, path: string, value: unknown): void {
+  // NB: write paths are split on '.' only — bracket notation (`a[0]`, `a["k"]`)
+  // that `lookupPath` understands for reads is NOT interpreted here. A path
+  // segment may legitimately contain brackets (fanOut branch node ids look like
+  // `fan[0]/echo`), so those are treated as a single literal key, by design.
   const parts = path.split('.');
   for (const seg of parts) {
     if (RESERVED_SEGMENTS.has(seg)) {

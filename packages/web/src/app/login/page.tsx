@@ -55,6 +55,16 @@ function LoginPageInner() {
   const requestPasswordReset = useAuthStore((s) => s.requestPasswordReset);
   const hydrate = useAuthStore((s) => s.hydrateFromSession);
 
+  // Where to land after a successful sign-in. The proxy sets ?redirect=<path>
+  // when it bounces an unauthenticated request here; honor it, but only for
+  // same-origin relative paths (reject `//host` and absolute URLs) to avoid an
+  // open-redirect.
+  const redirectParam = searchParams.get('redirect');
+  const destination =
+    redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+      ? redirectParam
+      : '/';
+
   const [tab, setTab] = useState<Tab>('magic');
   const [providers, setProviders] = useState<ProviderFlags>({
     github: false,
@@ -96,12 +106,12 @@ function LoginPageInner() {
         setPendingEmail(u.email ?? null);
         return;
       }
-      router.replace('/');
+      router.replace(destination);
     })();
     return () => {
       cancelled = true;
     };
-  }, [searchParams, hydrate, router]);
+  }, [searchParams, hydrate, router, destination]);
 
   // Which social providers are configured in the backend? Also doubles as
   // the gateway-reachability check (see gatewayDown above). "Gateway is up"
@@ -148,7 +158,7 @@ function LoginPageInner() {
     setLoading(true);
     try {
       await login(email, password);
-      router.push('/');
+      router.push(destination);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {

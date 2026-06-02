@@ -25,20 +25,30 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
   }
   if (!wid) return {};
 
-  return withCache(`ctx:${wid}`, configCacheTtlMs(), async () => {
-    const [active, run] = await Promise.all([
-      prisma.activeWorkflow.findFirst({
-        select: { repository: { select: { teamId: true } } },
-        where: { temporalWorkflowId: wid },
-      }),
-      prisma.workflowRun.findUnique({
-        select: { templateId: true },
-        where: { workflowId: wid },
-      }),
-    ]);
-    return {
-      teamId: active?.repository?.teamId,
-      workflowTemplateId: run?.templateId,
-    };
-  });
+  // Don't cache an empty result: if the lookup raced ahead of
+  // `createWorkflowRun`/`ActiveWorkflow` (both fields undefined), caching it
+  // would pin scope resolution to GLOBAL for the whole TTL. The `shouldCache`
+  // predicate skips storing it so the next activity call re-resolves once the
+  // rows land.
+  return withCache(
+    `ctx:${wid}`,
+    configCacheTtlMs(),
+    async () => {
+      const [active, run] = await Promise.all([
+        prisma.activeWorkflow.findFirst({
+          select: { repository: { select: { teamId: true } } },
+          where: { temporalWorkflowId: wid },
+        }),
+        prisma.workflowRun.findUnique({
+          select: { templateId: true },
+          where: { workflowId: wid },
+        }),
+      ]);
+      return {
+        teamId: active?.repository?.teamId,
+        workflowTemplateId: run?.templateId,
+      };
+    },
+    (ctx) => ctx.teamId !== undefined || ctx.workflowTemplateId !== undefined
+  );
 }

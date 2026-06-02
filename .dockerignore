@@ -25,9 +25,11 @@ coverage
 .idea
 .vscode
 
-# Docker / docs
+# Docker meta — not needed inside any image
 Dockerfile
 .dockerignore
 docker-compose*.yml
 README.md
-docs
+# NOTE: `docs/` is intentionally NOT ignored — the web image's build stage runs
+# `COPY docs docs` to statically render the /docs pages (packages/web reads
+# ../../docs at build time). Excluding it breaks the web Docker build.

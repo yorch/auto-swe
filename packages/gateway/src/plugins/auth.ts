@@ -22,6 +22,10 @@ declare module 'fastify' {
       verifyAccessToken: (token: string) => JwtPayload;
       generateRefreshToken: () => string;
       hashToken: (token: string) => string;
+      /** Sign a single-purpose, short-lived token for OAuth `state`. Audience-
+       *  scoped so it can never be replayed as an API bearer (and vice versa). */
+      signOAuthState: (sub: string) => string;
+      verifyOAuthState: (token: string) => { sub: string };
     };
   }
   interface FastifyRequest {
@@ -65,6 +69,13 @@ export { getErrorMessage, getErrorName };
 const ACCESS_TOKEN_TTL = '1h';
 const REFRESH_TOKEN_BYTES = 48;
 
+// Audience claims keep token classes from being swapped: an API access token
+// can't be presented as OAuth `state`, and an OAuth-state token can't be used
+// as an API bearer. Both are enforced at verify time.
+const ACCESS_TOKEN_AUDIENCE = 'auto-swe:api';
+const OAUTH_STATE_AUDIENCE = 'auto-swe:oauth-state';
+const OAUTH_STATE_TTL = '10m';
+
 const JWT_DEV_FALLBACK = 'dev-secret-change-me';
 
 function getPrivateKey(): string {
@@ -87,8 +98,16 @@ function getPublicKey(): string {
   if (keyPath) {
     return fs.readFileSync(keyPath, 'utf-8');
   }
-  // Fallback for development: same shared secret (HS256)
-  return process.env.JWT_SECRET ?? 'dev-secret-change-me';
+  // Fallback for development: same shared secret (HS256). Apply the same
+  // production guard as getPrivateKey() so a misconfigured prod deployment
+  // can't silently verify tokens signed with the dev fallback.
+  const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
+  if (process.env.NODE_ENV === 'production' && secret === JWT_DEV_FALLBACK) {
+    throw new Error(
+      'JWT_SECRET (or JWT_PUBLIC_KEY_PATH) must be set in production — refusing to verify with the dev fallback.'
+    );
+  }
+  return secret;
 }
 
 function getAlgorithm(): jwt.Algorithm {
@@ -112,14 +131,32 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     signAccessToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
       return jwt.sign(payload, privateKey, {
         algorithm,
+        audience: ACCESS_TOKEN_AUDIENCE,
         expiresIn: ACCESS_TOKEN_TTL,
+      });
+    },
+
+    signOAuthState(sub: string): string {
+      return jwt.sign({ sub }, privateKey, {
+        algorithm,
+        audience: OAUTH_STATE_AUDIENCE,
+        expiresIn: OAUTH_STATE_TTL,
       });
     },
 
     verifyAccessToken(token: string): JwtPayload {
       return jwt.verify(token, publicKey, {
         algorithms: [algorithm],
+        audience: ACCESS_TOKEN_AUDIENCE,
       }) as JwtPayload;
+    },
+
+    verifyOAuthState(token: string): { sub: string } {
+      const decoded = jwt.verify(token, publicKey, {
+        algorithms: [algorithm],
+        audience: OAUTH_STATE_AUDIENCE,
+      }) as { sub: string };
+      return { sub: decoded.sub };
     },
   });
 };

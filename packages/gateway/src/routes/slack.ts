@@ -3,13 +3,7 @@ import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/wor
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { openSlackView, verifySlackSignature } from '../lib/slack.js';
-import {
-  getErrorName,
-  hasRole,
-  type JwtPayload,
-  requireAuth,
-  requireUser,
-} from '../plugins/auth.js';
+import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
 interface SlackOAuthResponse {
@@ -81,13 +75,14 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const user = requireUser(request);
-      const state = fastify.auth.signAccessToken({
-        role: user.role,
-        sub: user.sub,
-      });
+      // Single-purpose, short-lived state token (not an API access token) so a
+      // leak via Slack logs / Referer / browser history can't be replayed as a
+      // bearer credential.
+      const state = fastify.auth.signOAuthState(user.sub);
 
       const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
-      const scopes = 'identity.basic,identity.email';
+      // We link by Slack user id only; identity.basic is sufficient.
+      const scopes = 'identity.basic';
 
       const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${scopes}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 
@@ -105,10 +100,10 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    // Verify state JWT
-    let statePayload: JwtPayload;
+    // Verify the single-purpose OAuth state token.
+    let statePayload: { sub: string };
     try {
-      statePayload = fastify.auth.verifyAccessToken(state);
+      statePayload = fastify.auth.verifyOAuthState(state);
     } catch {
       return reply.status(400).send({
         error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },

@@ -99,7 +99,7 @@ These are deliberate architectural choices where the implementation differs from
 | Plan                                           | Actual                                                      | Rationale                                                               |
 | ---------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
 | K8s Jobs + KEDA for workspace isolation        | Docker-in-Docker (`docker run`/`exec`)                      | No cluster required; same isolation model, simpler ops                  |
-| Single hardcoded LLM provider                  | Multi-provider via `getModel(role)` — anthropic/openai/google/openai-compatible | Per-role env-var overrides (`<ROLE>_MODEL`); defaults stay on Claude    |
+| Single hardcoded LLM provider                  | Multi-provider via `getModel(role)` — anthropic/openai/google/openai-compatible | DB-backed per-role config (scope cascade: workflow-template → team → global); no model env vars. Defaults stay on Claude. |
 | RS256 JWT signing with K8s Secrets             | HS256 JWT with `JWT_SECRET` env var                         | Simpler for Docker Compose deployments; RS256 makes sense at K8s scale  |
 | `@mastra/anthropic` for model binding          | `@ai-sdk/anthropic` (Vercel AI SDK)                         | Mastra uses AI SDK under the hood; direct import is cleaner             |
 | 8 Prisma models                                | 10 Prisma models (added RefreshToken, Team, TeamMembership) | Auth and teams required additional models beyond the original plan      |
@@ -112,14 +112,14 @@ Work done after the original 4-phase plan was complete:
 
 | Item                                                              | Status | Notes                                                                                                                                                       |
 | ----------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-provider LLM routing (`getModel(role)`)                     | Done   | `<provider>/<model>` spec, `<ROLE>_MODEL` env override per agent role; supports anthropic, openai, google, and any OpenAI-compatible endpoint              |
+| Multi-provider LLM routing (`getModel(role)`)                     | Done   | `<provider>/<model>` spec resolved per agent role from DB-backed config (superseded the original `<ROLE>_MODEL` env overrides — see the DB-backed config row below); supports anthropic, openai, google, and any OpenAI-compatible endpoint |
 | Biome 2.4 for lint + format                                       | Done   | Single root `biome.json`; replaced no prior tool (project never had ESLint/Prettier). `noExplicitAny` and `noNonNullAssertion` enforced at error severity   |
 | GitHub Actions CI: lint, typecheck, test, build                   | Done   | `.github/workflows/ci.yml`                                                                                                                                  |
 | `EpicOrchestratorWorkflow` state reporting                        | Done   | Emits `PLANNING` / `FANNING_OUT` / `COMPLETED` / `FAILED` / `CANCELLED` via `updateDomainState`                                                              |
 | Epic workflow timeout                                             | Done   | `workflowExecutionTimeout: '30d'` on `startEpicWorkflow` — bounded by Temporal, children released via `PARENT_CLOSE_POLICY_REQUEST_CANCEL`                  |
 | Dependency-failure propagation in epic                            | Done   | `computeTransitiveDependents` walks the dep graph; downstream repos marked `SKIPPED` with `skippedReason` instead of silently omitted                        |
 | `updateDomainState` upsert                                        | Done   | Workflows self-register their `ActiveWorkflow` row on first state call (epic + epic-spawned children no longer silently fail)                                |
-| Docker Compose split (infra vs app)                               | Done   | `docker-compose.infra.yml` (postgres, postgres-temporal, temporal server+admin+ui, setup containers) + `docker-compose.yml` (gateway, worker, web, otel-lgtm — overlays infra). PR #10 split monolithic `auto-setup` into separate server / admin-tools / ui images. |
+| Docker Compose split (infra vs app)                               | Done   | `docker-compose.infra.yml` (postgres, postgres-temporal, temporal server+admin+ui, setup containers) + `docker-compose.app.yml` (gateway, worker, web, otel-lgtm — overlays infra). PR #10 split monolithic `auto-setup` into separate server / admin-tools / ui images. |
 
 ---
 

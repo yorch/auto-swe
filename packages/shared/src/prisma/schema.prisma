@@ -125,6 +125,8 @@ model PullRequest {
   status          String
   ciStatus        String          @default("PENDING") @map("ci_status")
 
+  @@index([workflowId])
+  @@index([repoId])
   @@map("pull_requests")
 }
 

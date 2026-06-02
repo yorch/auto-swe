@@ -1,6 +1,8 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
+import { currentWorkflowId } from '../lib/activityContext.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
@@ -49,6 +51,15 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         ],
         { structuredOutput: { schema: SecurityScanResultSchema } }
       );
+
+      if (result.usage) {
+        await recordLlmUsage(
+          currentWorkflowId(),
+          'securityReview',
+          result.usage,
+          'llm.security_scan'
+        );
+      }
 
       if (!result.object) {
         throw new Error('Security review agent did not return structured output');
