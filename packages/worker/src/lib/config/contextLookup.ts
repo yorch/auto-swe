@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
-import { configCacheTtlMs, withCache } from './cache.js';
+import { configCacheTtlMs, invalidate, withCache } from './cache.js';
 import type { ResolveCtx } from './types.js';
 
 /// Look up `{ teamId, workflowTemplateId }` for the currently-executing
@@ -25,7 +25,8 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
   }
   if (!wid) return {};
 
-  return withCache(`ctx:${wid}`, configCacheTtlMs(), async () => {
+  const key = `ctx:${wid}`;
+  const ctx = await withCache(key, configCacheTtlMs(), async () => {
     const [active, run] = await Promise.all([
       prisma.activeWorkflow.findFirst({
         select: { repository: { select: { teamId: true } } },
@@ -41,4 +42,13 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
       workflowTemplateId: run?.templateId,
     };
   });
+
+  // If the lookup raced ahead of `createWorkflowRun`/`ActiveWorkflow` (both
+  // fields empty), don't let that empty result pin scope resolution to GLOBAL
+  // for the whole TTL — drop it so the next activity call re-resolves once the
+  // rows land.
+  if (ctx.teamId === undefined && ctx.workflowTemplateId === undefined) {
+    invalidate(key);
+  }
+  return ctx;
 }

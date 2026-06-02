@@ -2,6 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
@@ -90,6 +91,15 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
     ],
     { structuredOutput: { schema: LessonOutputSchema } }
   );
+
+  if (result.usage) {
+    await recordLlmUsage(
+      temporalWorkflowId,
+      'commitToMemory',
+      result.usage,
+      'llm.commit_to_memory'
+    );
+  }
 
   if (!result.object) {
     throw new Error('Memory summarizer agent did not return structured output');
