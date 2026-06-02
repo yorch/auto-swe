@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
@@ -22,19 +22,28 @@ const UpdateUserSchema = z.object({
 });
 
 /**
- * If `err` is a Prisma unique-constraint violation (P2002), return the joined
- * target column(s); otherwise null. Used to map a race that slips past the
- * application-level pre-check into the right 409 rather than a generic 500 —
- * the DB `@unique` constraints on email + slackId are the real guarantee.
+ * If `err` is a Prisma unique-constraint violation (P2002) on the user table,
+ * send the matching 409 and return the reply; otherwise return null so the
+ * caller rethrows. This maps a race that slips past the application-level
+ * pre-check into the right 409 rather than a generic 500 — the DB `@unique`
+ * constraints on email + slackId are the real guarantee. Shared by the create
+ * and update handlers so the mapping lives in one place.
  */
-function uniqueViolationTarget(err: unknown): string | null {
+function replyOnUserUniqueViolation(err: unknown, reply: FastifyReply): FastifyReply | null {
   if (typeof err !== 'object' || err === null) return null;
   const e = err as { code?: string; meta?: { target?: unknown } };
   if (e.code !== 'P2002') return null;
   const t = e.meta?.target;
-  if (Array.isArray(t)) return t.join(',');
-  if (typeof t === 'string') return t;
-  return '';
+  const target = Array.isArray(t) ? t.join(',') : typeof t === 'string' ? t : '';
+  const isSlack = target.includes('slack');
+  return reply.status(409).send({
+    error: {
+      code: isSlack ? 'SLACK_ID_TAKEN' : 'USER_EXISTS',
+      message: isSlack
+        ? 'This Slack ID is linked to another user'
+        : 'User with this email already exists',
+    },
+  });
 }
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
@@ -119,14 +128,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         // The pre-checks above cover the common case; this maps a concurrent
         // collision (caught by the DB @unique constraints) to the right 409.
-        const target = uniqueViolationTarget(err);
-        if (target !== null) {
-          const code = target.includes('slack') ? 'SLACK_ID_TAKEN' : 'USER_EXISTS';
-          const message = target.includes('slack')
-            ? 'This Slack ID is linked to another user'
-            : 'User with this email already exists';
-          return reply.status(409).send({ error: { code, message } });
-        }
+        const conflict = replyOnUserUniqueViolation(err, reply);
+        if (conflict) return conflict;
         throw err;
       }
 
@@ -251,14 +254,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return { data: updated };
       } catch (err) {
-        const target = uniqueViolationTarget(err);
-        if (target !== null) {
-          const code = target.includes('slack') ? 'SLACK_ID_TAKEN' : 'USER_EXISTS';
-          const message = target.includes('slack')
-            ? 'This Slack ID is linked to another user'
-            : 'User with this email already exists';
-          return reply.status(409).send({ error: { code, message } });
-        }
+        const conflict = replyOnUserUniqueViolation(err, reply);
+        if (conflict) return conflict;
         throw err;
       }
     }

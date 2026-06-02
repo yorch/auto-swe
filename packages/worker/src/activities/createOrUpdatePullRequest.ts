@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -52,17 +52,24 @@ export async function createOrUpdatePullRequest(
   // the activity idempotent across Temporal retries: if a prior attempt created
   // the PR on GitHub but crashed before persisting the DB row, the retry finds
   // it here instead of failing with GitHub's 422 "a pull request already exists
-  // for this branch" — and still writes the tracking row below.
-  const existingOpen = await octokit.pulls.list({
-    base: repo.defaultBranch,
-    head: `${repo.organizationName}:${codeResult.branch}`,
-    owner: repo.organizationName,
-    repo: repo.repoName,
-    state: 'open',
-  });
+  // for this branch" — and still writes the tracking row below. Only a prior
+  // attempt could have orphaned a PR, so we skip this extra GitHub round-trip on
+  // the first attempt and create directly.
+  const priorOpenPr =
+    activityInfo().attempt > 1
+      ? (
+          await octokit.pulls.list({
+            base: repo.defaultBranch,
+            head: `${repo.organizationName}:${codeResult.branch}`,
+            owner: repo.organizationName,
+            repo: repo.repoName,
+            state: 'open',
+          })
+        ).data[0]
+      : undefined;
 
   const pr =
-    existingOpen.data[0] ??
+    priorOpenPr ??
     (
       await octokit.pulls.create({
         base: repo.defaultBranch,

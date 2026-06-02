@@ -60,7 +60,12 @@ function enforceCap(): void {
 export async function withCache<T>(
   key: string,
   ttlMs: number,
-  fetcher: () => Promise<T>
+  fetcher: () => Promise<T>,
+  // Optional predicate: when it returns false the freshly-fetched value is
+  // returned but NOT stored. Lets callers skip caching negative/empty results
+  // (e.g. a context lookup that raced ahead of its DB rows) without the
+  // store-then-invalidate churn.
+  shouldCache?: (value: T) => boolean
 ): Promise<T> {
   const now = Date.now();
   const hit = store.get(key);
@@ -72,11 +77,13 @@ export async function withCache<T>(
     return hit.value as T;
   }
   const value = await fetcher();
-  // Lazy sweep + cap enforcement only when we actually insert — avoids
-  // O(n) work on every read.
-  purgeExpired(now);
-  store.set(key, { expiresAt: now + ttlMs, value });
-  enforceCap();
+  if (!shouldCache || shouldCache(value)) {
+    // Lazy sweep + cap enforcement only when we actually insert — avoids
+    // O(n) work on every read.
+    purgeExpired(now);
+    store.set(key, { expiresAt: now + ttlMs, value });
+    enforceCap();
+  }
   return value;
 }
 
