@@ -398,6 +398,12 @@ CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workf
 CREATE UNIQUE INDEX "context_snapshots_work_request_id_key" ON "context_snapshots"("work_request_id");
 
 -- CreateIndex
+CREATE INDEX "pull_requests_workflow_id_idx" ON "pull_requests"("workflow_id");
+
+-- CreateIndex
+CREATE INDEX "pull_requests_repo_id_idx" ON "pull_requests"("repo_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "refresh_tokens_token_hash_key" ON "refresh_tokens"("token_hash");
 
 -- CreateIndex
