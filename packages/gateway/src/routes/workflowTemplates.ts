@@ -5,6 +5,7 @@ import {
   computeAnalytics,
   computeGlobalAnalytics,
   diffSpecs,
+  hasStep,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
   type ShellNode,
@@ -251,12 +252,30 @@ function parseSpecOrThrow(input: unknown): unknown {
       { statusCode: 400 }
     );
   }
+  let parsed: WorkflowSpec;
   try {
-    return parseWorkflowSpec(input);
+    parsed = parseWorkflowSpec(input);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'invalid spec';
     throw Object.assign(new Error(message), { statusCode: 400 });
   }
+
+  // Reject step nodes naming a step the worker can't dispatch. The generic
+  // interpreter (in @auto-swe/shared) deliberately allows arbitrary step names
+  // so it can be tested with synthetic dispatchers, so this registry check
+  // lives here at the save boundary — without it a typo'd/unknown step name
+  // would only fail mid-run in the worker's dispatch `default:` branch, after
+  // a run has started and burned transitions/cost.
+  const unknownSteps = Object.entries(parsed.nodes)
+    .filter(([, node]) => node.type === 'step' && !hasStep(node.step))
+    .map(([id, node]) => `'${id}' → '${(node as { step: string }).step}'`);
+  if (unknownSteps.length > 0) {
+    throw Object.assign(new Error(`spec references unknown step(s): ${unknownSteps.join(', ')}`), {
+      statusCode: 400,
+    });
+  }
+
+  return parsed;
 }
 
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {

@@ -29,14 +29,19 @@ export const SPEC_SCHEMA_VERSION = 4 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
-/** A binding reads a value from the run context. */
+/** A binding reads a value from the run context. Exactly one of `from` /
+ *  `literal` / `expr` may be present — the members are `.strict()` so an
+ *  ambiguous object like `{ from, literal }` is rejected at parse time rather
+ *  than silently resolving to whichever member zod tried first. */
 export const BindingSchema = z.union([
-  z.object({
-    default: z.unknown().optional(),
-    from: z.string().min(1),
-  }),
-  z.object({ literal: z.unknown() }),
-  z.object({ expr: z.string().min(1) }),
+  z
+    .object({
+      default: z.unknown().optional(),
+      from: z.string().min(1),
+    })
+    .strict(),
+  z.object({ literal: z.unknown() }).strict(),
+  z.object({ expr: z.string().min(1) }).strict(),
 ]);
 export type Binding = z.infer<typeof BindingSchema>;
 
@@ -108,6 +113,9 @@ const SignalNodeSchema = z.object({
 
 const TerminateNodeSchema = z.object({
   result: InputMapSchema.optional(),
+  // CANCELLED is intentionally omitted: it's set out-of-band by Temporal on a
+  // cancellation signal, never reachable by a terminate node, so the spec can't
+  // declare it even though `WorkflowRunStatus` includes it.
   status: z.enum(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED']),
   type: z.literal('terminate'),
 });
@@ -134,14 +142,13 @@ const TerminateNodeSchema = z.object({
  * and execution continues at `join`. If `exports` is set, each entry's
  * `exports` field is populated with the listed child-context paths.
  *
- * Phase 3 ships sequential execution. `concurrency` is parsed but not
- * enforced; the follow-up (3.5) wires the Promise.all-with-limit runtime.
+ * Branches run in parallel through a concurrency-bounded worker pool (phase
+ * 3.5); see `concurrency` below.
  */
 const FanOutNodeSchema = z.object({
   /**
-   * Reserved for phase 3.5 — max number of branches to run concurrently.
-   * Currently parsed for forward-compat; the interpreter still runs branches
-   * sequentially regardless of value.
+   * Max number of branches to run concurrently (default 4 in the interpreter,
+   * capped at 20). Enforced by the interpreter's bounded worker pool.
    */
   concurrency: z.number().int().min(1).max(20).optional(),
   /** Optional dot-path exports lifted from each branch's child context. */
