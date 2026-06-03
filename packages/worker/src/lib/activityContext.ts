@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
+import type { AgentTracer } from './agentTracer.js';
 
 /**
  * Returns the Temporal activity type (function name) for the currently
@@ -46,4 +47,16 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Persist all in-memory implementer traces for the currently executing
+ * activity. Call this in the `finally` block after `workspace.destroy()` is
+ * synchronously done — or kick it off before the synchronous destroy and
+ * `await` afterwards to overlap the DB write with container teardown.
+ *
+ * Best-effort: errors are swallowed inside `AgentTracer.persist`.
+ */
+export async function persistImplementerTrace(tracer: AgentTracer): Promise<void> {
+  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
 }

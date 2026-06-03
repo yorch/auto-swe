@@ -67,23 +67,24 @@ export async function createImplementerAgent(
     outputSchema: z.object({ content: z.string() }),
   });
 
-  // Tool: Write/overwrite a file in the workspace
+  // Tool: Write/overwrite a file in the workspace.
+  // The security-checked executor is constructed once at tool-definition time.
+  // Tracing happens in the outer execute so blocked writes are still recorded —
+  // the security wrapper returns early without calling the inner function.
+  const writeExecute = wrapWriteToolWithSecurityCheck(async ({ path, content }) => {
+    const safep = safePath(path);
+    workspace.exec(`mkdir -p "$(dirname ${shellQuote(safep)})"`);
+    const b64 = Buffer.from(content).toString('base64');
+    workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(safep)}`);
+    return { result: `File written: ${safep}` };
+  });
+
   const writeFile = createTool({
     description: 'Create or overwrite a file in the workspace',
-    // Tracer wraps the outer execute so every write attempt is recorded —
-    // including ones blocked by the security check (which returns early before
-    // calling the inner function, so tracing inside would be missed).
     execute: async ({ path, content }) => {
       const start = Date.now();
-      const innerExecute = wrapWriteToolWithSecurityCheck(async ({ path: p }) => {
-        const safep = safePath(p);
-        workspace.exec(`mkdir -p "$(dirname ${shellQuote(safep)})"`);
-        const b64 = Buffer.from(content).toString('base64');
-        workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(safep)}`);
-        return { result: `File written: ${safep}` };
-      });
       try {
-        const result = await innerExecute({ content, path });
+        const result = await writeExecute({ content, path });
         // Only store path in inputJson — content can be large and is in readFile traces
         tracer?.addToolCall({
           durationMs: Date.now() - start,

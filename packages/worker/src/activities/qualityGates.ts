@@ -25,9 +25,9 @@ import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import {
-  currentActivityType,
   currentWorkflowId,
   currentWorkflowRunId,
+  persistImplementerTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
@@ -403,7 +403,8 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       testResults: testResult,
     };
   } finally {
-    await gateTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
+    const done = persistImplementerTrace(gateTracer);
     workspace.destroy();
+    await done;
   }
 }

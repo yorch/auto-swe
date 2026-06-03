@@ -20,9 +20,9 @@ import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import {
-  currentActivityType,
   currentWorkflowId,
   currentWorkflowRunId,
+  persistImplementerTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
@@ -272,8 +272,9 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
-    await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
+    const done = persistImplementerTrace(tracer);
     workspace.destroy();
+    await done;
   }
 }
 
@@ -346,7 +347,7 @@ async function mergeOneWithResolver(
     log: string[];
     maxAttempts: number;
     messagePrefix: string;
-    tracer?: AgentTracer;
+    tracer: AgentTracer;
   }
 ): Promise<{ passed: boolean; output: string }> {
   const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
