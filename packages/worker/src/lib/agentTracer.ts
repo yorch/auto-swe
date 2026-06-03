@@ -13,10 +13,7 @@ function truncateJsonValues(obj: unknown): unknown {
   if (obj === null || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return obj.map(truncateJsonValues);
   return Object.fromEntries(
-    Object.entries(obj as Record<string, unknown>).map(([k, v]) => [
-      k,
-      typeof v === 'string' ? truncateStr(v) : v,
-    ])
+    Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, truncateJsonValues(v)])
   );
 }
 
@@ -56,20 +53,6 @@ export class AgentTracer {
       toolName: opts.toolName,
       type: 'tool_call',
     });
-  }
-
-  addLlmResponse(opts: { inputJson?: unknown; outputJson?: unknown; durationMs: number }): void {
-    this.records.push({
-      durationMs: opts.durationMs,
-      inputJson: opts.inputJson !== undefined ? truncateJsonValues(opts.inputJson) : undefined,
-      outputJson: opts.outputJson !== undefined ? truncateJsonValues(opts.outputJson) : undefined,
-      seq: this.seq++,
-      type: 'llm_response',
-    });
-  }
-
-  get length(): number {
-    return this.records.length;
   }
 
   async persist(runId: string | undefined, nodeId: string, agentRole: string): Promise<void> {

@@ -131,9 +131,6 @@ export async function executeCIFixImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
-    const runId = await currentWorkflowRunId();
-    await tracer.persist(runId, currentActivityType(), 'implementer');
-
     return {
       branch: previousCodeResult.branch,
       diff,
@@ -143,6 +140,7 @@ export async function executeCIFixImplementation(
       testResults: testResult,
     };
   } finally {
+    await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
     workspace.destroy();
   }
 }
@@ -237,9 +235,6 @@ export async function executeReviewFixImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
-    const reviewRunId = await currentWorkflowRunId();
-    await reviewTracer.persist(reviewRunId, currentActivityType(), 'implementer');
-
     return {
       branch: previousCodeResult.branch,
       diff,
@@ -249,6 +244,7 @@ export async function executeReviewFixImplementation(
       testResults: testResult,
     };
   } finally {
+    await reviewTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
     workspace.destroy();
   }
 }

@@ -8,6 +8,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
+const RunDetailQuery = z.object({ includeTraces: z.coerce.boolean().optional().default(false) });
 const ListRunsQuery = RunListPaginationQuery.extend({
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
@@ -116,15 +117,16 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: RunIdParam },
+      schema: { params: RunIdParam, querystring: RunDetailQuery },
     },
     async (request, reply) => {
       const user = requireUser(request);
+      const { includeTraces } = request.query;
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true } },
-          traces: { orderBy: [{ nodeId: 'asc' }, { seq: 'asc' }] },
+          ...(includeTraces ? { traces: { orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }] } } : {}),
           workRequest: {
             select: { description: true, externalTicketId: true, id: true },
           },
@@ -158,7 +160,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: run.templateId,
           templateName: run.template.name,
           templateVersion: run.templateVersion,
-          traces: run.traces.map((t) => ({
+          traces: (run.traces ?? []).map((t) => ({
             agentRole: t.agentRole,
             createdAt: t.createdAt,
             durationMs: t.durationMs,

@@ -299,6 +299,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
+  const gateTracer = new AgentTracer();
 
   try {
     heartbeat('gate fix workspace provisioned');
@@ -314,7 +315,6 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const gateTracer = new AgentTracer();
     const { agent } = await createImplementerAgent(workspace, gateTracer);
 
     const gateFix = await agent.generate(
@@ -390,9 +390,6 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
-    const gateRunId = await currentWorkflowRunId();
-    await gateTracer.persist(gateRunId, currentActivityType(), 'implementer');
-
     const gateNote =
       gateRerunPassed === null
         ? `${gateName} not re-runnable (no command resolved)`
@@ -406,6 +403,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       testResults: testResult,
     };
   } finally {
+    await gateTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
     workspace.destroy();
   }
 }

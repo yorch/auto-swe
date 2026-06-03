@@ -161,6 +161,10 @@ export async function executeImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
+    // Persist traces before the security gate so they survive a gate rejection.
+    const runId = await currentWorkflowRunId();
+    await tracer.persist(runId, currentActivityType(), 'implementer');
+
     // Security scan — gate before returning code result
     heartbeat('running security scan');
     const securityResult = await scanDiffForSecurityIssues(diff);
@@ -177,10 +181,6 @@ export async function executeImplementation(
         { findings: securityResult.findings }
       );
     }
-
-    // Persist all captured tool-call traces before returning
-    const runId = await currentWorkflowRunId();
-    await tracer.persist(runId, currentActivityType(), 'implementer');
 
     return {
       branch,
