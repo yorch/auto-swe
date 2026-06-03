@@ -273,10 +273,10 @@ Four services for local development:
 | `DATABASE_URL`          | gateway, worker | PostgreSQL connection string                                                       |
 | `TEMPORAL_ADDRESS`      | gateway, worker | `temporal:7233`                                                                    |
 | `ANTHROPIC_API_KEY`     | worker          | For `claude-opus-4-7` (Implementer)                                                |
-| `GITHUB_TOKEN`          | worker          | PAT or App installation token for GitHub API                                       |
-| `GITHUB_WEBHOOK_SECRET` | gateway         | HMAC secret for verifying GitHub webhooks                                          |
-| `GITHUB_URL`            | worker          | Base URL for git clone (default: `https://github.com`; set for GHE)                |
-| `GITHUB_API_URL`        | worker          | Octokit base URL (default: `https://api.github.com`; GHE: `https://<host>/api/v3`) |
+| `GITHUB_TOKEN`          | worker          | PAT or App installation token for GitHub API — env fallback; prefer `/admin/integrations → GitHub` |
+| `GITHUB_WEBHOOK_SECRET` | gateway         | HMAC secret for verifying GitHub webhooks — env fallback; prefer `/admin/integrations → GitHub` |
+| `GITHUB_URL`            | worker          | Base URL for git clone (default: `https://github.com`; set for GHE) — env fallback; prefer `/admin/integrations → GitHub` |
+| `GITHUB_API_URL`        | worker          | Octokit base URL (default: `https://api.github.com`; GHE: `https://<host>/api/v3`) — env fallback; prefer `/admin/integrations → GitHub` |
 
 ## 8. Error Handling (MVP)
 

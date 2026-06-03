@@ -30,5 +30,15 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 
 ## After install
 
-- Set `SLACK_BOT_TOKEN` (the `xoxb-…` value from **OAuth & Permissions** → **Bot User OAuth Token**) on the worker so per-step + run-complete notifications can post.
-- Set `SLACK_SIGNING_SECRET` (from **Basic Information** → **App Credentials**) on the gateway so slash-command + interactive payload signatures verify.
+Configure the credentials via the admin UI at `/admin/integrations → Slack tab`:
+
+| Field | Source | Effect |
+|---|---|---|
+| **Client ID** | **Basic Information** → App Credentials → Client ID | Required for the OAuth `/connect` flow |
+| **Client Secret** | **Basic Information** → App Credentials → Client Secret | Required for the OAuth `/connect` flow (restart gateway after saving) |
+| **Signing Secret** | **Basic Information** → App Credentials → Signing Secret | Required for HMAC verification of slash commands and interactive payloads |
+| **Bot Token** | **OAuth & Permissions** → Bot User OAuth Token (`xoxb-…`) | Required for run notifications and opening modals |
+
+Click **Save**. The signing secret, bot token, and slash-command handling take effect immediately (no restart needed). Changing the client ID or client secret requires a gateway restart.
+
+> **Env var fallback.** `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_CLIENT_ID`, and `SLACK_CLIENT_SECRET` environment variables are still accepted as fallbacks when no DB row exists — useful during initial bootstrapping before the admin UI is available.

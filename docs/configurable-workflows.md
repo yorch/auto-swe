@@ -131,7 +131,7 @@ Phase 2 additions:
 - `codemods.test.ts` — built-in v1 → v2 chain registration, idempotent field preservation, no mutation of input.
 - `examples/qualityGates.spec.test.ts` — example spec parses + every gate node uses a known gate step + blocking gates carry `onFail`.
 - `stepRegistry.test.ts` (worker) — `assertBuiltinStepsRegistered` invariant + every gate has `command` + `timeoutMs` fields.
-- `artifactStore.test.ts` (worker) — postgres backend round-trip; lazy-load error when `ARTIFACT_S3_BUCKET` set without the SDK.
+- `artifactStore.test.ts` (worker) — postgres backend round-trip; lazy-load error when S3 backend configured without the AWS SDK installed.
 - `templates.test.ts` (worker) — `createWorkflowRun` migration of stored v1 spec, upsert-by-workflowId, error paths; `recordWorkflowStep` attempt-aware; `resolveTemplateForRepo` precedence + missing-template throw.
 - `qualityGates.test.ts` (worker) — `resolveCommand` precedence (step → repo → default → null for runPerfBench); empty step override falls through; `truncate` helper.
 - `workRequests.test.ts` (gateway) — `resolveDefaultTemplate` team default wins, global fallback, missing template returns null, missing activeVersion returns null.
@@ -444,7 +444,7 @@ Phase 6 additions:
 **Slack — per-step failure notifications**:
 - `WorkRequest.slackChannelId` (new field, paired with the pre-existing `slackMessageTs`) captures the channel the work request was kicked off from.
 - `Team.slackNotifyChannel` (new field, managed by team admins out-of-band for now) is the fallback channel.
-- `packages/worker/src/lib/slackNotify.ts` — `notifySlackStepFailure()` is called from `recordWorkflowStep` whenever a step lands in `FAILED`. Two-tier channel resolution (workRequest → team), best-effort posting (try/catch around the fetch), no-op when `SLACK_BOT_TOKEN` is unset. Throttled to **first attempt only** so `onFail.retry` doesn't spam the channel; the final-failure surface is the workflow_runs FAILED row.
+- `packages/worker/src/lib/slackNotify.ts` — `notifySlackStepFailure()` is called from `recordWorkflowStep` whenever a step lands in `FAILED`. Two-tier channel resolution (workRequest → team), best-effort posting (try/catch around the fetch), no-op when no bot token is configured (set via `/admin/integrations → Slack` or the `SLACK_BOT_TOKEN` env fallback). Throttled to **first attempt only** so `onFail.retry` doesn't spam the channel; the final-failure surface is the workflow_runs FAILED row.
 
 **CLI — new `packages/cli/` workspace**:
 - New `@auto-swe/cli` workspace with `bin.auto-swe`. Builds via `tsc`, ships ESM, `@types/node` + DOM lib pulled in for `fetch`.
@@ -467,7 +467,7 @@ Phase 6 additions:
 
 - `gateway/src/lib/slack.test.ts` — 6 tests: signature verification happy path, tamper, wrong secret, stale timestamp, malformed timestamp, mismatched signature length.
 - `gateway/src/routes/slack.test.ts` — 7 tests for the slash command: missing signature → 401, bad signature → 401, unlinked Slack user → ephemeral hint, `workflows list` returns templates, unknown subcommand → help text, `workflows show <name>` returns the active spec, unknown template name → friendly message.
-- `worker/src/lib/slackNotify.test.ts` — 6 tests: no-op without `SLACK_BOT_TOKEN`, throttled past attempt 1, posts to originating channel, falls back to team channel, silent skip when no channel resolves, swallows DB errors.
+- `worker/src/lib/slackNotify.test.ts` — 6 tests: no-op without bot token configured, throttled past attempt 1, posts to originating channel, falls back to team channel, silent skip when no channel resolves, swallows DB errors.
 - `cli/src/commands/workflows.test.ts` — 7 tests on `parseFlags()`: positional-only, `--foo=bar`, `--foo bar`, short `-o`, boolean flag, follow-flag non-consumption, mixed positionals + flags.
 
 ### Known follow-ups

@@ -32,11 +32,11 @@ Before touching infrastructure, gather these:
 - **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise.
 - **GitHub PAT** with `repo` scope, or a GitHub App (future work — single PAT today).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
-- **LLM provider key(s)** — `ANTHROPIC_API_KEY` is required for the default models. `OPENAI_API_KEY` is required if you keep the default embeddings (`text-embedding-3-large`, 1536d).
+- **LLM provider key(s)** — configured via the admin UI (`/admin/model-config`) after first boot. `ANTHROPIC_API_KEY` env var is a bootstrap fallback only.
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required if you want magic-link and password-reset emails actually delivered — without one the gateway only logs the link to stdout.
-- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app and/or a Google OAuth client, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google}`. See [`oauth-setup.md`](./oauth-setup.md).
-- **Slack credentials** (optional) — `SLACK_CLIENT_ID/_SECRET/_SIGNING_SECRET` for the `/auto-swe` slash command and OAuth-connect flow, plus `SLACK_BOT_TOKEN` for run notifications.
-- **S3-compatible artifact store** (optional but recommended in prod) — `ARTIFACT_S3_BUCKET/REGION/ENDPOINT/PREFIX`. Without it, large step outputs (diffs, logs) are stored inline in Postgres which bloats the DB.
+- **OAuth credentials** (optional but recommended) — register a GitHub OAuth app and/or a Google OAuth client, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google}`. Credentials are configured via `/admin/integrations` (OAuth tab) after first boot. See [`oauth-setup.md`](./oauth-setup.md).
+- **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
+- **S3-compatible artifact store** (optional but recommended in prod) — configured via `/admin/integrations` (Storage tab) after first boot. Without it, large step outputs are stored inline in Postgres.
 
 Generate strong secrets:
 
@@ -67,7 +67,9 @@ TEMPORAL_NAMESPACE=default
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...               # only if EMBEDDING_MODEL stays default
 
-# Source control
+# Source control — set here for bootstrap only; managed via /admin/integrations thereafter
+# If these are set they act as fallback when the DB row hasn't been configured yet.
+# Remove them once you've saved the values in the admin UI.
 GITHUB_TOKEN=ghp_...
 GITHUB_WEBHOOK_SECRET=<random>
 
@@ -104,32 +106,62 @@ AUTH_FROM_EMAIL=auth@example.com
 # RESEND_API_KEY=re_...
 # AUTH_FROM_EMAIL=auth@example.com
 
-# OAuth providers (optional — buttons hide when absent)
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-
-# Slack (optional)
-SLACK_CLIENT_ID=...
-SLACK_CLIENT_SECRET=...
-SLACK_SIGNING_SECRET=...
-SLACK_BOT_TOKEN=xoxb-...
-
-# Artifact store (recommended in prod). The S3 client uses standard
-# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars — or any other AWS SDK
-# credential chain (IAM role, EC2 instance profile, etc.) when those are unset.
-ARTIFACT_S3_BUCKET=auto-swe-artifacts
-ARTIFACT_S3_REGION=us-east-1
-ARTIFACT_S3_PREFIX=workflow-artifacts
-# ARTIFACT_S3_ENDPOINT=https://s3.eu-west-1.amazonaws.com   # only if non-AWS / R2 / MinIO
-# ARTIFACT_S3_FORCE_PATH_STYLE=true                         # required for MinIO + some R2 setups
+# OAuth providers, Slack, and artifact storage are configured via the admin UI
+# (/admin/integrations) after first boot. The env vars below are accepted as
+# bootstrap fallbacks but are NOT required if you use the UI.
+#
+# OAuth (env fallback — prefer /admin/integrations → OAuth tab)
+# GITHUB_CLIENT_ID=...
+# GITHUB_CLIENT_SECRET=...
+# GOOGLE_CLIENT_ID=...
+# GOOGLE_CLIENT_SECRET=...
+#
+# Slack (env fallback — prefer /admin/integrations → Slack tab)
+# SLACK_CLIENT_ID=...
+# SLACK_CLIENT_SECRET=...
+# SLACK_SIGNING_SECRET=...
+# SLACK_BOT_TOKEN=xoxb-...
+#
+# Artifact store (env fallback — prefer /admin/integrations → Storage tab)
+# AWS_ACCESS_KEY_ID=...
+# AWS_SECRET_ACCESS_KEY=...
+# ARTIFACT_S3_BUCKET=auto-swe-artifacts
+# ARTIFACT_S3_REGION=us-east-1
+# ARTIFACT_S3_PREFIX=workflow-artifacts
+# ARTIFACT_S3_ENDPOINT=https://...   # only if non-AWS / R2 / MinIO
+# ARTIFACT_S3_FORCE_PATH_STYLE=true  # required for MinIO + some R2 setups
 
 # Observability
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 ```
 
 > **Magic-link transport gotcha.** `nodemailer.sendMail()` resolves on SMTP `2xx` (relay accepted) — *not* delivery. Always test end-to-end against a real inbox after configuring SMTP/Resend, and check the audit log for `accepted` vs `rejected` arrays.
+
+---
+
+## 2b. Admin UI configuration (post-boot)
+
+Several categories of credentials that were previously env-only are now stored encrypted in the DB and managed via the admin UI. The env vars remain accepted as fallbacks, so existing deployments don't need an immediate flag day — but new deployments should configure via the UI and omit the env vars entirely.
+
+| Admin page | What it configures | Restart required? |
+|---|---|---|
+| `/admin/model-config` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
+| `/admin/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs | No for token/webhook; **Yes** for OAuth app creds |
+| `/admin/integrations → Slack` | Slack client ID/secret, signing secret, bot token | **Yes** for client ID/secret; No for bot token/signing secret |
+| `/admin/integrations → Storage` | S3/MinIO bucket, region, endpoint, credentials | No — resolved fresh per artifact write |
+| `/admin/integrations → OAuth` | Google OAuth client ID/secret | **Yes** — BetterAuth reads these at startup |
+| `/admin/workflow` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
+
+**Bootstrap order** (first deployment):
+1. Start gateway + web only (`yarn dev:gateway && yarn dev:web`).
+2. Sign in as admin.
+3. `/admin/model-config` → "Seed Anthropic defaults" → add provider credentials.
+4. `/admin/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
+5. `/admin/integrations` → any other tabs you need (Slack, Storage, OAuth).
+6. Start the worker (`yarn dev:worker`). The worker now reads all config from the DB.
+7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
+
+> **"Restart required" changes.** Changes to OAuth credentials (GitHub/Google social sign-in) and Slack OAuth credentials take effect only after restarting the gateway. The UI shows a yellow banner reminding you. All other config changes (GitHub token, webhook secret, Slack bot token/signing secret, storage, workflow defaults) take effect on the next activity call — no restart needed.
 
 ---
 
@@ -270,7 +302,11 @@ open https://app.example.com
 | Workflow visibility        | Temporal UI (`:8233`), or `/workflows`, `/runs`, `/workflows/:id` in the dashboard.                              |
 | Cost tracking              | `WorkflowRun.costUsdAccrued`, `/analytics` page, OTel span attribute `llm.cost_usd`. Unknown models log `llm.cost_pricing_known=false`. |
 | Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
-| Rotating LLM models        | Override `*_MODEL` env vars. The price table is in `packages/worker/src/lib/costTracking.ts` — extend it (or use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides) for new IDs. |
+| Rotating LLM models        | Change model spec at `/admin/model-config` (takes effect on next activity call). For pricing of new models use `MODEL_PRICE_<PROVIDER>_<MODEL>` env overrides. |
+| Rotating GitHub PAT        | `/admin/integrations → GitHub` → enter new token → Save. No restart required. |
+| Rotating Slack bot token   | `/admin/integrations → Slack` → enter new bot token → Save. No restart required. |
+| Rotating S3 credentials    | `/admin/integrations → Storage` → enter new key → Save. No restart required. |
+| Rotating OAuth app creds   | `/admin/integrations → GitHub or OAuth` → enter new secret → Save → restart gateway. |
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
 | Sessions admin             | `/admin/sessions` (revoke any session); `/admin/access-tokens` (revoke PATs across all users).                   |
 | Shell-step audit           | `/admin/access-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
@@ -304,7 +340,8 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces silently drop.
-- [ ] Webhook secrets (`GITHUB_WEBHOOK_SECRET`) are random per-environment.
+- [ ] GitHub PAT and webhook secret are set via `/admin/integrations` (or env var fallback). Secrets are random per-environment.
+- [ ] `CONFIG_ENCRYPTION_KEY` (base64 32-byte random) is set and backed up — it encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 key, OAuth secrets). Loss = all stored credentials are unreadable.
 
 ---
 
