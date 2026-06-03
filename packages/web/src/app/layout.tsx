@@ -32,8 +32,28 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Server Component: process.env is read from the Node.js runtime at request
+  // time, not baked at build. Injecting here lets client-side config.ts pick up
+  // values set via docker -e / docker-compose environment: without a rebuild.
+  // Unicode-escape <, >, & so the JSON is safe inside a <script> tag even if
+  // an env var contained a literal </script> sequence (same technique Next.js
+  // uses for __NEXT_DATA__).
+  const appConfig = JSON.stringify({
+    apiUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080',
+    temporalUiUrl:
+      process.env.NEXT_PUBLIC_TEMPORAL_UI_URL ??
+      (process.env.NODE_ENV !== 'production' ? 'http://localhost:8233' : ''),
+  })
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+
   return (
     <html className={`${fraunces.variable} ${plex.variable} ${jetbrains.variable}`} lang="en">
+      <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: operator-controlled env vars only */}
+        <script dangerouslySetInnerHTML={{ __html: `window.__APP_CONFIG__=${appConfig};` }} />
+      </head>
       <body className="min-h-screen">
         <Providers>
           <ErrorBoundary>

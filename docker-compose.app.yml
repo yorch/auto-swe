@@ -79,6 +79,9 @@ services:
     depends_on:
       - gateway
     environment:
-      - NEXT_PUBLIC_API_URL=http://gateway:8080
+      # NEXT_PUBLIC_* are read at request time by the root Server Component and
+      # injected into window.__APP_CONFIG__ — no rebuild required to change URLs.
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      - NEXT_PUBLIC_TEMPORAL_UI_URL=${NEXT_PUBLIC_TEMPORAL_UI_URL:-}
       - PORT=3000
       - HOSTNAME=0.0.0.0

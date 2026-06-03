@@ -343,8 +343,11 @@ function LoginPageInner() {
               </div>
               <p className="leading-relaxed">
                 Can't reach the auto-swe gateway at{' '}
-                <code className="text-brick-100">{API_BASE}</code>. Sign-in won't work until the
-                gateway is running and CORS_ORIGIN includes this page's origin (
+                <code className="text-brick-100" suppressHydrationWarning>
+                  {API_BASE}
+                </code>
+                . Sign-in won't work until the gateway is running and CORS_ORIGIN includes this
+                page's origin (
                 <code className="text-brick-100">
                   {typeof window !== 'undefined' ? window.location.origin : ''}
                 </code>

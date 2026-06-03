@@ -2,7 +2,7 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -19,6 +19,13 @@ export function DashboardOnboarding({
   role: Role;
   onSubmit?: () => void;
 }) {
+  // Start empty so SSR output is stable regardless of runtime env. After mount,
+  // window.__APP_CONFIG__ is set and TEMPORAL_UI_URL holds the runtime value.
+  const [temporalUiUrl, setTemporalUiUrl] = useState('');
+  useEffect(() => {
+    setTemporalUiUrl(TEMPORAL_UI_URL);
+  }, []);
+
   const canManageRepos = role === 'ADMIN' || role === 'LEAD';
   const hasRepo = repos.length > 0;
   const sampleRepo = repos[0];
@@ -122,16 +129,16 @@ export function DashboardOnboarding({
                   Active runs
                 </Link>{' '}
                 and on this dashboard.{' '}
-                {TEMPORAL_UI_URL ? (
+                {temporalUiUrl ? (
                   <>
                     The Temporal UI at{' '}
                     <a
                       className="text-ember-400 hover:underline"
-                      href={TEMPORAL_UI_URL}
+                      href={temporalUiUrl}
                       rel="noreferrer"
                       target="_blank"
                     >
-                      {TEMPORAL_UI_URL}
+                      {temporalUiUrl}
                     </a>{' '}
                     shows the underlying workflow history.
                   </>
@@ -225,7 +232,10 @@ function ApiCurlDetails({ curlExample }: { curlExample: string }) {
       </button>
       {open && (
         <div className="mt-4 space-y-3">
-          <pre className="overflow-x-auto font-mono text-[12px] leading-relaxed text-paper-200">
+          <pre
+            className="overflow-x-auto font-mono text-[12px] leading-relaxed text-paper-200"
+            suppressHydrationWarning
+          >
             <code>{curlExample}</code>
           </pre>
           <p className="text-xs text-paper-500">
