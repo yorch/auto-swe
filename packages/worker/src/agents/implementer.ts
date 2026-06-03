@@ -5,6 +5,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
+import type { AgentTracer } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
@@ -27,19 +28,38 @@ function safePath(relPath: string): string {
 /**
  * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
  * Each tool call is translated to a `docker exec` command inside the workspace.
+ *
+ * If `tracer` is provided every tool execution is recorded so callers can
+ * persist the full tool-call sequence to `agent_traces` after generation.
  */
 export async function createImplementerAgent(
-  workspace: Workspace
+  workspace: Workspace,
+  tracer?: AgentTracer
 ): Promise<{ agent: Agent; mastra: Mastra }> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
     execute: async ({ path }) => {
+      const start = Date.now();
       try {
         const p = safePath(path);
-        return { content: workspace.exec(`cat ${shellQuote(p)}`) };
+        const result = { content: workspace.exec(`cat ${shellQuote(p)}`) };
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { path },
+          outputJson: result,
+          toolName: 'readFile',
+        });
+        return result;
       } catch (err: unknown) {
-        return { content: `Error reading file: ${getErrorMessage(err)}` };
+        const error = getErrorMessage(err);
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          error,
+          inputJson: { path },
+          toolName: 'readFile',
+        });
+        return { content: `Error reading file: ${error}` };
       }
     },
     id: 'readFile',
@@ -51,14 +71,30 @@ export async function createImplementerAgent(
   const writeFile = createTool({
     description: 'Create or overwrite a file in the workspace',
     execute: wrapWriteToolWithSecurityCheck(async ({ path, content }) => {
+      const start = Date.now();
       try {
         const p = safePath(path);
         workspace.exec(`mkdir -p "$(dirname ${shellQuote(p)})"`);
         const b64 = Buffer.from(content).toString('base64');
         workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(p)}`);
-        return { result: `File written: ${p}` };
+        const result = { result: `File written: ${p}` };
+        // Only store path in inputJson — content can be very large and is already in readFile traces
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { path },
+          outputJson: result,
+          toolName: 'writeFile',
+        });
+        return result;
       } catch (err: unknown) {
-        return { result: `Error writing file: ${getErrorMessage(err)}` };
+        const error = getErrorMessage(err);
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          error,
+          inputJson: { path },
+          toolName: 'writeFile',
+        });
+        return { result: `Error writing file: ${error}` };
       }
     }),
     id: 'writeFile',
@@ -73,12 +109,27 @@ export async function createImplementerAgent(
   const listDirectory = createTool({
     description: 'List files and directories at a given path',
     execute: async ({ path }) => {
+      const start = Date.now();
       try {
         // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
         const p = safePath(path ?? '.');
-        return { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
+        const result = { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { path: p },
+          outputJson: result,
+          toolName: 'listDirectory',
+        });
+        return result;
       } catch (err: unknown) {
-        return { listing: `Error listing directory: ${getErrorMessage(err)}` };
+        const error = getErrorMessage(err);
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          error,
+          inputJson: { path },
+          toolName: 'listDirectory',
+        });
+        return { listing: `Error listing directory: ${error}` };
       }
     },
     id: 'listDirectory',
@@ -98,13 +149,26 @@ export async function createImplementerAgent(
       // The container is isolated from the host, but logging helps detect
       // unexpected behaviour (e.g., exfiltration attempts via curl/wget).
       console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(command)}`);
+      const start = Date.now();
       try {
-        return { output: workspace.exec(command) };
+        const result = { output: workspace.exec(command) };
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { command },
+          outputJson: result,
+          toolName: 'bash',
+        });
+        return result;
       } catch (err: unknown) {
         const e = err as { status?: number; stdout?: string; stderr?: string };
-        return {
-          output: `Command failed (exit code ${e.status}):\n${e.stdout ?? ''}\n${e.stderr ?? getErrorMessage(err)}`,
-        };
+        const output = `Command failed (exit code ${e.status}):\n${e.stdout ?? ''}\n${e.stderr ?? getErrorMessage(err)}`;
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { command },
+          outputJson: { output },
+          toolName: 'bash',
+        });
+        return { output };
       }
     },
     id: 'bash',

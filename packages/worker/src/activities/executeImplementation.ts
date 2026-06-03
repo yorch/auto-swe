@@ -9,7 +9,12 @@ import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentWorkflowId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
@@ -52,6 +57,8 @@ export async function executeImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const tracer = new AgentTracer();
+
   try {
     heartbeat('workspace provisioned');
 
@@ -59,8 +66,8 @@ export async function executeImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Create Mastra agent with tools bound to workspace
-    const { agent } = await createImplementerAgent(workspace);
+    // Create Mastra agent with tools bound to workspace (tracer captures every call)
+    const { agent } = await createImplementerAgent(workspace, tracer);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -170,6 +177,10 @@ export async function executeImplementation(
         { findings: securityResult.findings }
       );
     }
+
+    // Persist all captured tool-call traces before returning
+    const runId = await currentWorkflowRunId();
+    await tracer.persist(runId, currentActivityType(), 'implementer');
 
     return {
       branch,

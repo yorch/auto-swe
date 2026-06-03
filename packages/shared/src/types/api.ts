@@ -357,11 +357,29 @@ export interface WorkflowStepRecord {
   error: string | null;
 }
 
+/** One captured tool call or LLM response from an agent activity. */
+export interface AgentTraceRecord {
+  id: string;
+  /** Temporal activity type, e.g. "executeImplementation". */
+  nodeId: string;
+  agentRole: string;
+  seq: number;
+  /** "tool_call" | "llm_response" */
+  type: string;
+  toolName: string | null;
+  inputJson: unknown;
+  outputJson: unknown;
+  durationMs: number | null;
+  error: string | null;
+  createdAt: string;
+}
+
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
   specSnapshot: unknown;
   contextSnapshot: unknown;
   steps: WorkflowStepRecord[];
+  traces: AgentTraceRecord[];
   templateName: string;
 }
 

@@ -124,6 +124,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true } },
+          traces: { orderBy: [{ nodeId: 'asc' }, { seq: 'asc' }] },
           workRequest: {
             select: { description: true, externalTicketId: true, id: true },
           },
@@ -157,6 +158,19 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: run.templateId,
           templateName: run.template.name,
           templateVersion: run.templateVersion,
+          traces: run.traces.map((t) => ({
+            agentRole: t.agentRole,
+            createdAt: t.createdAt,
+            durationMs: t.durationMs,
+            error: t.error,
+            id: t.id,
+            inputJson: t.inputJson,
+            nodeId: t.nodeId,
+            outputJson: t.outputJson,
+            seq: t.seq,
+            toolName: t.toolName,
+            type: t.type,
+          })),
           workflowId: run.workflowId,
           workRequest: run.workRequest,
         },

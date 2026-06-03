@@ -24,7 +24,12 @@ import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/share
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentWorkflowId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
@@ -309,7 +314,8 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const gateTracer = new AgentTracer();
+    const { agent } = await createImplementerAgent(workspace, gateTracer);
 
     const gateFix = await agent.generate(
       [
@@ -383,6 +389,9 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    const gateRunId = await currentWorkflowRunId();
+    await gateTracer.persist(gateRunId, currentActivityType(), 'implementer');
 
     const gateNote =
       gateRerunPassed === null

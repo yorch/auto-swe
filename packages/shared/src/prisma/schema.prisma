@@ -400,10 +400,36 @@ model WorkflowRun {
 
   steps           WorkflowStep[]
   artifacts       WorkflowArtifact[]
+  traces          AgentTrace[]
 
   @@index([templateId])
   @@index([workRequestId])
   @@map("workflow_runs")
+}
+
+/// One tool call or LLM response captured during an agent activity execution.
+/// `nodeId` is the Temporal activity type (e.g. "executeImplementation") so it
+/// can be correlated with the spec node via specSnapshot.nodes[nodeId].step.
+/// Persisted best-effort — failures are swallowed so tracing never breaks runs.
+model AgentTrace {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId      String      @map("run_id") @db.Uuid
+  run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Temporal activity type that produced this trace (e.g. "executeImplementation").
+  nodeId     String      @map("node_id")
+  agentRole  String      @map("agent_role")
+  seq        Int
+  /// "tool_call" | "llm_response"
+  type       String
+  toolName   String?     @map("tool_name")
+  inputJson  Json?       @map("input_json")
+  outputJson Json?       @map("output_json")
+  durationMs Int?        @map("duration_ms")
+  error      String?
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId, nodeId])
+  @@map("agent_traces")
 }
 
 /// One node execution within a run. Recorded incrementally so the UI can show

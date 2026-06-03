@@ -3,7 +3,12 @@ import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow'
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentWorkflowId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
@@ -65,6 +70,8 @@ export async function executeCIFixImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const tracer = new AgentTracer();
+
   try {
     heartbeat('CI fix workspace provisioned');
 
@@ -72,7 +79,7 @@ export async function executeCIFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, tracer);
 
     // Run the agent in CI fix mode
     const ciFix = await agent.generate(
@@ -124,6 +131,9 @@ export async function executeCIFixImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
+    const runId = await currentWorkflowRunId();
+    await tracer.persist(runId, currentActivityType(), 'implementer');
+
     return {
       branch: previousCodeResult.branch,
       diff,
@@ -170,13 +180,15 @@ export async function executeReviewFixImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const reviewTracer = new AgentTracer();
+
   try {
     heartbeat('review fix workspace provisioned');
 
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, reviewTracer);
 
     const reviewFix = await agent.generate(
       [
@@ -224,6 +236,9 @@ export async function executeReviewFixImplementation(
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    const reviewRunId = await currentWorkflowRunId();
+    await reviewTracer.persist(reviewRunId, currentActivityType(), 'implementer');
 
     return {
       branch: previousCodeResult.branch,

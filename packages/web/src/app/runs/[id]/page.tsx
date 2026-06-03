@@ -1,5 +1,6 @@
 'use client';
 
+import type { AgentTraceRecord, WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
@@ -13,6 +14,122 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+// ── Agent trace helpers ──────────────────────────────────────────────────────
+
+const TOOL_ICONS: Record<string, string> = {
+  bash: '⚡',
+  listDirectory: '📂',
+  readFile: '📄',
+  writeFile: '✏️',
+};
+
+const TOOL_LABELS: Record<string, string> = {
+  bash: 'bash',
+  listDirectory: 'ls',
+  readFile: 'read',
+  writeFile: 'write',
+};
+
+function toolSummary(trace: AgentTraceRecord): { label: string; detail: string } {
+  const input = trace.inputJson as Record<string, unknown> | null;
+  if (!input) return { detail: '', label: trace.toolName ?? 'call' };
+
+  switch (trace.toolName) {
+    case 'readFile':
+    case 'writeFile':
+      return { detail: String(input.path ?? ''), label: trace.toolName };
+    case 'listDirectory':
+      return { detail: String(input.path ?? '.'), label: 'ls' };
+    case 'bash':
+      return {
+        detail: String(input.command ?? '').slice(0, 80),
+        label: 'bash',
+      };
+    default:
+      return { detail: '', label: trace.toolName ?? 'call' };
+  }
+}
+
+function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
+  const output = trace.outputJson as Record<string, unknown> | null;
+  if (trace.error) {
+    return (
+      <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+        {trace.error}
+      </div>
+    );
+  }
+  if (!output) return null;
+  const text =
+    typeof output.output === 'string'
+      ? output.output
+      : typeof output.content === 'string'
+        ? output.content
+        : typeof output.listing === 'string'
+          ? output.listing
+          : typeof output.result === 'string'
+            ? output.result
+            : JSON.stringify(output);
+  if (!text) return null;
+  return (
+    <pre className="text-[10px] leading-tight bg-[var(--muted)] p-1.5 rounded overflow-x-auto max-h-28 mt-1 whitespace-pre-wrap break-all">
+      {text.slice(0, 1200)}
+      {text.length > 1200 ? '\n…' : ''}
+    </pre>
+  );
+}
+
+function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  if (traces.length === 0) {
+    return <p className="text-xs text-[var(--muted-foreground)] py-1">No tool calls recorded.</p>;
+  }
+
+  return (
+    <ol className="space-y-1 max-h-96 overflow-y-auto">
+      {traces.map((t) => {
+        const { label, detail } = toolSummary(t);
+        const icon = TOOL_ICONS[t.toolName ?? ''] ?? '🔧';
+        const displayLabel = TOOL_LABELS[t.toolName ?? ''] ?? label;
+        const isExpanded = expandedId === t.id;
+        const durationLabel = t.durationMs != null ? `${t.durationMs}ms` : '';
+
+        return (
+          <li key={t.id}>
+            <button
+              className="w-full text-left rounded hover:bg-[var(--muted)] px-2 py-1 transition-colors"
+              onClick={() => setExpandedId(isExpanded ? null : t.id)}
+              type="button"
+            >
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-base leading-none">{icon}</span>
+                <span className="font-mono font-semibold shrink-0">{displayLabel}</span>
+                {detail && (
+                  <span className="text-[var(--muted-foreground)] truncate font-mono">
+                    {detail}
+                  </span>
+                )}
+                <span className="ml-auto text-[var(--muted-foreground)] shrink-0 text-[10px]">
+                  {durationLabel}
+                </span>
+                {t.error && <span className="text-red-600 shrink-0">✗</span>}
+              </div>
+              {isExpanded && (
+                <div className="mt-1.5">
+                  <TraceOutput trace={t} />
+                </div>
+              )}
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: run, isLoading } = useWorkflowRun(id);
@@ -25,9 +142,6 @@ export default function RunDetailPage({ params }: PageProps) {
     }
     const byNodeId: Record<string, { status: string; attempt: number }> = {};
     for (const s of run.steps) {
-      // Strip fan-out branch prefix (e.g. "fan[0]/impl") so the parent DAG
-      // can show aggregate status. The detail panel still shows per-branch
-      // attempts for inspection.
       const baseId = s.nodeId.includes('/') ? (s.nodeId.split('/').pop() ?? s.nodeId) : s.nodeId;
       const existing = byNodeId[baseId];
       if (!existing || s.attempt >= existing.attempt) {
@@ -36,6 +150,27 @@ export default function RunDetailPage({ params }: PageProps) {
     }
     return { byNodeId };
   }, [run?.steps]);
+
+  // Build a mapping from spec nodeId → activityType (e.g. "impl" → "executeImplementation")
+  // so we can match agent traces to spec nodes.
+  const nodeActivityMap = useMemo<Record<string, string>>(() => {
+    if (!run?.specSnapshot) return {};
+    const spec = run.specSnapshot as WorkflowSpec;
+    const map: Record<string, string> = {};
+    for (const [nid, node] of Object.entries(spec.nodes)) {
+      if (node.type === 'step') map[nid] = node.step;
+    }
+    return map;
+  }, [run?.specSnapshot]);
+
+  // Traces for the currently selected node
+  const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
+    if (!selectedNodeId || !run?.traces) return [];
+    // Use activity type as the trace nodeId
+    const activityType = nodeActivityMap[selectedNodeId];
+    if (!activityType) return [];
+    return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === activityType);
+  }, [selectedNodeId, run, nodeActivityMap]);
 
   if (isLoading || !run) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
@@ -48,6 +183,8 @@ export default function RunDetailPage({ params }: PageProps) {
           (s) => s.nodeId === selectedNodeId || s.nodeId.endsWith(`/${selectedNodeId}`)
         )
       : [];
+
+  const totalTraces = (run as WorkflowRunDetail).traces?.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -135,6 +272,12 @@ export default function RunDetailPage({ params }: PageProps) {
                 <dt className="text-[var(--muted-foreground)]">Workflow ID</dt>
                 <dd className="font-mono text-xs">{run.workflowId}</dd>
               </div>
+              {totalTraces > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-[var(--muted-foreground)]">Tool calls</dt>
+                  <dd className="font-mono text-xs">{totalTraces}</dd>
+                </div>
+              )}
               {run.workRequest && (
                 <>
                   <div className="flex justify-between">
@@ -190,6 +333,15 @@ export default function RunDetailPage({ params }: PageProps) {
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {nodeTraces.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-[var(--border)]">
+                  <p className="text-xs font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wide">
+                    Agent trace · {nodeTraces.length} tool call{nodeTraces.length !== 1 ? 's' : ''}
+                  </p>
+                  <AgentTracePanel traces={nodeTraces} />
                 </div>
               )}
             </Card>

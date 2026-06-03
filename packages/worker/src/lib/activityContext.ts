@@ -2,6 +2,15 @@ import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
 
 /**
+ * Returns the Temporal activity type (function name) for the currently
+ * executing activity, e.g. "executeImplementation". Used as the nodeId
+ * correlator for AgentTrace records.
+ */
+export function currentActivityType(): string {
+  return activityInfo().activityType;
+}
+
+/**
  * Returns the Temporal workflow ID that scheduled the current activity.
  *
  * `Info.workflowExecution` is typed as optional because the Temporal SDK
