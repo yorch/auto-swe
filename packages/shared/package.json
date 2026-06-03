@@ -41,7 +41,7 @@
     "@prisma/client": "7.8.0",
     "bcrypt": "6.0.0",
     "dotenv-expand": "13.0.0",
-    "pg": "8.20.0",
+    "pg": "8.21.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
