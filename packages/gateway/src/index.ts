@@ -48,9 +48,11 @@ async function start() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // CORS — allow the web dashboard and any additional origins from env
+  // CORS — allow the web dashboard and any additional origins from env.
+  // Explicitly list all methods used by the API so PUT/DELETE preflights pass.
   await app.register(cors, {
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH'],
     origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) ?? ['http://localhost:3000'],
   });
 
