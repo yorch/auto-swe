@@ -10,7 +10,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { auth as betterAuth, configuredProviders } from './lib/betterAuth.js';
+import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import authPlugin, { invalidateSessionCache } from './plugins/auth.js';
 
 /** Extract the better-auth session token from a cookie header string. */
@@ -36,6 +36,7 @@ import { lessonRoutes } from './routes/lessons.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { slackRoutes } from './routes/slack.js';
+import { systemConfigRoutes } from './routes/systemConfig.js';
 import { teamRoutes } from './routes/teams.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { userRoutes } from './routes/users.js';
@@ -46,6 +47,9 @@ import { workflowTemplateRoutes } from './routes/workflowTemplates.js';
 import { workRequestRoutes } from './routes/workRequests.js';
 
 async function start() {
+  // Must run before betterAuth.handler is called — reads OAuth creds from DB.
+  await initAuth();
+
   const app = Fastify({ logger: true });
 
   // Zod validation + serialization
@@ -112,7 +116,7 @@ async function start() {
           headers,
           method: request.method,
         });
-        const response = await betterAuth.handler(req);
+        const response = await getAuth().handler(req);
         // Invalidate the cache for sign-out / revoke-session calls so the
         // logged-out user is locked out immediately instead of waiting up
         // to 60s for the cached entry to expire.
@@ -124,7 +128,7 @@ async function start() {
           invalidateSessionCache(sessionCookieBefore);
         }
         reply.status(response.status);
-        response.headers.forEach((value, key) => {
+        response.headers.forEach((value: string, key: string) => {
           reply.header(key, value);
         });
         return reply.send(response.body ? await response.text() : null);
@@ -150,7 +154,7 @@ async function start() {
   app.post('/api/v1/auth/session-token', async (request, reply) => {
     try {
       const headers = fromNodeHeaders(request.headers);
-      const session = await betterAuth.api.getSession({ headers });
+      const session = await getAuth().api.getSession({ headers });
       if (!session) {
         return reply.status(401).send({
           error: { code: 'NO_SESSION', message: 'No active better-auth session' },
@@ -206,6 +210,7 @@ async function start() {
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ host: '0.0.0.0', port });
