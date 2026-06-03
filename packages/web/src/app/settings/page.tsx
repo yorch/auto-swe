@@ -5,10 +5,9 @@ import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { API_BASE } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 /** Subset of better-auth's list-accounts response shape we actually use. */
 interface LinkedAccount {

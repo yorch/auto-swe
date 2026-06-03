@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
+import { API_BASE } from '@/lib/config';
 import { gatewayUnreachableMessage } from '@/lib/networkErrors';
 
 interface AuthState {
@@ -45,7 +46,6 @@ interface AuthState {
   checkAuth: () => Promise<void>;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 /** Lifetime of the proxy-visible marker cookie. Just long enough to span
  *  a typical session — actual auth always re-verifies against the gateway. */
 const MARKER_TTL_SECONDS = 60 * 60 * 24 * 7;

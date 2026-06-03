@@ -4,11 +4,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { useAuthStore } from '@/stores/authStore';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
-const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? '0.0.0';
-const IS_DEV = process.env.NODE_ENV !== 'production';
 
 interface ProviderFlags {
   github: boolean;

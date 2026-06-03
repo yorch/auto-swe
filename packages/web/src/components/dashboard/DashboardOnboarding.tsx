@@ -6,10 +6,9 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { API_BASE, TEMPORAL_UI_URL } from '@/lib/config';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER' | string;
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 export function DashboardOnboarding({
   repos,
@@ -122,16 +121,23 @@ export function DashboardOnboarding({
                 <Link className="text-ember-400 hover:underline" href="/workflows">
                   Active runs
                 </Link>{' '}
-                and on this dashboard. The Temporal UI at{' '}
-                <a
-                  className="text-ember-400 hover:underline"
-                  href="http://localhost:8233"
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  localhost:8233
-                </a>{' '}
-                shows the underlying workflow history.
+                and on this dashboard.{' '}
+                {TEMPORAL_UI_URL ? (
+                  <>
+                    The Temporal UI at{' '}
+                    <a
+                      className="text-ember-400 hover:underline"
+                      href={TEMPORAL_UI_URL}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {TEMPORAL_UI_URL}
+                    </a>{' '}
+                    shows the underlying workflow history.
+                  </>
+                ) : (
+                  <>The Temporal UI shows the underlying workflow history.</>
+                )}
               </p>
             }
             index={3}
