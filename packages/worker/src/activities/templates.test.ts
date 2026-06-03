@@ -1,6 +1,21 @@
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackConfig: async () => ({
+    botToken: null,
+    clientId: null,
+    clientSecret: null,
+    signingSecret: null,
+  }),
+  resolveWorkflowDefaults: async () => ({
+    branchPrefix: 'auto',
+    defaultTeamSlug: 'default',
+    prBodyTemplate: '',
+    prTitleTemplate: '[auto-swe] {{ticketId}}',
+  }),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     repository: {

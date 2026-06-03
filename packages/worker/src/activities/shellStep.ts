@@ -23,13 +23,13 @@
 import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
-import { requireEnv } from '../lib/errors.js';
 import { EXEC_OPTS } from '../lib/execUtils.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
@@ -71,15 +71,17 @@ const GIT_HELPER_IMAGE = 'alpine/git:latest';
  * `error.stdout` / `error.stderr`. Without this, a failed clone would leak
  * the token into the Temporal workflow history.
  */
-function redactToken(s: unknown): string {
+function redactToken(s: unknown, token?: string | null): string {
   if (typeof s !== 'string') {
     return String(s);
   }
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
+  // Fall back to env var for error-path redaction (only used when DB lookup
+  // hasn't run yet, e.g. in the runDocker helper that doesn't hold the token)
+  const t = token ?? process.env.GITHUB_TOKEN;
+  if (!t) {
     return s;
   }
-  return s.split(token).join('***');
+  return s.split(t).join('***');
 }
 
 function runDocker(args: string[]): string {
@@ -123,12 +125,17 @@ interface RepoMeta {
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
-  const repo = await prisma.repository.findUniqueOrThrow({
-    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
-    where: { id: request.repoId },
-  });
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-  const token = requireEnv('GITHUB_TOKEN');
+  const [repo, ghConfig] = await Promise.all([
+    prisma.repository.findUniqueOrThrow({
+      include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
+      where: { id: request.repoId },
+    }),
+    resolveGitHubConfig(),
+  ]);
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
+  if (!ghConfig.token)
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  const token = ghConfig.token;
   const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
     'https://',
     `https://x-access-token:${token}@`
@@ -270,7 +277,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     throw err;
   }
 
-  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
+  const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;

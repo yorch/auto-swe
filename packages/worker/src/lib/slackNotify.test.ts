@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackConfig: async () => ({
+    botToken: process.env.SLACK_BOT_TOKEN ?? null,
+    clientId: null,
+    clientSecret: null,
+    signingSecret: null,
+  }),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     team: { findUnique: vi.fn() },
