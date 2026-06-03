@@ -32,7 +32,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 expand(dotenv.config({ path: path.resolve(here, '../../../../.env'), quiet: true }));
 
 // Lazy import to make sure dotenv has populated process.env first.
-const { auth } = await import('../lib/betterAuth.js');
+const { initAuth, getAuth } = await import('../lib/betterAuth.js');
+await initAuth();
+const auth = getAuth();
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
 
@@ -54,7 +56,8 @@ async function main() {
   // Find the existing User row (created by the shared seed). If absent, the
   // shared seed hasn't been run yet — bail loudly so the user runs them in
   // the right order.
-  const user = await ctx.adapter.findOne<{ id: string; email: string }>({
+  // biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
+  const user = await (ctx.adapter.findOne as any)({
     model: 'user',
     where: [{ field: 'email', operator: 'eq', value: ADMIN_EMAIL }],
   });
@@ -66,7 +69,8 @@ async function main() {
 
   // Idempotent upsert into the Account table. better-auth keys credential
   // accounts by (providerId='credential', accountId=<user.id>).
-  const existing = await ctx.adapter.findOne<{ id: string }>({
+  // biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
+  const existing = await (ctx.adapter.findOne as any)({
     model: 'account',
     where: [
       { field: 'providerId', operator: 'eq', value: 'credential' },

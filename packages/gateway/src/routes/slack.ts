@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -69,7 +70,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request, reply) => {
-      const clientId = process.env.SLACK_CLIENT_ID;
+      const { clientId } = await resolveSlackConfig();
       if (!clientId) {
         return reply.status(503).send({
           error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack integration not configured' },
@@ -112,8 +113,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const clientId = process.env.SLACK_CLIENT_ID;
-    const clientSecret = process.env.SLACK_CLIENT_SECRET;
+    const { clientId, clientSecret } = await resolveSlackConfig();
     if (!clientId || !clientSecret) {
       return reply.status(503).send({
         error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
@@ -183,7 +183,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      const { signingSecret } = await resolveSlackConfig();
       if (!signingSecret) {
         return reply.status(503).send({
           error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack signing secret not configured' },
@@ -299,7 +299,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      const { signingSecret } = await resolveSlackConfig();
       if (!signingSecret) {
         return reply.status(503).send({
           error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack signing secret not configured' },
@@ -364,7 +364,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
           if (!built.ok) {
             return ephemeral(built.error);
           }
-          const opened = await openSlackView({ triggerId, view: built.view });
+          const { botToken: slackBotToken } = await resolveSlackConfig();
+          const opened = await openSlackView(
+            { triggerId, view: built.view },
+            slackBotToken ?? undefined
+          );
           if (!opened.ok) {
             return ephemeral(`Could not open modal: ${opened.error ?? 'unknown error'}`);
           }
@@ -677,7 +681,8 @@ async function handleRunModalSubmission(
   }
 
   const temporalWorkflowId = generateWorkflowId(ticket, repo.organizationName, repo.repoName);
-  const branch = generateBranchName(ticket);
+  const { branchPrefix: slackBranchPrefix } = await resolveWorkflowDefaults();
+  const branch = generateBranchName(ticket, slackBranchPrefix);
   const workRequestId = crypto.randomUUID();
   const repoWorkRequest: RepoWorkRequest = {
     budgetTier: 'STANDARD',

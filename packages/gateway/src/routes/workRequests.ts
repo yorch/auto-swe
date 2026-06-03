@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -126,7 +127,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repo.organizationName,
         repo.repoName
       );
-      const branch = generateBranchName(externalTicketId);
+      const { branchPrefix } = await resolveWorkflowDefaults();
+      const branch = generateBranchName(externalTicketId, branchPrefix);
 
       // Generate the work request ID upfront so it can be passed to Temporal
       // before the DB row exists. This avoids the ordering problem where

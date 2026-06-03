@@ -1,3 +1,4 @@
+import { resolveGitHubConfig, resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { verifyGitHubSignature } from '../lib/github.js';
@@ -20,12 +21,12 @@ const CheckRunWebhookSchema = z.object({
   repository: z.object({ full_name: z.string() }),
 });
 
-function verifyWebhookOrReject(
+async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
   reply: FastifyReply
-): boolean {
+): Promise<boolean> {
   const signature = request.headers['x-hub-signature-256'] as string;
-  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+  const { webhookSecret: secret } = await resolveGitHubConfig();
 
   if (!secret || !signature) {
     reply
@@ -118,11 +119,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const teamChannel = pullRequest.workflow.repository?.team?.slackNotifyChannel ?? null;
       const slackChannel = originChannel ?? teamChannel;
       if (slackChannel) {
-        await postSlackMessage({
-          channel: slackChannel,
-          text: `:merged: *[${wr?.externalTicketId ?? 'unknown'}]* PR #${prNumber} was merged`,
-          ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
-        }).catch(() => null);
+        const { botToken } = await resolveSlackConfig();
+        await postSlackMessage(
+          {
+            channel: slackChannel,
+            text: `:merged: *[${wr?.externalTicketId ?? 'unknown'}]* PR #${prNumber} was merged`,
+            ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
+          },
+          botToken ?? undefined
+        ).catch(() => null);
       }
 
       return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };

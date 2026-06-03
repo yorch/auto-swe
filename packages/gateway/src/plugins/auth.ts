@@ -273,11 +273,11 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   // Lazy-load to avoid pulling the better-auth module graph into the auth
   // plugin's hot startup path (and to avoid a cycle if betterAuth.ts ever
   // imports from this file).
-  const [{ auth: betterAuth }, { fromNodeHeaders }] = await Promise.all([
+  const [{ getAuth }, { fromNodeHeaders }] = await Promise.all([
     import('../lib/betterAuth.js'),
     import('better-auth/node'),
   ]);
-  const session = await betterAuth.api.getSession({
+  const session = await getAuth().api.getSession({
     headers: fromNodeHeaders(request.headers),
   });
   if (!session) {

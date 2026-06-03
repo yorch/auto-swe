@@ -2,7 +2,23 @@ import crypto from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackConfig: vi.fn(async () => ({
+    botToken: 'xoxb-test',
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+    signingSecret: 'test-signing-secret',
+  })),
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    branchPrefix: 'auto',
+    defaultTeamSlug: 'default',
+    prBodyTemplate: '',
+    prTitleTemplate: '[auto-swe] {{ticketId}}',
+  })),
+}));
+
 import { slackRoutes } from './slack.js';
 
 const SIGNING_SECRET = 'test-signing-secret';
