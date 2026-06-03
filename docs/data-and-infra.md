@@ -1,6 +1,8 @@
 # Data Layer & Infrastructure
 
-> Original design doc for data, infra, and security — extracted from [PLAN.md](../PLAN.md). All four phases have shipped. The shipped Prisma schema lives at `packages/shared/src/prisma/schema.prisma` and is the authoritative reference (its model count has grown past the 10 sketched here as auth, workflow templates, and audit trails were added). §3.1–3.2 have been rewritten to describe the Docker-in-Docker workspace model that actually shipped; other sections remain as-designed and may diverge from current code — see [STATUS.md](../STATUS.md) for a phase-by-phase status.
+> **Historical design document.** For a current architecture overview with diagrams and file references, see [architecture.md](./architecture.md).
+>
+> Original design doc for data, infra, and security — extracted from [PLAN.md](../PLAN.md). All four phases have shipped. **The schema section below (§1) is outdated** — the actual schema is `packages/shared/src/prisma/schema.prisma` (20+ models; the sketch here shows ~10). §3.1–3.2 have been rewritten to describe the Docker-in-Docker workspace model that actually shipped; other sections remain as-designed and may diverge from current code — see [STATUS.md](../STATUS.md) for a phase-by-phase status.
 
 ## 1. Prisma Data Model (Relational Domain Schema & RBAC)
 
