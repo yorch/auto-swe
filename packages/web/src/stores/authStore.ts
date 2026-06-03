@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
-import { API_BASE } from '@/lib/config';
+import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
 import { gatewayUnreachableMessage } from '@/lib/networkErrors';
 
 interface AuthState {
@@ -49,28 +49,27 @@ interface AuthState {
 /** Lifetime of the proxy-visible marker cookie. Just long enough to span
  *  a typical session — actual auth always re-verifies against the gateway. */
 const MARKER_TTL_SECONDS = 60 * 60 * 24 * 7;
-const MARKER_COOKIE = 'web-session-active';
 
 function setLegacyTokenCookie(token: string): void {
   if (typeof window === 'undefined') return;
   const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
   // biome-ignore lint/suspicious/noDocumentCookie: same-origin cookie read by the Next.js proxy to gate routes; gateway re-verifies the JWT.
-  document.cookie = `accessToken=${token}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
+  document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
 }
 
 function setSessionMarkerCookie(): void {
   if (typeof window === 'undefined') return;
   const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
   // biome-ignore lint/suspicious/noDocumentCookie: presence-only marker for the Next.js proxy; the real session cookie lives on the gateway origin.
-  document.cookie = `${MARKER_COOKIE}=1; path=/; max-age=${MARKER_TTL_SECONDS}; SameSite=Lax${isSecure}`;
+  document.cookie = `${COOKIE_SESSION_MARKER}=1; path=/; max-age=${MARKER_TTL_SECONDS}; SameSite=Lax${isSecure}`;
 }
 
 function clearAllAuthCookies(): void {
   if (typeof window === 'undefined') return;
   // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
-  document.cookie = 'accessToken=; path=/; max-age=0';
+  document.cookie = `${COOKIE_ACCESS_TOKEN}=; path=/; max-age=0`;
   // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
-  document.cookie = `${MARKER_COOKIE}=; path=/; max-age=0`;
+  document.cookie = `${COOKIE_SESSION_MARKER}=; path=/; max-age=0`;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> {

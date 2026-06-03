@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
 
 const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health'];
 
@@ -24,8 +25,8 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const hasLegacyToken = Boolean(request.cookies.get('accessToken')?.value);
-  const hasBetterAuthMarker = Boolean(request.cookies.get('web-session-active')?.value);
+  const hasLegacyToken = Boolean(request.cookies.get(COOKIE_ACCESS_TOKEN)?.value);
+  const hasBetterAuthMarker = Boolean(request.cookies.get(COOKIE_SESSION_MARKER)?.value);
 
   if (!(hasLegacyToken || hasBetterAuthMarker)) {
     const loginUrl = new URL('/login', request.url);

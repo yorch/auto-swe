@@ -1,4 +1,4 @@
-import { API_BASE } from './config';
+import { API_BASE, COOKIE_ACCESS_TOKEN } from './config';
 import { gatewayUnreachableMessage } from './networkErrors';
 
 interface ApiError {
@@ -16,13 +16,13 @@ export class ApiClient {
   setToken(token: string) {
     this.accessToken = token;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('accessToken', token);
+      localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
     }
   }
 
   getToken(): string | null {
     if (!this.accessToken && typeof window !== 'undefined') {
-      this.accessToken = localStorage.getItem('accessToken');
+      this.accessToken = localStorage.getItem(COOKIE_ACCESS_TOKEN);
     }
     return this.accessToken;
   }
@@ -30,7 +30,7 @@ export class ApiClient {
   clearToken() {
     this.accessToken = null;
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('accessToken');
+      localStorage.removeItem(COOKIE_ACCESS_TOKEN);
     }
   }
 
