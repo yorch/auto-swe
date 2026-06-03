@@ -27,15 +27,18 @@ async function main() {
   // account-linking-by-verified-email picks this row up when the same email
   // later signs in via GitHub / Google / magic-link (otherwise a duplicate
   // would be created).
+  // SEED_ADMIN_EMAIL must match the default in provisionAuthAdmin.ts, which
+  // looks this row up by the same env var.
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@auto-swe.local';
   const admin = await prisma.user.upsert({
     create: {
-      email: 'admin@auto-swe.local',
+      email: adminEmail,
       emailVerified: true,
       passwordHash: await bcrypt.hash(adminPassword, 12),
       role: 'ADMIN',
     },
     update: { emailVerified: true },
-    where: { email: 'admin@auto-swe.local' },
+    where: { email: adminEmail },
   });
   console.log(`Seed: admin user created (${admin.id})`);
   console.log(
