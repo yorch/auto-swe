@@ -15,6 +15,15 @@ import {
 
 type ProbeResult = { ok: boolean; status?: number; error?: string };
 
+const BUILTIN_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
+type BuiltinProvider = (typeof BUILTIN_PROVIDERS)[number];
+
+const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
+  anthropic: 'Built-in — no API base needed. Key format: sk-ant-…',
+  google: 'Built-in — no API base needed. Key is the Gemini API key from Google AI Studio.',
+  openai: 'Built-in — no API base needed. Key format: sk-…',
+};
+
 export function CredentialsTab() {
   const { data: credentials, isLoading } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
@@ -225,13 +234,22 @@ function CredentialModal({
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
                 id="provider"
+                list="provider-suggestions"
                 onChange={(e) => setProvider(e.target.value)}
-                placeholder="anthropic / openai / google / opencodego / ..."
+                placeholder="anthropic / openai / google / openrouter / ..."
                 value={provider}
               />
+              <datalist id="provider-suggestions">
+                {BUILTIN_PROVIDERS.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
               <p className="mt-1 text-[11px] text-paper-500">
-                Lowercase kebab-case. Built-in: anthropic, openai, google. Anything else is treated
-                as OpenAI-compatible and requires an apiBase URL.
+                {BUILTIN_PROVIDERS.includes(provider as BuiltinProvider)
+                  ? BUILTIN_PROVIDER_HINTS[provider as BuiltinProvider]
+                  : provider
+                    ? 'Custom provider — treated as OpenAI-compatible. An API base URL is required.'
+                    : 'Built-in: anthropic, openai, google (no API base needed). Anything else is OpenAI-compatible and requires an API base URL.'}
               </p>
             </div>
             <div>
