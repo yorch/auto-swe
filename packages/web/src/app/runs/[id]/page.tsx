@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useCancelWorkflowRun, useWorkflowRun } from '@/hooks/useWorkflows';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -77,20 +77,14 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
   }
 }
 
+const OUTPUT_TEXT_FIELDS = ['text', 'output', 'content', 'listing', 'result'] as const;
+
 function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   const output = trace.outputJson as Record<string, unknown> | null;
   const text = output
-    ? typeof output.text === 'string'
-      ? output.text
-      : typeof output.output === 'string'
-        ? output.output
-        : typeof output.content === 'string'
-          ? output.content
-          : typeof output.listing === 'string'
-            ? output.listing
-            : typeof output.result === 'string'
-              ? output.result
-              : JSON.stringify(output, null, 2)
+    ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
+        | string
+        | undefined) ?? JSON.stringify(output, null, 2))
     : null;
 
   if (!trace.error && !text) {
@@ -143,11 +137,11 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
             </p>
           )}
           <ol className="space-y-1 max-h-80 overflow-y-auto">
-            {(byAttempt[attempt] ?? []).map((t) => {
+            {byAttempt[attempt].map((t) => {
               const { label, detail } = traceSummary(t);
               const isExpanded = expandedId === t.id;
               const durationLabel =
-                t.durationMs != null && t.durationMs > 0 ? `${t.durationMs}ms` : '';
+                t.durationMs != null && t.durationMs > 0 ? formatDuration(t.durationMs) : '';
               const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
               const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
 
@@ -219,34 +213,18 @@ export default function RunDetailPage({ params }: PageProps) {
     return { byNodeId };
   }, [run?.steps]);
 
-  // Build a mapping from spec nodeId → activityType (e.g. "impl" → "executeImplementation")
-  // so we can match agent traces to spec nodes.
-  const nodeActivityMap = useMemo<Record<string, string>>(() => {
-    if (!run?.specSnapshot) {
-      return {};
+  // Traces for the currently selected node — derived directly from spec + selected node id
+  const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
+    if (!selectedNodeId || !run?.traces || !run?.specSnapshot) {
+      return [];
     }
     const spec = run.specSnapshot as WorkflowSpec;
-    const map: Record<string, string> = {};
-    for (const [nid, node] of Object.entries(spec.nodes)) {
-      if (node.type === 'step') {
-        map[nid] = node.step;
-      }
-    }
-    return map;
-  }, [run?.specSnapshot]);
-
-  // Traces for the currently selected node
-  const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
-    if (!selectedNodeId || !run?.traces) {
+    const node = spec.nodes[selectedNodeId];
+    if (node?.type !== 'step') {
       return [];
     }
-    // Use activity type as the trace nodeId
-    const activityType = nodeActivityMap[selectedNodeId];
-    if (!activityType) {
-      return [];
-    }
-    return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === activityType);
-  }, [selectedNodeId, run, nodeActivityMap]);
+    return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === node.step);
+  }, [selectedNodeId, run?.traces, run?.specSnapshot]);
 
   if (isLoading || !run) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;

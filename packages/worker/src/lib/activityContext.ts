@@ -58,22 +58,9 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
 }
 
 /**
- * Persist all in-memory implementer traces for the currently executing
- * activity. Call this in the `finally` block after `workspace.destroy()` is
- * synchronously done — or kick it off before the synchronous destroy and
- * `await` afterwards to overlap the DB write with container teardown.
- *
+ * Persist all in-memory traces for the currently executing activity.
  * Best-effort: errors are swallowed inside `AgentTracer.persist`.
  */
-export async function persistImplementerTrace(tracer: AgentTracer): Promise<void> {
-  await tracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'implementer',
-    currentAttempt()
-  );
-}
-
 export async function persistActivityTrace(tracer: AgentTracer, agentRole: string): Promise<void> {
   await tracer.persist(
     await currentWorkflowRunId(),

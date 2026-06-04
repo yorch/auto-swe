@@ -27,7 +27,7 @@ import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import {
   currentWorkflowId,
   currentWorkflowRunId,
-  persistImplementerTrace,
+  persistActivityTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
@@ -427,7 +427,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       testResults: testResult,
     };
   } finally {
-    const done = persistImplementerTrace(gateTracer);
+    const done = persistActivityTrace(gateTracer, 'implementer');
     workspace.destroy();
     await done;
   }

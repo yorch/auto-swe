@@ -1,11 +1,7 @@
 import type { AggregatedReviewResult, CodeResult } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 
 /**
@@ -23,12 +19,7 @@ export async function runReviewNetwork(
 
   heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
 
-  await tracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'reviewer',
-    currentAttempt()
-  );
+  await persistActivityTrace(tracer, 'reviewer');
 
   return result;
 }

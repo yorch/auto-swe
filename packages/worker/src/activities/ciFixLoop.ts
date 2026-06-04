@@ -3,7 +3,7 @@ import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow'
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId, persistImplementerTrace } from '../lib/activityContext.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
@@ -160,7 +160,7 @@ export async function executeCIFixImplementation(
       testResults: testResult,
     };
   } finally {
-    const done = persistImplementerTrace(tracer);
+    const done = persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
     await done;
   }
@@ -289,7 +289,7 @@ export async function executeReviewFixImplementation(
       testResults: testResult,
     };
   } finally {
-    const done = persistImplementerTrace(reviewTracer);
+    const done = persistActivityTrace(reviewTracer, 'implementer');
     workspace.destroy();
     await done;
   }

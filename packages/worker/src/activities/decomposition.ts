@@ -23,7 +23,6 @@ import {
   currentWorkflowId,
   currentWorkflowRunId,
   persistActivityTrace,
-  persistImplementerTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
@@ -276,7 +275,7 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
-    const done = persistImplementerTrace(tracer);
+    const done = persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
     await done;
   }

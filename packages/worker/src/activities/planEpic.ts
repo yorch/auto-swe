@@ -2,11 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { EpicPlanRequest, EpicRepoEntry, RepoInfo } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { decomposeEpic } from '../agents/plannerAgent.js';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 
 /**
@@ -35,12 +31,7 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
 
   const tracer = new AgentTracer();
   const plannedRepos = await decomposeEpic(epicRequest.description, repoInfos, tracer);
-  await tracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'planner',
-    currentAttempt()
-  );
+  await persistActivityTrace(tracer, 'planner');
 
   return plannedRepos.map((pr) => ({
     dependsOn: pr.dependsOn,
