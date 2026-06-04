@@ -171,6 +171,7 @@ export async function createImplementerAgent(
         const output = `Command failed (exit code ${e.status}):\n${e.stdout ?? ''}\n${e.stderr ?? getErrorMessage(err)}`;
         tracer?.addToolCall({
           durationMs: Date.now() - start,
+          error: `exit code ${e.status ?? 'unknown'}`,
           inputJson: { command },
           outputJson: { output },
           toolName: 'bash',

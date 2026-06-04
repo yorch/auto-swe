@@ -3,6 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import {
   currentActivityType,
+  currentAttempt,
   currentWorkflowId,
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
@@ -101,7 +102,12 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       throw e;
     } finally {
       span.end();
-      await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'securityReview');
+      await tracer.persist(
+        await currentWorkflowRunId(),
+        currentActivityType(),
+        'securityReview',
+        currentAttempt()
+      );
     }
   });
 }

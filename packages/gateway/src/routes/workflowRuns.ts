@@ -162,6 +162,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateVersion: run.templateVersion,
           traces: (run.traces ?? []).map((t) => ({
             agentRole: t.agentRole,
+            attempt: t.attempt,
             createdAt: t.createdAt,
             durationMs: t.durationMs,
             error: t.error,

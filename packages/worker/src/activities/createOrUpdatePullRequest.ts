@@ -1,7 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
-import { currentActivityType, currentWorkflowRunId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentAttempt,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
@@ -55,7 +59,12 @@ export async function createOrUpdatePullRequest(
         prUrl,
       },
     });
-    await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'pr');
+    await tracer.persist(
+      await currentWorkflowRunId(),
+      currentActivityType(),
+      'pr',
+      currentAttempt()
+    );
     return { prNumber: existingPR.prNumber, prUrl };
   }
 

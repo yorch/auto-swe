@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
 import {
   currentActivityType,
+  currentAttempt,
   currentWorkflowId,
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
@@ -105,7 +106,12 @@ export async function validateContext(
     // Graceful degradation: empty criteria still allows workflow to proceed
   }
 
-  await agentTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'validateContext');
+  await agentTracer.persist(
+    await currentWorkflowRunId(),
+    currentActivityType(),
+    'validateContext',
+    currentAttempt()
+  );
 
   heartbeat('persisting context snapshot');
 

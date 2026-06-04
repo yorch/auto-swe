@@ -12,6 +12,14 @@ export function currentActivityType(): string {
 }
 
 /**
+ * Returns the current Temporal activity attempt number (1-based). Stored on
+ * AgentTrace rows so the UI can separate traces from different retry attempts.
+ */
+export function currentAttempt(): number {
+  return activityInfo().attempt;
+}
+
+/**
  * Returns the Temporal workflow ID that scheduled the current activity.
  *
  * `Info.workflowExecution` is typed as optional because the Temporal SDK
@@ -58,9 +66,19 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
  * Best-effort: errors are swallowed inside `AgentTracer.persist`.
  */
 export async function persistImplementerTrace(tracer: AgentTracer): Promise<void> {
-  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
+  await tracer.persist(
+    await currentWorkflowRunId(),
+    currentActivityType(),
+    'implementer',
+    currentAttempt()
+  );
 }
 
 export async function persistActivityTrace(tracer: AgentTracer, agentRole: string): Promise<void> {
-  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), agentRole);
+  await tracer.persist(
+    await currentWorkflowRunId(),
+    currentActivityType(),
+    agentRole,
+    currentAttempt()
+  );
 }

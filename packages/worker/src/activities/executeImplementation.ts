@@ -11,6 +11,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import {
   currentActivityType,
+  currentAttempt,
   currentWorkflowId,
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
@@ -202,7 +203,7 @@ export async function executeImplementation(
 
     // Persist traces before the security gate so they survive a gate rejection.
     const runId = await currentWorkflowRunId();
-    await tracer.persist(runId, currentActivityType(), 'implementer');
+    await tracer.persist(runId, currentActivityType(), 'implementer', currentAttempt());
 
     // Security scan — gate before returning code result
     heartbeat('running security scan');
