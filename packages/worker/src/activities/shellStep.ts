@@ -26,7 +26,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
@@ -119,8 +119,8 @@ interface RepoMeta {
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
-  /// The resolved PAT — kept alongside cloneUrl so error-path redaction works
-  /// even when no GITHUB_TOKEN env var is set (DB-only token configuration).
+  /** The resolved PAT — kept alongside cloneUrl so error-path redaction works
+   * even when no GITHUB_TOKEN env var is set (DB-only token configuration). */
   token: string;
 }
 
@@ -134,7 +134,10 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   ]);
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   if (!ghConfig.token) {
-    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+    throw ApplicationFailure.nonRetryable(
+      'GitHub token not configured. Set it at /admin/integrations.',
+      'CONFIG_MISSING'
+    );
   }
   const token = ghConfig.token;
   const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(

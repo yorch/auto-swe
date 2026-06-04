@@ -66,7 +66,7 @@ const StoragePutBody = z
     awsAccessKeyId: z.string().max(200).nullable().optional(),
     awsSecretAccessKey: z.string().min(1).max(500).optional(),
     backend: z.enum(['inline', 's3']).optional(),
-    s3Bucket: z.string().max(200).nullable().optional(),
+    s3Bucket: z.string().min(1).max(200).nullable().optional(),
     s3Endpoint: z.string().url().max(500).nullable().optional(),
     s3ForcePathStyle: z.boolean().optional(),
     s3Prefix: z.string().max(200).nullable().optional(),
@@ -108,12 +108,14 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get('/config/github', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
     const row = await prisma.gitHubConfig.findUnique({ where: { id: 'default' } });
     return reply.send({
-      apiUrl: row?.apiUrl ?? null,
-      baseUrl: row?.baseUrl ?? null,
-      oauthClientId: row?.oauthClientId ?? null,
-      oauthClientSecret: maskedSecret(row?.oauthClientSecretLastFour),
-      token: maskedSecret(row?.tokenLastFour),
-      webhookSecret: maskedSecret(row?.webhookSecretLastFour),
+      data: {
+        apiUrl: row?.apiUrl ?? null,
+        baseUrl: row?.baseUrl ?? null,
+        oauthClientId: row?.oauthClientId ?? null,
+        oauthClientSecret: maskedSecret(row?.oauthClientSecretLastFour),
+        token: maskedSecret(row?.tokenLastFour),
+        webhookSecret: maskedSecret(row?.webhookSecretLastFour),
+      },
     });
   });
 
@@ -145,13 +147,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
 
       return reply.send({
-        apiUrl: row.apiUrl,
-        baseUrl: row.baseUrl,
-        oauthClientId: row.oauthClientId,
-        oauthClientSecret: maskedSecret(row.oauthClientSecretLastFour),
-        requiresRestart: !!(oauthClientId !== undefined || oauthClientSecret),
-        token: maskedSecret(row.tokenLastFour),
-        webhookSecret: maskedSecret(row.webhookSecretLastFour),
+        data: {
+          apiUrl: row.apiUrl,
+          baseUrl: row.baseUrl,
+          oauthClientId: row.oauthClientId,
+          oauthClientSecret: maskedSecret(row.oauthClientSecretLastFour),
+          requiresRestart: !!(oauthClientId !== undefined || oauthClientSecret),
+          token: maskedSecret(row.tokenLastFour),
+          webhookSecret: maskedSecret(row.webhookSecretLastFour),
+        },
       });
     }
   );
@@ -161,10 +165,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get('/config/slack', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
     const row = await prisma.slackConfig.findUnique({ where: { id: 'default' } });
     return reply.send({
-      botToken: maskedSecret(row?.botTokenLastFour),
-      clientId: row?.clientId ?? null,
-      clientSecret: maskedSecret(row?.clientSecretLastFour),
-      signingSecret: maskedSecret(row?.signingSecretLastFour),
+      data: {
+        botToken: maskedSecret(row?.botTokenLastFour),
+        clientId: row?.clientId ?? null,
+        clientSecret: maskedSecret(row?.clientSecretLastFour),
+        signingSecret: maskedSecret(row?.signingSecretLastFour),
+      },
     });
   });
 
@@ -190,11 +196,13 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
 
       return reply.send({
-        botToken: maskedSecret(row.botTokenLastFour),
-        clientId: row.clientId,
-        clientSecret: maskedSecret(row.clientSecretLastFour),
-        requiresRestart: !!(clientId !== undefined || clientSecret),
-        signingSecret: maskedSecret(row.signingSecretLastFour),
+        data: {
+          botToken: maskedSecret(row.botTokenLastFour),
+          clientId: row.clientId,
+          clientSecret: maskedSecret(row.clientSecretLastFour),
+          requiresRestart: !!(clientId !== undefined || clientSecret),
+          signingSecret: maskedSecret(row.signingSecretLastFour),
+        },
       });
     }
   );
@@ -204,14 +212,16 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get('/config/storage', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
     const row = await prisma.storageConfig.findUnique({ where: { id: 'default' } });
     return reply.send({
-      awsAccessKeyId: row?.awsAccessKeyId ?? null,
-      awsSecretAccessKey: maskedSecret(row?.awsSecretAccessKeyLastFour),
-      backend: row?.backend ?? 'inline',
-      s3Bucket: row?.s3Bucket ?? null,
-      s3Endpoint: row?.s3Endpoint ?? null,
-      s3ForcePathStyle: row?.s3ForcePathStyle ?? false,
-      s3Prefix: row?.s3Prefix ?? null,
-      s3Region: row?.s3Region ?? null,
+      data: {
+        awsAccessKeyId: row?.awsAccessKeyId ?? null,
+        awsSecretAccessKey: maskedSecret(row?.awsSecretAccessKeyLastFour),
+        backend: row?.backend ?? 'inline',
+        s3Bucket: row?.s3Bucket ?? null,
+        s3Endpoint: row?.s3Endpoint ?? null,
+        s3ForcePathStyle: row?.s3ForcePathStyle ?? false,
+        s3Prefix: row?.s3Prefix ?? null,
+        s3Region: row?.s3Region ?? null,
+      },
     });
   });
 
@@ -269,14 +279,16 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
 
       return reply.send({
-        awsAccessKeyId: row.awsAccessKeyId,
-        awsSecretAccessKey: maskedSecret(row.awsSecretAccessKeyLastFour),
-        backend: row.backend,
-        s3Bucket: row.s3Bucket,
-        s3Endpoint: row.s3Endpoint,
-        s3ForcePathStyle: row.s3ForcePathStyle,
-        s3Prefix: row.s3Prefix,
-        s3Region: row.s3Region,
+        data: {
+          awsAccessKeyId: row.awsAccessKeyId,
+          awsSecretAccessKey: maskedSecret(row.awsSecretAccessKeyLastFour),
+          backend: row.backend,
+          s3Bucket: row.s3Bucket,
+          s3Endpoint: row.s3Endpoint,
+          s3ForcePathStyle: row.s3ForcePathStyle,
+          s3Prefix: row.s3Prefix,
+          s3Region: row.s3Region,
+        },
       });
     }
   );
@@ -286,7 +298,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get(
     '/config/workflow-defaults',
     { schema: { response: { 200: z.any() } } },
-    async (_req, reply) => reply.send(await resolveWorkflowDefaults())
+    async (_req, reply) => reply.send({ data: await resolveWorkflowDefaults() })
   );
 
   f.put(
@@ -300,7 +312,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
       // Return through the shared resolver so GET and PUT always produce the
       // same shape, including env-var fallbacks for fields not yet set in DB.
-      return reply.send(await resolveWorkflowDefaults());
+      return reply.send({ data: await resolveWorkflowDefaults() });
     }
   );
 
@@ -309,8 +321,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get('/config/oauth/google', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
     const row = await prisma.googleOAuthConfig.findUnique({ where: { id: 'default' } });
     return reply.send({
-      clientId: row?.clientId ?? null,
-      clientSecret: maskedSecret(row?.clientSecretLastFour),
+      data: {
+        clientId: row?.clientId ?? null,
+        clientSecret: maskedSecret(row?.clientSecretLastFour),
+      },
     });
   });
 
@@ -334,9 +348,11 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
 
       return reply.send({
-        clientId: row.clientId,
-        clientSecret: maskedSecret(row.clientSecretLastFour),
-        requiresRestart: true,
+        data: {
+          clientId: row.clientId,
+          clientSecret: maskedSecret(row.clientSecretLastFour),
+          requiresRestart: true,
+        },
       });
     }
   );
@@ -361,6 +377,6 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     } catch (e) {
       results.githubToken = `error: ${e instanceof Error ? e.message : e}`;
     }
-    return reply.send(results);
+    return reply.send({ data: results });
   });
 };

@@ -275,8 +275,8 @@ export function getAuth(): AuthInstance {
   return _auth;
 }
 
-/// Alias for backwards compatibility with the scripts that do
-/// `const { auth } = await import('../lib/betterAuth.js')`.
+/** Alias so scripts can still do `const { auth } = await import('../lib/betterAuth.js')`.
+ * Note: `auth` is a function — call `auth()` to get the BetterAuth instance. */
 export { getAuth as auth };
 
 function buildAuth() {
