@@ -28,7 +28,7 @@ import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel, getModelSpec } from '../lib/models.js';
+import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
@@ -50,7 +50,8 @@ const DecomposerOutputSchema = z.object({
 
 export async function planDecomposition(
   request: RepoWorkRequest,
-  tracer?: AgentTracer
+  tracer?: AgentTracer,
+  systemPromptOverride?: string
 ): Promise<DecompositionResult> {
   return otelTracer.startActiveSpan(
     'llm.plan_decomposition',
@@ -61,9 +62,14 @@ export async function planDecomposition(
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
+        const systemPrompt = await resolveSystemPrompt(
+          'planner',
+          DECOMPOSER_AGENT_PROMPT,
+          systemPromptOverride
+        );
         const agent = new Agent({
           id: 'feature-decomposer',
-          instructions: DECOMPOSER_AGENT_PROMPT,
+          instructions: systemPrompt,
           model,
           name: 'feature-decomposer',
         });

@@ -31,10 +31,13 @@ import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
-export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
+export async function planDecomposition(
+  request: RepoWorkRequest,
+  systemPromptOverride?: string
+): Promise<DecompositionResult> {
   heartbeat('plan decomposition: calling agent');
   const tracer = new AgentTracer();
-  const result = await decomposerPlan(request, tracer);
+  const result = await decomposerPlan(request, tracer, systemPromptOverride);
   await persistActivityTrace(tracer, 'planner');
   return result;
 }
