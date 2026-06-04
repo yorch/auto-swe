@@ -19,6 +19,15 @@ import { BUILTIN_STEPS, type StepMetadata } from './registry-types.js';
 
 const REGISTRY = new Map<string, StepMetadata>();
 
+const SYSTEM_PROMPT_FIELD = {
+  description:
+    'Override the agent system prompt for this step. Leave empty to use the team/global default configured at /admin/model-config.',
+  key: 'systemPrompt',
+  label: 'System prompt',
+  multiline: true,
+  type: 'string' as const,
+} as const;
+
 function register(meta: StepMetadata): void {
   REGISTRY.set(meta.name, meta);
 }
@@ -41,7 +50,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'validateContext', tokensIn: 4000, tokensOut: 500 },
   description: 'Extract success criteria from the work request payload.',
   label: 'Validate context',
@@ -50,7 +59,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run the implementer agent inside a fresh Docker workspace.',
   label: 'Execute implementation',
@@ -59,7 +68,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'reviewer', tokensIn: 15000, tokensOut: 3000 },
   description: 'Run the security / domain / performance reviewer agents in parallel.',
   label: 'Run review network',
@@ -68,7 +77,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with reviewer rejection feedback.',
   label: 'Apply review fix',
@@ -77,7 +86,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with CI failure logs as context.',
   label: 'Apply CI fix',
@@ -102,7 +111,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'commitToMemory', tokensIn: 6000, tokensOut: 1000 },
   description: 'Summarize the run and store a lesson in pgvector memory.',
   label: 'Commit to memory',
@@ -181,7 +190,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with a failed gate output as context.',
   label: 'Apply gate fix',
@@ -192,7 +201,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'planner', tokensIn: 6000, tokensOut: 2000 },
   description:
     'Split a work request into feature-level subtasks (one subagent per subtask). Returns { subtasks: Subtask[] }.',
@@ -232,6 +241,7 @@ register({
       label: 'Max attempts per branch',
       type: 'number',
     },
+    SYSTEM_PROMPT_FIELD,
   ],
   costHint: { role: 'implementer', tokensIn: 12000, tokensOut: 4000 },
   description:

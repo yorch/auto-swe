@@ -65,4 +65,13 @@ describe('stepRegistry', () => {
     expect(keys).toContain('maxAttemptsPerBranch');
     expect(keys).toContain('mergeMessagePrefix');
   });
+
+  it('all agent steps expose a systemPrompt config field', () => {
+    const agentSteps = listSteps().filter((s) => s.category === 'agent');
+    for (const step of agentSteps) {
+      const field = step.configFields?.find((f) => f.key === 'systemPrompt');
+      expect(field, `${step.name} missing systemPrompt field`).toBeDefined();
+      expect(field?.multiline).toBe(true);
+    }
+  });
 });
