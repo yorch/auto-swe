@@ -58,7 +58,7 @@ const StoragePutBody = z
     s3Prefix: z.string().max(200).nullable().optional(),
     s3Region: z.string().max(50).nullable().optional(),
   })
-  .refine((v) => v.backend !== 's3' || v.s3Bucket !== undefined || v.s3Bucket !== null, {
+  .refine((v) => v.backend !== 's3' || (v.s3Bucket !== undefined && v.s3Bucket !== null), {
     message: 'backend=s3 requires s3Bucket',
   });
 

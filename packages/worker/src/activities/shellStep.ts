@@ -75,16 +75,13 @@ function redactToken(s: unknown, token?: string | null): string {
   if (typeof s !== 'string') {
     return String(s);
   }
-  // Fall back to env var for error-path redaction (only used when DB lookup
-  // hasn't run yet, e.g. in the runDocker helper that doesn't hold the token)
-  const t = token ?? process.env.GITHUB_TOKEN;
-  if (!t) {
+  if (!token) {
     return s;
   }
-  return s.split(t).join('***');
+  return s.split(token).join('***');
 }
 
-function runDocker(args: string[]): string {
+function runDocker(args: string[], tokenForRedact?: string | null): string {
   // execSync prefers a string command, so we shell-quote each arg before
   // joining. The inputs to this helper are either hard-coded literals or
   // identifiers that have already been validated upstream (volume names,
@@ -95,14 +92,14 @@ function runDocker(args: string[]): string {
     return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
   } catch (err) {
     if (err instanceof Error) {
-      err.message = redactToken(err.message);
+      err.message = redactToken(err.message, tokenForRedact);
     }
     const e = err as { stdout?: unknown; stderr?: unknown };
     if (typeof e.stdout === 'string') {
-      e.stdout = redactToken(e.stdout);
+      e.stdout = redactToken(e.stdout, tokenForRedact);
     }
     if (typeof e.stderr === 'string') {
-      e.stderr = redactToken(e.stderr);
+      e.stderr = redactToken(e.stderr, tokenForRedact);
     }
     throw err;
   }
@@ -122,6 +119,9 @@ interface RepoMeta {
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
+  /// The resolved PAT — kept alongside cloneUrl so error-path redaction works
+  /// even when no GITHUB_TOKEN env var is set (DB-only token configuration).
+  token: string;
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
@@ -146,6 +146,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
     teamId: repo.team?.id ?? '',
+    token,
   };
 }
 
@@ -158,17 +159,20 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  */
 function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): void {
   const tryClone = (refspec: string): string =>
-    runDocker([
-      'run',
-      '--rm',
-      '-v',
-      `${volumeName}:/workspace:rw`,
-      '--entrypoint',
-      'sh',
-      GIT_HELPER_IMAGE,
-      '-c',
-      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
-    ]);
+    runDocker(
+      [
+        'run',
+        '--rm',
+        '-v',
+        `${volumeName}:/workspace:rw`,
+        '--entrypoint',
+        'sh',
+        GIT_HELPER_IMAGE,
+        '-c',
+        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+      ],
+      meta.token
+    );
   try {
     tryClone(branch);
   } catch (err) {

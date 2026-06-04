@@ -16,7 +16,7 @@ export function OAuthTab() {
   const update = useUpdateGoogleOAuthConfig();
 
   const [clientId, setClientId] = useState('');
-  const [oauthClientSecret, setOauthClientSecret] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -30,13 +30,13 @@ export function OAuthTab() {
 
     const body: GoogleOAuthConfigInput = {};
     if (clientId) body.clientId = clientId;
-    if (oauthClientSecret) body.oauthClientSecret = oauthClientSecret;
+    if (clientSecret) body.clientSecret = clientSecret;
 
     try {
       const res = await update.mutateAsync(body);
       setSaved(true);
       setRequiresRestart(!!res.data.requiresRestart);
-      setOauthClientSecret('');
+      setClientSecret('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     }
@@ -78,11 +78,11 @@ export function OAuthTab() {
             />
           </div>
           <SecretInput
-            current={data?.oauthClientSecret ?? null}
+            current={data?.clientSecret ?? null}
             id="google-client-secret"
             label="Client secret"
-            onChange={setOauthClientSecret}
-            value={oauthClientSecret}
+            onChange={setClientSecret}
+            value={clientSecret}
           />
         </div>
       </Card>

@@ -168,13 +168,13 @@ export function useUpdateWorkflowDefaultsConfig() {
 
 export interface GoogleOAuthConfig {
   clientId: string | null;
-  oauthClientSecret: MaskedField | null;
+  clientSecret: MaskedField | null;
   requiresRestart?: boolean;
 }
 
 export interface GoogleOAuthConfigInput {
   clientId?: string;
-  oauthClientSecret?: string;
+  clientSecret?: string;
 }
 
 export function useGoogleOAuthConfig() {
