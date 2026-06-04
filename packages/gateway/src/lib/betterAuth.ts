@@ -242,8 +242,8 @@ function renderMagicLinkHtml({ email, url }: { email: string; url: string }): st
 
 // ─── Lazy singleton ───────────────────────────────────────────────────────────
 
-// biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
-let _auth: any = null;
+type AuthInstance = ReturnType<typeof buildAuth>;
+let _auth: AuthInstance | null = null;
 
 /// Called once at gateway startup. Reads OAuth credentials from DB (with env
 /// fallback) then initialises the BetterAuth singleton. Subsequent calls are
@@ -269,8 +269,7 @@ export async function initAuth(): Promise<void> {
 
 /// Returns the initialised BetterAuth instance. Throws if `initAuth()` hasn't
 /// been called yet (should never happen in production; indicates a startup bug).
-// biome-ignore lint/suspicious/noExplicitAny: betterAuth lazy singleton requires any for type deferral
-export function getAuth(): any {
+export function getAuth(): AuthInstance {
   if (!_auth) throw new Error('BetterAuth not initialised — call initAuth() at gateway startup.');
   return _auth;
 }

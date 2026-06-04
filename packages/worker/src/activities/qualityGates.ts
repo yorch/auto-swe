@@ -151,35 +151,33 @@ async function provisionGateWorkspace(
     resolveGitHubConfig(),
     resolveWorkflowDefaults(),
   ]);
-  return (() => {
-    const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-    const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-    const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
-    if (!ghConfig.token)
-      throw new Error('GitHub token not configured. Set it at /admin/integrations.');
-    const githubToken = ghConfig.token;
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
+  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
+  const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  if (!ghConfig.token)
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  const githubToken = ghConfig.token;
 
-    const workspace = createWorkspace(
-      repoUrl,
-      branch,
-      repo.defaultBranch,
-      githubToken,
-      repo.executorImage ?? 'node:24-alpine'
-    );
+  const workspace = createWorkspace(
+    repoUrl,
+    branch,
+    repo.defaultBranch,
+    githubToken,
+    repo.executorImage ?? 'node:24-alpine'
+  );
 
-    // createWorkspace produces a fresh local branch from the default branch.
-    // For gates we want the implementer's pushed commits, so fetch + reset.
-    // If the remote branch doesn't exist yet (e.g. gate runs before first
-    // push), the reset will fail and the implementer's local copy stays.
-    try {
-      workspace.exec(`git fetch origin ${shellQuote(branch)}`);
-      workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
-    } catch {
-      // Gate runs against the local branch starting at defaultBranch.
-      heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
-    }
-    return { branch, workspace };
-  })();
+  // createWorkspace produces a fresh local branch from the default branch.
+  // For gates we want the implementer's pushed commits, so fetch + reset.
+  // If the remote branch doesn't exist yet (e.g. gate runs before first
+  // push), the reset will fail and the implementer's local copy stays.
+  try {
+    workspace.exec(`git fetch origin ${shellQuote(branch)}`);
+    workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+  } catch {
+    // Gate runs against the local branch starting at defaultBranch.
+    heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
+  }
+  return { branch, workspace };
 }
 
 /**

@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -18,10 +19,21 @@ import { requireAuth } from '../plugins/auth.js';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-/// Encrypts a secret and returns Prisma-ready columns.
-function seal(plaintext: string) {
+/// Encrypts `plaintext` and writes the five AES-GCM envelope columns into
+/// `data` using `prefix` as the field-name prefix (e.g. prefix='token' →
+/// data.tokenCiphertext, data.tokenNonce, …).  No-ops when plaintext is falsy.
+function sealInto(
+  data: Record<string, unknown>,
+  prefix: string,
+  plaintext: string | undefined
+): void {
+  if (!plaintext) return;
   const { authTag, ciphertext, keyVersion, lastFour, nonce } = encryptSecret(plaintext);
-  return { authTag, ciphertext, keyVersion, lastFour, nonce };
+  data[`${prefix}Ciphertext`] = ciphertext;
+  data[`${prefix}Nonce`] = nonce;
+  data[`${prefix}AuthTag`] = authTag;
+  data[`${prefix}KeyVersion`] = keyVersion;
+  data[`${prefix}LastFour`] = lastFour;
 }
 
 /// Returns a lastFour-only object when ciphertext exists, null otherwise.
@@ -114,30 +126,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       if (baseUrl !== undefined) data.baseUrl = baseUrl;
       if (oauthClientId !== undefined) data.oauthClientId = oauthClientId;
 
-      if (token) {
-        const s = seal(token);
-        data.tokenCiphertext = s.ciphertext;
-        data.tokenNonce = s.nonce;
-        data.tokenAuthTag = s.authTag;
-        data.tokenKeyVersion = s.keyVersion;
-        data.tokenLastFour = s.lastFour;
-      }
-      if (webhookSecret) {
-        const s = seal(webhookSecret);
-        data.webhookSecretCiphertext = s.ciphertext;
-        data.webhookSecretNonce = s.nonce;
-        data.webhookSecretAuthTag = s.authTag;
-        data.webhookSecretKeyVersion = s.keyVersion;
-        data.webhookSecretLastFour = s.lastFour;
-      }
-      if (oauthClientSecret) {
-        const s = seal(oauthClientSecret);
-        data.oauthClientSecretCiphertext = s.ciphertext;
-        data.oauthClientSecretNonce = s.nonce;
-        data.oauthClientSecretAuthTag = s.authTag;
-        data.oauthClientSecretKeyVersion = s.keyVersion;
-        data.oauthClientSecretLastFour = s.lastFour;
-      }
+      sealInto(data, 'token', token);
+      sealInto(data, 'webhookSecret', webhookSecret);
+      sealInto(data, 'oauthClientSecret', oauthClientSecret);
 
       const row = await prisma.gitHubConfig.upsert({
         create: { id: 'default', ...data },
@@ -178,30 +169,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       const data: Record<string, unknown> = {};
       if (clientId !== undefined) data.clientId = clientId;
 
-      if (botToken) {
-        const s = seal(botToken);
-        data.botTokenCiphertext = s.ciphertext;
-        data.botTokenNonce = s.nonce;
-        data.botTokenAuthTag = s.authTag;
-        data.botTokenKeyVersion = s.keyVersion;
-        data.botTokenLastFour = s.lastFour;
-      }
-      if (clientSecret) {
-        const s = seal(clientSecret);
-        data.clientSecretCiphertext = s.ciphertext;
-        data.clientSecretNonce = s.nonce;
-        data.clientSecretAuthTag = s.authTag;
-        data.clientSecretKeyVersion = s.keyVersion;
-        data.clientSecretLastFour = s.lastFour;
-      }
-      if (signingSecret) {
-        const s = seal(signingSecret);
-        data.signingSecretCiphertext = s.ciphertext;
-        data.signingSecretNonce = s.nonce;
-        data.signingSecretAuthTag = s.authTag;
-        data.signingSecretKeyVersion = s.keyVersion;
-        data.signingSecretLastFour = s.lastFour;
-      }
+      sealInto(data, 'botToken', botToken);
+      sealInto(data, 'clientSecret', clientSecret);
+      sealInto(data, 'signingSecret', signingSecret);
 
       const row = await prisma.slackConfig.upsert({
         create: { id: 'default', ...data },
@@ -259,14 +229,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       if (s3ForcePathStyle !== undefined) data.s3ForcePathStyle = s3ForcePathStyle;
       if (awsAccessKeyId !== undefined) data.awsAccessKeyId = awsAccessKeyId;
 
-      if (awsSecretAccessKey) {
-        const s = seal(awsSecretAccessKey);
-        data.awsSecretAccessKeyCiphertext = s.ciphertext;
-        data.awsSecretAccessKeyNonce = s.nonce;
-        data.awsSecretAccessKeyAuthTag = s.authTag;
-        data.awsSecretAccessKeyKeyVersion = s.keyVersion;
-        data.awsSecretAccessKeyLastFour = s.lastFour;
-      }
+      sealInto(data, 'awsSecretAccessKey', awsSecretAccessKey);
 
       const row = await prisma.storageConfig.upsert({
         create: { id: 'default', ...data },
@@ -293,13 +256,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/workflow-defaults',
     { schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
-      const row = await prisma.workflowDefaults.findUnique({ where: { id: 'default' } });
-      return reply.send({
-        branchPrefix: row?.branchPrefix ?? 'auto',
-        defaultTeamSlug: row?.defaultTeamSlug ?? 'default',
-        prBodyTemplate: row?.prBodyTemplate ?? '',
-        prTitleTemplate: row?.prTitleTemplate ?? '[auto-swe] {{ticketId}}',
-      });
+      return reply.send(await resolveWorkflowDefaults());
     }
   );
 
@@ -340,14 +297,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       const data: Record<string, unknown> = {};
       if (clientId !== undefined) data.clientId = clientId;
 
-      if (clientSecret) {
-        const s = seal(clientSecret);
-        data.clientSecretCiphertext = s.ciphertext;
-        data.clientSecretNonce = s.nonce;
-        data.clientSecretAuthTag = s.authTag;
-        data.clientSecretKeyVersion = s.keyVersion;
-        data.clientSecretLastFour = s.lastFour;
-      }
+      sealInto(data, 'clientSecret', clientSecret);
 
       const row = await prisma.googleOAuthConfig.upsert({
         create: { id: 'default', ...data },
