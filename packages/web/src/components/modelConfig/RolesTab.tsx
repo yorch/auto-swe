@@ -14,6 +14,7 @@ import {
   SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
   useAdminDeleteModelConfig,
+  useAdminEffectiveModelConfig,
   useAdminModelConfigs,
   useAdminUpsertModelConfig,
   useSeedDefaults,
@@ -120,6 +121,7 @@ export function RolesTab() {
           </div>
         </Card>
       ))}
+      <CascadePreview />
       {(editing || creatingFor) && (
         <EditRoleModal
           credentials={credentials ?? []}
@@ -209,6 +211,106 @@ function ScopeBadge({ scope }: { scope: ConfigScope }) {
     <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${color}`}>
       {scope.replace('_', ' ')}
     </span>
+  );
+}
+
+function CascadePreview() {
+  const [role, setRole] = useState<ModelRole>('IMPLEMENTER');
+  const [teamId, setTeamId] = useState('');
+  const [templateId, setTemplateId] = useState('');
+
+  const trimmedTeam = teamId.trim();
+  const trimmedTemplate = templateId.trim();
+
+  const { data, isLoading, isError } = useAdminEffectiveModelConfig({
+    role,
+    teamId: trimmedTeam.length === 36 ? trimmedTeam : undefined,
+    workflowTemplateId: trimmedTemplate.length === 36 ? trimmedTemplate : undefined,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle eyebrow="cascade resolver">Effective config preview</CardTitle>
+      </CardHeader>
+      <div className="space-y-3">
+        <p className="text-xs text-paper-400">
+          Shows which config row the worker resolves at runtime for a given role + optional
+          team/template context. Resolution order: workflow-template → team → global.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Select
+            className="border-ink-600 bg-ink-900"
+            id="preview-role"
+            label="Role"
+            onChange={(e) => setRole(e.target.value as ModelRole)}
+            value={role}
+          >
+            {MODEL_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </Select>
+          <div>
+            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="preview-team">
+              Team ID{' '}
+              <span className="normal-case text-paper-500">(optional)</span>
+            </label>
+            <input
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+              id="preview-team"
+              onChange={(e) => setTeamId(e.target.value)}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              value={teamId}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="preview-tpl">
+              Template ID{' '}
+              <span className="normal-case text-paper-500">(optional)</span>
+            </label>
+            <input
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+              id="preview-tpl"
+              onChange={(e) => setTemplateId(e.target.value)}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              value={templateId}
+            />
+          </div>
+        </div>
+        {isLoading && <p className="text-xs text-paper-400">Resolving…</p>}
+        {isError && (
+          <p className="text-xs text-brick-400">
+            Lookup failed — check that any IDs entered are valid UUIDs.
+          </p>
+        )}
+        {data && !isError && (
+          <div className="rounded-sm border border-ink-600 bg-ink-800/40 px-3 py-2">
+            {data.row ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-paper-400">Resolved via</span>
+                  <ScopeBadge scope={data.scope!} />
+                </div>
+                <code className="block font-mono text-sm text-paper-100">{data.row.modelSpec}</code>
+                {data.row.systemPrompt && (
+                  <p className="truncate font-mono text-[11px] text-paper-500">
+                    prompt: {data.row.systemPrompt.slice(0, 80)}
+                    {data.row.systemPrompt.length > 80 ? '…' : ''}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-brick-400">
+                No config found — the worker would throw{' '}
+                <code className="font-mono">ConfigMissingError</code>.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
