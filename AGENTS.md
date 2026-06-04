@@ -241,6 +241,24 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 
 `packages/worker/src/lib/embeddings.ts` resolves its `<provider>/<model>` spec, API key, and (for OpenAI-compatible providers) `apiBase` entirely from the DB-backed `EmbeddingConfig` singleton via `resolveEmbeddingConfig()` — there are no `EMBEDDING_MODEL` / `<PROVIDER>_API_BASE` env vars (model + credential config is fully DB-driven; see `docs/model-configuration.md`). Built-in: `openai`; any other provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase` on the credential row. Output **must** be 1536-dimensional — the `agent_lessons.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
 
+### Agent Observability (AgentTracer)
+
+Every LLM-calling activity must use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows in the `agent_traces` table, linked to the `WorkflowRun`. The `/runs/[id]` viewer uses them to show the full tool-call sequence per activity attempt.
+
+Pattern used in all LLM activities (`executeImplementation`, `commitToMemory`, `qualityGates`, etc.):
+
+```typescript
+const tracer = new AgentTracer();
+// inside the activity:
+tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
+tracer.addLlmResponse({ role, outputJson, durationMs });
+tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
+// at exit — best-effort, failures are swallowed:
+await persistActivityTrace(tracer, 'implementer');
+```
+
+`persistActivityTrace` from `packages/worker/src/lib/activityContext.ts` auto-resolves the `runId` and `attempt` from Temporal context. **Never omit this call in new activities that make LLM or tool calls** — the run viewer depends on it.
+
 ### Temporal Workflow Constraints
 
 - Workflow files run in a **V8 isolate**, not Node.js

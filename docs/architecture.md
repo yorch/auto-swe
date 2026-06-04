@@ -130,7 +130,7 @@ packages/
 | `src/activities/createOrUpdatePullRequest.ts` | GitHub PR create/update via Octokit; idempotent on branch |
 | `src/activities/templates.ts` | Fetches + resolves `WorkflowSpec` for a run (scope cascade + A/B routing) |
 | `src/activities/state.ts` | `updateDomainState`, `createWorkflowRun`, `recordWorkflowStep`, `finalizeWorkflowRun` |
-| `src/activities/workspace.ts` | DinD workspace helpers (`spawnContainer`, `execInContainer`, `teardownContainer`) |
+| `src/activities/workspace.ts` | DinD workspace helpers — `createWorkspace()` returns `{ exec, execCapture, destroy }` + `shellQuote()` |
 | `src/agents/implementer.ts` | Mastra `Agent` for code writing + TDD |
 | `src/agents/reviewNetwork.ts` | Three Mastra `Agent`s (Security Auditor, Domain Logic, Performance) |
 | `src/agents/plannerAgent.ts` | Mastra `Agent` for per-repo plan decomposition |
@@ -279,27 +279,26 @@ flowchart TD
 
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
-| `step` | Dispatch a named activity | `activity`, `inputs`, `output`, `onFail` |
-| `set` | Write to workflow context | `assignments` (jsonpath expressions) |
-| `cond` | Branch on a boolean predicate | `predicate`, `then`, `else` |
-| `signal` | Await a Temporal signal with timeout | `signal`, `timeout`, `output` |
-| `terminate` | End with a specific status | `status` |
-| `fanOut` | Parallel sub-agent dispatch | `items`, `subtask`, `concurrency`, `onBranchFail`, `exports` |
-| `shell` | Run a user-authored shell command | `image`, `command`, `network`, `timeoutMs` |
+| `step` | Dispatch a registered activity | `step` (name), `inputs`, `next`, `onFail`, `config` |
+| `set` | Write values into the workflow context | `values` (map of path → binding) |
+| `cond` | Branch on a boolean expression | `expr` (jsonpath), `onTrue`, `onFalse` |
+| `signal` | Await a named Temporal signal with timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |
+| `terminate` | End the run with a specific status | `status`, `result` |
+| `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
+| `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus`, `onFail` |
 
 ### Dispatcher interface (`interpreter.ts`)
 
 ```
 interface Dispatcher {
-  dispatchStep(node, ctx, cancellationToken?)  → Promise<unknown>
-  dispatchShell(node, ctx, cancellationToken?) → Promise<unknown>
-  awaitSignal(node, ctx)                       → Promise<unknown>
-  runFanOut(node, ctx)                         → Promise<unknown[]>
-  recordStep(nodeId, status, inputs, outputs, error?) → Promise<void>
+  dispatchStep({ nodeId, step, config, inputs, ctx, cancellation? }) → Promise<unknown>
+  dispatchShell?({ nodeId, node, inputs, ctx, cancellation? })       → Promise<unknown>
+  waitSignal(name, timeout)                                          → Promise<unknown | undefined>
+  recordStep({ nodeId, status, inputs?, outputs?, error?, attempt? }) → Promise<void>
 }
 ```
 
-`RunnableWorkflow` implements this by wrapping each activity proxy call. The interpreter itself has no Temporal imports and can run in tests with a mock dispatcher.
+`RunnableWorkflow` implements this by wrapping each activity proxy call. Fan-out, set, cond, signal, and terminate nodes are handled internally by the interpreter — only `step` and `shell` go through the dispatcher. `dispatchShell` is optional; dispatchers that omit it throw on shell nodes. The interpreter has no Temporal imports and runs in tests with a mock dispatcher.
 
 ### Model resolution (3-level cascade)
 
@@ -402,6 +401,7 @@ erDiagram
 | Work | `WorkRequest`, `ContextSnapshot` | Input + context capture |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Template versioning, run tracking, artifact storage, shell audit |
+| Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows — full agent observability |
 | Memory | `AgentLesson` | pgvector semantic memory (1536-dim HNSW index) |
 | Model config | `ModelRoleConfig`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys) |
 | Infrastructure | `Team`, `Repository` | Tenant isolation + repo registry |

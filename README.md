@@ -226,10 +226,11 @@ yarn docker:app:build        # Rebuild app images
 
 ```text
 packages/
-├── shared/     # Prisma schema, DB client, shared TypeScript types
+├── shared/     # Prisma schema, DB client, shared types, workflow engine (spec + interpreter)
 ├── gateway/    # Fastify 5.x HTTP API (auth, RBAC, routes, webhooks)
 ├── worker/     # Temporal worker, Mastra agents, activities
-└── web/        # Next.js 16 web dashboard
+├── web/        # Next.js 16 web dashboard (App Router, React Flow template editor)
+└── cli/        # auto-swe binary — thin REST client over the gateway
 ```
 
 See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes, and design decisions.
