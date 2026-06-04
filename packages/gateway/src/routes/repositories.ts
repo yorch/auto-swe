@@ -20,6 +20,7 @@ const CreateRepoSchema = z.object({
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 
 const UpdateRepoSchema = z.object({
+  consolidationEnabled: z.boolean().optional(),
   defaultBranch: z.string().optional(),
   description: z.string().nullable().optional(),
   executorImage: z.string().nullable().optional(),

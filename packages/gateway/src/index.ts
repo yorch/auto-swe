@@ -27,6 +27,7 @@ function extractSessionCookie(cookieHeader: string | undefined): string | null {
   return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
 }
 
+import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
@@ -76,6 +77,13 @@ async function start() {
   await app.register(prismaPlugin);
   await app.register(temporalPlugin);
   await app.register(authPlugin);
+
+  // Sync the lesson consolidation Temporal Schedule with whatever config is in
+  // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't
+  // crash the gateway; the admin can re-save from the UI once Temporal is up.
+  resolveConsolidationConfig()
+    .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
+    .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
 
   // Global error handler
   app.setErrorHandler(async (error: FastifyError, request, reply) => {

@@ -204,3 +204,20 @@ export interface ConsolidateLessonsResult {
   lessonsConsolidated: number;
   lessonsCreated: number;
 }
+
+/** Input for the system-wide scheduled consolidation workflow. */
+export interface ScheduledConsolidationInput {
+  minClusterSize: number;
+  similarityThreshold: number;
+}
+
+/** Per-repo outcome within a scheduled run. */
+export interface ScheduledConsolidationRepoResult {
+  repoId: string;
+  result: ConsolidateLessonsResult | { error: string };
+}
+
+export interface ScheduledConsolidationResult {
+  reposProcessed: number;
+  repoResults: ScheduledConsolidationRepoResult[];
+}

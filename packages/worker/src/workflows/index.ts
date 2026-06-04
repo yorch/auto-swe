@@ -3,3 +3,4 @@
 export { ConsolidateLessonsWorkflow } from './consolidateLessons.js';
 export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.js';
 export { RunnableWorkflow } from './runnable.js';
+export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';

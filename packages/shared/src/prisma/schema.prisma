@@ -185,6 +185,7 @@ model Repository {
   team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
+  consolidationEnabled Boolean      @default(true) @map("consolidation_enabled")
   /// Optional per-repo overrides for phase-2 quality-gate commands. Shape:
   /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
   /// Resolution order: step config → this field → built-in defaults.
@@ -697,6 +698,13 @@ model WorkflowDefaults {
   prTitleTemplate String @default("[auto-swe] {{ticketId}}") @map("pr_title_template")
   prBodyTemplate  String @default("") @map("pr_body_template")
   defaultTeamSlug String @default("default") @map("default_team_slug")
+
+  // Lesson consolidation schedule. The gateway reads these on startup and on
+  // every admin save, then syncs the Temporal Schedule accordingly.
+  consolidationEnabled          Boolean @default(true) @map("consolidation_enabled")
+  consolidationCron             String  @default("0 3 * * 0") @map("consolidation_cron")
+  consolidationMinClusterSize   Int     @default(3) @map("consolidation_min_cluster_size")
+  consolidationSimilarityThreshold Float @default(0.85) @map("consolidation_similarity_threshold")
 
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

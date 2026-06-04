@@ -217,6 +217,55 @@ export function useUpdateGoogleOAuthConfig() {
   });
 }
 
+// ── Consolidation schedule config ──
+
+export interface ConsolidationScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+}
+
+export interface ConsolidationConfig {
+  enabled: boolean;
+  cronExpression: string;
+  minClusterSize: number;
+  similarityThreshold: number;
+  schedule: ConsolidationScheduleStatus;
+}
+
+export interface ConsolidationConfigInput {
+  enabled?: boolean;
+  cronExpression?: string;
+  minClusterSize?: number;
+  similarityThreshold?: number;
+}
+
+export function useConsolidationConfig() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: ConsolidationConfig }>('/api/v1/admin/config/consolidation')
+        .then((r) => r.data),
+    queryKey: ['admin-config-consolidation'],
+  });
+}
+
+export function useUpdateConsolidationConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ConsolidationConfigInput) =>
+      api.put<{ data: ConsolidationConfig }>('/api/v1/admin/config/consolidation', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-consolidation'] }),
+  });
+}
+
+export function triggerConsolidationNow() {
+  return api.post<{ data: { triggered: boolean } }>(
+    '/api/v1/admin/config/consolidation/trigger',
+    {}
+  );
+}
+
 // ── Config audit log ──
 
 export interface ConfigAuditEntry {

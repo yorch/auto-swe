@@ -2,10 +2,26 @@ import type {
   ConsolidateLessonsInput,
   EpicRequest,
   RepoWorkRequest,
+  ScheduledConsolidationInput,
 } from '@auto-swe/shared/types/workflow';
-import { Client, Connection } from '@temporalio/client';
+import { Client, Connection, ScheduleClient, ScheduleOverlapPolicy } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
+
+export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
+
+export interface ConsolidationScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+  minClusterSize: number;
+  similarityThreshold: number;
+}
+
+export interface ConsolidationScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+}
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -21,6 +37,9 @@ declare module 'fastify' {
       ) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
       cancelWorkflow: (workflowId: string) => Promise<void>;
+      syncConsolidationSchedule: (config: ConsolidationScheduleConfig) => Promise<void>;
+      getConsolidationScheduleStatus: () => Promise<ConsolidationScheduleStatus>;
+      triggerConsolidationNow: () => Promise<void>;
     };
   }
 }
@@ -30,11 +49,36 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
   });
   const client = new Client({ connection });
+  const schedules = new ScheduleClient({ connection });
+
+  function makeScheduleAction(input: ScheduledConsolidationInput) {
+    return {
+      args: [input],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledConsolidationWorkflow',
+    };
+  }
 
   fastify.decorate('temporal', {
     async cancelWorkflow(workflowId: string): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.cancel();
+    },
+
+    async getConsolidationScheduleStatus(): Promise<ConsolidationScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        return {
+          exists: true,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, nextRunAt: null, paused: false };
+      }
     },
 
     async signalWorkflow(
@@ -62,14 +106,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       await client.workflow.start('EpicOrchestratorWorkflow', {
         args: [request],
         taskQueue: 'engineering-workflow',
-        // Hard upper bound. A child workflow that hangs indefinitely (e.g. waiting
-        // on a never-arriving human merge) cannot keep the epic alive forever.
-        // Temporal terminates the workflow on timeout; child workflows are released
-        // via PARENT_CLOSE_POLICY_REQUEST_CANCEL set in the orchestrator.
         workflowExecutionTimeout: '30d',
         workflowId,
       });
     },
+
     async startRunnableWorkflow(
       workflowId: string,
       input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -79,6 +120,39 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         taskQueue: 'engineering-workflow',
         workflowId,
       });
+    },
+
+    async syncConsolidationSchedule(config: ConsolidationScheduleConfig): Promise<void> {
+      const input: ScheduledConsolidationInput = {
+        minClusterSize: config.minClusterSize,
+        similarityThreshold: config.similarityThreshold,
+      };
+      const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
+
+      try {
+        await handle.describe();
+        // Schedule exists — update it in place.
+        await handle.update((prev) => ({
+          ...prev,
+          action: makeScheduleAction(input),
+          spec: { cronExpressions: [config.cronExpression] },
+          state: { ...prev.state, paused: !config.enabled },
+        }));
+      } catch {
+        // Schedule doesn't exist yet — create it.
+        await schedules.create({
+          action: makeScheduleAction(input),
+          policies: { overlap: ScheduleOverlapPolicy.SKIP },
+          scheduleId: CONSOLIDATION_SCHEDULE_ID,
+          spec: { cronExpressions: [config.cronExpression] },
+          state: { paused: !config.enabled },
+        });
+      }
+    },
+
+    async triggerConsolidationNow(): Promise<void> {
+      const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
+      await handle.trigger(ScheduleOverlapPolicy.ALLOW_ALL);
     },
   });
 

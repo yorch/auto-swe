@@ -6,6 +6,8 @@ export {
 export { commitToMemory } from './commitToMemory.js';
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult } from './consolidateLessons.js';
 export { consolidateLessons } from './consolidateLessons.js';
+export type { RepoForConsolidation } from './getReposForConsolidation.js';
+export { getReposForConsolidation } from './getReposForConsolidation.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export type {
   MergeBranchesInput,

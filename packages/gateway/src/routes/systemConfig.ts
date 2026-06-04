@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
+  resolveConsolidationConfig,
   resolveGitHubConfig,
   resolveSlackConfig,
   resolveStorageConfig,
@@ -131,6 +132,18 @@ const WorkflowDefaultsPutBody = z.object({
   defaultTeamSlug: z.string().min(1).max(100).optional(),
   prBodyTemplate: z.string().max(10_000).optional(),
   prTitleTemplate: z.string().min(1).max(500).optional(),
+});
+
+const ConsolidationPutBody = z.object({
+  cronExpression: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^(\S+\s+){4}\S+$/, 'must be a valid 5-field cron expression (e.g. "0 3 * * 0")')
+    .optional(),
+  enabled: z.boolean().optional(),
+  minClusterSize: z.number().int().min(2).max(20).optional(),
+  similarityThreshold: z.number().min(0.5).max(1).optional(),
 });
 
 const GoogleOAuthPutBody = z.object({
@@ -691,6 +704,60 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       })),
     });
   });
+
+  // ── Consolidation schedule ───────────────────────────────────────────────────
+
+  f.get(
+    '/config/consolidation',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      const config = await resolveConsolidationConfig();
+      const status = await fastify.temporal.getConsolidationScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.put(
+    '/config/consolidation',
+    { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      const { enabled, cronExpression, minClusterSize, similarityThreshold } = req.body;
+
+      const data: Record<string, unknown> = {};
+      if (enabled !== undefined) {
+        data.consolidationEnabled = enabled;
+      }
+      if (cronExpression !== undefined) {
+        data.consolidationCron = cronExpression;
+      }
+      if (minClusterSize !== undefined) {
+        data.consolidationMinClusterSize = minClusterSize;
+      }
+      if (similarityThreshold !== undefined) {
+        data.consolidationSimilarityThreshold = similarityThreshold;
+      }
+
+      await prisma.workflowDefaults.upsert({
+        create: { id: 'default', ...data },
+        update: data,
+        where: { id: 'default' },
+      });
+
+      const config = await resolveConsolidationConfig();
+      await fastify.temporal.syncConsolidationSchedule(config);
+      const status = await fastify.temporal.getConsolidationScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.post(
+    '/config/consolidation/trigger',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      await fastify.temporal.triggerConsolidationNow();
+      return reply.send({ data: { triggered: true } });
+    }
+  );
 
   // ── Test endpoint (checks decryption works for all secrets) ──────────────────
 

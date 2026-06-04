@@ -169,7 +169,7 @@ GitHub, Slack, artifact storage, workflow defaults, and OAuth credentials are st
 | `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug | `resolveWorkflowDefaults()` |
+| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` |
 
 All five tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
 
@@ -245,7 +245,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 
 Every LLM-calling activity must use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows in the `agent_traces` table, linked to the `WorkflowRun`. The `/runs/[id]` viewer uses them to show the full tool-call sequence per activity attempt.
 
-Pattern used in all LLM activities (`executeImplementation`, `commitToMemory`, `qualityGates`, etc.):
+Pattern used in all LLM activities (`executeImplementation`, `commitToMemory`, `consolidateLessons`, `qualityGates`, etc.):
 
 ```typescript
 const tracer = new AgentTracer();
