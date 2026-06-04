@@ -3,15 +3,23 @@ import { prisma } from '@auto-swe/shared/db';
 const MAX_JSON_CHARS = 4_000;
 
 function truncateStr(s: string, max = MAX_JSON_CHARS): string {
-  if (s.length <= max) return s;
+  if (s.length <= max) {
+    return s;
+  }
   return `${s.slice(0, max)}\n…[truncated ${s.length - max} chars]`;
 }
 
 /** Truncate string values inside a plain object one level deep. */
 function truncateJsonValues(obj: unknown): unknown {
-  if (typeof obj === 'string') return truncateStr(obj);
-  if (obj === null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(truncateJsonValues);
+  if (typeof obj === 'string') {
+    return truncateStr(obj);
+  }
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(truncateJsonValues);
+  }
   return Object.fromEntries(
     Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, truncateJsonValues(v)])
   );
@@ -100,7 +108,9 @@ export class AgentTracer {
     agentRole: string,
     attempt = 1
   ): Promise<void> {
-    if (!runId || this.records.length === 0) return;
+    if (!runId || this.records.length === 0) {
+      return;
+    }
     try {
       await prisma.agentTrace.createMany({
         data: this.records.map((r) => ({

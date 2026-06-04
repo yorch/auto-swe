@@ -61,7 +61,9 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
   }
 
   // tool_call
-  if (!input) return { detail: '', label: TOOL_LABELS[name] ?? name };
+  if (!input) {
+    return { detail: '', label: TOOL_LABELS[name] ?? name };
+  }
   switch (name) {
     case 'readFile':
     case 'writeFile':
@@ -91,7 +93,9 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
               : JSON.stringify(output, null, 2)
     : null;
 
-  if (!trace.error && !text) return null;
+  if (!trace.error && !text) {
+    return null;
+  }
   return (
     <div>
       {trace.error && (
@@ -119,7 +123,9 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
   // Group by attempt so retries are visually separated
   const byAttempt = traces.reduce<Record<number, AgentTraceRecord[]>>((acc, t) => {
     const a = t.attempt ?? 1;
-    if (!acc[a]) acc[a] = [];
+    if (!acc[a]) {
+      acc[a] = [];
+    }
     acc[a].push(t);
     return acc;
   }, {});
@@ -216,21 +222,29 @@ export default function RunDetailPage({ params }: PageProps) {
   // Build a mapping from spec nodeId → activityType (e.g. "impl" → "executeImplementation")
   // so we can match agent traces to spec nodes.
   const nodeActivityMap = useMemo<Record<string, string>>(() => {
-    if (!run?.specSnapshot) return {};
+    if (!run?.specSnapshot) {
+      return {};
+    }
     const spec = run.specSnapshot as WorkflowSpec;
     const map: Record<string, string> = {};
     for (const [nid, node] of Object.entries(spec.nodes)) {
-      if (node.type === 'step') map[nid] = node.step;
+      if (node.type === 'step') {
+        map[nid] = node.step;
+      }
     }
     return map;
   }, [run?.specSnapshot]);
 
   // Traces for the currently selected node
   const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
-    if (!selectedNodeId || !run?.traces) return [];
+    if (!selectedNodeId || !run?.traces) {
+      return [];
+    }
     // Use activity type as the trace nodeId
     const activityType = nodeActivityMap[selectedNodeId];
-    if (!activityType) return [];
+    if (!activityType) {
+      return [];
+    }
     return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === activityType);
   }, [selectedNodeId, run, nodeActivityMap]);
 
