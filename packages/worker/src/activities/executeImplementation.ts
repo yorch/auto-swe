@@ -15,6 +15,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -33,7 +34,8 @@ const MAX_TDD_ITERATIONS = 5;
  */
 export async function executeImplementation(
   request: RepoWorkRequest,
-  subtask?: Subtask
+  subtask?: Subtask,
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -103,13 +105,19 @@ export async function executeImplementation(
       total: 0,
     };
 
+    const systemPrompt = await resolveSystemPrompt(
+      'implementer',
+      IMPLEMENTER_SYSTEM_PROMPT,
+      systemPromptOverride
+    );
+
     // TDD loop
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
 
       const genResult = await agent.generate(
         [
-          { content: IMPLEMENTER_SYSTEM_PROMPT + lessonsContext, role: 'system' },
+          { content: systemPrompt + lessonsContext, role: 'system' },
           {
             content: JSON.stringify({
               description: subtask?.description ?? request.description,

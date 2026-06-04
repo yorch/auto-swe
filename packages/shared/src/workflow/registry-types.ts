@@ -16,6 +16,8 @@ export interface StepFieldDef {
   required?: boolean;
   default?: unknown;
   description?: string;
+  /** When true, NodeConfigForm renders a <textarea> instead of <input type="text">. */
+  multiline?: boolean;
 }
 
 export interface StepMetadata {

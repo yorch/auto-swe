@@ -89,6 +89,15 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                       : JSON.stringify(current, null, 2)
                 }
               />
+            ) : f.type === 'string' && f.multiline ? (
+              <textarea
+                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded resize-y"
+                id={id}
+                onChange={(e) => onChange(f.key, e.target.value || undefined)}
+                placeholder="Leave empty to use team/global default"
+                rows={6}
+                value={typeof current === 'string' ? current : ''}
+              />
             ) : (
               <input
                 className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"

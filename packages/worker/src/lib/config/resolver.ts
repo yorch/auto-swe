@@ -37,6 +37,30 @@ async function resolveModelConfigUncached(
 ): Promise<ResolvedModelConfig> {
   const prismaRole = ROLE_TO_PRISMA[role];
 
+  // Model spec + credential cascade: first non-null row wins. systemPrompt is
+  // also cascaded independently — a higher-scope row may carry the model spec
+  // but leave systemPrompt=null, so we keep looking at lower scopes for the
+  // prompt even after the spec is resolved. We only query a lower scope when
+  // either (a) no spec has been found yet, or (b) the spec row had
+  // systemPrompt=null and we still need to cascade the prompt.
+
+  type ScopeEntry = {
+    row: ModelRoleConfigWithCredential;
+    scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL';
+  };
+  let specEntry: ScopeEntry | undefined;
+  let systemPrompt: string | undefined;
+
+  // Helper: check whether a row provides a systemPrompt value.
+  const hasPrompt = (r: ModelRoleConfigWithCredential) => r.systemPrompt != null;
+
+  // Track whether we need to keep looking for a systemPrompt at lower scopes.
+  // We cascade when the current row has the column (systemPrompt !== undefined)
+  // but its value is null (operator left it unset at this scope).
+  // A row where the property is absent entirely (e.g. test mocks predating the
+  // migration) is treated as "stop cascading" — no extra DB calls.
+  let needPromptCascade = false;
+
   // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {
     const row = await prisma.modelRoleConfig.findFirst({
@@ -48,36 +72,77 @@ async function resolveModelConfigUncached(
       },
     });
     if (row) {
-      return materializeRow(row, 'WORKFLOW_TEMPLATE', ctx);
+      specEntry = { row, scope: 'WORKFLOW_TEMPLATE' };
+      if (hasPrompt(row)) {
+        systemPrompt = row.systemPrompt as string;
+      } else {
+        // Column present but null — cascade to lower scope for systemPrompt.
+        needPromptCascade = row.systemPrompt !== undefined;
+      }
     }
   }
 
-  // 2. Team scope
-  if (ctx?.teamId) {
+  // 2. Team scope — fetch when we don't have a spec yet, or the spec row
+  //    had systemPrompt=null (column exists, value null → cascade).
+  if (ctx?.teamId && (!specEntry || needPromptCascade)) {
     const row = await prisma.modelRoleConfig.findFirst({
       include: { credential: true },
       where: { role: prismaRole, scope: 'TEAM', teamId: ctx.teamId },
     });
     if (row) {
-      return materializeRow(row, 'TEAM', ctx);
+      const isNewSpec = !specEntry;
+      if (isNewSpec) {
+        specEntry = { row, scope: 'TEAM' };
+      }
+      // Process systemPrompt when cascading from a higher scope OR when this row
+      // becomes our spec provider. A row that hasn't been seen before should
+      // contribute its systemPrompt (if any) to the cascade.
+      if (needPromptCascade || isNewSpec) {
+        if (hasPrompt(row)) {
+          systemPrompt = row.systemPrompt as string;
+          needPromptCascade = false;
+        } else {
+          needPromptCascade = row.systemPrompt !== undefined;
+        }
+      }
     }
   }
 
-  // 3. Global scope
-  const globalRow = await prisma.modelRoleConfig.findFirst({
-    include: { credential: true },
-    where: { role: prismaRole, scope: 'GLOBAL' },
-  });
-  if (globalRow) {
-    return materializeRow(globalRow, 'GLOBAL', ctx);
+  // 3. Global scope — fetch when we don't have a spec yet, or systemPrompt
+  //    cascade is still pending.
+  if (!specEntry || needPromptCascade) {
+    const globalRow = await prisma.modelRoleConfig.findFirst({
+      include: { credential: true },
+      where: { role: prismaRole, scope: 'GLOBAL' },
+    });
+    if (globalRow) {
+      const isNewSpec = !specEntry;
+      if (isNewSpec) {
+        specEntry = { row: globalRow, scope: 'GLOBAL' };
+      }
+      // Process systemPrompt when cascading from a higher scope OR when this row
+      // becomes our spec provider.
+      if (needPromptCascade || isNewSpec) {
+        if (hasPrompt(globalRow)) {
+          systemPrompt = globalRow.systemPrompt as string;
+        } else if (needPromptCascade) {
+          // Column absent from row (pre-migration mock) — mark cascade exhausted.
+          needPromptCascade = globalRow.systemPrompt !== undefined;
+        }
+      }
+    }
   }
 
-  // No fallback. The worker's startup check should have refused to start
-  // without a GLOBAL row for every role; reaching this branch means an
-  // operator deleted it after boot.
-  throw new ConfigMissingError(
-    `No GLOBAL ModelRoleConfig row for role '${role}'. Restore it via the admin dashboard at /admin/model-config.`
-  );
+  if (!specEntry) {
+    // No row found at any scope. The worker boot check should prevent this
+    // (it refuses to start without a GLOBAL row for every role), so reaching
+    // here means an operator deleted the row after boot.
+    throw new ConfigMissingError(
+      `No ModelRoleConfig row found for role '${role}' at any scope (WORKFLOW_TEMPLATE/TEAM/GLOBAL). Restore or create a GLOBAL row at /admin/model-config.`
+    );
+  }
+
+  return materializeRow(specEntry.row, specEntry.scope, ctx, systemPrompt);
 }
 
 /// Look up the credential for a provider at the given scope. Cascade is
@@ -189,7 +254,8 @@ type ModelRoleConfigWithCredential = NonNullable<
 async function materializeRow(
   row: ModelRoleConfigWithCredential,
   scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL',
-  ctx: ResolveCtx | undefined
+  ctx: ResolveCtx | undefined,
+  systemPrompt: string | undefined
 ): Promise<ResolvedModelConfig> {
   const spec = row.modelSpec;
   const { provider } = parseProviderModelSpec(spec);
@@ -198,10 +264,10 @@ async function materializeRow(
   // through the provider's TEAM/GLOBAL credentials.
   if (row.credential) {
     const decrypted = decryptRow(row.credential);
-    return { apiBase: decrypted.apiBase, apiKey: decrypted.apiKey, scope, spec };
+    return { apiBase: decrypted.apiBase, apiKey: decrypted.apiKey, scope, spec, systemPrompt };
   }
   const cred = await resolveProviderCredential(provider, ctx);
-  return { apiBase: cred.apiBase, apiKey: cred.apiKey, scope, spec };
+  return { apiBase: cred.apiBase, apiKey: cred.apiKey, scope, spec, systemPrompt };
 }
 
 function decryptRow(row: ProviderCredentialRow): { apiBase?: string; apiKey: string } {

@@ -8,6 +8,7 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -43,7 +44,8 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
  */
 export async function executeCIFixImplementation(
   failureContext: string,
-  previousCodeResult: CodeResult
+  previousCodeResult: CodeResult,
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -83,11 +85,17 @@ export async function executeCIFixImplementation(
 
     const { agent } = await createImplementerAgent(workspace, tracer);
 
+    const systemPrompt = await resolveSystemPrompt(
+      'implementer',
+      CI_FIX_SYSTEM_PROMPT,
+      systemPromptOverride
+    );
+
     // Run the agent in CI fix mode
     const agentStart = Date.now();
     const ciFix = await agent.generate(
       [
-        { content: CI_FIX_SYSTEM_PROMPT, role: 'system' },
+        { content: systemPrompt, role: 'system' },
         {
           content: JSON.stringify({
             ciLogs: failureContext,
@@ -181,7 +189,8 @@ export async function executeCIFixImplementation(
  */
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
-  previousCodeResult: CodeResult
+  previousCodeResult: CodeResult,
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -219,10 +228,16 @@ export async function executeReviewFixImplementation(
 
     const { agent } = await createImplementerAgent(workspace, reviewTracer);
 
+    const reviewSystemPrompt = await resolveSystemPrompt(
+      'implementer',
+      REVIEW_FIX_SYSTEM_PROMPT,
+      systemPromptOverride
+    );
+
     const agentStart = Date.now();
     const reviewFix = await agent.generate(
       [
-        { content: REVIEW_FIX_SYSTEM_PROMPT, role: 'system' },
+        { content: reviewSystemPrompt, role: 'system' },
         {
           content: JSON.stringify({
             mode: 'REVIEW_FIX',

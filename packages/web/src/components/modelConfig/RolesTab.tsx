@@ -18,6 +18,7 @@ import {
   useAdminUpsertModelConfig,
   useSeedDefaults,
 } from '@/hooks/useModelConfig';
+import { ROLE_DEFAULT_PROMPTS, ROLE_PROMPT_NOTES } from '@/lib/rolePromptDefaults';
 
 const ROLE_LABELS: Record<ModelRole, string> = {
   COMMIT_TO_MEMORY: 'Memory summarizer',
@@ -172,6 +173,12 @@ function RoleRow({
             </>
           )}
         </div>
+        {row.systemPrompt && (
+          <div className="mt-1 text-[10px] text-paper-500 truncate font-mono">
+            prompt: {row.systemPrompt.slice(0, 60)}
+            {row.systemPrompt.length > 60 ? '…' : ''}
+          </div>
+        )}
       </div>
       <div className="flex gap-2">
         <Button onClick={onEdit} size="sm" variant="ghost">
@@ -223,6 +230,7 @@ function EditRoleModal({
     workflowTemplateId?: string;
     modelSpec: string;
     credentialId?: string | null;
+    systemPrompt?: string | null;
   }) => Promise<void>;
 }) {
   const [role, setRole] = useState<ModelRole>(existing?.role ?? newRoleDefault ?? 'IMPLEMENTER');
@@ -231,6 +239,7 @@ function EditRoleModal({
   const [workflowTemplateId, setWorkflowTemplateId] = useState(existing?.workflowTemplateId ?? '');
   const [modelSpec, setModelSpec] = useState(existing?.modelSpec ?? 'anthropic/claude-opus-4-7');
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
+  const [systemPrompt, setSystemPrompt] = useState<string>(existing?.systemPrompt ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -242,6 +251,7 @@ function EditRoleModal({
         modelSpec,
         role,
         scope,
+        systemPrompt: systemPrompt.trim() || null,
         ...(scope === 'TEAM' && { teamId }),
         ...(scope === 'WORKFLOW_TEMPLATE' && { workflowTemplateId }),
       });
@@ -357,6 +367,34 @@ function EditRoleModal({
             </option>
           ))}
         </Select>
+        <div>
+          <div className="mb-1 flex items-baseline justify-between">
+            <label className="text-xs uppercase text-paper-500" htmlFor="systemPrompt">
+              System prompt override
+              <span className="ml-1 text-[10px] normal-case text-paper-500">
+                (optional — leave empty to use the global default)
+              </span>
+            </label>
+            <button
+              className="text-[10px] text-sky-400 hover:text-sky-300 underline"
+              onClick={() => setSystemPrompt(ROLE_DEFAULT_PROMPTS[role])}
+              type="button"
+            >
+              Load default
+            </button>
+          </div>
+          {ROLE_PROMPT_NOTES[role] && (
+            <p className="mb-1 text-[10px] text-amber-400">{ROLE_PROMPT_NOTES[role]}</p>
+          )}
+          <textarea
+            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs resize-y"
+            id="systemPrompt"
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            placeholder="Leave empty to use the built-in default prompt for this role."
+            rows={8}
+            value={systemPrompt}
+          />
+        </div>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel, getModelSpec } from '../lib/models.js';
+import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
@@ -38,9 +38,10 @@ export async function decomposeEpic(
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
+        const systemPrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
         const agent = new Agent({
           id: 'epic-planner',
-          instructions: PLANNER_AGENT_PROMPT,
+          instructions: systemPrompt,
           model,
           name: 'epic-planner',
         });

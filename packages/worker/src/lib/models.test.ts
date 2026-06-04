@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findFirstMock, credFindFirstMock } = vi.hoisted(() => ({
+const { findFirstMock, credFindFirstMock, resolveModelConfigOverride } = vi.hoisted(() => ({
   credFindFirstMock: vi.fn().mockResolvedValue(null),
   findFirstMock: vi.fn().mockResolvedValue(null),
+  // When set, resolveModelConfig returns this value; when null, the real impl runs.
+  resolveModelConfigOverride: { value: null as ((...args: unknown[]) => unknown) | null },
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -13,19 +15,40 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('./config/resolver.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./config/resolver.js')>();
+  return {
+    ...actual,
+    resolveModelConfig: (...args: Parameters<typeof actual.resolveModelConfig>) => {
+      if (resolveModelConfigOverride.value !== null) {
+        return (resolveModelConfigOverride.value as typeof actual.resolveModelConfig)(...args);
+      }
+      return actual.resolveModelConfig(...args);
+    },
+  };
+});
+
 import { _resetConfigCacheForTests } from './config/cache.js';
 import { ConfigMissingError } from './config/resolver.js';
-import { _resetModelCacheForTests, getModel, getModelSpec, resolveModel } from './models.js';
+import {
+  _resetModelCacheForTests,
+  getModel,
+  getModelSpec,
+  resolveModel,
+  resolveSystemPrompt,
+} from './models.js';
 
 beforeEach(() => {
   _resetConfigCacheForTests();
   _resetModelCacheForTests();
   findFirstMock.mockReset().mockResolvedValue(null);
   credFindFirstMock.mockReset().mockResolvedValue(null);
+  resolveModelConfigOverride.value = null;
 });
 
 afterEach(() => {
   _resetConfigCacheForTests();
+  resolveModelConfigOverride.value = null;
 });
 
 describe('getModelSpec', () => {
@@ -95,5 +118,38 @@ describe('getModel', () => {
   it('throws ConfigMissingError when no DB config exists', async () => {
     findFirstMock.mockResolvedValue(null);
     await expect(getModel('implementer')).rejects.toThrow(ConfigMissingError);
+  });
+});
+
+describe('resolveSystemPrompt', () => {
+  const baseConfig = {
+    apiKey: 'sk-ant-x',
+    scope: 'GLOBAL' as const,
+    spec: 'anthropic/claude-opus-4-6',
+  };
+
+  it('returns configOverride immediately without touching DB', async () => {
+    let called = false;
+    resolveModelConfigOverride.value = () => {
+      called = true;
+      return Promise.resolve(baseConfig);
+    };
+    const result = await resolveSystemPrompt('implementer', 'default prompt', 'override prompt');
+    expect(result).toBe('override prompt');
+    expect(called).toBe(false);
+  });
+
+  it('returns DB systemPrompt when no configOverride and DB row has one', async () => {
+    resolveModelConfigOverride.value = () =>
+      Promise.resolve({ ...baseConfig, systemPrompt: 'db prompt' });
+    const result = await resolveSystemPrompt('implementer', 'default prompt');
+    expect(result).toBe('db prompt');
+  });
+
+  it('falls back to hardcoded constant when DB returns no systemPrompt', async () => {
+    resolveModelConfigOverride.value = () =>
+      Promise.resolve({ ...baseConfig, systemPrompt: undefined });
+    const result = await resolveSystemPrompt('implementer', 'default prompt');
+    expect(result).toBe('default prompt');
   });
 });

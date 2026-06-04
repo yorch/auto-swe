@@ -520,6 +520,7 @@ model ModelRoleConfig {
   workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
   workflowTemplate   WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
   modelSpec          String              @map("model_spec")
+  systemPrompt       String?             @map("system_prompt")
   credentialId      String?              @map("credential_id") @db.Uuid
   credential        ProviderCredential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   createdById       String?              @map("created_by_id") @db.Uuid

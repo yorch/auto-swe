@@ -104,7 +104,9 @@ describe('resolveModelConfig — cascade', () => {
   it('throws ConfigMissingError when no GLOBAL row exists for the role', async () => {
     findFirstMock.mockResolvedValue(null);
     await expect(resolveModelConfig('implementer')).rejects.toThrow(ConfigMissingError);
-    await expect(resolveModelConfig('implementer')).rejects.toThrow(/GLOBAL ModelRoleConfig/);
+    await expect(resolveModelConfig('implementer')).rejects.toThrow(
+      /ModelRoleConfig row found for role/
+    );
   });
 });
 
@@ -213,6 +215,94 @@ describe('resolveEmbeddingConfig', () => {
     embeddingFindUniqueMock.mockResolvedValue(null);
     await expect(resolveEmbeddingConfig()).rejects.toThrow(ConfigMissingError);
     await expect(resolveEmbeddingConfig()).rejects.toThrow(/EmbeddingConfig/);
+  });
+});
+
+describe('resolveModelConfig — systemPrompt cascade', () => {
+  it('returns systemPrompt from WORKFLOW_TEMPLATE row when set', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-a')),
+          systemPrompt: 'custom tpl prompt',
+        };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', {
+      teamId: 'team-1',
+      workflowTemplateId: 'tpl-1',
+    });
+    expect(result.systemPrompt).toBe('custom tpl prompt');
+  });
+
+  it('falls through to TEAM row systemPrompt when template row has none', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-a')), systemPrompt: null };
+      }
+      if (args.where.scope === 'TEAM') {
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-b')),
+          systemPrompt: 'team prompt',
+        };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', {
+      teamId: 'team-1',
+      workflowTemplateId: 'tpl-1',
+    });
+    expect(result.systemPrompt).toBe('team prompt');
+  });
+
+  it('returns undefined when no row has a systemPrompt', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'GLOBAL') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-c')), systemPrompt: null };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer');
+    expect(result.systemPrompt).toBeUndefined();
+  });
+
+  it('returns systemPrompt from GLOBAL row when it is the only scope (no template, no team)', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'GLOBAL') {
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-global')),
+          systemPrompt: 'global prompt',
+        };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer');
+    expect(result.systemPrompt).toBe('global prompt');
+  });
+
+  it('returns systemPrompt from TEAM row when it is the only scope (no template)', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'TEAM') {
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-team')),
+          systemPrompt: 'team only prompt',
+        };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', { teamId: 'team-1' });
+    expect(result.systemPrompt).toBe('team only prompt');
   });
 });
 

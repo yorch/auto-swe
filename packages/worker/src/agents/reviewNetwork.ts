@@ -116,19 +116,23 @@ async function runReviewerAgent(
 export async function runReviewNetwork(
   codeResult: CodeResult,
   successCriteria?: string[],
-  tracer?: AgentTracer
+  tracer?: AgentTracer,
+  systemPromptOverride?: string
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
-  let domainLogicPrompt = DOMAIN_LOGIC_REVIEWER_PROMPT;
+  let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
   if (successCriteria && successCriteria.length > 0) {
     domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
   }
 
+  const securityPrompt = systemPromptOverride ?? SECURITY_AUDITOR_PROMPT;
+  const performancePrompt = systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT;
+
   // Run all three reviewers in parallel
   const results = await Promise.allSettled([
-    runReviewerAgent(SECURITY_AUDITOR_PROMPT, 'SECURITY', codeResult, tracer),
+    runReviewerAgent(securityPrompt, 'SECURITY', codeResult, tracer),
     runReviewerAgent(domainLogicPrompt, 'DOMAIN_LOGIC', codeResult, tracer),
-    runReviewerAgent(PERFORMANCE_REVIEWER_PROMPT, 'PERFORMANCE', codeResult, tracer),
+    runReviewerAgent(performancePrompt, 'PERFORMANCE', codeResult, tracer),
   ]);
 
   const verdicts: ReviewVerdict[] = results.map((result, index) => {

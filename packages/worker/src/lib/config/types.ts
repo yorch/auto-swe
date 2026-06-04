@@ -69,4 +69,9 @@ export interface ResolvedModelConfig {
   apiKey: string;
   /** Base URL override from the resolved credential. */
   apiBase?: string;
+  /**
+   * Optional system prompt override. `undefined` means use the hardcoded
+   * constant in prompts.ts. Set on the ModelRoleConfig row via the admin UI.
+   */
+  systemPrompt?: string;
 }

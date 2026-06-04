@@ -42,6 +42,7 @@ const UpsertModelRoleConfigSchema = z
     modelSpec: ModelSpecSchema,
     role: z.enum(ROLE_VALUES),
     scope: z.enum(SCOPE_VALUES),
+    systemPrompt: z.string().max(50_000).nullable().optional(),
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
   })
@@ -309,6 +310,7 @@ type ModelRoleConfigUpsertInput = {
   workflowTemplateId: string | null;
   modelSpec: string;
   credentialId: string | null;
+  systemPrompt: string | null;
 };
 
 /// findFirst → create-or-update, with one P2002 retry to handle the rare case
@@ -331,7 +333,11 @@ async function upsertModelRoleConfig(
   });
   if (existing) {
     const updated = await fastify.prisma.modelRoleConfig.update({
-      data: { credentialId: input.credentialId, modelSpec: input.modelSpec },
+      data: {
+        credentialId: input.credentialId,
+        modelSpec: input.modelSpec,
+        systemPrompt: input.systemPrompt,
+      },
       where: { id: existing.id },
     });
     await writeAuditLog(fastify, {
@@ -352,6 +358,7 @@ async function upsertModelRoleConfig(
         modelSpec: input.modelSpec,
         role: input.role,
         scope: input.scope,
+        systemPrompt: input.systemPrompt,
         teamId: input.teamId,
         workflowTemplateId: input.workflowTemplateId,
       },
@@ -381,7 +388,11 @@ async function upsertModelRoleConfig(
       throw err; // race recovery failed — surface the original
     }
     const updated = await fastify.prisma.modelRoleConfig.update({
-      data: { credentialId: input.credentialId, modelSpec: input.modelSpec },
+      data: {
+        credentialId: input.credentialId,
+        modelSpec: input.modelSpec,
+        systemPrompt: input.systemPrompt,
+      },
       where: { id: row.id },
     });
     await writeAuditLog(fastify, {
@@ -431,7 +442,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: UpsertModelRoleConfigSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { role, scope, teamId, workflowTemplateId, modelSpec, credentialId } = request.body;
+      const { role, scope, teamId, workflowTemplateId, modelSpec, credentialId, systemPrompt } =
+        request.body;
 
       // Pinned credentials must reference an existing row.
       if (credentialId) {
@@ -453,6 +465,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         modelSpec,
         role,
         scope,
+        systemPrompt: systemPrompt?.trim() || null,
         teamId: scope === 'TEAM' ? (teamId ?? null) : null,
         workflowTemplateId: scope === 'WORKFLOW_TEMPLATE' ? (workflowTemplateId ?? null) : null,
       });
@@ -891,6 +904,7 @@ const TeamModelConfigUpsert = z.object({
   credentialId: z.string().uuid().nullable().optional(),
   modelSpec: ModelSpecSchema,
   role: z.enum(ROLE_VALUES),
+  systemPrompt: z.string().max(50_000).nullable().optional(),
 });
 
 const TeamCredentialCreate = z.object({
@@ -938,7 +952,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: teamAdmin, schema: { body: TeamModelConfigUpsert, params: IdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { role, modelSpec, credentialId } = request.body;
+      const { role, modelSpec, credentialId, systemPrompt } = request.body;
       if (credentialId) {
         const cred = await fastify.prisma.providerCredential.findUnique({
           where: { id: credentialId },
@@ -958,6 +972,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
         modelSpec,
         role,
         scope: 'TEAM',
+        systemPrompt: systemPrompt?.trim() || null,
         teamId: request.params.id,
         workflowTemplateId: null,
       });

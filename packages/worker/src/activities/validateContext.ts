@@ -13,7 +13,7 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel, getModelSpec } from '../lib/models.js';
+import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
@@ -26,7 +26,8 @@ const ContextValidationSchema = z.object({
 // ── Context Validator Activity ──
 
 export async function validateContext(
-  workRequest: RepoWorkRequest
+  workRequest: RepoWorkRequest,
+  systemPromptOverride?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
@@ -40,9 +41,14 @@ export async function validateContext(
         const modelSpec = await getModelSpec('validateContext');
         const model = await getModel('validateContext');
         span.setAttribute('llm.model', modelSpec);
+        const systemPrompt = await resolveSystemPrompt(
+          'validateContext',
+          CONTEXT_VALIDATOR_PROMPT,
+          systemPromptOverride
+        );
         const agent = new Agent({
           id: 'context-validator',
-          instructions: CONTEXT_VALIDATOR_PROMPT,
+          instructions: systemPrompt,
           model,
           name: 'context-validator',
         });

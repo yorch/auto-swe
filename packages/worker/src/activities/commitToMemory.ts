@@ -10,7 +10,7 @@ import {
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
-import { getModel } from '../lib/models.js';
+import { getModel, resolveSystemPrompt } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
   failureType: z
@@ -57,7 +57,11 @@ async function writeAgentLessonRow(input: {
  * Summarizes a completed workflow into a reusable lesson and persists it
  * with a vector embedding for future semantic search.
  */
-export async function commitToMemory(temporalWorkflowId: string, repoId: string): Promise<string> {
+export async function commitToMemory(
+  temporalWorkflowId: string,
+  repoId: string,
+  systemPromptOverride?: string
+): Promise<string> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: {
       pullRequests: true,
@@ -73,9 +77,15 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
   const agentTracer = new AgentTracer();
   const start = Date.now();
 
+  const systemPrompt = await resolveSystemPrompt(
+    'commitToMemory',
+    MEMORY_SUMMARIZER_PROMPT,
+    systemPromptOverride
+  );
+
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
-    instructions: MEMORY_SUMMARIZER_PROMPT,
+    instructions: systemPrompt,
     model: await getModel('commitToMemory'),
     name: 'memory-summarizer',
   });
