@@ -216,6 +216,56 @@ describe('resolveEmbeddingConfig', () => {
   });
 });
 
+describe('resolveModelConfig — systemPrompt cascade', () => {
+  it('returns systemPrompt from WORKFLOW_TEMPLATE row when set', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-a')), systemPrompt: 'custom tpl prompt' };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', {
+      teamId: 'team-1',
+      workflowTemplateId: 'tpl-1',
+    });
+    expect(result.systemPrompt).toBe('custom tpl prompt');
+  });
+
+  it('falls through to TEAM row systemPrompt when template row has none', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-a')), systemPrompt: null };
+      }
+      if (args.where.scope === 'TEAM') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-b')), systemPrompt: 'team prompt' };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', {
+      teamId: 'team-1',
+      workflowTemplateId: 'tpl-1',
+    });
+    expect(result.systemPrompt).toBe('team prompt');
+  });
+
+  it('returns undefined when no row has a systemPrompt', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'GLOBAL') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-c')), systemPrompt: null };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer');
+    expect(result.systemPrompt).toBeUndefined();
+  });
+});
+
 describe('resolver cache', () => {
   it('hits the cache on the second call with the same context', async () => {
     findFirstMock.mockResolvedValue(row('anthropic/global'));
