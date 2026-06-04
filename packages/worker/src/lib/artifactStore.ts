@@ -13,6 +13,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveStorageConfig } from '@auto-swe/shared/lib/systemConfig';
 
 export type ArtifactBackend = 's3' | 'pg';
 
@@ -31,8 +32,9 @@ export interface PutArtifactInput {
   body: Buffer | string;
 }
 
-function activeBackend(): ArtifactBackend {
-  return process.env.ARTIFACT_S3_BUCKET ? 's3' : 'pg';
+async function activeBackend(): Promise<ArtifactBackend> {
+  const cfg = await resolveStorageConfig();
+  return cfg.backend === 's3' ? 's3' : 'pg';
 }
 
 function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
@@ -71,19 +73,25 @@ async function s3Client(): Promise<S3Helper> {
     } | null;
     if (!mod) {
       throw new Error(
-        '@aws-sdk/client-s3 not installed but ARTIFACT_S3_BUCKET is set. ' +
+        '@aws-sdk/client-s3 not installed but S3 storage backend is active. ' +
           'Run `yarn workspace @auto-swe/worker add @aws-sdk/client-s3`.'
       );
     }
     const { S3Client, PutObjectCommand, GetObjectCommand } = mod;
-    const region = process.env.ARTIFACT_S3_REGION ?? 'us-east-1';
-    const endpoint = process.env.ARTIFACT_S3_ENDPOINT;
-    const forcePathStyle = process.env.ARTIFACT_S3_FORCE_PATH_STYLE === 'true';
+    const storageCfg = await resolveStorageConfig();
+    if (!storageCfg.s3Bucket) {
+      throw new Error(
+        'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
+      );
+    }
+    const region = storageCfg.s3Region ?? 'us-east-1';
+    const endpoint = storageCfg.s3Endpoint ?? undefined;
+    const forcePathStyle = storageCfg.s3ForcePathStyle;
     const client = new S3Client({
       region,
       ...(endpoint ? { endpoint, forcePathStyle } : {}),
     });
-    const bucket = process.env.ARTIFACT_S3_BUCKET as string;
+    const bucket = storageCfg.s3Bucket;
     return {
       async getObject(key) {
         const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
@@ -106,13 +114,19 @@ async function s3Client(): Promise<S3Helper> {
 }
 
 export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef> {
-  const backend = activeBackend();
+  const backend = await activeBackend();
   const contentType = input.contentType ?? 'application/octet-stream';
   const body = typeof input.body === 'string' ? Buffer.from(input.body, 'utf8') : input.body;
 
   if (backend === 's3') {
-    const bucket = process.env.ARTIFACT_S3_BUCKET as string;
-    const prefix = process.env.ARTIFACT_S3_PREFIX ?? 'workflow-artifacts';
+    const storageCfg = await resolveStorageConfig();
+    if (!storageCfg.s3Bucket) {
+      throw new Error(
+        'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
+      );
+    }
+    const bucket = storageCfg.s3Bucket;
+    const prefix = storageCfg.s3Prefix ?? 'workflow-artifacts';
     const key = `${prefix}/${input.runId ?? 'global'}/${input.kind}/${crypto.randomUUID()}`;
     const client = await s3Client();
     await client.putObject(key, body, contentType);

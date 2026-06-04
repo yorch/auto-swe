@@ -1,6 +1,16 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    branchPrefix: 'auto',
+    defaultTeamSlug: 'default',
+    prBodyTemplate: '',
+    prTitleTemplate: '[auto-swe] {{ticketId}}',
+  })),
+}));
+
 import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 describe('POST /api/v1/work-requests', () => {

@@ -441,7 +441,7 @@ flowchart LR
 - **`docker-compose.infra.yml`** — Postgres (app) + Postgres (Temporal) + Temporal (server + admin-tools + UI).
 - **`docker-compose.app.yml`** — Gateway + Worker + Web + Grafana LGTM. Overlay — references infra network, not standalone.
 - **Worker Docker socket** — The worker needs `/var/run/docker.sock` mounted to spin up DinD workspaces.
-- **MinIO** (optional) — S3-compatible artifact store started alongside infra when `ARTIFACT_S3_*` is configured; falls back to Postgres inline blobs otherwise.
+- **MinIO** (optional) — S3-compatible artifact store started alongside infra. Configure the backend via `/admin/integrations → Storage`; falls back to Postgres inline blobs when no S3 config is present.
 
 ---
 

@@ -126,7 +126,6 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true } },
-          ...(includeTraces ? { traces: { orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }] } } : {}),
           workRequest: {
             select: { description: true, externalTicketId: true, id: true },
           },
@@ -138,6 +137,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
         });
       }
+      const traces = includeTraces
+        ? await fastify.prisma.agentTrace.findMany({
+            orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+            where: { runId: run.id },
+          })
+        : [];
       return {
         data: {
           contextSnapshot: run.contextSnapshot,
@@ -160,7 +165,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: run.templateId,
           templateName: run.template.name,
           templateVersion: run.templateVersion,
-          traces: (run.traces ?? []).map((t) => ({
+          traces: traces.map((t) => ({
             agentRole: t.agentRole,
             attempt: t.attempt,
             createdAt: t.createdAt,

@@ -583,6 +583,139 @@ model EmbeddingConfig {
   @@map("embedding_configs")
 }
 
+/// Singleton GitHub integration config. One row (id = "default").
+/// Encrypted fields follow the same AES-256-GCM envelope used by
+/// ProviderCredential (ciphertext + nonce + authTag per secret).
+/// oauthClientId / oauthClientSecret enable GitHub social sign-in via
+/// BetterAuth; changes require a gateway restart to take effect.
+model GitHubConfig {
+  id String @id @default("default")
+
+  /// PAT used for cloning repos and creating PRs (required to start worker)
+  tokenCiphertext Bytes?  @map("token_ciphertext")
+  tokenNonce      Bytes?  @map("token_nonce")
+  tokenAuthTag    Bytes?  @map("token_auth_tag")
+  tokenKeyVersion Int?    @map("token_key_version")
+  tokenLastFour   String? @map("token_last_four")
+
+  /// HMAC secret for validating inbound GitHub webhook payloads
+  webhookSecretCiphertext Bytes?  @map("webhook_secret_ciphertext")
+  webhookSecretNonce      Bytes?  @map("webhook_secret_nonce")
+  webhookSecretAuthTag    Bytes?  @map("webhook_secret_auth_tag")
+  webhookSecretKeyVersion Int?    @map("webhook_secret_key_version")
+  webhookSecretLastFour   String? @map("webhook_secret_last_four")
+
+  /// GitHub OAuth app credentials for browser social sign-in (BetterAuth)
+  oauthClientId String? @map("oauth_client_id")
+
+  oauthClientSecretCiphertext Bytes?  @map("oauth_client_secret_ciphertext")
+  oauthClientSecretNonce      Bytes?  @map("oauth_client_secret_nonce")
+  oauthClientSecretAuthTag    Bytes?  @map("oauth_client_secret_auth_tag")
+  oauthClientSecretKeyVersion Int?    @map("oauth_client_secret_key_version")
+  oauthClientSecretLastFour   String? @map("oauth_client_secret_last_four")
+
+  /// Base URL for git clone operations; null → https://github.com
+  baseUrl String? @map("base_url")
+  /// Octokit REST API base URL; null → https://api.github.com (for GHE)
+  apiUrl  String? @map("api_url")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("github_config")
+}
+
+/// Singleton Slack integration config. One row (id = "default").
+/// Requires a gateway restart only for clientId / clientSecret (used by the
+/// OAuth flow at server init). botToken and signingSecret are resolved
+/// fresh per request/activity.
+model SlackConfig {
+  id String @id @default("default")
+
+  clientId String? @map("client_id")
+
+  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
+  clientSecretNonce      Bytes?  @map("client_secret_nonce")
+  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
+  clientSecretKeyVersion Int?    @map("client_secret_key_version")
+  clientSecretLastFour   String? @map("client_secret_last_four")
+
+  signingSecretCiphertext Bytes?  @map("signing_secret_ciphertext")
+  signingSecretNonce      Bytes?  @map("signing_secret_nonce")
+  signingSecretAuthTag    Bytes?  @map("signing_secret_auth_tag")
+  signingSecretKeyVersion Int?    @map("signing_secret_key_version")
+  signingSecretLastFour   String? @map("signing_secret_last_four")
+
+  botTokenCiphertext Bytes?  @map("bot_token_ciphertext")
+  botTokenNonce      Bytes?  @map("bot_token_nonce")
+  botTokenAuthTag    Bytes?  @map("bot_token_auth_tag")
+  botTokenKeyVersion Int?    @map("bot_token_key_version")
+  botTokenLastFour   String? @map("bot_token_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("slack_config")
+}
+
+/// Singleton artifact storage config. One row (id = "default").
+/// backend="inline" stores blobs in Postgres; backend="s3" uses any
+/// S3-compatible endpoint (AWS S3, MinIO, R2). Changes take effect on the
+/// next worker activity call — no restart required.
+model StorageConfig {
+  id      String @id @default("default")
+  backend String @default("inline") // "inline" | "s3"
+
+  s3Bucket         String?  @map("s3_bucket")
+  s3Region         String?  @map("s3_region")
+  s3Endpoint       String?  @map("s3_endpoint")
+  s3Prefix         String?  @map("s3_prefix")
+  s3ForcePathStyle Boolean  @default(false) @map("s3_force_path_style")
+
+  awsAccessKeyId String? @map("aws_access_key_id")
+
+  awsSecretAccessKeyCiphertext Bytes?  @map("aws_secret_access_key_ciphertext")
+  awsSecretAccessKeyNonce      Bytes?  @map("aws_secret_access_key_nonce")
+  awsSecretAccessKeyAuthTag    Bytes?  @map("aws_secret_access_key_auth_tag")
+  awsSecretAccessKeyKeyVersion Int?    @map("aws_secret_access_key_key_version")
+  awsSecretAccessKeyLastFour   String? @map("aws_secret_access_key_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("storage_config")
+}
+
+/// Singleton workflow behaviour defaults. One row (id = "default").
+/// All fields have fallback values so the row is optional — the worker
+/// falls back to the baked-in defaults when no row exists.
+model WorkflowDefaults {
+  id String @id @default("default")
+
+  branchPrefix    String @default("auto") @map("branch_prefix")
+  prTitleTemplate String @default("[auto-swe] {{ticketId}}") @map("pr_title_template")
+  prBodyTemplate  String @default("") @map("pr_body_template")
+  defaultTeamSlug String @default("default") @map("default_team_slug")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("workflow_defaults")
+}
+
+/// Singleton Google OAuth config for BetterAuth social sign-in.
+/// Changes require a gateway restart to take effect.
+model GoogleOAuthConfig {
+  id       String  @id @default("default")
+  clientId String? @map("client_id")
+
+  clientSecretCiphertext Bytes?  @map("client_secret_ciphertext")
+  clientSecretNonce      Bytes?  @map("client_secret_nonce")
+  clientSecretAuthTag    Bytes?  @map("client_secret_auth_tag")
+  clientSecretKeyVersion Int?    @map("client_secret_key_version")
+  clientSecretLastFour   String? @map("client_secret_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("google_oauth_config")
+}
+
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.
 /// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
 /// recorded). Written from the gateway routes that mutate these rows.

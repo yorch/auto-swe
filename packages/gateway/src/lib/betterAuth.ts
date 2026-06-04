@@ -14,6 +14,11 @@
 
 import crypto from 'node:crypto';
 import { PrismaClient } from '@auto-swe/shared/db';
+import {
+  resolveGitHubConfig,
+  resolveGoogleOAuthConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
@@ -44,10 +49,12 @@ if (IS_PRODUCTION && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
   );
 }
 
-const githubClientId = process.env.GITHUB_CLIENT_ID;
-const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
-const googleClientId = process.env.GOOGLE_CLIENT_ID;
-const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+// OAuth credentials resolved at initAuth() time (DB-primary, env-fallback).
+// These are set once at startup and not re-read — changing them requires restart.
+let _githubClientId: string | null = null;
+let _githubClientSecret: string | null = null;
+let _googleClientId: string | null = null;
+let _googleClientSecret: string | null = null;
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.AUTH_FROM_EMAIL;
@@ -232,125 +239,169 @@ function renderMagicLinkHtml({ email, url }: { email: string; url: string }): st
   </body></html>`;
 }
 
-/** Slug of the team new sign-ups are added to. Override via env if your
- *  deployment uses a different "everyone" team. */
-const DEFAULT_TEAM_SLUG = process.env.DEFAULT_TEAM_SLUG ?? 'default';
+// ─── Lazy singleton ───────────────────────────────────────────────────────────
 
-export const auth = betterAuth({
-  // Link sign-ins by verified email so a user who's already in the system
-  // via GitHub and then signs in with Google (same verified email) ends up
-  // attached to the existing User row instead of creating a duplicate.
-  // Trusted providers skip the explicit-link-confirmation step.
-  account: {
-    accountLinking: {
-      enabled: true,
-      trustedProviders: ['github', 'google', 'email-password'],
+type AuthInstance = ReturnType<typeof buildAuth>;
+let _auth: AuthInstance | null = null;
+
+/// Called once at gateway startup. Reads OAuth credentials from DB (with env
+/// fallback) then initialises the BetterAuth singleton. Subsequent calls are
+/// no-ops (the singleton is already built). A restart is required to pick up
+/// changes to OAuth credentials after the server is running.
+export async function initAuth(): Promise<void> {
+  if (_auth) {
+    return;
+  }
+
+  const [ghConfig, googleConfig] = await Promise.all([
+    resolveGitHubConfig(),
+    resolveGoogleOAuthConfig(),
+  ]);
+
+  _githubClientId = ghConfig.oauthClientId;
+  _githubClientSecret = ghConfig.oauthClientSecret;
+  _googleClientId = googleConfig.clientId;
+  _googleClientSecret = googleConfig.clientSecret;
+
+  _auth = buildAuth();
+}
+
+/// Returns the initialised BetterAuth instance. Throws if `initAuth()` hasn't
+/// been called yet (should never happen in production; indicates a startup bug).
+export function getAuth(): AuthInstance {
+  if (!_auth) {
+    throw new Error('BetterAuth not initialised — call initAuth() at gateway startup.');
+  }
+  return _auth;
+}
+
+/** Alias so scripts can still do `const { auth } = await import('../lib/betterAuth.js')`.
+ * Note: `auth` is a function — call `auth()` to get the BetterAuth instance. */
+export { getAuth as auth };
+
+function buildAuth() {
+  return betterAuth({
+    // Link sign-ins by verified email so a user who's already in the system
+    // via GitHub and then signs in with Google (same verified email) ends up
+    // attached to the existing User row instead of creating a duplicate.
+    // Trusted providers skip the explicit-link-confirmation step.
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ['github', 'google', 'email-password'],
+      },
     },
-  },
-  // Cookies on the gateway need to be readable by the browser running on
-  // a different port. SameSite=Lax is sufficient for top-level GET nav and
-  // OAuth callbacks; Secure flips on automatically under HTTPS.
-  advanced: {
-    crossSubDomainCookies: { enabled: false },
-    // Our existing schema uses `@db.Uuid` for every primary key (User row
-    // pre-dates better-auth and is referenced by half the system); the
-    // better-auth tables we just added follow the same convention. Override
-    // better-auth's default nanoid generator to emit RFC-4122 UUIDs so the
-    // Postgres `uuid` column accepts them on insert.
-    database: { generateId: () => crypto.randomUUID() },
-    defaultCookieAttributes: {
-      sameSite: 'lax',
-      secure: BASE_URL.startsWith('https://'),
+    // Cookies on the gateway need to be readable by the browser running on
+    // a different port. SameSite=Lax is sufficient for top-level GET nav and
+    // OAuth callbacks; Secure flips on automatically under HTTPS.
+    advanced: {
+      crossSubDomainCookies: { enabled: false },
+      // Our existing schema uses `@db.Uuid` for every primary key (User row
+      // pre-dates better-auth and is referenced by half the system); the
+      // better-auth tables we just added follow the same convention. Override
+      // better-auth's default nanoid generator to emit RFC-4122 UUIDs so the
+      // Postgres `uuid` column accepts them on insert.
+      database: { generateId: () => crypto.randomUUID() },
+      defaultCookieAttributes: {
+        sameSite: 'lax',
+        secure: BASE_URL.startsWith('https://'),
+      },
     },
-  },
-  baseURL: BASE_URL,
-  database: prismaAdapter(prisma, { provider: 'postgresql' }),
-  // Post-create hook: auto-add new users to the configured default team so
-  // team-scoped pages have something to show even before an admin has done
-  // any explicit assignment. Failures are swallowed (with a server log) so a
-  // missing default team doesn't block the sign-up — the user can still be
-  // assigned manually.
-  databaseHooks: {
-    user: {
-      create: {
-        after: async (user) => {
-          try {
-            const team = await prisma.team.findUnique({ where: { slug: DEFAULT_TEAM_SLUG } });
-            if (!team) {
-              console.warn(
-                `[better-auth] default team '${DEFAULT_TEAM_SLUG}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
+    baseURL: BASE_URL,
+    database: prismaAdapter(prisma, { provider: 'postgresql' }),
+    // Post-create hook: auto-add new users to the configured default team so
+    // team-scoped pages have something to show even before an admin has done
+    // any explicit assignment. Failures are swallowed (with a server log) so a
+    // missing default team doesn't block the sign-up — the user can still be
+    // assigned manually.
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            try {
+              // Re-read at sign-up time so admin changes to defaultTeamSlug take
+              // effect immediately without a gateway restart.
+              const { defaultTeamSlug } = await resolveWorkflowDefaults();
+              const team = await prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
+              if (!team) {
+                console.warn(
+                  `[better-auth] default team '${defaultTeamSlug}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
+                );
+                return;
+              }
+              await prisma.teamMembership.upsert({
+                create: { role: 'ENGINEER', teamId: team.id, userId: user.id },
+                update: {},
+                where: { userId_teamId: { teamId: team.id, userId: user.id } },
+              });
+            } catch (err) {
+              console.error(
+                `[better-auth] auto-team-membership hook failed for ${user.email}:`,
+                err
               );
-              return;
             }
-            await prisma.teamMembership.upsert({
-              create: { role: 'ENGINEER', teamId: team.id, userId: user.id },
-              update: {},
-              where: { userId_teamId: { teamId: team.id, userId: user.id } },
-            });
-          } catch (err) {
-            console.error(`[better-auth] auto-team-membership hook failed for ${user.email}:`, err);
-          }
+          },
         },
       },
     },
-  },
-  emailAndPassword: {
-    autoSignIn: true,
-    enabled: true,
-    minPasswordLength: 8,
-    requireEmailVerification: false,
-    // Reuse the same multi-transport delivery we use for magic links —
-    // SMTP > Resend > console fallback. The user receives a tokenised
-    // reset URL pointing at the web app's /reset-password page.
-    sendResetPassword: async ({ user, url }) => deliverPasswordReset({ email: user.email, url }),
-  },
-  plugins: [
-    magicLink({
-      disableSignUp: false,
-      expiresIn: 60 * 10, // 10 minutes
-      sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
-    }),
-  ],
-  // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
-  // its own server-side redirect handling so it doesn't need to appear here.
-  secret: RESOLVED_SECRET,
-  socialProviders: {
-    ...(githubClientId && githubClientSecret
-      ? {
-          github: { clientId: githubClientId, clientSecret: githubClientSecret },
-        }
-      : {}),
-    ...(googleClientId && googleClientSecret
-      ? {
-          google: { clientId: googleClientId, clientSecret: googleClientSecret },
-        }
-      : {}),
-  },
-  trustedOrigins: [CLIENT_ORIGIN, BASE_URL],
-  // Map better-auth's User fields onto our existing Prisma columns. The
-  // legacy `password_hash` column lives on `users` for back-compat (the
-  // old admin seed used it) but better-auth stores its own credential hash
-  // in the Account row, so this field is optional from better-auth's POV.
-  //
-  // `isActive: false` is the default for new sign-ups — they sit in an
-  // approval queue until an admin flips them via PATCH /api/v1/users/:id.
-  // The seeded admin is pre-active via the shared seed.
-  user: {
-    additionalFields: {
-      isActive: { defaultValue: false, input: false, required: false, type: 'boolean' },
-      role: { defaultValue: 'ENGINEER', input: false, required: false, type: 'string' },
-      slackId: { input: false, required: false, type: 'string' },
+    emailAndPassword: {
+      autoSignIn: true,
+      enabled: true,
+      minPasswordLength: 8,
+      requireEmailVerification: false,
+      // Reuse the same multi-transport delivery we use for magic links —
+      // SMTP > Resend > console fallback. The user receives a tokenised
+      // reset URL pointing at the web app's /reset-password page.
+      sendResetPassword: async ({ user, url }) => deliverPasswordReset({ email: user.email, url }),
     },
-  },
-});
+    plugins: [
+      magicLink({
+        disableSignUp: false,
+        expiresIn: 60 * 10, // 10 minutes
+        sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
+      }),
+    ],
+    // Strict origins for browser-initiated calls. The Slack OAuth flow keeps
+    // its own server-side redirect handling so it doesn't need to appear here.
+    secret: RESOLVED_SECRET,
+    socialProviders: {
+      ...(_githubClientId && _githubClientSecret
+        ? {
+            github: { clientId: _githubClientId, clientSecret: _githubClientSecret },
+          }
+        : {}),
+      ...(_googleClientId && _googleClientSecret
+        ? {
+            google: { clientId: _googleClientId, clientSecret: _googleClientSecret },
+          }
+        : {}),
+    },
+    trustedOrigins: [CLIENT_ORIGIN, BASE_URL],
+    // Map better-auth's User fields onto our existing Prisma columns. The
+    // legacy `password_hash` column lives on `users` for back-compat (the
+    // old admin seed used it) but better-auth stores its own credential hash
+    // in the Account row, so this field is optional from better-auth's POV.
+    //
+    // `isActive: false` is the default for new sign-ups — they sit in an
+    // approval queue until an admin flips them via PATCH /api/v1/users/:id.
+    // The seeded admin is pre-active via the shared seed.
+    user: {
+      additionalFields: {
+        isActive: { defaultValue: false, input: false, required: false, type: 'boolean' },
+        role: { defaultValue: 'ENGINEER', input: false, required: false, type: 'string' },
+        slackId: { input: false, required: false, type: 'string' },
+      },
+    },
+  });
+}
 
 /** Helper for the Fastify handler — exposes the auth-list of providers
  *  currently configured (used by the front-end to know which buttons to
- *  show). The presence of credentials in env decides what we advertise. */
+ *  show). Read after initAuth() has been called. */
 export function configuredProviders(): { github: boolean; google: boolean; magicLink: boolean } {
   return {
-    github: Boolean(githubClientId && githubClientSecret),
-    google: Boolean(googleClientId && googleClientSecret),
+    github: Boolean(_githubClientId && _githubClientSecret),
+    google: Boolean(_googleClientId && _googleClientSecret),
     magicLink: true,
   };
 }

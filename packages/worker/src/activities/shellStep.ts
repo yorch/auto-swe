@@ -23,13 +23,13 @@
 import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
-import { requireEnv } from '../lib/errors.js';
 import { EXEC_OPTS } from '../lib/execUtils.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
@@ -71,18 +71,17 @@ const GIT_HELPER_IMAGE = 'alpine/git:latest';
  * `error.stdout` / `error.stderr`. Without this, a failed clone would leak
  * the token into the Temporal workflow history.
  */
-function redactToken(s: unknown): string {
+function redactToken(s: unknown, token?: string | null): string {
   if (typeof s !== 'string') {
     return String(s);
   }
-  const token = process.env.GITHUB_TOKEN;
   if (!token) {
     return s;
   }
   return s.split(token).join('***');
 }
 
-function runDocker(args: string[]): string {
+function runDocker(args: string[], tokenForRedact?: string | null): string {
   // execSync prefers a string command, so we shell-quote each arg before
   // joining. The inputs to this helper are either hard-coded literals or
   // identifiers that have already been validated upstream (volume names,
@@ -93,14 +92,14 @@ function runDocker(args: string[]): string {
     return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
   } catch (err) {
     if (err instanceof Error) {
-      err.message = redactToken(err.message);
+      err.message = redactToken(err.message, tokenForRedact);
     }
     const e = err as { stdout?: unknown; stderr?: unknown };
     if (typeof e.stdout === 'string') {
-      e.stdout = redactToken(e.stdout);
+      e.stdout = redactToken(e.stdout, tokenForRedact);
     }
     if (typeof e.stderr === 'string') {
-      e.stderr = redactToken(e.stderr);
+      e.stderr = redactToken(e.stderr, tokenForRedact);
     }
     throw err;
   }
@@ -120,15 +119,27 @@ interface RepoMeta {
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
+  /** The resolved PAT — kept alongside cloneUrl so error-path redaction works
+   * even when no GITHUB_TOKEN env var is set (DB-only token configuration). */
+  token: string;
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
-  const repo = await prisma.repository.findUniqueOrThrow({
-    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
-    where: { id: request.repoId },
-  });
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-  const token = requireEnv('GITHUB_TOKEN');
+  const [repo, ghConfig] = await Promise.all([
+    prisma.repository.findUniqueOrThrow({
+      include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
+      where: { id: request.repoId },
+    }),
+    resolveGitHubConfig(),
+  ]);
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
+  if (!ghConfig.token) {
+    throw ApplicationFailure.nonRetryable(
+      'GitHub token not configured. Set it at /admin/integrations.',
+      'CONFIG_MISSING'
+    );
+  }
+  const token = ghConfig.token;
   const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
     'https://',
     `https://x-access-token:${token}@`
@@ -139,6 +150,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
     teamId: repo.team?.id ?? '',
+    token,
   };
 }
 
@@ -151,17 +163,20 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  */
 function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): void {
   const tryClone = (refspec: string): string =>
-    runDocker([
-      'run',
-      '--rm',
-      '-v',
-      `${volumeName}:/workspace:rw`,
-      '--entrypoint',
-      'sh',
-      GIT_HELPER_IMAGE,
-      '-c',
-      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
-    ]);
+    runDocker(
+      [
+        'run',
+        '--rm',
+        '-v',
+        `${volumeName}:/workspace:rw`,
+        '--entrypoint',
+        'sh',
+        GIT_HELPER_IMAGE,
+        '-c',
+        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+      ],
+      meta.token
+    );
   try {
     tryClone(branch);
   } catch (err) {
@@ -270,7 +285,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     throw err;
   }
 
-  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
+  const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;

@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveStorageConfig: async () => ({
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? null,
+    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? null,
+    backend: process.env.ARTIFACT_S3_BUCKET ? 's3' : 'inline',
+    s3Bucket: process.env.ARTIFACT_S3_BUCKET ?? null,
+    s3Endpoint: process.env.ARTIFACT_S3_ENDPOINT ?? null,
+    s3ForcePathStyle: false,
+    s3Prefix: process.env.ARTIFACT_S3_PREFIX ?? null,
+    s3Region: process.env.ARTIFACT_S3_REGION ?? null,
+  }),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     workflowArtifact: {

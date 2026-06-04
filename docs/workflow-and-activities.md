@@ -363,8 +363,8 @@ export async function executeImplementation(
     volumes: [{ name: 'workspace', mountPath: '/workspace/target-repo' }],
     env: {
       GITHUB_TOKEN: await generateScopedInstallationToken(repo),
-      REPO_URL: `${repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com'}/${repo.organizationName}/${repo.repoName}.git`,
-      BRANCH: `${process.env.BRANCH_PREFIX ?? 'auto'}/${snapshot.workRequest.externalTicketId}`,
+      REPO_URL: `${repo.githubUrl ?? ghConfig.baseUrl}/${repo.organizationName}/${repo.repoName}.git`,
+      BRANCH: `${workflowDefaults.branchPrefix}/${snapshot.workRequest.externalTicketId}`,
     },
   });
 
@@ -409,7 +409,7 @@ export async function executeImplementation(
     const headSha = await workspace.exec('git', ['rev-parse', 'HEAD']);
 
     return {
-      branch: `${process.env.BRANCH_PREFIX ?? 'auto'}/${snapshot.workRequest.externalTicketId}`,
+      branch: `${workflowDefaults.branchPrefix}/${snapshot.workRequest.externalTicketId}`,
       headSha: headSha.trim(),
       diff,
       filesChanged: parseDiffToFileChanges(diff),
@@ -507,8 +507,8 @@ export async function createOrUpdatePullRequest(
   const { data: pr } = await octokit.pulls.create({
     owner: repo.organizationName,
     repo: repo.repoName,
-    title: formatPRTitle(codeResult),     // Configurable via PR_TITLE_TEMPLATE env var
-    body: formatPRBody(reviewResult),    // Configurable via PR_BODY_TEMPLATE env var
+    title: formatPRTitle(codeResult),     // Configurable via /admin/workflow (PR title template)
+    body: formatPRBody(reviewResult),    // Configurable via /admin/workflow (PR body template)
     head: codeResult.branch,
     base: repo.defaultBranch,
   });
@@ -535,7 +535,7 @@ export async function createOrUpdatePullRequest(
 export async function fetchCILogs(logsUrl?: string): Promise<string> {
   if (!logsUrl) return 'No logs URL provided by CI webhook';
   const response = await fetch(logsUrl, {
-    headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+    headers: { Authorization: `Bearer ${ghConfig.token}` },  // resolved from /admin/integrations
   });
   const fullLog = await response.text();
   // Truncate to last 50KB to fit in LLM context

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import bcrypt from 'bcrypt';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -189,8 +190,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Pre-attach to the default team so the new user sees something on
       // first sign-in. Soft-fails if the team doesn't exist (seed missing).
+      const { defaultTeamSlug } = await resolveWorkflowDefaults();
       const defaultTeam = await fastify.prisma.team.findUnique({
-        where: { slug: process.env.DEFAULT_TEAM_SLUG ?? 'default' },
+        where: { slug: defaultTeamSlug },
       });
       if (defaultTeam) {
         await fastify.prisma.teamMembership
@@ -209,10 +211,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       // a circular import (routes/users → lib/betterAuth → adapter →
       // PrismaClient already in scope here).
       try {
-        const { auth: betterAuth } = await import('../lib/betterAuth.js');
+        const { getAuth } = await import('../lib/betterAuth.js');
         const clientOrigin =
           process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
-        await betterAuth.api.signInMagicLink({
+        await getAuth().api.signInMagicLink({
           body: { callbackURL: `${clientOrigin}/login?bridge=1`, email },
           // better-auth's typing requires a Headers object even for purely
           // server-side invocations (no real browser headers to forward here).

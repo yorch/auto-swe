@@ -69,7 +69,7 @@ const SLACK_POST_TIMEOUT_MS = 2_000;
 
 export async function postSlackMessage(
   options: SlackPostMessageOptions,
-  token: string | undefined = process.env.SLACK_BOT_TOKEN
+  token: string | undefined
 ): Promise<string | null> {
   if (!token) {
     return null;
@@ -123,10 +123,10 @@ interface SlackViewsOpenResponse {
  */
 export async function openSlackView(
   options: SlackViewsOpenOptions,
-  token: string | undefined = process.env.SLACK_BOT_TOKEN
+  token: string | undefined
 ): Promise<{ ok: boolean; viewId?: string; error?: string }> {
   if (!token) {
-    return { error: 'SLACK_BOT_TOKEN not configured', ok: false };
+    return { error: 'Slack bot token not configured — set it at /admin/integrations', ok: false };
   }
   try {
     const res = await fetch('https://slack.com/api/views.open', {

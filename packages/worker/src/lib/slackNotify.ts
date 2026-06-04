@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
  * Slack notifications. Three surfaces:
@@ -198,7 +199,7 @@ export async function notifySlackStepFailure(input: {
   attempt: number;
   error?: string | undefined;
 }): Promise<void> {
-  const token = process.env.SLACK_BOT_TOKEN;
+  const { botToken: token } = await resolveSlackConfig();
   if (!token) {
     return;
   }
@@ -231,7 +232,7 @@ export async function notifySlackPrReady(input: {
   prNumber: number;
   prUrl: string;
 }): Promise<void> {
-  const token = process.env.SLACK_BOT_TOKEN;
+  const { botToken: token } = await resolveSlackConfig();
   if (!token) {
     return;
   }
@@ -257,7 +258,7 @@ export async function notifySlackRunComplete(input: {
   runId: string;
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED';
 }): Promise<void> {
-  const token = process.env.SLACK_BOT_TOKEN;
+  const { botToken: token } = await resolveSlackConfig();
   if (!token) {
     return;
   }

@@ -159,6 +159,22 @@ The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
 - Model binding: **always use `getModel(role)` from `packages/worker/src/lib/models.ts`** — never call `anthropic('...')` / `openai('...')` directly in agent code. Provider selection is config-driven.
 - Structured generation: `agent.generate(messages, { output: zodSchema })`
 
+### System Config (Integrations)
+
+GitHub, Slack, artifact storage, workflow defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var fallback for backwards compat. **Never read these from `process.env` directly in new code.**
+
+| Admin page | What it manages | Resolver |
+|---|---|---|
+| `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
+| `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
+| `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
+| `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
+| `/admin/workflow` | branch prefix, PR templates, default team slug | `resolveWorkflowDefaults()` |
+
+All five tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
+
+**Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
+
 ### Multi-Model Support
 
 Model selection and provider credentials are fully DB-driven via the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).
@@ -177,7 +193,9 @@ No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker 
 2. Start gateway + web only.
 3. Sign in as admin at `/admin/model-config`. Click "Seed Anthropic defaults" to create the 6 GLOBAL `ModelRoleConfig` rows + the `EmbeddingConfig` singleton.
 4. Add at least one `ProviderCredential` for the providers the seeded specs reference (Anthropic by default; OpenAI for embeddings).
-5. Start the worker.
+5. Go to `/admin/integrations → GitHub`. Enter the GitHub PAT and webhook secret. Save.
+6. Configure any other integrations (Slack, Storage, OAuth) as needed.
+7. Start the worker.
 
 Per-role baked-in defaults (used by the "Seed defaults" button):
 
@@ -267,7 +285,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + temporal + otel-lgtm)
-cp .env.example .env    # Fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, SEED_ADMIN_PASSWORD
+cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally GITHUB_TOKEN/GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
 
 # 3. Database setup
@@ -277,14 +295,21 @@ yarn db:migrate && yarn db:generate && yarn db:seed
 #    start over locally (migrations consolidate into a single init + the
 #    pgvector HNSW index migration; see packages/shared/src/prisma/migrations).
 
-# 4. Start services (three terminals — or `yarn dev` to run all three)
+# 4. Start gateway + web first (worker needs GitHub config in DB before starting)
 yarn dev:gateway         # Terminal 1 — http://localhost:8080
-yarn dev:worker          # Terminal 2
-yarn dev:web             # Terminal 3 — http://localhost:3000
+yarn dev:web             # Terminal 2 — http://localhost:3000
 
-# 5. Drive it from the dashboard
-#    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD,
-#    then either click "+ Submit work request" or follow the onboarding panel.
+# 4b. Configure integrations in the admin UI
+#    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD
+#    → /admin/model-config → "Seed Anthropic defaults" → add provider credentials
+#    → /admin/integrations → GitHub → enter GITHUB_TOKEN + GITHUB_WEBHOOK_SECRET → Save
+#    (or skip if GITHUB_TOKEN is set in .env — the env var fallback still works)
+
+# 5. Start the worker
+yarn dev:worker          # Terminal 3 — reads GitHub token from DB (or .env fallback)
+
+# 6. Drive it from the dashboard
+#    Either click "+ Submit work request" or follow the onboarding panel.
 #    For headless / scripted use, mint a PAT at Settings → API tokens and:
 TOKEN=<paste-PAT>
 curl -X POST http://localhost:8080/api/v1/work-requests \

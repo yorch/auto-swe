@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
@@ -6,7 +7,7 @@ import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompt
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { getExecErrorStdout } from '../lib/errors.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -19,10 +20,11 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
     return 'No logs URL provided by CI webhook';
   }
 
+  const { token: githubToken } = await resolveGitHubConfig();
   const response = await fetch(logsUrl, {
     headers: {
       Accept: 'application/vnd.github.v3+json',
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
     },
   });
 
@@ -53,9 +55,13 @@ export async function executeCIFixImplementation(
   }
 
   const repo = workflow.repository;
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const ghConfig = await resolveGitHubConfig();
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  if (!ghConfig.token) {
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
+  const githubToken = ghConfig.token;
 
   // Provision workspace and checkout the existing branch
   const workspace = createWorkspace(
@@ -187,9 +193,13 @@ export async function executeReviewFixImplementation(
   }
 
   const repo = workflow.repository;
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const ghConfig = await resolveGitHubConfig();
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  if (!ghConfig.token) {
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
+  const githubToken = ghConfig.token;
 
   const workspace = createWorkspace(
     repoUrl,

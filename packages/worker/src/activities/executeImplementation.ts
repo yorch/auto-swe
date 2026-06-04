@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type {
   CodeResult,
   RepoWorkRequest,
@@ -12,7 +13,7 @@ import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js'
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -38,12 +39,18 @@ export async function executeImplementation(
     where: { id: request.repoId },
   });
 
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const [ghConfig, workflowDefaults] = await Promise.all([
+    resolveGitHubConfig(),
+    resolveWorkflowDefaults(),
+  ]);
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-  const featureBranch = `${branchPrefix}/${request.externalTicketId}`;
+  const featureBranch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  if (!ghConfig.token) {
+    throw new ApplicationFailure('GitHub token not configured. Set it at /admin/integrations.');
+  }
+  const githubToken = ghConfig.token;
 
   const workspace = createWorkspace(
     repoUrl,

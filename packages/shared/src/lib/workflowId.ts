@@ -16,7 +16,7 @@ export function generateWorkflowId(
 /**
  * Generate a branch name for a work request.
  */
-export function generateBranchName(externalTicketId: string): string {
-  const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-  return `${branchPrefix}/${externalTicketId}`;
+export function generateBranchName(externalTicketId: string, branchPrefix?: string): string {
+  const prefix = branchPrefix ?? process.env.BRANCH_PREFIX ?? 'auto';
+  return `${prefix}/${externalTicketId}`;
 }

@@ -322,7 +322,7 @@ Work requests trigger execution strictly within isolated clones of Target Reposi
 
 - **Custom Executor Images:** The worker spawns an ephemeral Docker container (`docker run -d ... <image> sleep infinity`) per work request, using the image specified in `Repository.executorImage` (default `node:24-alpine`). This lets the agent immediately execute `npm install` or `mvn test` against language-specific toolchains without complex setup scripting. Image references are validated against `DOCKER_IMAGE_REF_RE` before being passed to the shell.
 - **Volume Sandboxing:** The agent's bash/file tools execute via `docker exec` and the working directory is fixed to `/workspace/target-repo`. The agent runs inside the container's filesystem and cannot reach the worker host's filesystem or the agent framework source code.
-- **Just-In-Time (JIT) Credential Scoping:** Today the worker authenticates to GitHub with a single PAT (`GITHUB_TOKEN`) injected into the clone URL inside the container. JIT installation-scoped tokens via a GitHub App remain future work (see the design-decisions table in [`README.md`](../README.md)).
+- **Just-In-Time (JIT) Credential Scoping:** Today the worker authenticates to GitHub with a single PAT (configured via `/admin/integrations → GitHub` or the `GITHUB_TOKEN` env fallback) injected into the clone URL inside the container. JIT installation-scoped tokens via a GitHub App remain future work (see the design-decisions table in [`README.md`](../README.md)).
 
 ### 3.2 Executor Image Selection
 
@@ -333,7 +333,7 @@ The `Repository.executorImage` column stores a Docker image reference (default `
 1. Validates the reference against `DOCKER_IMAGE_REF_RE` (defined in `@auto-swe/shared/workflow`) to reject anything that's not a well-formed `<registry>/<repo>:<tag>`.
 2. Starts a long-lived container with `docker run -d --name workspace-<random-hex> -- <image> sleep infinity`. The `--` separator prevents image arguments from being interpreted as docker flags.
 3. Installs git inside the container (`apk add --no-cache git` for Alpine bases) and configures a local commit identity.
-4. Clones the repo at depth 50 using an authenticated URL (`https://x-access-token:<GITHUB_TOKEN>@…`).
+4. Clones the repo at depth 50 using an authenticated URL (`https://x-access-token:<token>@…`) where the token is resolved from `/admin/integrations → GitHub` (with `GITHUB_TOKEN` env fallback).
 5. Returns a handle whose command runner shells into the container via `docker exec workspace-<id>` and whose `destroy()` runs `docker rm -f` — always called from a `finally` block.
 
 See `packages/worker/src/activities/workspace.ts` for the full implementation and `packages/worker/src/lib/ephemeralContainer.ts` for the shared cleanup helper.
@@ -352,7 +352,7 @@ There is no build trigger, no GitHub Actions workflow, and no IRSA service accou
 
 - The worker process mounts `/var/run/docker.sock` — anyone with code execution inside the worker container has root on the host. Keep the worker host isolated.
 - The shell wrapper inside the workspace escapes single quotes (`shellQuote`), but agent-generated commands run inside the workspace container with whatever permissions the executor image grants. Use minimal-privilege base images.
-- `GITHUB_TOKEN` is embedded in the clone URL inside the container. It lives for the container's lifetime (workflow run) and is destroyed with `docker rm -f`. A GitHub App with per-repo installation tokens would shorten that window further (still future work).
+- The GitHub PAT (resolved from `/admin/integrations → GitHub`) is embedded in the clone URL inside the container. It lives for the container's lifetime (workflow run) and is destroyed with `docker rm -f`. A GitHub App with per-repo installation tokens would shorten that window further (still future work).
 
 ### 3.3 The TDD Loop
 

@@ -20,6 +20,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
@@ -32,7 +33,7 @@ import {
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
+import { getExecErrorStdout } from '../lib/errors.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -137,7 +138,7 @@ export async function resolveCommand(
  * remote commit. The implementer pushes commits to this branch, so gates
  * need to see the same tree the reviewer/CI sees.
  */
-function provisionGateWorkspace(
+async function provisionGateWorkspace(
   request: RepoWorkRequest,
   gate: GateName,
   branchOverride?: string
@@ -145,34 +146,39 @@ function provisionGateWorkspace(
   workspace: Workspace;
   branch: string;
 }> {
-  return prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } }).then((repo) => {
-    const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-    const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-    const branchPrefix = process.env.BRANCH_PREFIX ?? 'auto';
-    const branch = branchOverride ?? `${branchPrefix}/${request.externalTicketId}`;
-    const githubToken = requireEnv('GITHUB_TOKEN');
+  const [repo, ghConfig, workflowDefaults] = await Promise.all([
+    prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } }),
+    resolveGitHubConfig(),
+    resolveWorkflowDefaults(),
+  ]);
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
+  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
+  const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  if (!ghConfig.token) {
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
+  const githubToken = ghConfig.token;
 
-    const workspace = createWorkspace(
-      repoUrl,
-      branch,
-      repo.defaultBranch,
-      githubToken,
-      repo.executorImage ?? 'node:24-alpine'
-    );
+  const workspace = createWorkspace(
+    repoUrl,
+    branch,
+    repo.defaultBranch,
+    githubToken,
+    repo.executorImage ?? 'node:24-alpine'
+  );
 
-    // createWorkspace produces a fresh local branch from the default branch.
-    // For gates we want the implementer's pushed commits, so fetch + reset.
-    // If the remote branch doesn't exist yet (e.g. gate runs before first
-    // push), the reset will fail and the implementer's local copy stays.
-    try {
-      workspace.exec(`git fetch origin ${shellQuote(branch)}`);
-      workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
-    } catch {
-      // Gate runs against the local branch starting at defaultBranch.
-      heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
-    }
-    return { branch, workspace };
-  });
+  // createWorkspace produces a fresh local branch from the default branch.
+  // For gates we want the implementer's pushed commits, so fetch + reset.
+  // If the remote branch doesn't exist yet (e.g. gate runs before first
+  // push), the reset will fail and the implementer's local copy stays.
+  try {
+    workspace.exec(`git fetch origin ${shellQuote(branch)}`);
+    workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+  } catch {
+    // Gate runs against the local branch starting at defaultBranch.
+    heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
+  }
+  return { branch, workspace };
 }
 
 /**
@@ -276,9 +282,13 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
   }
 
   const repo = workflow.repository;
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  const ghConfig = await resolveGitHubConfig();
+  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  if (!ghConfig.token) {
+    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
+  const githubToken = ghConfig.token;
 
   // Load full gate logs from the artifact store, falling back to the inline
   // summary if the artifact is missing or unreadable.
