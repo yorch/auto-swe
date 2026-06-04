@@ -6,8 +6,6 @@ export {
 export { commitToMemory } from './commitToMemory.js';
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult } from './consolidateLessons.js';
 export { consolidateLessons } from './consolidateLessons.js';
-export type { RepoForConsolidation } from './getReposForConsolidation.js';
-export { getReposForConsolidation } from './getReposForConsolidation.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export type {
   MergeBranchesInput,
@@ -21,6 +19,8 @@ export {
   subtaskBranchName,
 } from './decomposition.js';
 export { executeImplementation } from './executeImplementation.js';
+export type { RepoForConsolidation } from './getReposForConsolidation.js';
+export { getReposForConsolidation } from './getReposForConsolidation.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
 // Phase 2 quality gates
