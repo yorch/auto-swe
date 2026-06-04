@@ -1,9 +1,11 @@
+import type { ReactNode } from 'react';
+
 interface FieldWrapperProps {
   id?: string;
   label?: string;
   hint?: string;
   error?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 export function FieldWrapper({ id, label, hint, error, children }: FieldWrapperProps) {
@@ -19,10 +21,20 @@ export function FieldWrapper({ id, label, hint, error, children }: FieldWrapperP
       )}
       {children}
       {hint && !error && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">{hint}</p>
+        <p
+          className="font-mono text-[10px] uppercase tracking-wider text-paper-500"
+          id={id ? `${id}-hint` : undefined}
+        >
+          {hint}
+        </p>
       )}
       {error && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
+        <p
+          className="font-mono text-[10px] uppercase tracking-wider text-brick-400"
+          id={id ? `${id}-error` : undefined}
+        >
+          {error}
+        </p>
       )}
     </div>
   );

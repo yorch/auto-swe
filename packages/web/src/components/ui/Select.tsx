@@ -1,7 +1,8 @@
+import type { SelectHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 import { FieldWrapper } from './FieldWrapper';
 
-type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
+type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label?: string;
   hint?: string;
   error?: string;
@@ -10,8 +11,18 @@ type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
 export function Select({ label, hint, error, className, id, children, ...props }: SelectProps) {
   const selectId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
 
+  const describedBy =
+    [
+      hint && !error && selectId ? `${selectId}-hint` : null,
+      error && selectId ? `${selectId}-error` : null,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
+
   const selectEl = (
     <select
+      aria-describedby={describedBy}
+      aria-invalid={error ? true : undefined}
       className={cn(
         'h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
         'focus:border-ember-400 focus:bg-ink-900/80',
