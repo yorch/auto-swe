@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import { type CreatedUser, useCreateUser } from '@/hooks/useWorkflows';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -87,24 +88,16 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             type="email"
             value={email}
           />
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="new-user-role"
-            >
-              Role
-            </label>
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="new-user-role"
-              onChange={(e) => setRole(e.target.value as Role)}
-              value={role}
-            >
-              <option value="ENGINEER">ENGINEER</option>
-              <option value="LEAD">LEAD</option>
-              <option value="ADMIN">ADMIN</option>
-            </select>
-          </div>
+          <Select
+            id="new-user-role"
+            label="Role"
+            onChange={(e) => setRole(e.target.value as Role)}
+            value={role}
+          >
+            <option value="ENGINEER">ENGINEER</option>
+            <option value="LEAD">LEAD</option>
+            <option value="ADMIN">ADMIN</option>
+          </Select>
           <Input
             hint="Min 8 chars. Leave blank to auto-generate one (shown once)."
             label="Password (optional)"

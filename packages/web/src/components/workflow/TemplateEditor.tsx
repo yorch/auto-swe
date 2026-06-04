@@ -39,6 +39,7 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { DagNode, type DagNodeData, type HandleKind, handleKindsFor } from './dagNode';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
 import { specToFlow } from './specToFlow';
@@ -589,27 +590,21 @@ function EdgeConnectionsSection({
         const current = (nodeRecord[kind] as string | undefined) ?? '';
         const selectId = `edge-${kind}`;
         return (
-          <div className="space-y-1" key={kind}>
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-              htmlFor={selectId}
-            >
-              {HANDLE_LABEL_FULL[kind]}
-            </label>
-            <select
-              className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-              id={selectId}
-              onChange={(e) => onSetEdge(kind, e.target.value || null)}
-              value={current}
-            >
-              <option value="">— none —</option>
-              {otherIds.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            className="h-9 px-2 font-mono text-xs"
+            id={selectId}
+            key={kind}
+            label={HANDLE_LABEL_FULL[kind]}
+            onChange={(e) => onSetEdge(kind, e.target.value || null)}
+            value={current}
+          >
+            <option value="">— none —</option>
+            {otherIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </Select>
         );
       })}
     </div>
@@ -757,25 +752,18 @@ function FanOutSection({
         placeholder="subtask"
         value={node.itemKey ?? 'subtask'}
       />
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="fanout-branch-fail"
-        >
-          On branch fail
-        </label>
-        <select
-          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-          id="fanout-branch-fail"
-          onChange={(e) =>
-            onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
-          }
-          value={node.onBranchFail ?? 'block'}
-        >
-          <option value="block">Block (default) — stop on first failure</option>
-          <option value="continue">Continue — collect all results</option>
-        </select>
-      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="fanout-branch-fail"
+        label="On branch fail"
+        onChange={(e) =>
+          onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
+        }
+        value={node.onBranchFail ?? 'block'}
+      >
+        <option value="block">Block (default) — stop on first failure</option>
+        <option value="continue">Continue — collect all results</option>
+      </Select>
       <div>
         <label
           className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
@@ -870,26 +858,19 @@ function ShellSection({
           value={node.command ?? ''}
         />
       </div>
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="shell-network"
-        >
-          Network
-        </label>
-        <select
-          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
-          id="shell-network"
-          onChange={(e) => {
-            const v = e.target.value as 'none' | 'egress';
-            onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
-          }}
-          value={node.network ?? 'none'}
-        >
-          <option value="none">None (default) — no outbound access</option>
-          <option value="egress">Egress — outbound via team allowlist</option>
-        </select>
-      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="shell-network"
+        label="Network"
+        onChange={(e) => {
+          const v = e.target.value as 'none' | 'egress';
+          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+        }}
+        value={node.network ?? 'none'}
+      >
+        <option value="none">None (default) — no outbound access</option>
+        <option value="egress">Egress — outbound via team allowlist</option>
+      </Select>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label
@@ -949,26 +930,18 @@ function TerminateSection({
   onChange: (v: TerminateStatus) => void;
 }) {
   return (
-    <div>
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor="terminate-status"
-      >
-        Status
-      </label>
-      <select
-        className="mt-1.5 h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-        id="terminate-status"
-        onChange={(e) => onChange(e.target.value as TerminateStatus)}
-        value={status}
-      >
-        {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
-    </div>
+    <Select
+      id="terminate-status"
+      label="Status"
+      onChange={(e) => onChange(e.target.value as TerminateStatus)}
+      value={status}
+    >
+      {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </Select>
   );
 }
 
@@ -1091,7 +1064,7 @@ function SchemaField({
           value={typeof value === 'number' ? value : ''}
         />
       ) : field.type === 'enum' ? (
-        <select
+        <Select
           className={baseInput}
           id={id}
           onChange={(e) => onChange(e.target.value || undefined)}
@@ -1103,7 +1076,7 @@ function SchemaField({
               {v}
             </option>
           ))}
-        </select>
+        </Select>
       ) : field.type === 'json' ? (
         <textarea
           className="h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 py-1 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400"
@@ -1162,8 +1135,8 @@ function OnFailSection({
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
         On fail
       </div>
-      <select
-        className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+      <Select
+        className="h-9 px-2 font-mono text-xs"
         onChange={(e) => {
           const v = e.target.value;
           if (v === 'block') {
@@ -1179,7 +1152,7 @@ function OnFailSection({
         <option value="block">Block (default) — abort run on failure</option>
         <option value="warn">Warn — record failure and continue</option>
         <option value="retry">Retry</option>
-      </select>
+      </Select>
       {mode === 'retry' && (
         <div className="space-y-1">
           <label
@@ -1269,8 +1242,8 @@ function InputsBindingsSection({
                 }}
                 placeholder="key"
               />
-              <select
-                className="h-7 rounded-sm border border-ink-500 bg-ink-900/60 px-1 font-mono text-[10px] text-paper-100 outline-none focus:border-ember-400"
+              <Select
+                className="h-7 w-auto px-1 font-mono text-[10px]"
                 onChange={(e) => {
                   if (e.target.value === 'from') {
                     setEntry(key, { from: displayVal });
@@ -1282,7 +1255,7 @@ function InputsBindingsSection({
               >
                 <option value="from">path</option>
                 <option value="literal">literal</option>
-              </select>
+              </Select>
               <button
                 className="font-mono text-[10px] text-brick-400 hover:text-brick-300"
                 onClick={() => removeEntry(key)}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
@@ -239,8 +240,8 @@ function VersionSelect({ label, versions, value, onChange, activeVersion }: Vers
       >
         {label}
       </label>
-      <select
-        className="h-9 rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+      <Select
+        className="h-9 w-auto px-2 font-mono text-xs"
         id={id}
         onChange={(e) => onChange(Number(e.target.value))}
         value={value ?? ''}
@@ -251,7 +252,7 @@ function VersionSelect({ label, versions, value, onChange, activeVersion }: Vers
             {v.version === activeVersion ? ' (active)' : ''}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

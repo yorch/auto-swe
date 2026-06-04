@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
@@ -119,8 +120,8 @@ export default function UsersPage() {
               >
                 Role
               </label>
-              <select
-                className="mt-1.5 h-10 rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
+              <Select
+                className="mt-1.5 w-auto"
                 id="invite-role"
                 onChange={(e) => setInviteRole(e.target.value as Role)}
                 value={inviteRole}
@@ -128,7 +129,7 @@ export default function UsersPage() {
                 <option value="ENGINEER">ENGINEER</option>
                 <option value="LEAD">LEAD</option>
                 <option value="ADMIN">ADMIN</option>
-              </select>
+              </Select>
             </div>
             <Button disabled={inviteUser.isPending} size="md" type="submit" variant="primary">
               {inviteUser.isPending ? 'Sending…' : 'Send invite →'}

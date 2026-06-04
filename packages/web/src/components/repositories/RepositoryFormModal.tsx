@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
 
 type Mode = { kind: 'create' } | { kind: 'edit'; repo: RepositorySummary };
@@ -127,30 +128,22 @@ export function RepositoryFormModal({
             required
             value={defaultBranch}
           />
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="team"
-            >
-              Team
-            </label>
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="team"
-              onChange={(e) => setTeamId(e.target.value)}
-              required
-              value={teamId}
-            >
-              <option disabled value="">
-                Select a team
+          <Select
+            id="team"
+            label="Team"
+            onChange={(e) => setTeamId(e.target.value)}
+            required
+            value={teamId}
+          >
+            <option disabled value="">
+              Select a team
+            </option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
+            ))}
+          </Select>
         </div>
         <Input
           hint="Docker image the worker spins up per run. Defaults to node:24-alpine if left blank."

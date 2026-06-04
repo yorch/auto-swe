@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import { useAddTeamMember, useUsers } from '@/hooks/useWorkflows';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -83,39 +84,25 @@ export function AddMemberModal({
               <span className="text-paper-200">/users</span> first.
             </p>
           ) : (
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="user"
-              onChange={(e) => setUserId(e.target.value)}
-              required
-              value={userId}
-            >
+            <Select id="user" onChange={(e) => setUserId(e.target.value)} required value={userId}>
               {eligible.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.email} · {u.role}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
-        <div className="space-y-1.5">
-          <label
-            className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-            htmlFor="role"
-          >
-            Team role
-          </label>
-          <select
-            className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-            id="role"
-            onChange={(e) => setRole(e.target.value as Role)}
-            value={role}
-          >
-            <option value="ENGINEER">ENGINEER</option>
-            <option value="LEAD">LEAD</option>
-            <option value="ADMIN">ADMIN</option>
-          </select>
-        </div>
+        <Select
+          id="role"
+          label="Team role"
+          onChange={(e) => setRole(e.target.value as Role)}
+          value={role}
+        >
+          <option value="ENGINEER">ENGINEER</option>
+          <option value="LEAD">LEAD</option>
+          <option value="ADMIN">ADMIN</option>
+        </Select>
         {error && (
           <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
         )}

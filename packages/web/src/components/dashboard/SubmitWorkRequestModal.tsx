@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { useCreateWorkRequest, useRepositories } from '@/hooks/useWorkflows';
 
 type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';
@@ -153,8 +154,7 @@ export function SubmitWorkRequestModal({
               No repositories connected. Ask an admin or lead to add one before submitting work.
             </p>
           ) : (
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
+            <Select
               id="repo"
               name="repo"
               onChange={(e) => setRepoId(e.target.value)}
@@ -166,7 +166,7 @@ export function SubmitWorkRequestModal({
                   {r.organizationName}/{r.repoName} · {r.defaultBranch}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
 

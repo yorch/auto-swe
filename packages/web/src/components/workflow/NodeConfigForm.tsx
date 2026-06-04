@@ -1,6 +1,7 @@
 'use client';
 
 import type { StepFieldDef } from '@auto-swe/shared/workflow';
+import { Select } from '@/components/ui/Select';
 
 interface Props {
   fields: ReadonlyArray<StepFieldDef>;
@@ -56,8 +57,8 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                 value={typeof current === 'number' ? current : ''}
               />
             ) : f.type === 'enum' ? (
-              <select
-                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"
+              <Select
+                className="h-auto bg-transparent border-[var(--border)] rounded px-2 py-1 font-mono"
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 value={typeof current === 'string' ? current : ''}
@@ -68,7 +69,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                     {v}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : f.type === 'json' ? (
               <textarea
                 className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"

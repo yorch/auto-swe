@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import {
   MODEL_ROLES,
   type ModelRole,
@@ -261,24 +262,20 @@ function TeamRoleEditModal({
             ))}
           </datalist>
         </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="cred">
-            Pin credential (optional)
-          </label>
-          <select
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
-            id="cred"
-            onChange={(e) => setCredentialId(e.target.value)}
-            value={credentialId}
-          >
-            <option value="">— Use scope cascade —</option>
-            {credentials.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.scope} · {c.provider}/****{c.lastFour}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          className="border-ink-600 bg-ink-900"
+          id="cred"
+          label="Pin credential (optional)"
+          onChange={(e) => setCredentialId(e.target.value)}
+          value={credentialId}
+        >
+          <option value="">— Use scope cascade —</option>
+          {credentials.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.scope} · {c.provider}/****{c.lastFour}
+            </option>
+          ))}
+        </Select>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
