@@ -21,6 +21,15 @@ export const MODEL_ROLES: ModelRole[] = [
   'COMMIT_TO_MEMORY',
 ];
 
+export const ROLE_LABELS: Record<ModelRole, string> = {
+  COMMIT_TO_MEMORY: 'Memory summarizer',
+  IMPLEMENTER: 'Implementer',
+  PLANNER: 'Planner',
+  REVIEWER: 'Reviewer',
+  SECURITY_REVIEW: 'Security review',
+  VALIDATE_CONTEXT: 'Context validator',
+};
+
 export type ConfigScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
 
 export interface ModelRoleConfigRow {
@@ -271,6 +280,7 @@ export function useTeamUpsertModelConfig(teamId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['team-model-config', teamId] });
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
     },
   });
 }
@@ -283,6 +293,7 @@ export function useTeamDeleteModelConfig(teamId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['team-model-config', teamId] });
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
     },
   });
 }
@@ -383,6 +394,7 @@ export function useSeedDefaults() {
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
       qc.invalidateQueries({ queryKey: ['admin-embedding-config'] });
       qc.invalidateQueries({ queryKey: ['admin-config-audit-log'] });
     },

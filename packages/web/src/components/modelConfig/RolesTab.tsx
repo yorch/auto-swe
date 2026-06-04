@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import {
   type ConfigScope,
   MODEL_ROLES,
+  ROLE_LABELS,
   type ModelRole,
   type ModelRoleConfigRow,
   type ProviderCredentialRow,
@@ -21,14 +22,7 @@ import {
 } from '@/hooks/useModelConfig';
 import { ROLE_DEFAULT_PROMPTS, ROLE_PROMPT_NOTES } from '@/lib/rolePromptDefaults';
 
-const ROLE_LABELS: Record<ModelRole, string> = {
-  COMMIT_TO_MEMORY: 'Memory summarizer',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security review',
-  VALIDATE_CONTEXT: 'Context validator',
-};
+const truncateStr = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 /// Admin Roles tab — shows every ModelRoleConfig row across all scopes, lets
 /// admins edit them in a single modal. Team/template rows are flagged with
@@ -177,8 +171,7 @@ function RoleRow({
         </div>
         {row.systemPrompt && (
           <div className="mt-1 text-[10px] text-paper-500 truncate font-mono">
-            prompt: {row.systemPrompt.slice(0, 60)}
-            {row.systemPrompt.length > 60 ? '…' : ''}
+            prompt: {truncateStr(row.systemPrompt, 60)}
           </div>
         )}
       </div>
@@ -215,6 +208,36 @@ function ScopeBadge({ scope }: { scope: ConfigScope }) {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function UuidInput({
+  id,
+  label,
+  value,
+  onChange,
+  hasError,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  hasError: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor={id}>
+        {label} <span className="normal-case text-paper-500">(optional)</span>
+      </label>
+      <input
+        className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${hasError ? 'border-brick-400' : 'border-ink-600'}`}
+        id={id}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        value={value}
+      />
+      {hasError && <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>}
+    </div>
+  );
+}
 
 function CascadePreview() {
   const [role, setRole] = useState<ModelRole>('IMPLEMENTER');
@@ -260,38 +283,20 @@ function CascadePreview() {
               </option>
             ))}
           </Select>
-          <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="preview-team">
-              Team ID{' '}
-              <span className="normal-case text-paper-500">(optional)</span>
-            </label>
-            <input
-              className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${teamIdFormatError ? 'border-brick-400' : 'border-ink-600'}`}
-              id="preview-team"
-              onChange={(e) => setTeamId(e.target.value)}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              value={teamId}
-            />
-            {teamIdFormatError && (
-              <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>
-            )}
-          </div>
-          <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="preview-tpl">
-              Template ID{' '}
-              <span className="normal-case text-paper-500">(optional)</span>
-            </label>
-            <input
-              className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${templateIdFormatError ? 'border-brick-400' : 'border-ink-600'}`}
-              id="preview-tpl"
-              onChange={(e) => setTemplateId(e.target.value)}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              value={templateId}
-            />
-            {templateIdFormatError && (
-              <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>
-            )}
-          </div>
+          <UuidInput
+            hasError={teamIdFormatError}
+            id="preview-team"
+            label="Team ID"
+            onChange={setTeamId}
+            value={teamId}
+          />
+          <UuidInput
+            hasError={templateIdFormatError}
+            id="preview-tpl"
+            label="Template ID"
+            onChange={setTemplateId}
+            value={templateId}
+          />
         </div>
         {bothContextsProvided && (
           <p className="text-[11px] text-amber-400">
@@ -318,8 +323,7 @@ function CascadePreview() {
                 <code className="block font-mono text-sm text-paper-100">{data.row.modelSpec}</code>
                 {data.row.systemPrompt && (
                   <p className="truncate font-mono text-[11px] text-paper-500">
-                    prompt: {data.row.systemPrompt.slice(0, 80)}
-                    {data.row.systemPrompt.length > 80 ? '…' : ''}
+                    prompt: {truncateStr(data.row.systemPrompt, 80)}
                   </p>
                 )}
               </div>
