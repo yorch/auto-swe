@@ -31,6 +31,7 @@ export interface ModelRoleConfigRow {
   workflowTemplateId: string | null;
   modelSpec: string;
   credentialId: string | null;
+  systemPrompt: string | null;
   credential?: { id: string; provider: string; lastFour: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +104,7 @@ export function useAdminUpsertModelConfig() {
       workflowTemplateId?: string;
       modelSpec: string;
       credentialId?: string | null;
+      systemPrompt?: string | null;
     }) => api.put<{ data: ModelRoleConfigRow }>('/api/v1/admin/model-config', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
@@ -258,8 +260,12 @@ export function useTeamModelConfig(teamId: string) {
 export function useTeamUpsertModelConfig(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { role: ModelRole; modelSpec: string; credentialId?: string | null }) =>
-      api.put<{ data: ModelRoleConfigRow }>(`/api/v1/teams/${teamId}/model-config`, body),
+    mutationFn: (body: {
+      role: ModelRole;
+      modelSpec: string;
+      credentialId?: string | null;
+      systemPrompt?: string | null;
+    }) => api.put<{ data: ModelRoleConfigRow }>(`/api/v1/teams/${teamId}/model-config`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['team-model-config', teamId] });
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
