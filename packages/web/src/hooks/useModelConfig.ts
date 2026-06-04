@@ -109,6 +109,7 @@ export function useAdminUpsertModelConfig() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
       qc.invalidateQueries({ queryKey: ['team-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
     },
   });
 }
@@ -120,6 +121,7 @@ export function useAdminDeleteModelConfig() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-model-config'] });
       qc.invalidateQueries({ queryKey: ['team-model-config'] });
+      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
     },
   });
 }

@@ -214,6 +214,8 @@ function ScopeBadge({ scope }: { scope: ConfigScope }) {
   );
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function CascadePreview() {
   const [role, setRole] = useState<ModelRole>('IMPLEMENTER');
   const [teamId, setTeamId] = useState('');
@@ -222,10 +224,16 @@ function CascadePreview() {
   const trimmedTeam = teamId.trim();
   const trimmedTemplate = templateId.trim();
 
-  const { data, isLoading, isError } = useAdminEffectiveModelConfig({
+  const validTeamId = UUID_RE.test(trimmedTeam) ? trimmedTeam : undefined;
+  const validTemplateId = UUID_RE.test(trimmedTemplate) ? trimmedTemplate : undefined;
+  const teamIdFormatError = trimmedTeam.length > 0 && !validTeamId;
+  const templateIdFormatError = trimmedTemplate.length > 0 && !validTemplateId;
+  const bothContextsProvided = validTeamId !== undefined && validTemplateId !== undefined;
+
+  const { data, isLoading, isError, isFetching } = useAdminEffectiveModelConfig({
     role,
-    teamId: trimmedTeam.length === 36 ? trimmedTeam : undefined,
-    workflowTemplateId: trimmedTemplate.length === 36 ? trimmedTemplate : undefined,
+    teamId: validTeamId,
+    workflowTemplateId: validTemplateId,
   });
 
   return (
@@ -258,12 +266,15 @@ function CascadePreview() {
               <span className="normal-case text-paper-500">(optional)</span>
             </label>
             <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+              className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${teamIdFormatError ? 'border-brick-400' : 'border-ink-600'}`}
               id="preview-team"
               onChange={(e) => setTeamId(e.target.value)}
               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
               value={teamId}
             />
+            {teamIdFormatError && (
+              <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="preview-tpl">
@@ -271,14 +282,22 @@ function CascadePreview() {
               <span className="normal-case text-paper-500">(optional)</span>
             </label>
             <input
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs"
+              className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${templateIdFormatError ? 'border-brick-400' : 'border-ink-600'}`}
               id="preview-tpl"
               onChange={(e) => setTemplateId(e.target.value)}
               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
               value={templateId}
             />
+            {templateIdFormatError && (
+              <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>
+            )}
           </div>
         </div>
+        {bothContextsProvided && (
+          <p className="text-[11px] text-amber-400">
+            Template takes priority when both are set — team context was not used in this lookup.
+          </p>
+        )}
         {isLoading && <p className="text-xs text-paper-400">Resolving…</p>}
         {isError && (
           <p className="text-xs text-brick-400">
@@ -292,6 +311,9 @@ function CascadePreview() {
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-paper-400">Resolved via</span>
                   <ScopeBadge scope={data.scope!} />
+                  {isFetching && (
+                    <span className="ml-auto text-[10px] text-paper-500">refreshing…</span>
+                  )}
                 </div>
                 <code className="block font-mono text-sm text-paper-100">{data.row.modelSpec}</code>
                 {data.row.systemPrompt && (
