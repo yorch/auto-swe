@@ -6,6 +6,7 @@ import type {
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { LESSON_CONSOLIDATOR_PROMPT } from '../agents/prompts.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
@@ -33,26 +34,23 @@ interface RawLesson {
   embeddingJson: string | null;
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
+function dotProduct(a: number[], b: number[]): number {
+  let sum = 0;
   for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    sum += a[i] * b[i];
   }
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return sum;
 }
 
 /**
- * Greedy single-linkage clustering.
+ * Greedy single-linkage clustering using pre-computed norms.
  * Returns a list of clusters, each as a list of lesson indices.
  */
-function clusterByEmbedding(embeddings: (number[] | null)[], threshold: number): number[][] {
+function clusterByEmbedding(
+  embeddings: (number[] | null)[],
+  norms: number[],
+  threshold: number
+): number[][] {
   const n = embeddings.length;
   const assigned = new Uint8Array(n);
   const clusters: number[][] = [];
@@ -63,13 +61,13 @@ function clusterByEmbedding(embeddings: (number[] | null)[], threshold: number):
     }
     const cluster = [i];
     assigned[i] = 1;
+    const ei = embeddings[i];
     for (let j = i + 1; j < n; j++) {
-      if (assigned[j] || !embeddings[j]) {
+      const ej = embeddings[j];
+      if (!ej || norms[i] === 0 || norms[j] === 0) {
         continue;
       }
-      const ei = embeddings[i];
-      const ej = embeddings[j];
-      if (ei && ej && cosineSimilarity(ei, ej) >= threshold) {
+      if (ei && dotProduct(ei, ej) / (norms[i] * norms[j]) >= threshold) {
         cluster.push(j);
         assigned[j] = 1;
       }
@@ -125,7 +123,19 @@ export async function consolidateLessons(
     }
   });
 
-  const clusters = clusterByEmbedding(embeddings, similarityThreshold);
+  // Pre-compute norms once so the O(N²) inner loop only does dot products.
+  const norms = embeddings.map((e) => {
+    if (!e) {
+      return 0;
+    }
+    let sum = 0;
+    for (const v of e) {
+      sum += v * v;
+    }
+    return Math.sqrt(sum);
+  });
+
+  const clusters = clusterByEmbedding(embeddings, norms, similarityThreshold);
   const qualifying = clusters.filter((c) => c.length >= minClusterSize);
 
   if (qualifying.length === 0) {
@@ -144,94 +154,99 @@ export async function consolidateLessons(
     name: 'lesson-consolidator',
   });
 
-  let totalConsolidated = 0;
-  let totalCreated = 0;
   const tracer = new AgentTracer();
 
-  for (const cluster of qualifying) {
-    const clusterLessons = cluster.map((idx) => rows[idx]);
-    const sourceIds = clusterLessons.map((l) => l.id);
+  // Process clusters in parallel — each is independent (different source rows, different inserts).
+  const clusterOutcomes = await Promise.all(
+    qualifying.map(async (cluster) => {
+      const clusterLessons = cluster.map((idx) => rows[idx]);
+      const sourceIds = clusterLessons.map((l) => l.id);
 
-    const prompt = clusterLessons
-      .map(
-        (l, i) =>
-          `Lesson ${i + 1} [${l.failureType ?? 'GENERAL'}]:\n` +
-          `Rationale: ${l.rationale}\n` +
-          `Summary: ${l.lessonSummary}`
-      )
-      .join('\n\n');
+      const prompt = clusterLessons
+        .map(
+          (l, i) =>
+            `Lesson ${i + 1} [${l.failureType ?? 'GENERAL'}]:\n` +
+            `Rationale: ${l.rationale}\n` +
+            `Summary: ${l.lessonSummary}`
+        )
+        .join('\n\n');
 
-    const start = Date.now();
-    const result = await agent.generate([{ content: prompt, role: 'user' }], {
-      structuredOutput: { schema: ConsolidatorOutputSchema },
-    });
+      const start = Date.now();
+      const result = await agent.generate([{ content: prompt, role: 'user' }], {
+        structuredOutput: { schema: ConsolidatorOutputSchema },
+      });
 
-    if (result.usage) {
-      await recordLlmUsage(
-        'consolidateLessons',
-        'commitToMemory',
-        result.usage,
-        'llm.consolidate_lessons'
-      );
-    }
-
-    if (!result.object) {
-      continue;
-    }
-    const { lessons } = result.object as z.infer<typeof ConsolidatorOutputSchema>;
-
-    tracer.addLlmResponse({
-      durationMs: Date.now() - start,
-      outputJson: { lessonsOut: lessons.length, sourceIds },
-      role: 'commitToMemory',
-    });
-
-    // Determine dominant failureType across the cluster (null if mixed).
-    const types = [...new Set(clusterLessons.map((l) => l.failureType))];
-    const sharedFailureType = types.length === 1 ? types[0] : null;
-
-    // Write new consolidated lessons then soft-delete sources in a transaction.
-    await prisma.$transaction(async (tx) => {
-      for (const lesson of lessons) {
-        const embedding = await generateEmbedding(lesson.lessonSummary);
-        await tx.$executeRawUnsafe(
-          `INSERT INTO agent_lessons
-             (id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
-           VALUES
-             (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6::jsonb, now())`,
-          repoId,
-          lesson.rationale,
-          lesson.lessonSummary,
-          JSON.stringify(embedding),
-          lesson.failureType ?? sharedFailureType,
-          JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+      if (result.usage) {
+        await recordLlmUsage(
+          'consolidateLessons',
+          'commitToMemory',
+          result.usage,
+          'llm.consolidate_lessons'
         );
-        totalCreated++;
       }
 
-      // Soft-delete source rows.
-      await tx.$executeRawUnsafe(
-        `UPDATE agent_lessons SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
-        sourceIds
+      if (!result.object) {
+        return { consolidated: 0, created: 0 };
+      }
+
+      const { lessons } = ConsolidatorOutputSchema.parse(result.object);
+
+      tracer.addLlmResponse({
+        durationMs: Date.now() - start,
+        outputJson: { lessonsOut: lessons.length, sourceIds },
+        role: 'commitToMemory',
+      });
+
+      // Determine dominant failureType across the cluster (null if mixed).
+      const types = [...new Set(clusterLessons.map((l) => l.failureType))];
+      const sharedFailureType = types.length === 1 ? types[0] : null;
+
+      // Generate embeddings before opening the transaction to avoid holding a
+      // DB connection open during an external HTTP round-trip.
+      const newEmbeddings = await Promise.all(
+        lessons.map((l) => generateEmbedding(l.lessonSummary))
       );
-    });
 
-    totalConsolidated += cluster.length;
-  }
+      await prisma.$transaction(async (tx) => {
+        for (let i = 0; i < lessons.length; i++) {
+          const lesson = lessons[i];
+          await tx.$executeRawUnsafe(
+            `INSERT INTO agent_lessons
+               (id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
+             VALUES
+               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6::jsonb, now())`,
+            repoId,
+            lesson.rationale,
+            lesson.lessonSummary,
+            JSON.stringify(newEmbeddings[i]),
+            lesson.failureType ?? sharedFailureType,
+            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+          );
+        }
 
-  tracer.addActivityEvent({
-    name: 'lessons.consolidated',
-    outputJson: {
-      clustersConsolidated: qualifying.length,
-      lessonsConsolidated: totalConsolidated,
-      lessonsCreated: totalCreated,
-    },
-  });
+        // Soft-delete source rows.
+        await tx.$executeRawUnsafe(
+          `UPDATE agent_lessons SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
+          sourceIds
+        );
+      });
 
-  return {
+      return { consolidated: cluster.length, created: lessons.length };
+    })
+  );
+
+  const totalConsolidated = clusterOutcomes.reduce((s, o) => s + o.consolidated, 0);
+  const totalCreated = clusterOutcomes.reduce((s, o) => s + o.created, 0);
+
+  const finalResult: ConsolidateLessonsResult = {
     clustersConsolidated: qualifying.length,
     clustersFound: clusters.length,
     lessonsConsolidated: totalConsolidated,
     lessonsCreated: totalCreated,
   };
+
+  tracer.addActivityEvent({ name: 'lessons.consolidated', outputJson: finalResult });
+  await persistActivityTrace(tracer, 'commitToMemory');
+
+  return finalResult;
 }

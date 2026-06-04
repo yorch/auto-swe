@@ -42,7 +42,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       const where: Prisma.AgentLessonWhereInput = {
         ...accessFilter,
-        ...(includeConsolidated ? {} : { consolidatedAt: null }),
+        ...(!includeConsolidated && { consolidatedAt: null }),
       };
 
       const lessons = await fastify.prisma.agentLesson.findMany({
@@ -110,7 +110,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             { lessonSummary: { contains: q, mode: 'insensitive' } },
             { rationale: { contains: q, mode: 'insensitive' } },
           ],
-          ...(includeConsolidated ? {} : { consolidatedAt: null }),
+          ...(!includeConsolidated && { consolidatedAt: null }),
           repoId,
         },
       });

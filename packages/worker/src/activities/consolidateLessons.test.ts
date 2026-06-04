@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('../lib/embeddings.js', () => ({ generateEmbedding: vi.fn() }));
 vi.mock('../lib/models.js', () => ({ getModel: vi.fn() }));
 vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage: vi.fn() }));
+vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
 vi.mock('../lib/agentTracer.js', () => ({
   AgentTracer: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
     this.addActivityEvent = vi.fn();
