@@ -16,7 +16,7 @@
     "@ai-sdk/openai-compatible": "2.0.48",
     "@auto-swe/shared": "*",
     "@aws-sdk/client-s3": "3.1061.0",
-    "@mastra/core": "1.39.0",
+    "@mastra/core": "1.40.0",
     "@octokit/rest": "22.0.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-metrics-otlp-grpc": "0.218.0",
@@ -26,7 +26,7 @@
     "@temporalio/activity": "1.17.2",
     "@temporalio/worker": "1.17.2",
     "@temporalio/workflow": "1.17.2",
-    "ai": "6.0.195",
+    "ai": "6.0.196",
     "zod": "4.4.3"
   },
   "devDependencies": {

@@ -37,16 +37,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@ai-sdk/gateway@npm:3.0.123":
-  version: 3.0.123
-  resolution: "@ai-sdk/gateway@npm:3.0.123"
+"@ai-sdk/gateway@npm:3.0.124":
+  version: 3.0.124
+  resolution: "@ai-sdk/gateway@npm:3.0.124"
   dependencies:
     "@ai-sdk/provider": "npm:3.0.10"
     "@ai-sdk/provider-utils": "npm:4.0.27"
     "@vercel/oidc": "npm:3.2.0"
   peerDependencies:
     zod: ^3.25.76 || ^4.1.8
-  checksum: 10c0/13b70e0d88e8fa3ad4acb81072dae571d6b5cc128eaaf18d36cac3bd09cbe5022a89e90c176bd5466bc89e3a8184b4cc5b26c85fbc9ec2c4e5399878959da638
+  checksum: 10c0/7653fe883ba5377fe580dc76ef33ee6222e67d01f8a0beb9d9c201c9bf29f48bb47776b160a69b49a969d7d7eaa6b561d1c4902f72d76d8ed4f3e6be3eba5994
   languageName: node
   linkType: hard
 
@@ -254,7 +254,7 @@ __metadata:
   dependencies:
     "@tailwindcss/postcss": "npm:4.3.0"
     "@tanstack/react-query": "npm:5.101.0"
-    "@testing-library/dom": "npm:^10.4.1"
+    "@testing-library/dom": "npm:10.4.1"
     "@testing-library/react": "npm:16.3.2"
     "@types/dagre": "npm:0.7.54"
     "@types/react": "npm:19.2.16"
@@ -290,7 +290,7 @@ __metadata:
     "@ai-sdk/openai-compatible": "npm:2.0.48"
     "@auto-swe/shared": "npm:*"
     "@aws-sdk/client-s3": "npm:3.1061.0"
-    "@mastra/core": "npm:1.39.0"
+    "@mastra/core": "npm:1.40.0"
     "@octokit/rest": "npm:22.0.1"
     "@opentelemetry/api": "npm:1.9.1"
     "@opentelemetry/exporter-metrics-otlp-grpc": "npm:0.218.0"
@@ -300,7 +300,7 @@ __metadata:
     "@temporalio/activity": "npm:1.17.2"
     "@temporalio/worker": "npm:1.17.2"
     "@temporalio/workflow": "npm:1.17.2"
-    ai: "npm:6.0.195"
+    ai: "npm:6.0.196"
     tsx: "npm:4.22.4"
     typescript: "npm:6.0.3"
     zod: "npm:4.4.3"
@@ -1984,9 +1984,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@mastra/core@npm:1.39.0":
-  version: 1.39.0
-  resolution: "@mastra/core@npm:1.39.0"
+"@mastra/core@npm:1.40.0":
+  version: 1.40.0
+  resolution: "@mastra/core@npm:1.40.0"
   dependencies:
     "@a2a-js/sdk": "npm:~0.3.13"
     "@ai-sdk/provider-utils-v5": "npm:@ai-sdk/provider-utils@3.0.25"
@@ -2018,7 +2018,7 @@ __metadata:
     xxhash-wasm: "npm:^1.1.0"
   peerDependencies:
     zod: ^3.25.0 || ^4.0.0
-  checksum: 10c0/b18e992c06165646f90c26db658f8e4a16d890c47fe5342fcb2641d02b7deb1d9d1403aba9be83e86a366de3ac1a9af7f26474851412c538c14cedfa1d834cf0
+  checksum: 10c0/56e25008427d3ae675b26b6a1329ac1ee7602d630fad3a09877390debea38dd45f178070370bbe2884bc5368bf4d9ddc576b3ebbbcb4a23199e1ae407ec116f5
   languageName: node
   linkType: hard
 
@@ -3909,7 +3909,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@testing-library/dom@npm:^10.4.1":
+"@testing-library/dom@npm:10.4.1":
   version: 10.4.1
   resolution: "@testing-library/dom@npm:10.4.1"
   dependencies:
@@ -4624,17 +4624,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ai@npm:6.0.195":
-  version: 6.0.195
-  resolution: "ai@npm:6.0.195"
+"ai@npm:6.0.196":
+  version: 6.0.196
+  resolution: "ai@npm:6.0.196"
   dependencies:
-    "@ai-sdk/gateway": "npm:3.0.123"
+    "@ai-sdk/gateway": "npm:3.0.124"
     "@ai-sdk/provider": "npm:3.0.10"
     "@ai-sdk/provider-utils": "npm:4.0.27"
     "@opentelemetry/api": "npm:^1.9.0"
   peerDependencies:
     zod: ^3.25.76 || ^4.1.8
-  checksum: 10c0/87f991de1916c9d8efa789588a32187d02f67933acc0be7157d3df47812ce6a6d939bd6fa25afb14fed8656a4a028da0b4acd4e726d5b23dfb662a51af7aa708
+  checksum: 10c0/f4108537e06f340334af74e9e01139d6f8371f672fdf2067cc501892401f98aadf7bd43ea69ab0bfc56bf975f1c8dbbb832931c3440ed2c0896bccf94e7d2ecc
   languageName: node
   linkType: hard
 
