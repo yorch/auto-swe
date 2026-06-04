@@ -264,6 +264,33 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
     const result = await resolveModelConfig('implementer');
     expect(result.systemPrompt).toBeUndefined();
   });
+
+  it('returns systemPrompt from GLOBAL row when it is the only scope (no template, no team)', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'GLOBAL') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-global')), systemPrompt: 'global prompt' };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer');
+    expect(result.systemPrompt).toBe('global prompt');
+  });
+
+  it('returns systemPrompt from TEAM row when it is the only scope (no template)', async () => {
+    findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'TEAM') {
+        return { ...row('anthropic/claude-opus-4-7', credRow('key-team')), systemPrompt: 'team only prompt' };
+      }
+      return null;
+    });
+    credFindFirstMock.mockResolvedValue(null);
+
+    const result = await resolveModelConfig('implementer', { teamId: 'team-1' });
+    expect(result.systemPrompt).toBe('team only prompt');
+  });
+
 });
 
 describe('resolver cache', () => {

@@ -97,8 +97,12 @@ async function resolveModelConfigUncached(
       where: { role: prismaRole, scope: 'TEAM', teamId: ctx.teamId },
     });
     if (row) {
-      if (!specEntry) specEntry = { row, scope: 'TEAM' };
-      if (needPromptCascade || !specEntry) {
+      const isNewSpec = !specEntry;
+      if (isNewSpec) specEntry = { row, scope: 'TEAM' };
+      // Process systemPrompt when cascading from a higher scope OR when this row
+      // becomes our spec provider. A row that hasn't been seen before should
+      // contribute its systemPrompt (if any) to the cascade.
+      if (needPromptCascade || isNewSpec) {
         if (hasPrompt(row)) {
           systemPrompt = row.systemPrompt as string;
           needPromptCascade = false;
@@ -117,9 +121,17 @@ async function resolveModelConfigUncached(
       where: { role: prismaRole, scope: 'GLOBAL' },
     });
     if (globalRow) {
-      if (!specEntry) specEntry = { row: globalRow, scope: 'GLOBAL' };
-      if (needPromptCascade && hasPrompt(globalRow)) {
-        systemPrompt = globalRow.systemPrompt as string;
+      const isNewSpec = !specEntry;
+      if (isNewSpec) specEntry = { row: globalRow, scope: 'GLOBAL' };
+      // Process systemPrompt when cascading from a higher scope OR when this row
+      // becomes our spec provider.
+      if (needPromptCascade || isNewSpec) {
+        if (hasPrompt(globalRow)) {
+          systemPrompt = globalRow.systemPrompt as string;
+        } else if (needPromptCascade) {
+          // We're cascading but this row has no prompt — mark as exhausted.
+          needPromptCascade = hasSystemPromptColumn(globalRow);
+        }
       }
     }
   }
