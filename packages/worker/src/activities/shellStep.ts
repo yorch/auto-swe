@@ -133,8 +133,9 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     resolveGitHubConfig(),
   ]);
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  if (!ghConfig.token)
+  if (!ghConfig.token) {
     throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
   const token = ghConfig.token;
   const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
     'https://',

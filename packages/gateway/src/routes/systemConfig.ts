@@ -27,7 +27,9 @@ function sealInto(
   prefix: string,
   plaintext: string | undefined
 ): void {
-  if (!plaintext) return;
+  if (!plaintext) {
+    return;
+  }
   const { authTag, ciphertext, keyVersion, lastFour, nonce } = encryptSecret(plaintext);
   data[`${prefix}Ciphertext`] = ciphertext;
   data[`${prefix}Nonce`] = nonce;
@@ -122,9 +124,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       const { token, webhookSecret, oauthClientSecret, oauthClientId, apiUrl, baseUrl } = req.body;
 
       const data: Record<string, unknown> = {};
-      if (apiUrl !== undefined) data.apiUrl = apiUrl;
-      if (baseUrl !== undefined) data.baseUrl = baseUrl;
-      if (oauthClientId !== undefined) data.oauthClientId = oauthClientId;
+      if (apiUrl !== undefined) {
+        data.apiUrl = apiUrl;
+      }
+      if (baseUrl !== undefined) {
+        data.baseUrl = baseUrl;
+      }
+      if (oauthClientId !== undefined) {
+        data.oauthClientId = oauthClientId;
+      }
 
       sealInto(data, 'token', token);
       sealInto(data, 'webhookSecret', webhookSecret);
@@ -167,7 +175,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       const { botToken, clientId, clientSecret, signingSecret } = req.body;
 
       const data: Record<string, unknown> = {};
-      if (clientId !== undefined) data.clientId = clientId;
+      if (clientId !== undefined) {
+        data.clientId = clientId;
+      }
 
       sealInto(data, 'botToken', botToken);
       sealInto(data, 'clientSecret', clientSecret);
@@ -221,18 +231,34 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       } = req.body;
 
       const data: Record<string, unknown> = {};
-      if (backend !== undefined) data.backend = backend;
+      if (backend !== undefined) {
+        data.backend = backend;
+      }
       // Providing s3Bucket without an explicit backend implies S3 mode. This
       // prevents a partial PUT from writing the Prisma default 'inline' to the
       // DB, which would make it impossible to distinguish "admin chose inline"
       // from "admin never set backend" in the resolver.
-      else if (s3Bucket !== undefined && s3Bucket !== null) data.backend = 's3';
-      if (s3Bucket !== undefined) data.s3Bucket = s3Bucket;
-      if (s3Region !== undefined) data.s3Region = s3Region;
-      if (s3Endpoint !== undefined) data.s3Endpoint = s3Endpoint;
-      if (s3Prefix !== undefined) data.s3Prefix = s3Prefix;
-      if (s3ForcePathStyle !== undefined) data.s3ForcePathStyle = s3ForcePathStyle;
-      if (awsAccessKeyId !== undefined) data.awsAccessKeyId = awsAccessKeyId;
+      else if (s3Bucket !== undefined && s3Bucket !== null) {
+        data.backend = 's3';
+      }
+      if (s3Bucket !== undefined) {
+        data.s3Bucket = s3Bucket;
+      }
+      if (s3Region !== undefined) {
+        data.s3Region = s3Region;
+      }
+      if (s3Endpoint !== undefined) {
+        data.s3Endpoint = s3Endpoint;
+      }
+      if (s3Prefix !== undefined) {
+        data.s3Prefix = s3Prefix;
+      }
+      if (s3ForcePathStyle !== undefined) {
+        data.s3ForcePathStyle = s3ForcePathStyle;
+      }
+      if (awsAccessKeyId !== undefined) {
+        data.awsAccessKeyId = awsAccessKeyId;
+      }
 
       sealInto(data, 'awsSecretAccessKey', awsSecretAccessKey);
 
@@ -260,9 +286,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.get(
     '/config/workflow-defaults',
     { schema: { response: { 200: z.any() } } },
-    async (_req, reply) => {
-      return reply.send(await resolveWorkflowDefaults());
-    }
+    async (_req, reply) => reply.send(await resolveWorkflowDefaults())
   );
 
   f.put(
@@ -297,7 +321,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       const { clientId, clientSecret } = req.body;
 
       const data: Record<string, unknown> = {};
-      if (clientId !== undefined) data.clientId = clientId;
+      if (clientId !== undefined) {
+        data.clientId = clientId;
+      }
 
       sealInto(data, 'clientSecret', clientSecret);
 

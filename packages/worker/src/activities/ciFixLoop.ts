@@ -58,8 +58,9 @@ export async function executeCIFixImplementation(
   const ghConfig = await resolveGitHubConfig();
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  if (!ghConfig.token)
+  if (!ghConfig.token) {
     throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
   const githubToken = ghConfig.token;
 
   // Provision workspace and checkout the existing branch
@@ -195,8 +196,9 @@ export async function executeReviewFixImplementation(
   const ghConfig = await resolveGitHubConfig();
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  if (!ghConfig.token)
+  if (!ghConfig.token) {
     throw new Error('GitHub token not configured. Set it at /admin/integrations.');
+  }
   const githubToken = ghConfig.token;
 
   const workspace = createWorkspace(

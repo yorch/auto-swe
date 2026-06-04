@@ -29,7 +29,9 @@ export function StorageTab() {
 
   // Seed form from loaded data (once)
   useEffect(() => {
-    if (!data) return;
+    if (!data) {
+      return;
+    }
     setBackend(data.backend ?? 'inline');
     setS3Bucket(data.s3Bucket ?? '');
     setS3Region(data.s3Region ?? '');
@@ -46,13 +48,25 @@ export function StorageTab() {
 
     const body: StorageConfigInput = { backend };
     if (backend === 's3') {
-      if (s3Bucket) body.s3Bucket = s3Bucket;
-      if (s3Region) body.s3Region = s3Region;
-      if (s3Endpoint) body.s3Endpoint = s3Endpoint;
-      if (s3Prefix) body.s3Prefix = s3Prefix;
+      if (s3Bucket) {
+        body.s3Bucket = s3Bucket;
+      }
+      if (s3Region) {
+        body.s3Region = s3Region;
+      }
+      if (s3Endpoint) {
+        body.s3Endpoint = s3Endpoint;
+      }
+      if (s3Prefix) {
+        body.s3Prefix = s3Prefix;
+      }
       body.s3ForcePathStyle = s3ForcePathStyle;
-      if (awsAccessKeyId) body.awsAccessKeyId = awsAccessKeyId;
-      if (awsSecretAccessKey) body.awsSecretAccessKey = awsSecretAccessKey;
+      if (awsAccessKeyId) {
+        body.awsAccessKeyId = awsAccessKeyId;
+      }
+      if (awsSecretAccessKey) {
+        body.awsSecretAccessKey = awsSecretAccessKey;
+      }
     }
 
     try {

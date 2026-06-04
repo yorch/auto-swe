@@ -27,7 +27,9 @@ type EncryptedRow = {
 };
 
 function decryptOptional(row: EncryptedRow): string | null {
-  if (!row.ciphertext || !row.nonce || !row.authTag || row.keyVersion === null) return null;
+  if (!row.ciphertext || !row.nonce || !row.authTag || row.keyVersion === null) {
+    return null;
+  }
   return decryptSecret({
     authTag: row.authTag,
     ciphertext: row.ciphertext,

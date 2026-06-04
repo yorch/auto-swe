@@ -29,8 +29,12 @@ export function OAuthTab() {
     setRequiresRestart(false);
 
     const body: GoogleOAuthConfigInput = {};
-    if (clientId) body.clientId = clientId;
-    if (clientSecret) body.clientSecret = clientSecret;
+    if (clientId) {
+      body.clientId = clientId;
+    }
+    if (clientSecret) {
+      body.clientSecret = clientSecret;
+    }
 
     try {
       const res = await update.mutateAsync(body);

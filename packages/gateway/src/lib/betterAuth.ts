@@ -249,7 +249,9 @@ let _auth: AuthInstance | null = null;
 /// no-ops (the singleton is already built). A restart is required to pick up
 /// changes to OAuth credentials after the server is running.
 export async function initAuth(): Promise<void> {
-  if (_auth) return;
+  if (_auth) {
+    return;
+  }
 
   const [ghConfig, googleConfig] = await Promise.all([
     resolveGitHubConfig(),
@@ -267,7 +269,9 @@ export async function initAuth(): Promise<void> {
 /// Returns the initialised BetterAuth instance. Throws if `initAuth()` hasn't
 /// been called yet (should never happen in production; indicates a startup bug).
 export function getAuth(): AuthInstance {
-  if (!_auth) throw new Error('BetterAuth not initialised — call initAuth() at gateway startup.');
+  if (!_auth) {
+    throw new Error('BetterAuth not initialised — call initAuth() at gateway startup.');
+  }
   return _auth;
 }
 

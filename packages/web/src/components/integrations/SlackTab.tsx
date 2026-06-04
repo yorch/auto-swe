@@ -31,10 +31,18 @@ export function SlackTab() {
     setRequiresRestart(false);
 
     const body: SlackConfigInput = {};
-    if (botToken) body.botToken = botToken;
-    if (clientId) body.clientId = clientId;
-    if (clientSecret) body.clientSecret = clientSecret;
-    if (signingSecret) body.signingSecret = signingSecret;
+    if (botToken) {
+      body.botToken = botToken;
+    }
+    if (clientId) {
+      body.clientId = clientId;
+    }
+    if (clientSecret) {
+      body.clientSecret = clientSecret;
+    }
+    if (signingSecret) {
+      body.signingSecret = signingSecret;
+    }
 
     try {
       const res = await update.mutateAsync(body);

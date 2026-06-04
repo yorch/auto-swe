@@ -23,7 +23,9 @@ export default function AdminWorkflowPage() {
 
   // Seed form from loaded data (once)
   useEffect(() => {
-    if (!data) return;
+    if (!data) {
+      return;
+    }
     setBranchPrefix(data.branchPrefix ?? '');
     setPrTitleTemplate(data.prTitleTemplate ?? '');
     setPrBodyTemplate(data.prBodyTemplate ?? '');
@@ -36,10 +38,18 @@ export default function AdminWorkflowPage() {
     setSaved(false);
 
     const body: WorkflowDefaultsInput = {};
-    if (branchPrefix) body.branchPrefix = branchPrefix;
-    if (prTitleTemplate) body.prTitleTemplate = prTitleTemplate;
-    if (prBodyTemplate) body.prBodyTemplate = prBodyTemplate;
-    if (defaultTeamSlug) body.defaultTeamSlug = defaultTeamSlug;
+    if (branchPrefix) {
+      body.branchPrefix = branchPrefix;
+    }
+    if (prTitleTemplate) {
+      body.prTitleTemplate = prTitleTemplate;
+    }
+    if (prBodyTemplate) {
+      body.prBodyTemplate = prBodyTemplate;
+    }
+    if (defaultTeamSlug) {
+      body.defaultTeamSlug = defaultTeamSlug;
+    }
 
     try {
       await update.mutateAsync(body);

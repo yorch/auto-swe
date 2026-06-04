@@ -33,12 +33,24 @@ export function GitHubTab() {
     setRequiresRestart(false);
 
     const body: GitHubConfigInput = {};
-    if (token) body.token = token;
-    if (webhookSecret) body.webhookSecret = webhookSecret;
-    if (oauthClientId) body.oauthClientId = oauthClientId;
-    if (oauthClientSecret) body.oauthClientSecret = oauthClientSecret;
-    if (baseUrl) body.baseUrl = baseUrl;
-    if (apiUrl) body.apiUrl = apiUrl;
+    if (token) {
+      body.token = token;
+    }
+    if (webhookSecret) {
+      body.webhookSecret = webhookSecret;
+    }
+    if (oauthClientId) {
+      body.oauthClientId = oauthClientId;
+    }
+    if (oauthClientSecret) {
+      body.oauthClientSecret = oauthClientSecret;
+    }
+    if (baseUrl) {
+      body.baseUrl = baseUrl;
+    }
+    if (apiUrl) {
+      body.apiUrl = apiUrl;
+    }
 
     try {
       const res = await update.mutateAsync(body);

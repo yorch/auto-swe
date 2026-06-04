@@ -47,8 +47,9 @@ export async function executeImplementation(
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const featureBranch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
-  if (!ghConfig.token)
+  if (!ghConfig.token) {
     throw new ApplicationFailure('GitHub token not configured. Set it at /admin/integrations.');
+  }
   const githubToken = ghConfig.token;
 
   const workspace = createWorkspace(
