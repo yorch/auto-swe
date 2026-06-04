@@ -192,6 +192,62 @@ describe('modelConfigRoutes — admin', () => {
       expect(ctx.mockPrisma.configAuditLog.create.mock.calls[0][0].data.action).toBe('UPDATE');
     });
 
+    it('PUT round-trips systemPrompt on create', async () => {
+      ctx.mockPrisma.modelRoleConfig.create.mockResolvedValueOnce({
+        id: 'new-sp-1',
+        modelSpec: 'anthropic/claude-opus-4-7',
+        role: 'IMPLEMENTER',
+        scope: 'GLOBAL',
+        systemPrompt: 'You are a TypeScript expert.',
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: {
+          modelSpec: 'anthropic/claude-opus-4-7',
+          role: 'IMPLEMENTER',
+          scope: 'GLOBAL',
+          systemPrompt: 'You are a TypeScript expert.',
+        },
+        url: '/api/v1/admin/model-config',
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.data.systemPrompt).toBe('You are a TypeScript expert.');
+    });
+
+    it('PUT accepts null systemPrompt to clear the override', async () => {
+      // First create with a prompt
+      ctx.mockPrisma.modelRoleConfig.findFirst.mockResolvedValueOnce({
+        id: 'r-sp-1',
+        modelSpec: 'anthropic/claude-opus-4-7',
+        role: 'IMPLEMENTER',
+        scope: 'GLOBAL',
+        systemPrompt: 'initial prompt',
+      });
+      ctx.mockPrisma.modelRoleConfig.update.mockResolvedValueOnce({
+        id: 'r-sp-1',
+        modelSpec: 'anthropic/claude-opus-4-7',
+        role: 'IMPLEMENTER',
+        scope: 'GLOBAL',
+        systemPrompt: null,
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: {
+          modelSpec: 'anthropic/claude-opus-4-7',
+          role: 'IMPLEMENTER',
+          scope: 'GLOBAL',
+          systemPrompt: null,
+        },
+        url: '/api/v1/admin/model-config',
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.data.systemPrompt).toBeNull();
+    });
+
     it('rejects scope/key mismatch', async () => {
       const res = await ctx.app.inject({
         headers: AUTH,
