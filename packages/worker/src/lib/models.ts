@@ -97,6 +97,26 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
   }
 }
 
+/**
+ * Resolves the system prompt for a role using the same scope cascade as
+ * `resolveModelConfig`. Priority order:
+ *  1. `configOverride` — returned immediately if truthy (no DB access).
+ *  2. `systemPrompt` from the DB-resolved `ModelRoleConfig` row.
+ *  3. `fallback` — used when the DB row has no system prompt set.
+ */
+export async function resolveSystemPrompt(
+  role: AgentRole,
+  fallback: string,
+  configOverride?: string
+): Promise<string> {
+  if (configOverride) {
+    return configOverride;
+  }
+  const ctx = await currentRequestContext();
+  const resolved = await resolveModelConfig(role, ctx);
+  return resolved.systemPrompt ?? fallback;
+}
+
 /// Drops the model-build cache. Used in tests and after credential rotations.
 export function _resetModelCacheForTests(): void {
   modelCache.clear();
