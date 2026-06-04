@@ -25,6 +25,7 @@ import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/share
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import {
   currentWorkflowId,
   currentWorkflowRunId,
@@ -268,10 +269,12 @@ export interface GateFixInput {
   gateOutput: GateResult;
   /** Previous code state, for context. */
   previousCodeResult: CodeResult;
+  /** Optional system prompt override from workflow step config. */
+  systemPromptOverride?: string;
 }
 
 export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
-  const { gateName, gateOutput, previousCodeResult } = input;
+  const { gateName, gateOutput, previousCodeResult, systemPromptOverride } = input;
 
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -327,10 +330,16 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
 
     const { agent } = await createImplementerAgent(workspace, gateTracer);
 
+    const systemPrompt = await resolveSystemPrompt(
+      'implementer',
+      GATE_FIX_SYSTEM_PROMPT,
+      systemPromptOverride
+    );
+
     const agentStart = Date.now();
     const gateFix = await agent.generate(
       [
-        { content: GATE_FIX_SYSTEM_PROMPT, role: 'system' },
+        { content: systemPrompt, role: 'system' },
         {
           content: JSON.stringify({
             failedGate: gateName,

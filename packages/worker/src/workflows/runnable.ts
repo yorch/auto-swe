@@ -286,6 +286,7 @@ async function dispatchStepImpl(
   config: Record<string, unknown>,
   inputs: Record<string, unknown>
 ): Promise<unknown> {
+  const systemPromptOverride = config.systemPrompt as string | undefined;
   switch (step) {
     case 'updateDomainState': {
       const status = (inputs.status ?? config.status) as string;
@@ -293,22 +294,22 @@ async function dispatchStepImpl(
       return { status };
     }
     case 'validateContext':
-      return await contextActivities.validateContext(request);
+      return await contextActivities.validateContext(request, systemPromptOverride);
     case 'executeImplementation': {
       // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`.
       const subtask =
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
       return subtask
-        ? await agentActivities.executeImplementation(request, subtask)
-        : await agentActivities.executeImplementation(request);
+        ? await agentActivities.executeImplementation(request, subtask, systemPromptOverride)
+        : await agentActivities.executeImplementation(request, undefined, systemPromptOverride);
     }
     case 'runReviewNetwork': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
       const successCriteria =
         (inputs.successCriteria as string[] | undefined) ??
         (lookupPath(ctx, 'context.successCriteria') as string[] | undefined);
-      return await agentActivities.runReviewNetwork(codeResult, successCriteria);
+      return await agentActivities.runReviewNetwork(codeResult, successCriteria, systemPromptOverride);
     }
     case 'executeReviewFixImplementation': {
       const rejection =
@@ -316,7 +317,7 @@ async function dispatchStepImpl(
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeReviewFixImplementation(rejection, prev);
+      return await agentActivities.executeReviewFixImplementation(rejection, prev, systemPromptOverride);
     }
     case 'executeCIFixImplementation': {
       const failureContext =
@@ -324,7 +325,7 @@ async function dispatchStepImpl(
         (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeCIFixImplementation(failureContext, prev);
+      return await agentActivities.executeCIFixImplementation(failureContext, prev, systemPromptOverride);
     }
     case 'createOrUpdatePullRequest': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
@@ -334,7 +335,7 @@ async function dispatchStepImpl(
       return await githubActivities.fetchCILogs(inputs.logsUrl as string | undefined);
     case 'commitToMemory': {
       const repoId = (inputs.repoId as string | undefined) ?? request.repoId;
-      const lessonId = await memoryActivities.commitToMemory(workflowInfo().workflowId, repoId);
+      const lessonId = await memoryActivities.commitToMemory(workflowInfo().workflowId, repoId, systemPromptOverride);
       return { lessonId };
     }
     // ── Phase 2 quality gates ──────────────────────────────────────────────
@@ -360,7 +361,7 @@ async function dispatchStepImpl(
       return await gateActivities[step](gateInput);
     }
     case 'planDecomposition':
-      return await agentActivities.planDecomposition(request);
+      return await agentActivities.planDecomposition(request, systemPromptOverride);
     case 'mergeBranches': {
       const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
       return await mergeActivities.mergeBranches({
@@ -407,6 +408,7 @@ async function dispatchStepImpl(
         gateName,
         gateOutput,
         previousCodeResult: prev,
+        systemPromptOverride,
       });
     }
     default:
