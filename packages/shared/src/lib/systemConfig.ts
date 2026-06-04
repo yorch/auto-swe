@@ -8,7 +8,7 @@ async function db() {
 }
 
 /// Shared resolvers for system-level config stored in the five singleton
-/// tables added in migration 00000000000002. Each resolver reads from the DB
+/// tables added in migration 20260604000000. Each resolver reads from the DB
 /// and falls back to the matching environment variable so that deployments
 /// that haven't visited the admin UI yet continue to work unchanged.
 ///
