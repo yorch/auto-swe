@@ -172,12 +172,12 @@ export async function resolveStorageConfig(): Promise<ResolvedStorageConfig> {
     process.env.AWS_SECRET_ACCESS_KEY ??
     null;
 
-  // Only trust an explicit 's3' DB value — 'inline' is the Prisma column default
-  // and may have been written by a partial PUT (e.g. setting s3Bucket without
-  // setting backend). Fall back to the env var so a bootstrapped ARTIFACT_S3_BUCKET
-  // isn't silently overridden by a default-value DB row.
+  // Trust any explicit DB value when a row exists. The PUT endpoint auto-sets
+  // backend='s3' when s3Bucket is provided without an explicit backend, so a
+  // partial PUT can never silently land backend='inline' in the DB anymore.
+  // Fall back to the env var only when there is no DB row at all.
   const envBackend = process.env.ARTIFACT_S3_BUCKET ? 's3' : 'inline';
-  const backend = (row?.backend === 's3' ? 's3' : envBackend) as 'inline' | 's3';
+  const backend = (row?.backend ?? envBackend) as 'inline' | 's3';
 
   return {
     awsAccessKeyId: row?.awsAccessKeyId ?? process.env.AWS_ACCESS_KEY_ID ?? null,

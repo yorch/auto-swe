@@ -222,6 +222,11 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
       const data: Record<string, unknown> = {};
       if (backend !== undefined) data.backend = backend;
+      // Providing s3Bucket without an explicit backend implies S3 mode. This
+      // prevents a partial PUT from writing the Prisma default 'inline' to the
+      // DB, which would make it impossible to distinguish "admin chose inline"
+      // from "admin never set backend" in the resolver.
+      else if (s3Bucket !== undefined && s3Bucket !== null) data.backend = 's3';
       if (s3Bucket !== undefined) data.s3Bucket = s3Bucket;
       if (s3Region !== undefined) data.s3Region = s3Region;
       if (s3Endpoint !== undefined) data.s3Endpoint = s3Endpoint;
@@ -264,17 +269,14 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/workflow-defaults',
     { schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const row = await prisma.workflowDefaults.upsert({
+      await prisma.workflowDefaults.upsert({
         create: { id: 'default', ...req.body },
         update: req.body,
         where: { id: 'default' },
       });
-      return reply.send({
-        branchPrefix: row.branchPrefix,
-        defaultTeamSlug: row.defaultTeamSlug,
-        prBodyTemplate: row.prBodyTemplate,
-        prTitleTemplate: row.prTitleTemplate,
-      });
+      // Return through the shared resolver so GET and PUT always produce the
+      // same shape, including env-var fallbacks for fields not yet set in DB.
+      return reply.send(await resolveWorkflowDefaults());
     }
   );
 

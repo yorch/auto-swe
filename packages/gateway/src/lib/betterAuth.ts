@@ -55,7 +55,6 @@ let _githubClientId: string | null = null;
 let _githubClientSecret: string | null = null;
 let _googleClientId: string | null = null;
 let _googleClientSecret: string | null = null;
-let _defaultTeamSlug = 'default';
 
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.AUTH_FROM_EMAIL;
@@ -252,17 +251,15 @@ let _auth: AuthInstance | null = null;
 export async function initAuth(): Promise<void> {
   if (_auth) return;
 
-  const [ghConfig, googleConfig, workflowDefaults] = await Promise.all([
+  const [ghConfig, googleConfig] = await Promise.all([
     resolveGitHubConfig(),
     resolveGoogleOAuthConfig(),
-    resolveWorkflowDefaults(),
   ]);
 
   _githubClientId = ghConfig.oauthClientId;
   _githubClientSecret = ghConfig.oauthClientSecret;
   _googleClientId = googleConfig.clientId;
   _googleClientSecret = googleConfig.clientSecret;
-  _defaultTeamSlug = workflowDefaults.defaultTeamSlug;
 
   _auth = buildAuth();
 }
@@ -279,8 +276,6 @@ export function getAuth(): AuthInstance {
 export { getAuth as auth };
 
 function buildAuth() {
-  const DEFAULT_TEAM_SLUG = _defaultTeamSlug;
-
   return betterAuth({
     // Link sign-ins by verified email so a user who's already in the system
     // via GitHub and then signs in with Google (same verified email) ends up
@@ -320,10 +315,13 @@ function buildAuth() {
         create: {
           after: async (user) => {
             try {
-              const team = await prisma.team.findUnique({ where: { slug: DEFAULT_TEAM_SLUG } });
+              // Re-read at sign-up time so admin changes to defaultTeamSlug take
+              // effect immediately without a gateway restart.
+              const { defaultTeamSlug } = await resolveWorkflowDefaults();
+              const team = await prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
               if (!team) {
                 console.warn(
-                  `[better-auth] default team '${DEFAULT_TEAM_SLUG}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
+                  `[better-auth] default team '${defaultTeamSlug}' not found — new user ${user.email} has no team membership. Run \`yarn db:seed\` or create the team manually.`
                 );
                 return;
               }
