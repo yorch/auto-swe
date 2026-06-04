@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import {
   type ProviderCredentialRow,
   useAdminCreateCredential,
@@ -256,15 +257,15 @@ function CredentialModal({
               <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="scope">
                 Scope
               </label>
-              <select
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+              <Select
+                className="border-ink-600 bg-ink-900"
                 id="scope"
                 onChange={(e) => setScope(e.target.value as 'GLOBAL' | 'TEAM')}
                 value={scope}
               >
                 <option value="GLOBAL">Global (used by every team unless overridden)</option>
                 <option value="TEAM">Team</option>
-              </select>
+              </Select>
             </div>
             {scope === 'TEAM' && (
               <div>

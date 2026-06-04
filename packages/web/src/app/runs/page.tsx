@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
@@ -36,54 +37,38 @@ export default function WorkflowRunsPage() {
 
       <Card variant="inset">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="status"
-            >
-              Status
-            </label>
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="status"
-              onChange={(e) => {
-                setStatus(e.target.value);
-                setOffset(0);
-              }}
-              value={status}
-            >
-              <option value="">All statuses</option>
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="template"
-            >
-              Template
-            </label>
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="template"
-              onChange={(e) => {
-                setTemplateId(e.target.value);
-                setOffset(0);
-              }}
-              value={templateId}
-            >
-              <option value="">All templates</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            id="status"
+            label="Status"
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setOffset(0);
+            }}
+            value={status}
+          >
+            <option value="">All statuses</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+          <Select
+            id="template"
+            label="Template"
+            onChange={(e) => {
+              setTemplateId(e.target.value);
+              setOffset(0);
+            }}
+            value={templateId}
+          >
+            <option value="">All templates</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
         </div>
       </Card>
 

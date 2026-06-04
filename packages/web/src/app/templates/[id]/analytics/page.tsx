@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useWorkflows';
 import { cn, formatCost, formatDuration, formatPercent } from '@/lib/utils';
@@ -41,8 +42,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 >
                   Window
                 </label>
-                <select
-                  className="h-9 rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+                <Select
+                  className="h-9 w-auto px-2 font-mono text-xs"
                   id="window"
                   onChange={(e) => setWindowDays(Number(e.target.value))}
                   value={windowDays}
@@ -52,7 +53,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                       {w}d
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             }
             chapter={`§ Analytics · last ${windowDays} days`}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { Select } from '@/components/ui/Select';
 import { useTeams } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
@@ -33,7 +34,7 @@ export function TopBar() {
         <span className="h-4 w-px bg-ink-500" />
 
         {/* Team picker — styled as a terminal context */}
-        <label className="group relative flex items-center gap-2">
+        <label className="group relative flex items-center gap-2" htmlFor="topbar-team-select">
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
             context
           </span>
@@ -41,9 +42,10 @@ export function TopBar() {
           <span className="flex items-center gap-1 font-mono text-xs text-paper-100">
             team:
             <span className="text-ember-400">{teamLabel}</span>
-            <select
+            <Select
               aria-label="Select team"
               className="absolute inset-0 cursor-pointer opacity-0"
+              id="topbar-team-select"
               onChange={(e) => setSelectedTeamId(e.target.value || null)}
               value={selectedTeamId ?? ''}
             >
@@ -53,7 +55,7 @@ export function TopBar() {
                   {t.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <span className="text-paper-500">▾</span>
           </span>
           <span className="font-mono text-xs text-paper-400">]</span>

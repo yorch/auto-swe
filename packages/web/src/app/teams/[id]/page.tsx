@@ -9,6 +9,7 @@ import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Select } from '@/components/ui/Select';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -84,8 +85,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   <td className="py-2 text-[var(--muted-foreground)]">{m.user?.role}</td>
                   <td className="py-2">
                     {canManage && m.user?.id ? (
-                      <select
-                        className="h-7 rounded-sm border border-ink-500 bg-ink-900/60 px-2 text-xs"
+                      <Select
+                        className="h-7 w-auto px-2 text-xs"
                         defaultValue={m.role}
                         onChange={(e) =>
                           m.user?.id &&
@@ -98,7 +99,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         <option value="ENGINEER">ENGINEER</option>
                         <option value="LEAD">LEAD</option>
                         <option value="ADMIN">ADMIN</option>
-                      </select>
+                      </Select>
                     ) : (
                       m.role
                     )}

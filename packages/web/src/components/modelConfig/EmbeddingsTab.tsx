@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Select } from '@/components/ui/Select';
 import {
   SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
@@ -88,8 +89,8 @@ export function EmbeddingsTab() {
           <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="embedCred">
             Pinned credential (optional)
           </label>
-          <select
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+          <Select
+            className="border-ink-600 bg-ink-900"
             id="embedCred"
             onChange={(e) => {
               setCredentialId(e.target.value);
@@ -103,7 +104,7 @@ export function EmbeddingsTab() {
                 {c.scope} · {c.provider}/****{c.lastFour}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end pt-2">

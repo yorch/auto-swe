@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import {
   type ConfigScope,
   MODEL_ROLES,
@@ -264,8 +265,8 @@ function EditRoleModal({
             <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="role">
               Role
             </label>
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+            <Select
+              className="border-ink-600 bg-ink-900"
               id="role"
               onChange={(e) => setRole(e.target.value as ModelRole)}
               value={role}
@@ -275,7 +276,7 @@ function EditRoleModal({
                   {ROLE_LABELS[r]}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         {!existing && (
@@ -283,8 +284,8 @@ function EditRoleModal({
             <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="scope">
               Scope
             </label>
-            <select
-              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+            <Select
+              className="border-ink-600 bg-ink-900"
               id="scope"
               onChange={(e) => setScope(e.target.value as ConfigScope)}
               value={scope}
@@ -292,7 +293,7 @@ function EditRoleModal({
               <option value="GLOBAL">Global (system-wide default)</option>
               <option value="TEAM">Team</option>
               <option value="WORKFLOW_TEMPLATE">Workflow template</option>
-            </select>
+            </Select>
           </div>
         )}
         {scope === 'TEAM' && (
@@ -353,8 +354,8 @@ function EditRoleModal({
           <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="credId">
             Pinned credential (optional)
           </label>
-          <select
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+          <Select
+            className="border-ink-600 bg-ink-900"
             id="credId"
             onChange={(e) => setCredentialId(e.target.value)}
             value={credentialId}
@@ -366,7 +367,7 @@ function EditRoleModal({
                 {c.teamId && ` (team ${c.teamId.slice(0, 6)}…)`}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">

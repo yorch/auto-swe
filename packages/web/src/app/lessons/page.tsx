@@ -5,6 +5,7 @@ import { LessonsByTypeChart } from '@/components/charts/LessonsByTypeChart';
 import { LessonsOverTimeChart } from '@/components/charts/LessonsOverTimeChart';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { useLessonSearch, useLessons, useRepositories } from '@/hooks/useWorkflows';
 import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
@@ -58,27 +59,19 @@ export default function LessonsPage() {
             placeholder="e.g. retry, timeout, race condition"
             value={query}
           />
-          <div className="space-y-1.5">
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-              htmlFor="lesson-repo"
-            >
-              Repository
-            </label>
-            <select
-              className="h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none focus:border-ember-400"
-              id="lesson-repo"
-              onChange={(e) => setRepoId(e.target.value)}
-              value={repoId}
-            >
-              <option value="">All repos (no search)</option>
-              {repos.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.organizationName}/{r.repoName}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            id="lesson-repo"
+            label="Repository"
+            onChange={(e) => setRepoId(e.target.value)}
+            value={repoId}
+          >
+            <option value="">All repos (no search)</option>
+            {repos.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.organizationName}/{r.repoName}
+              </option>
+            ))}
+          </Select>
         </div>
         {searchEnabled && (
           <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">

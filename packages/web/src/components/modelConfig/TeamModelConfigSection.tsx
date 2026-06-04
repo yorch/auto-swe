@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import {
   MODEL_ROLES,
   type ModelRole,
@@ -265,8 +266,8 @@ function TeamRoleEditModal({
           <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="cred">
             Pin credential (optional)
           </label>
-          <select
-            className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 text-sm"
+          <Select
+            className="border-ink-600 bg-ink-900"
             id="cred"
             onChange={(e) => setCredentialId(e.target.value)}
             value={credentialId}
@@ -277,7 +278,7 @@ function TeamRoleEditModal({
                 {c.scope} · {c.provider}/****{c.lastFour}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
