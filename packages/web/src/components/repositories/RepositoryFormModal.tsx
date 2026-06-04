@@ -32,6 +32,9 @@ export function RepositoryFormModal({
   const [language, setLanguage] = useState(initial?.language ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
+  const [consolidationEnabled, setConsolidationEnabled] = useState(
+    initial?.consolidationEnabled ?? true
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Reset form state from `initial` only when the modal opens — the previous
@@ -49,6 +52,7 @@ export function RepositoryFormModal({
     setLanguage(initial?.language ?? '');
     setDescription(initial?.description ?? '');
     setIsActive(initial?.isActive ?? true);
+    setConsolidationEnabled(initial?.consolidationEnabled ?? true);
     setError(null);
   }, [open, initial]);
 
@@ -77,6 +81,7 @@ export function RepositoryFormModal({
         });
       } else {
         await update.mutateAsync({
+          consolidationEnabled,
           defaultBranch,
           description: description.trim() || null,
           executorImage: executorImage.trim() || null,
@@ -165,14 +170,24 @@ export function RepositoryFormModal({
           value={description}
         />
         {isEdit && (
-          <label className="flex items-center gap-2 text-xs text-paper-300">
-            <input
-              checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-              type="checkbox"
-            />
-            <span>Active — accept new work requests for this repo</span>
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs text-paper-300">
+              <input
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                type="checkbox"
+              />
+              <span>Active — accept new work requests for this repo</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-paper-300">
+              <input
+                checked={consolidationEnabled}
+                onChange={(e) => setConsolidationEnabled(e.target.checked)}
+                type="checkbox"
+              />
+              <span>Include in scheduled lesson consolidation</span>
+            </label>
+          </div>
         )}
         {error && (
           <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
