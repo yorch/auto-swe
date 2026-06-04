@@ -11,6 +11,7 @@
 >
 > - **Dashboard** now ships an onboarding panel (3-step "get started" + collapsible API example) that replaces the empty-state when the user has no runs, plus a persistent `+ Submit work request` button in the header that opens a modal form.
 > - **`/runs`** (not in this doc) is a global workflow-run history with status + template filters and offset pagination — distinct from `/workflows` which lists `ActiveWorkflow` rows.
+> - **`/runs/:id`** (see [§15 below](#15-workflowrun-detail)) shows the workflow spec DAG with per-node status overlays, a step-record panel, and a full agent trace timeline (tool calls, LLM responses, activity events) for the selected node.
 > - **Settings** has an "API tokens" section (create / list / revoke personal access tokens with a one-time secret-reveal modal) — used by the CLI via `AUTO_SWE_TOKEN`.
 > - **Team detail** has a shell-image allowlist editor (one image per line, validated against `DOCKER_IMAGE_REF_RE`) and an egress hostname allowlist editor, both gated to platform ADMIN or team-ADMIN (`canManageTeamConfig`). Platform LEAD without a team-ADMIN membership does not see these editors.
 > - **Team member remove** (DELETE `/teams/:id/members/:userId`) is implemented and exposed in the UI. Remove + add + role-change all require platform LEAD + team LEAD+.
@@ -722,6 +723,76 @@ mobile to a hamburger menu.
 - `[Remove]` → `DELETE /api/v1/teams/:id/members/:userId` with confirmation.
 - Repository cards link to `/workflows?repo=:id`.
 - Team settings → `PATCH /api/v1/teams/:id`.
+
+---
+
+## 15. WorkflowRun Detail
+
+**Route:** `/runs/:id`
+**RBAC:** `ENGINEER+`
+**Data:** `GET /api/v1/workflow-runs/:id?includeTraces=true` — returns `WorkflowRunDetail` with `specSnapshot`, `steps[]`, `traces[]`, and `templateName`.
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│  ← Run History                                                       │
+│                                                                      │
+│  Run abc-123  ·  default-engineering@v3        Status: ◉ RUNNING    │
+│  Started: Jun 3 14:22  ·  Template: default-engineering             │
+│  JIRA-892 — Add rate limiting to payments API         [Cancel Run]  │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ WORKFLOW DAG                                                  │  │
+│  │                                                               │  │
+│  │   [validateCtx]──▶[impl]──▶[review]──▶[pr]──▶[ciWait]        │  │
+│  │      ◉ PASSED       ◉ RUNNING  ○ PENDING  ○        ○         │  │
+│  │                        ↑ selected                            │  │
+│  │                                                               │  │
+│  │  Click a node to inspect its step records and agent traces.  │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ NODE: impl (executeImplementation)            attempt 1 of 1  │  │
+│  │                                                               │  │
+│  │  STEP RECORDS                                                 │  │
+│  │  ┌──────────────────────────────────────────────────────────┐ │  │
+│  │  │ attempt 1  ·  RUNNING  ·  started 14:23  ·  —           │ │  │
+│  │  └──────────────────────────────────────────────────────────┘ │  │
+│  │                                                               │  │
+│  │  AGENT TRACES  ·  47 events                                   │  │
+│  │  ┌──────────────────────────────────────────────────────────┐ │  │
+│  │  │ ● event  lessons.retrieved   3 lessons              12ms │ │  │
+│  │  │ ● llm    implementer                                  3s  │ │  │
+│  │  │ ● tool   read    src/middleware/rateLimit.ts         45ms │ │  │
+│  │  │ ● tool   write   src/middleware/rateLimit.ts        120ms │ │  │
+│  │  │ ● tool   bash    yarn test --testPathPattern=rate…  8.2s  │ │  │
+│  │  │ ● event  tdd.test_run  pass 12/12                   8.2s  │ │  │
+│  │  │ ● event  git.commit_push  a1b2c3d4                   2s   │ │  │
+│  │  │   ▼ expanded                                              │ │  │
+│  │  │   ┌────────────────────────────────────────────────────┐ │ │  │
+│  │  │   │ { "branch": "auto/JIRA-892",                      │ │ │  │
+│  │  │   │   "headSha": "a1b2c3d4e5f6...",                   │ │ │  │
+│  │  │   │   "commitMessage": "auto: implement JIRA-892" }   │ │ │  │
+│  │  │   └────────────────────────────────────────────────────┘ │ │  │
+│  │  └──────────────────────────────────────────────────────────┘ │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Trace event types and their dot colours:**
+
+| Dot   | Type badge | Meaning                                                                 |
+| ----- | ---------- | ----------------------------------------------------------------------- |
+| ●gray | `tool`     | Implementer tool call: `read`, `write`, `ls`, `bash`                   |
+| ●purple| `llm`     | LLM response (reasoning text or structured output from any agent role) |
+| ●blue  | `event`   | Activity-level event: `lessons.retrieved`, `tdd.test_run`, `git.commit_push`, `pr.created`, `pr.updated`, `memory.lesson_written` |
+
+**Interactions:**
+
+- Click any DAG node to load its step records and agent traces into the right panel.
+- Click a trace row to expand it — shows error banner (red) if `error` is set, then the output content (LLM text, JSON, bash stdout).
+- When a node was retried, traces are grouped under **Attempt N** headers.
+- `[Cancel Run]` → `POST /api/v1/workflow-runs/:id/cancel` (ENGINEER+). Only visible when `status === 'RUNNING'`.
+- Fan-out nodes (e.g. parallel subtask branches) share traces under the leaf step name after the `/` separator is stripped.
 
 ---
 
