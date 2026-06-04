@@ -1,10 +1,16 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveGitHubConfig,
+  resolveSlackConfig,
+  resolveStorageConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
+import { WebClient } from '@slack/web-api';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /// Admin CRUD routes for the five singleton system-config tables:
 ///   GET/PUT /api/v1/admin/config/github
@@ -13,9 +19,28 @@ import { requireAuth } from '../plugins/auth.js';
 ///   GET/PUT /api/v1/admin/config/workflow-defaults
 ///   GET/PUT /api/v1/admin/config/oauth/google
 ///
+/// Also:
+///   POST /api/v1/admin/config/github/test   — live connection test
+///   POST /api/v1/admin/config/slack/test    — live connection test
+///   POST /api/v1/admin/config/storage/test  — connectivity test
+///   GET  /api/v1/admin/config/audit-log     — config change history
+///
 /// All routes require platform ADMIN role.
 /// Secret fields are write-only from the API: reads return `lastFour` only,
 /// never the plaintext (same convention as /admin/config/credentials).
+
+// ─── constants ────────────────────────────────────────────────────────────────
+
+// Fixed UUIDs for the five singleton system-config entities.
+// Used as entityId in ConfigAuditLog (which requires a UUID PK) since the
+// config tables use the string 'default' as their PK.
+const SYSTEM_CONFIG_IDS = {
+  github: '00000000-0000-0000-0001-000000000001',
+  googleOAuth: '00000000-0000-0000-0001-000000000005',
+  slack: '00000000-0000-0000-0001-000000000002',
+  storage: '00000000-0000-0000-0001-000000000003',
+  workflowDefaults: '00000000-0000-0000-0001-000000000004',
+} as const;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +66,19 @@ function sealInto(
 /// Returns a lastFour-only object when ciphertext exists, null otherwise.
 function maskedSecret(lastFour: string | null | undefined) {
   return lastFour ? { lastFour } : null;
+}
+
+/// Returns the source of a config value: 'db' when the DB row has the value,
+/// 'env' when it falls back to an environment variable, null when absent.
+type ConfigSource = 'db' | 'env' | null;
+function src(dbPresent: boolean, envKey: string): ConfigSource {
+  if (dbPresent) {
+    return 'db';
+  }
+  if (process.env[envKey]) {
+    return 'env';
+  }
+  return null;
 }
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
@@ -116,6 +154,14 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         token: maskedSecret(row?.tokenLastFour),
         webhookSecret: maskedSecret(row?.webhookSecretLastFour),
       },
+      sources: {
+        apiUrl: src(!!row?.apiUrl, 'GITHUB_API_URL'),
+        baseUrl: src(!!row?.baseUrl, 'GITHUB_URL'),
+        oauthClientId: src(!!row?.oauthClientId, 'GITHUB_CLIENT_ID'),
+        oauthClientSecret: src(!!row?.oauthClientSecretCiphertext, 'GITHUB_CLIENT_SECRET'),
+        token: src(!!row?.tokenCiphertext, 'GITHUB_TOKEN'),
+        webhookSecret: src(!!row?.webhookSecretCiphertext, 'GITHUB_WEBHOOK_SECRET'),
+      },
     });
   });
 
@@ -124,6 +170,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: GitHubPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const { token, webhookSecret, oauthClientSecret, oauthClientId, apiUrl, baseUrl } = req.body;
+
+      const existing = await prisma.gitHubConfig.findUnique({ where: { id: 'default' } });
 
       const data: Record<string, unknown> = {};
       if (apiUrl !== undefined) {
@@ -146,6 +194,33 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
+      // Audit: log which fields changed (no plaintext secrets)
+      const changedFields = [
+        ...(token ? ['token'] : []),
+        ...(webhookSecret ? ['webhookSecret'] : []),
+        ...(oauthClientId !== undefined ? ['oauthClientId'] : []),
+        ...(oauthClientSecret ? ['oauthClientSecret'] : []),
+        ...(apiUrl !== undefined ? ['apiUrl'] : []),
+        ...(baseUrl !== undefined ? ['baseUrl'] : []),
+      ];
+      if (changedFields.length > 0) {
+        const actor = requireUser(req);
+        await prisma.configAuditLog.create({
+          data: {
+            action: existing ? 'UPDATE' : 'CREATE',
+            actorId: actor.sub,
+            afterJson: {
+              apiUrl: row.apiUrl,
+              baseUrl: row.baseUrl,
+              changedFields,
+              oauthClientId: row.oauthClientId,
+            } as never,
+            entityId: SYSTEM_CONFIG_IDS.github,
+            entityType: 'GitHubConfig',
+          },
+        });
+      }
+
       return reply.send({
         data: {
           apiUrl: row.apiUrl,
@@ -160,6 +235,39 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     }
   );
 
+  // ── GitHub: connection test ──────────────────────────────────────────────────
+
+  f.post('/config/github/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const { token, apiUrl } = await resolveGitHubConfig();
+    if (!token) {
+      return reply.send({ detail: 'No GitHub token configured.', ok: false });
+    }
+    try {
+      const res = await fetch(`${apiUrl}/user`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'auto-swe/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        return reply.send({
+          detail: `GitHub API returned ${res.status}: ${body.message ?? res.statusText}`,
+          ok: false,
+        });
+      }
+      const user = (await res.json()) as { login: string };
+      return reply.send({ detail: `Authenticated as ${user.login}`, ok: true });
+    } catch (err) {
+      return reply.send({
+        detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+        ok: false,
+      });
+    }
+  });
+
   // ── Slack ───────────────────────────────────────────────────────────────────
 
   f.get('/config/slack', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
@@ -171,6 +279,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         clientSecret: maskedSecret(row?.clientSecretLastFour),
         signingSecret: maskedSecret(row?.signingSecretLastFour),
       },
+      sources: {
+        botToken: src(!!row?.botTokenCiphertext, 'SLACK_BOT_TOKEN'),
+        clientId: src(!!row?.clientId, 'SLACK_CLIENT_ID'),
+        clientSecret: src(!!row?.clientSecretCiphertext, 'SLACK_CLIENT_SECRET'),
+        signingSecret: src(!!row?.signingSecretCiphertext, 'SLACK_SIGNING_SECRET'),
+      },
     });
   });
 
@@ -179,6 +293,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: SlackPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const { botToken, clientId, clientSecret, signingSecret } = req.body;
+
+      const existing = await prisma.slackConfig.findUnique({ where: { id: 'default' } });
 
       const data: Record<string, unknown> = {};
       if (clientId !== undefined) {
@@ -195,6 +311,25 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
+      const changedFields = [
+        ...(botToken ? ['botToken'] : []),
+        ...(clientId !== undefined ? ['clientId'] : []),
+        ...(clientSecret ? ['clientSecret'] : []),
+        ...(signingSecret ? ['signingSecret'] : []),
+      ];
+      if (changedFields.length > 0) {
+        const actor = requireUser(req);
+        await prisma.configAuditLog.create({
+          data: {
+            action: existing ? 'UPDATE' : 'CREATE',
+            actorId: actor.sub,
+            afterJson: { changedFields, clientId: row.clientId } as never,
+            entityId: SYSTEM_CONFIG_IDS.slack,
+            entityType: 'SlackConfig',
+          },
+        });
+      }
+
       return reply.send({
         data: {
           botToken: maskedSecret(row.botTokenLastFour),
@@ -206,6 +341,31 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
     }
   );
+
+  // ── Slack: connection test ───────────────────────────────────────────────────
+
+  f.post('/config/slack/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const { botToken } = await resolveSlackConfig();
+    if (!botToken) {
+      return reply.send({ detail: 'No Slack bot token configured.', ok: false });
+    }
+    try {
+      const slack = new WebClient(botToken);
+      const res = await slack.auth.test();
+      if (!res.ok) {
+        return reply.send({ detail: `Slack API error: ${res.error}`, ok: false });
+      }
+      return reply.send({
+        detail: `Authenticated as ${res.user} in workspace ${res.team}`,
+        ok: true,
+      });
+    } catch (err) {
+      return reply.send({
+        detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+        ok: false,
+      });
+    }
+  });
 
   // ── Storage ─────────────────────────────────────────────────────────────────
 
@@ -221,6 +381,19 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         s3ForcePathStyle: row?.s3ForcePathStyle ?? false,
         s3Prefix: row?.s3Prefix ?? null,
         s3Region: row?.s3Region ?? null,
+      },
+      sources: {
+        awsAccessKeyId: src(!!row?.awsAccessKeyId, 'AWS_ACCESS_KEY_ID'),
+        awsSecretAccessKey: src(!!row?.awsSecretAccessKeyCiphertext, 'AWS_SECRET_ACCESS_KEY'),
+        backend: src(!!row?.backend, 'ARTIFACT_S3_BUCKET'),
+        s3Bucket: src(!!row?.s3Bucket, 'ARTIFACT_S3_BUCKET'),
+        s3Endpoint: src(!!row?.s3Endpoint, 'ARTIFACT_S3_ENDPOINT'),
+        s3ForcePathStyle: src(
+          row?.s3ForcePathStyle !== null && row?.s3ForcePathStyle !== undefined,
+          'ARTIFACT_S3_FORCE_PATH_STYLE'
+        ),
+        s3Prefix: src(!!row?.s3Prefix, 'ARTIFACT_S3_PREFIX'),
+        s3Region: src(!!row?.s3Region, 'ARTIFACT_S3_REGION'),
       },
     });
   });
@@ -239,6 +412,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         awsAccessKeyId,
         awsSecretAccessKey,
       } = req.body;
+
+      const existing = await prisma.storageConfig.findUnique({ where: { id: 'default' } });
 
       const data: Record<string, unknown> = {};
       if (backend !== undefined) {
@@ -278,6 +453,38 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
+      const changedFields = [
+        ...(backend !== undefined ? ['backend'] : []),
+        ...(s3Bucket !== undefined ? ['s3Bucket'] : []),
+        ...(s3Region !== undefined ? ['s3Region'] : []),
+        ...(s3Endpoint !== undefined ? ['s3Endpoint'] : []),
+        ...(s3Prefix !== undefined ? ['s3Prefix'] : []),
+        ...(s3ForcePathStyle !== undefined ? ['s3ForcePathStyle'] : []),
+        ...(awsAccessKeyId !== undefined ? ['awsAccessKeyId'] : []),
+        ...(awsSecretAccessKey ? ['awsSecretAccessKey'] : []),
+      ];
+      if (changedFields.length > 0) {
+        const actor = requireUser(req);
+        await prisma.configAuditLog.create({
+          data: {
+            action: existing ? 'UPDATE' : 'CREATE',
+            actorId: actor.sub,
+            afterJson: {
+              awsAccessKeyId: row.awsAccessKeyId,
+              backend: row.backend,
+              changedFields,
+              s3Bucket: row.s3Bucket,
+              s3Endpoint: row.s3Endpoint,
+              s3ForcePathStyle: row.s3ForcePathStyle,
+              s3Prefix: row.s3Prefix,
+              s3Region: row.s3Region,
+            } as never,
+            entityId: SYSTEM_CONFIG_IDS.storage,
+            entityType: 'StorageConfig',
+          },
+        });
+      }
+
       return reply.send({
         data: {
           awsAccessKeyId: row.awsAccessKeyId,
@@ -290,6 +497,59 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           s3Region: row.s3Region,
         },
       });
+    }
+  );
+
+  // ── Storage: connection test ─────────────────────────────────────────────────
+
+  f.post(
+    '/config/storage/test',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      const config = await resolveStorageConfig();
+      if (config.backend === 'inline') {
+        return reply.send({
+          detail: 'Inline (Postgres) storage — no external connection needed.',
+          ok: true,
+        });
+      }
+      if (!config.s3Bucket) {
+        return reply.send({ detail: 'S3 backend selected but no bucket configured.', ok: false });
+      }
+
+      const endpoint = config.s3Endpoint;
+      const region = config.s3Region ?? 'us-east-1';
+      const url =
+        endpoint && config.s3ForcePathStyle
+          ? `${endpoint}/${config.s3Bucket}`
+          : endpoint
+            ? `${endpoint}/${config.s3Bucket}`
+            : `https://${config.s3Bucket}.s3.${region}.amazonaws.com/`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(8_000),
+        });
+        // 403 / 400 → endpoint reachable, auth error (expected without signed request)
+        // 200 / 301 → bucket accessible
+        // 404 → endpoint reachable but bucket missing
+        if (res.status === 404) {
+          return reply.send({
+            detail: `Endpoint reachable but bucket '${config.s3Bucket}' not found (404).`,
+            ok: false,
+          });
+        }
+        return reply.send({
+          detail: `Endpoint reachable (HTTP ${res.status}). Note: credential verification requires a signed request.`,
+          ok: true,
+        });
+      } catch (err) {
+        return reply.send({
+          detail: `Cannot reach S3 endpoint: ${err instanceof Error ? err.message : String(err)}`,
+          ok: false,
+        });
+      }
     }
   );
 
@@ -325,6 +585,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         clientId: row?.clientId ?? null,
         clientSecret: maskedSecret(row?.clientSecretLastFour),
       },
+      sources: {
+        clientId: src(!!row?.clientId, 'GOOGLE_CLIENT_ID'),
+        clientSecret: src(!!row?.clientSecretCiphertext, 'GOOGLE_CLIENT_SECRET'),
+      },
     });
   });
 
@@ -333,6 +597,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { body: GoogleOAuthPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const { clientId, clientSecret } = req.body;
+
+      const existing = await prisma.googleOAuthConfig.findUnique({ where: { id: 'default' } });
 
       const data: Record<string, unknown> = {};
       if (clientId !== undefined) {
@@ -347,6 +613,23 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
+      const changedFields = [
+        ...(clientId !== undefined ? ['clientId'] : []),
+        ...(clientSecret ? ['clientSecret'] : []),
+      ];
+      if (changedFields.length > 0) {
+        const actor = requireUser(req);
+        await prisma.configAuditLog.create({
+          data: {
+            action: existing ? 'UPDATE' : 'CREATE',
+            actorId: actor.sub,
+            afterJson: { changedFields, clientId: row.clientId } as never,
+            entityId: SYSTEM_CONFIG_IDS.googleOAuth,
+            entityType: 'GoogleOAuthConfig',
+          },
+        });
+      }
+
       return reply.send({
         data: {
           clientId: row.clientId,
@@ -356,6 +639,37 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       });
     }
   );
+
+  // ── Config audit log ─────────────────────────────────────────────────────────
+
+  f.get('/config/audit-log', { schema: { response: { 200: z.any() } } }, async (req, reply) => {
+    const limitParam = (req.query as { limit?: string }).limit;
+    const take = Math.min(Number(limitParam ?? 100), 500);
+
+    const entries = await prisma.configAuditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    // Resolve actor emails in one batch query
+    const actorIds = [...new Set(entries.map((e) => e.actorId).filter(Boolean))] as string[];
+    const actors =
+      actorIds.length > 0
+        ? await prisma.user.findMany({
+            select: { email: true, id: true, name: true },
+            where: { id: { in: actorIds } },
+          })
+        : [];
+    const actorMap = new Map(actors.map((a) => [a.id, a]));
+
+    return reply.send({
+      data: entries.map((e) => ({
+        ...e,
+        actorEmail: e.actorId ? (actorMap.get(e.actorId)?.email ?? null) : null,
+        actorName: e.actorId ? (actorMap.get(e.actorId)?.name ?? null) : null,
+      })),
+    });
+  });
 
   // ── Test endpoint (checks decryption works for all secrets) ──────────────────
 

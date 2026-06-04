@@ -9,6 +9,15 @@ export interface MaskedField {
   lastFour: string;
 }
 
+// ── Source tracking ──
+// 'db'  → stored in the database (configured via this UI)
+// 'env' → falling back to an environment variable
+// null  → not configured anywhere
+
+export type ConfigSource = 'db' | 'env' | null;
+
+export type ConfigSources<K extends string> = Partial<Record<K, ConfigSource>>;
+
 // ── GitHub config ──
 
 export interface GitHubConfig {
@@ -30,10 +39,14 @@ export interface GitHubConfigInput {
   apiUrl?: string;
 }
 
+export interface GitHubConfigResponse {
+  data: GitHubConfig;
+  sources: ConfigSources<keyof GitHubConfig>;
+}
+
 export function useGitHubConfig() {
   return useQuery({
-    queryFn: () =>
-      api.get<{ data: GitHubConfig }>('/api/v1/admin/config/github').then((r) => r.data),
+    queryFn: () => api.get<GitHubConfigResponse>('/api/v1/admin/config/github'),
     queryKey: ['admin-config-github'],
   });
 }
@@ -47,6 +60,13 @@ export function useUpdateGitHubConfig() {
         body
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-github'] }),
+  });
+}
+
+export function useTestGitHubConnection() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/github/test', {}),
   });
 }
 
@@ -67,9 +87,14 @@ export interface SlackConfigInput {
   signingSecret?: string;
 }
 
+export interface SlackConfigResponse {
+  data: SlackConfig;
+  sources: ConfigSources<keyof SlackConfig>;
+}
+
 export function useSlackConfig() {
   return useQuery({
-    queryFn: () => api.get<{ data: SlackConfig }>('/api/v1/admin/config/slack').then((r) => r.data),
+    queryFn: () => api.get<SlackConfigResponse>('/api/v1/admin/config/slack'),
     queryKey: ['admin-config-slack'],
   });
 }
@@ -83,6 +108,13 @@ export function useUpdateSlackConfig() {
         body
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-slack'] }),
+  });
+}
+
+export function useTestSlackConnection() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/slack/test', {}),
   });
 }
 
@@ -112,10 +144,14 @@ export interface StorageConfigInput {
   awsSecretAccessKey?: string;
 }
 
+export interface StorageConfigResponse {
+  data: StorageConfig;
+  sources: ConfigSources<keyof StorageConfig>;
+}
+
 export function useStorageConfig() {
   return useQuery({
-    queryFn: () =>
-      api.get<{ data: StorageConfig }>('/api/v1/admin/config/storage').then((r) => r.data),
+    queryFn: () => api.get<StorageConfigResponse>('/api/v1/admin/config/storage'),
     queryKey: ['admin-config-storage'],
   });
 }
@@ -126,6 +162,13 @@ export function useUpdateStorageConfig() {
     mutationFn: (body: StorageConfigInput) =>
       api.put<{ data: StorageConfig }>('/api/v1/admin/config/storage', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-storage'] }),
+  });
+}
+
+export function useTestStorageConnection() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/storage/test', {}),
   });
 }
 
@@ -177,10 +220,14 @@ export interface GoogleOAuthConfigInput {
   clientSecret?: string;
 }
 
+export interface GoogleOAuthConfigResponse {
+  data: GoogleOAuthConfig;
+  sources: ConfigSources<keyof GoogleOAuthConfig>;
+}
+
 export function useGoogleOAuthConfig() {
   return useQuery({
-    queryFn: () =>
-      api.get<{ data: GoogleOAuthConfig }>('/api/v1/admin/config/oauth/google').then((r) => r.data),
+    queryFn: () => api.get<GoogleOAuthConfigResponse>('/api/v1/admin/config/oauth/google'),
     queryKey: ['admin-config-oauth-google'],
   });
 }
@@ -194,5 +241,30 @@ export function useUpdateGoogleOAuthConfig() {
         body
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-oauth-google'] }),
+  });
+}
+
+// ── Config audit log ──
+
+export interface ConfigAuditEntry {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  actorId: string | null;
+  actorEmail: string | null;
+  actorName: string | null;
+  beforeJson: unknown;
+  afterJson: unknown;
+  createdAt: string;
+}
+
+export function useConfigAuditLog(limit = 100) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: ConfigAuditEntry[] }>(`/api/v1/admin/config/audit-log?limit=${limit}`)
+        .then((r) => r.data),
+    queryKey: ['admin-config-audit-log', limit],
   });
 }

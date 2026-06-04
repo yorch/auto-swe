@@ -7,13 +7,18 @@ import {
   type StorageBackend,
   type StorageConfigInput,
   useStorageConfig,
+  useTestStorageConnection,
   useUpdateStorageConfig,
 } from '@/hooks/useAdminConfig';
 import { SecretInput } from './SecretInput';
+import { SourceBadge } from './SourceBadge';
 
 export function StorageTab() {
-  const { data, isLoading } = useStorageConfig();
+  const { data: resp, isLoading } = useStorageConfig();
+  const data = resp?.data;
+  const sources = resp?.sources ?? {};
   const update = useUpdateStorageConfig();
+  const testConn = useTestStorageConnection();
 
   const [backend, setBackend] = useState<StorageBackend>('inline');
   const [s3Bucket, setS3Bucket] = useState('');
@@ -26,6 +31,7 @@ export function StorageTab() {
 
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
   // Seed form from loaded data (once)
   useEffect(() => {
@@ -45,6 +51,7 @@ export function StorageTab() {
     e.preventDefault();
     setError(null);
     setSaved(false);
+    setTestResult(null);
 
     const body: StorageConfigInput = { backend };
     if (backend === 's3') {
@@ -78,6 +85,16 @@ export function StorageTab() {
     }
   };
 
+  const handleTest = async () => {
+    setTestResult(null);
+    try {
+      const res = await testConn.mutateAsync();
+      setTestResult(res);
+    } catch (err) {
+      setTestResult({ detail: err instanceof Error ? err.message : 'Request failed', ok: false });
+    }
+  };
+
   if (isLoading) {
     return <p className="text-sm text-paper-400">Loading…</p>;
   }
@@ -99,7 +116,14 @@ export function StorageTab() {
               value="inline"
             />
             <span>
-              <span className="text-sm text-paper-100">Inline (Postgres)</span>
+              <span className="text-sm text-paper-100">
+                Inline (Postgres)
+                {sources.backend === 'env' && (
+                  <span className="ml-2">
+                    <SourceBadge source="env" />
+                  </span>
+                )}
+              </span>
               <span className="mt-0.5 block text-xs text-paper-500">
                 Store artifacts directly in the database. Simple setup, no extra infra.
               </span>
@@ -132,8 +156,12 @@ export function StorageTab() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="s3-bucket">
+                <label
+                  className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                  htmlFor="s3-bucket"
+                >
                   Bucket
+                  <SourceBadge source={sources.s3Bucket} />
                 </label>
                 <input
                   className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
@@ -144,8 +172,12 @@ export function StorageTab() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="s3-region">
+                <label
+                  className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                  htmlFor="s3-region"
+                >
                   Region
+                  <SourceBadge source={sources.s3Region} />
                 </label>
                 <input
                   className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
@@ -157,9 +189,13 @@ export function StorageTab() {
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="s3-endpoint">
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="s3-endpoint"
+              >
                 Endpoint URL
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-600">
+                <SourceBadge source={sources.s3Endpoint} />
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
                   (optional — leave blank for AWS)
                 </span>
               </label>
@@ -172,9 +208,13 @@ export function StorageTab() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="s3-prefix">
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="s3-prefix"
+              >
                 Key prefix
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-600">
+                <SourceBadge source={sources.s3Prefix} />
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
                   (optional)
                 </span>
               </label>
@@ -198,6 +238,7 @@ export function StorageTab() {
               <span className="text-xs text-paper-500">
                 (required for MinIO and some S3-compatible APIs)
               </span>
+              <SourceBadge source={sources.s3ForcePathStyle} />
             </label>
 
             <div className="border-t border-ink-700 pt-4">
@@ -207,12 +248,13 @@ export function StorageTab() {
               <div className="space-y-4">
                 <div>
                   <label
-                    className="mb-1 block text-xs uppercase text-paper-500"
+                    className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
                     htmlFor="aws-access-key-id"
                   >
                     Access key ID
+                    <SourceBadge source={sources.awsAccessKeyId} />
                     {data?.awsAccessKeyId && (
-                      <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                      <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
                         current: {data.awsAccessKeyId}
                       </span>
                     )}
@@ -230,11 +272,30 @@ export function StorageTab() {
                   id="aws-secret-access-key"
                   label="Secret access key"
                   onChange={setAwsSecretAccessKey}
+                  source={sources.awsSecretAccessKey}
                   value={awsSecretAccessKey}
                 />
               </div>
             </div>
           </div>
+
+          <div className="mt-4 flex justify-end">
+            <Button
+              disabled={testConn.isPending || !data?.s3Bucket}
+              onClick={handleTest}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              {testConn.isPending ? 'Testing…' : 'Test connection'}
+            </Button>
+          </div>
+
+          {testResult && (
+            <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+              {testResult.ok ? '✓' : '✗'} {testResult.detail}
+            </p>
+          )}
         </Card>
       )}
 
