@@ -220,7 +220,10 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
   it('returns systemPrompt from WORKFLOW_TEMPLATE row when set', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
       if (args.where.scope === 'WORKFLOW_TEMPLATE') {
-        return { ...row('anthropic/claude-opus-4-7', credRow('key-a')), systemPrompt: 'custom tpl prompt' };
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-a')),
+          systemPrompt: 'custom tpl prompt',
+        };
       }
       return null;
     });
@@ -239,7 +242,10 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
         return { ...row('anthropic/claude-opus-4-7', credRow('key-a')), systemPrompt: null };
       }
       if (args.where.scope === 'TEAM') {
-        return { ...row('anthropic/claude-opus-4-7', credRow('key-b')), systemPrompt: 'team prompt' };
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-b')),
+          systemPrompt: 'team prompt',
+        };
       }
       return null;
     });
@@ -268,7 +274,10 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
   it('returns systemPrompt from GLOBAL row when it is the only scope (no template, no team)', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
       if (args.where.scope === 'GLOBAL') {
-        return { ...row('anthropic/claude-opus-4-7', credRow('key-global')), systemPrompt: 'global prompt' };
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-global')),
+          systemPrompt: 'global prompt',
+        };
       }
       return null;
     });
@@ -281,7 +290,10 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
   it('returns systemPrompt from TEAM row when it is the only scope (no template)', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
       if (args.where.scope === 'TEAM') {
-        return { ...row('anthropic/claude-opus-4-7', credRow('key-team')), systemPrompt: 'team only prompt' };
+        return {
+          ...row('anthropic/claude-opus-4-7', credRow('key-team')),
+          systemPrompt: 'team only prompt',
+        };
       }
       return null;
     });
@@ -290,7 +302,6 @@ describe('resolveModelConfig — systemPrompt cascade', () => {
     const result = await resolveModelConfig('implementer', { teamId: 'team-1' });
     expect(result.systemPrompt).toBe('team only prompt');
   });
-
 });
 
 describe('resolver cache', () => {

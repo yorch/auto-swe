@@ -309,7 +309,11 @@ async function dispatchStepImpl(
       const successCriteria =
         (inputs.successCriteria as string[] | undefined) ??
         (lookupPath(ctx, 'context.successCriteria') as string[] | undefined);
-      return await agentActivities.runReviewNetwork(codeResult, successCriteria, systemPromptOverride);
+      return await agentActivities.runReviewNetwork(
+        codeResult,
+        successCriteria,
+        systemPromptOverride
+      );
     }
     case 'executeReviewFixImplementation': {
       const rejection =
@@ -317,7 +321,11 @@ async function dispatchStepImpl(
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeReviewFixImplementation(rejection, prev, systemPromptOverride);
+      return await agentActivities.executeReviewFixImplementation(
+        rejection,
+        prev,
+        systemPromptOverride
+      );
     }
     case 'executeCIFixImplementation': {
       const failureContext =
@@ -325,7 +333,11 @@ async function dispatchStepImpl(
         (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeCIFixImplementation(failureContext, prev, systemPromptOverride);
+      return await agentActivities.executeCIFixImplementation(
+        failureContext,
+        prev,
+        systemPromptOverride
+      );
     }
     case 'createOrUpdatePullRequest': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
@@ -335,7 +347,11 @@ async function dispatchStepImpl(
       return await githubActivities.fetchCILogs(inputs.logsUrl as string | undefined);
     case 'commitToMemory': {
       const repoId = (inputs.repoId as string | undefined) ?? request.repoId;
-      const lessonId = await memoryActivities.commitToMemory(workflowInfo().workflowId, repoId, systemPromptOverride);
+      const lessonId = await memoryActivities.commitToMemory(
+        workflowInfo().workflowId,
+        repoId,
+        systemPromptOverride
+      );
       return { lessonId };
     }
     // ── Phase 2 quality gates ──────────────────────────────────────────────

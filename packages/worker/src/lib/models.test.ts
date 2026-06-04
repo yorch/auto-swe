@@ -123,9 +123,9 @@ describe('getModel', () => {
 
 describe('resolveSystemPrompt', () => {
   const baseConfig = {
-    spec: 'anthropic/claude-opus-4-6',
-    scope: 'GLOBAL' as const,
     apiKey: 'sk-ant-x',
+    scope: 'GLOBAL' as const,
+    spec: 'anthropic/claude-opus-4-6',
   };
 
   it('returns configOverride immediately without touching DB', async () => {

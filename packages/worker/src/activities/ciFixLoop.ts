@@ -7,8 +7,8 @@ import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompt
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { resolveSystemPrompt } from '../lib/models.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 

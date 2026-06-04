@@ -25,7 +25,6 @@ import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/share
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { resolveSystemPrompt } from '../lib/models.js';
 import {
   currentWorkflowId,
   currentWorkflowRunId,
@@ -35,6 +34,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 

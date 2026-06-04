@@ -47,7 +47,10 @@ async function resolveModelConfigUncached(
   // had systemPrompt=null AND that next scope has a reason to be queried
   // (team/global always exist in the cascade).
 
-  type ScopeEntry = { row: ModelRoleConfigWithCredential; scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL' };
+  type ScopeEntry = {
+    row: ModelRoleConfigWithCredential;
+    scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL';
+  };
   let specEntry: ScopeEntry | undefined;
   let systemPrompt: string | undefined;
 
@@ -98,7 +101,9 @@ async function resolveModelConfigUncached(
     });
     if (row) {
       const isNewSpec = !specEntry;
-      if (isNewSpec) specEntry = { row, scope: 'TEAM' };
+      if (isNewSpec) {
+        specEntry = { row, scope: 'TEAM' };
+      }
       // Process systemPrompt when cascading from a higher scope OR when this row
       // becomes our spec provider. A row that hasn't been seen before should
       // contribute its systemPrompt (if any) to the cascade.
@@ -122,7 +127,9 @@ async function resolveModelConfigUncached(
     });
     if (globalRow) {
       const isNewSpec = !specEntry;
-      if (isNewSpec) specEntry = { row: globalRow, scope: 'GLOBAL' };
+      if (isNewSpec) {
+        specEntry = { row: globalRow, scope: 'GLOBAL' };
+      }
       // Process systemPrompt when cascading from a higher scope OR when this row
       // becomes our spec provider.
       if (needPromptCascade || isNewSpec) {
