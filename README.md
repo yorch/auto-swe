@@ -97,7 +97,7 @@ yarn dev:gateway     # Terminal 1 → http://localhost:8080
 yarn dev:worker      # Terminal 2
 
 # 6. Web dashboard (optional)
-cd packages/web && yarn dev   # → http://localhost:3000
+yarn dev:web   # → http://localhost:3000
 ```
 
 Temporal Web UI is available at <http://localhost:8233>.
