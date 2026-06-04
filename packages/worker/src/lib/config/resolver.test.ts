@@ -104,7 +104,9 @@ describe('resolveModelConfig — cascade', () => {
   it('throws ConfigMissingError when no GLOBAL row exists for the role', async () => {
     findFirstMock.mockResolvedValue(null);
     await expect(resolveModelConfig('implementer')).rejects.toThrow(ConfigMissingError);
-    await expect(resolveModelConfig('implementer')).rejects.toThrow(/GLOBAL ModelRoleConfig/);
+    await expect(resolveModelConfig('implementer')).rejects.toThrow(
+      /ModelRoleConfig row found for role/
+    );
   });
 });
 

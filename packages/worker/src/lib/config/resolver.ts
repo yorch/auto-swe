@@ -38,14 +38,11 @@ async function resolveModelConfigUncached(
   const prismaRole = ROLE_TO_PRISMA[role];
 
   // Model spec + credential cascade: first non-null row wins. systemPrompt is
-  // also cascaded independently within the same set of rows already fetched —
-  // a row at a higher scope (e.g. WORKFLOW_TEMPLATE) may carry the model spec
-  // but leave systemPrompt=null, allowing a lower-scope row to supply it.
-  // To avoid extra DB calls, we only fetch a lower scope when it would have
-  // been consulted for the spec anyway (i.e. no higher-scope row existed).
-  // Once the spec row is found, we fetch the next scope only if the spec row
-  // had systemPrompt=null AND that next scope has a reason to be queried
-  // (team/global always exist in the cascade).
+  // also cascaded independently — a higher-scope row may carry the model spec
+  // but leave systemPrompt=null, so we keep looking at lower scopes for the
+  // prompt even after the spec is resolved. We only query a lower scope when
+  // either (a) no spec has been found yet, or (b) the spec row had
+  // systemPrompt=null and we still need to cascade the prompt.
 
   type ScopeEntry = {
     row: ModelRoleConfigWithCredential;
@@ -137,11 +134,11 @@ async function resolveModelConfigUncached(
   }
 
   if (!specEntry) {
-    // No fallback. The worker's startup check should have refused to start
-    // without a GLOBAL row for every role; reaching this branch means an
-    // operator deleted it after boot.
+    // No row found at any scope. The worker boot check should prevent this
+    // (it refuses to start without a GLOBAL row for every role), so reaching
+    // here means an operator deleted the row after boot.
     throw new ConfigMissingError(
-      `No GLOBAL ModelRoleConfig row for role '${role}'. Restore it via the admin dashboard at /admin/model-config.`
+      `No ModelRoleConfig row found for role '${role}' at any scope (WORKFLOW_TEMPLATE/TEAM/GLOBAL). Restore or create a GLOBAL row at /admin/model-config.`
     );
   }
 

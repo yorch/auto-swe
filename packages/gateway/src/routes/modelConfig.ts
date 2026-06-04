@@ -465,7 +465,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         modelSpec,
         role,
         scope,
-        systemPrompt: systemPrompt ?? null,
+        systemPrompt: systemPrompt?.trim() || null,
         teamId: scope === 'TEAM' ? (teamId ?? null) : null,
         workflowTemplateId: scope === 'WORKFLOW_TEMPLATE' ? (workflowTemplateId ?? null) : null,
       });
@@ -972,7 +972,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
         modelSpec,
         role,
         scope: 'TEAM',
-        systemPrompt: systemPrompt ?? null,
+        systemPrompt: systemPrompt?.trim() || null,
         teamId: request.params.id,
         workflowTemplateId: null,
       });
