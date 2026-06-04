@@ -4,7 +4,18 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
+const ConsolidateBody = z.object({
+  minClusterSize: z.number().int().min(2).max(20).optional(),
+  repoId: z.string().uuid(),
+  similarityThreshold: z.number().min(0.5).max(1).optional(),
+});
+
+const LessonListQuery = z.object({
+  includeConsolidated: z.coerce.boolean().default(false),
+});
+
 const LessonSearchQuery = z.object({
+  includeConsolidated: z.coerce.boolean().default(false),
   limit: z.coerce.number().int().min(1).max(100).default(10),
   q: z.string().min(1),
   repoId: z.string().uuid(),
@@ -18,21 +29,26 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: LessonListQuery },
     },
     async (request) => {
       const user = requireUser(request);
-      const where: Prisma.AgentLessonWhereInput =
+      const { includeConsolidated } = request.query;
+
+      const accessFilter: Prisma.AgentLessonWhereInput =
         user.role === 'ADMIN'
           ? {}
-          : {
-              repository: {
-                team: { memberships: { some: { userId: user.sub } } },
-              },
-            };
+          : { repository: { team: { memberships: { some: { userId: user.sub } } } } };
+
+      const where: Prisma.AgentLessonWhereInput = {
+        ...accessFilter,
+        ...(includeConsolidated ? {} : { consolidatedAt: null }),
+      };
 
       const lessons = await fastify.prisma.agentLesson.findMany({
         orderBy: { createdAt: 'desc' },
         select: {
+          consolidatedAt: true,
           createdAt: true,
           failureType: true,
           id: true,
@@ -58,7 +74,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { querystring: LessonSearchQuery },
     },
     async (request, reply) => {
-      const { q, repoId, limit } = request.query;
+      const { q, repoId, limit, includeConsolidated } = request.query;
 
       // Non-admins must be a member of the team that owns the repo they're searching
       const user = requireUser(request);
@@ -94,11 +110,43 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             { lessonSummary: { contains: q, mode: 'insensitive' } },
             { rationale: { contains: q, mode: 'insensitive' } },
           ],
+          ...(includeConsolidated ? {} : { consolidatedAt: null }),
           repoId,
         },
       });
 
       return { data: lessons };
+    }
+  );
+
+  // POST /api/v1/lessons/consolidate — Trigger lesson consolidation (ADMIN only)
+  app.post(
+    '/consolidate',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: ConsolidateBody },
+    },
+    async (request, reply) => {
+      const { repoId, minClusterSize, similarityThreshold } = request.body;
+
+      const repo = await fastify.prisma.repository.findUnique({
+        select: { id: true },
+        where: { id: repoId },
+      });
+      if (!repo) {
+        return reply.status(404).send({
+          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
+        });
+      }
+
+      const workflowId = `consolidate-lessons-${repoId}-${Date.now()}`;
+      await fastify.temporal.startConsolidationWorkflow(workflowId, {
+        minClusterSize,
+        repoId,
+        similarityThreshold,
+      });
+
+      return reply.status(202).send({ data: { workflowId } });
     }
   );
 

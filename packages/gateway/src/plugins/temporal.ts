@@ -1,4 +1,8 @@
-import type { EpicRequest, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type {
+  ConsolidateLessonsInput,
+  EpicRequest,
+  RepoWorkRequest,
+} from '@auto-swe/shared/types/workflow';
 import { Client, Connection } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
@@ -11,6 +15,10 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      startConsolidationWorkflow: (
+        workflowId: string,
+        input: ConsolidateLessonsInput
+      ) => Promise<void>;
       signalWorkflow: (workflowId: string, signalName: string, args?: unknown[]) => Promise<void>;
       cancelWorkflow: (workflowId: string) => Promise<void>;
     };
@@ -36,6 +44,18 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startConsolidationWorkflow(
+      workflowId: string,
+      input: ConsolidateLessonsInput
+    ): Promise<void> {
+      await client.workflow.start('ConsolidateLessonsWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '35 minutes',
+        workflowId,
+      });
     },
 
     async startEpicWorkflow(workflowId: string, request: EpicRequest): Promise<void> {

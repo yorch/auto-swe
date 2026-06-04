@@ -4,6 +4,8 @@ export {
   fetchCILogs,
 } from './ciFixLoop.js';
 export { commitToMemory } from './commitToMemory.js';
+export type { ConsolidateLessonsInput, ConsolidateLessonsResult } from './consolidateLessons.js';
+export { consolidateLessons } from './consolidateLessons.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export type {
   MergeBranchesInput,

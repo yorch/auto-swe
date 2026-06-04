@@ -98,6 +98,9 @@ model AgentLesson {
   failureType     String?         @map("failure_type")
   metadata        Json?
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  // Soft-delete: set when this lesson has been merged into a consolidated one.
+  // Active lessons always have consolidatedAt = null.
+  consolidatedAt  DateTime?       @map("consolidated_at") @db.Timestamptz
 
   @@map("agent_lessons")
 }

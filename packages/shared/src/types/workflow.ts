@@ -187,3 +187,20 @@ export interface DecompositionResult {
 
 export const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
 export type BudgetTier = (typeof BUDGET_TIERS)[number];
+
+// ── Lesson Consolidation ──
+
+export interface ConsolidateLessonsInput {
+  repoId: string;
+  /** Minimum cluster size to consolidate. Defaults to 3. */
+  minClusterSize?: number;
+  /** Cosine similarity threshold for grouping lessons. Defaults to 0.85. */
+  similarityThreshold?: number;
+}
+
+export interface ConsolidateLessonsResult {
+  clustersFound: number;
+  clustersConsolidated: number;
+  lessonsConsolidated: number;
+  lessonsCreated: number;
+}
