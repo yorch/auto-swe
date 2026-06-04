@@ -442,15 +442,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: UpsertModelRoleConfigSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const {
-        role,
-        scope,
-        teamId,
-        workflowTemplateId,
-        modelSpec,
-        credentialId,
-        systemPrompt,
-      } = request.body;
+      const { role, scope, teamId, workflowTemplateId, modelSpec, credentialId, systemPrompt } =
+        request.body;
 
       // Pinned credentials must reference an existing row.
       if (credentialId) {
