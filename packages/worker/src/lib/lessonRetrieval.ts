@@ -36,6 +36,7 @@ export async function retrieveSimilarLessons(
     FROM agent_lessons
     WHERE repo_id = $2::uuid
       AND embedding IS NOT NULL
+      AND consolidated_at IS NULL
       AND 1 - (embedding <=> $1::vector) >= $3
     ORDER BY embedding <=> $1::vector ASC
     LIMIT $4`,

@@ -214,6 +214,29 @@ export async function resolveWorkflowDefaults(): Promise<ResolvedWorkflowDefault
   };
 }
 
+// ─── Consolidation schedule ───────────────────────────────────────────────────
+
+export interface ResolvedConsolidationConfig {
+  /// Whether the Temporal Schedule should be active (unpaused).
+  enabled: boolean;
+  /// Standard cron expression (5-field) for when to run consolidation.
+  cronExpression: string;
+  /// Minimum cluster size below which no consolidation is performed.
+  minClusterSize: number;
+  /// Cosine similarity threshold for grouping lessons into a cluster.
+  similarityThreshold: number;
+}
+
+export async function resolveConsolidationConfig(): Promise<ResolvedConsolidationConfig> {
+  const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
+  return {
+    cronExpression: row?.consolidationCron ?? '0 3 * * 0',
+    enabled: row?.consolidationEnabled ?? true,
+    minClusterSize: row?.consolidationMinClusterSize ?? 3,
+    similarityThreshold: row?.consolidationSimilarityThreshold ?? 0.85,
+  };
+}
+
 // ─── Google OAuth ─────────────────────────────────────────────────────────────
 
 export interface ResolvedGoogleOAuthConfig {

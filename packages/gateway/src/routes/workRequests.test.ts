@@ -60,9 +60,17 @@ describe('POST /api/v1/work-requests', () => {
     } as unknown as never);
     app.decorate('temporal', {
       cancelWorkflow: async () => {},
+      getConsolidationScheduleStatus: async () => ({
+        exists: false,
+        nextRunAt: null,
+        paused: false,
+      }),
       signalWorkflow: async () => {},
+      startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
       startRunnableWorkflow: async () => {},
+      syncConsolidationSchedule: async () => {},
+      triggerConsolidationNow: async () => {},
     });
 
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });

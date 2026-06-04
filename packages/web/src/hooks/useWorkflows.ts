@@ -401,6 +401,7 @@ export interface CreateRepoBody {
   githubApiUrl?: string;
 }
 export interface UpdateRepoBody {
+  consolidationEnabled?: boolean;
   defaultBranch?: string;
   description?: string | null;
   executorImage?: string | null;

@@ -309,8 +309,12 @@ export async function retrieveSimilarLessons(
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
 | Workflow completes (success or failure) | Memory Agent summarizes workflow → `generateEmbedding(summary)` → INSERT into `agent_lessons`                            | `commitToMemory` activity                  |
 | Human rejects PR with feedback          | Feedback text → `generateEmbedding(feedback)` → INSERT into `agent_lessons` with `failureType: 'REVIEW_REJECTION'`       | Gateway webhook handler                    |
-| Context Validator runs                  | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons` → inject into `ContextSnapshot.historicalLessons` | `executeImplementation` activity           |
+| Context Validator runs                  | `generateEmbedding(successCriteria.join(' '))` → query `agent_lessons WHERE consolidated_at IS NULL` → top-5 injected into implementer system prompt | `executeImplementation` activity |
+| Scheduled consolidation runs            | Cluster active lessons by cosine similarity → LLM synthesizes cluster → `generateEmbedding(consolidated summary)` → INSERT consolidated row, UPDATE originals `SET consolidated_at = now()` | `consolidateLessons` activity via `ScheduledConsolidationWorkflow` |
+| Admin triggers consolidation            | Same as above, for a single repo on demand                                                                               | Gateway `POST /api/v1/lessons/consolidate` |
 | Admin deletes lesson                    | DELETE from `agent_lessons` WHERE id = :id (embedding removed with row)                                                  | Gateway API (`DELETE /api/v1/lessons/:id`) |
+
+**Note:** `agent_lessons` rows with a non-null `consolidated_at` are soft-deleted — kept for audit but excluded from all retrieval queries. The `metadata.consolidatedFrom` JSON array records the source row IDs. See `docs/workflow-and-activities.md §5` for the full consolidation architecture.
 
 ## 3. Security, Guardrails, & Workspace Isolation
 

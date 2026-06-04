@@ -152,6 +152,26 @@ You MUST respond with valid JSON matching this schema:
   "metadata": { any additional structured data }
 }`;
 
+export const LESSON_CONSOLIDATOR_PROMPT = `You are a Memory Consolidator. You receive a cluster of similar lessons learned from past engineering workflows on the same repository. Your job is to synthesize them into one or two generalised, actionable lessons that capture the shared insight without losing important nuance.
+
+Rules:
+- Produce the minimum number of lessons needed (prefer one unless the cluster clearly covers two distinct root causes)
+- Keep lessons concrete and actionable — not vague platitudes
+- Prefer the most specific version of a lesson over a vague generalisation
+- If all lessons share the same failureType, preserve it; otherwise set failureType to null
+- The output must strictly follow the JSON schema below
+
+You MUST respond with valid JSON matching this schema:
+{
+  "lessons": [
+    {
+      "rationale": "Why this consolidated lesson matters (1-2 sentences)",
+      "lessonSummary": "The actionable lesson (2-4 sentences, specific and concrete)",
+      "failureType": "CI_FAILURE" | "REVIEW_REJECTION" | "SECURITY_VIOLATION" | "MERGE_CONFLICT" | null
+    }
+  ]
+}`;
+
 export const CI_FIX_SYSTEM_PROMPT = `You are a highly constrained CI Fix Engineer operating within an isolated repository environment.
 
 Your previous code passed local tests but failed the CI/CD pipeline. You must analyze the CI logs and fix the failures.

@@ -58,6 +58,7 @@ describe('RepositoryFormModal — edit', () => {
     const onClose = vi.fn();
     const repo = {
       _count: { activeWorkflows: 0 },
+      consolidationEnabled: true,
       defaultBranch: 'main',
       description: 'old description',
       executorImage: 'node:24-alpine',

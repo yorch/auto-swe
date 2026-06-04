@@ -93,6 +93,7 @@ export interface RepositorySummary {
   repoName: string;
   defaultBranch: string;
   isActive: boolean;
+  consolidationEnabled: boolean;
   executorImage: string | null;
   language: string | null;
   description: string | null;

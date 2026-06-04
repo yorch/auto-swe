@@ -1,6 +1,6 @@
 # Workflow & Activity Implementations
 
-> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, and memory commit described here are implemented under `packages/worker/`.
+> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, memory commit, and lesson consolidation described here are implemented under `packages/worker/`.
 >
 > **Two implementation drifts to keep in mind while reading:**
 >
@@ -654,3 +654,77 @@ export async function notifyHumanGate(
   });
 }
 ```
+
+## 5. Lesson Memory System
+
+The lesson memory system implements an **offline dreaming** pattern inspired by the Auto-Dreamer paper (arXiv:2605.20616). Lessons flow through three stages:
+
+```
+Workflow completes
+  → commitToMemory activity          — LLM summarizes outcome → embedding → INSERT agent_lessons
+  → (or) recordLessonDirectly        — direct write for activities that already know what happened
+  → (or) recordLessonBackground      — fire-and-forget variant, 5s timeout
+
+Next workflow starts for same repo
+  → retrieveSimilarLessons           — embed work description → cosine search → top-5 injected
+                                       into implementer system prompt
+
+Weekly (scheduled, all opted-in repos)
+  → ScheduledConsolidationWorkflow   — fan-out: one ConsolidateLessonsWorkflow child per repo
+  → ConsolidateLessonsWorkflow       — cluster by cosine similarity → LLM synthesize cluster
+                                       → INSERT consolidated rows → soft-delete originals
+```
+
+### `commitToMemory` activity
+
+Called at the end of every engineering workflow as a `COMMIT_TO_MEMORY` step in the workflow spec. Uses the `memory-summarizer` agent to produce a `lessonSummary`, `rationale`, and optional `failureType` (one of `CI_FAILURE`, `REVIEW_REJECTION`, `SECURITY_VIOLATION`, `MERGE_CONFLICT`). Inserts one row into `agent_lessons` via raw SQL (Prisma doesn't model `vector(1536)` natively).
+
+### `consolidateLessons` activity
+
+On-demand or scheduled consolidation for a single repo:
+
+1. Fetches all active (`consolidated_at IS NULL`) lessons with their raw embeddings
+2. Pre-computes L2 norms, then runs greedy single-linkage clustering using cosine similarity (default threshold 0.85, min cluster size 3)
+3. For each qualifying cluster — **in parallel** — calls the `lesson-consolidator` LLM agent to synthesize 1–2 generalised lessons
+4. Generates fresh embeddings for the consolidated lessons (before opening a transaction)
+5. Within a single `prisma.$transaction`: INSERTs consolidated rows (with `metadata.consolidatedFrom` for provenance) and soft-deletes source rows by setting `consolidated_at = now()`
+
+**Soft-delete semantics:** original rows are kept for audit. Retrieval (`retrieveSimilarLessons`) and the admin lesson list both filter `consolidated_at IS NULL` by default. Pass `?includeConsolidated=true` to the list endpoint to surface the full history.
+
+### `ScheduledConsolidationWorkflow`
+
+A Temporal workflow started by the Temporal Schedule (ID: `auto-swe-lesson-consolidation`). It:
+
+1. Calls `getReposForConsolidation` activity → list of repos where `consolidationEnabled = true AND isActive = true`
+2. Uses `startChild` to spawn one `ConsolidateLessonsWorkflow` per repo concurrently (each isolated — one failure doesn't abort others)
+3. Awaits all child results and returns aggregate stats
+
+### Temporal Schedule lifecycle
+
+The Temporal Schedule is managed by the gateway:
+
+- **On startup:** `resolveConsolidationConfig()` → `temporal.syncConsolidationSchedule()` — creates or updates the schedule to match DB config. Best-effort; Temporal unavailability logs a warning and doesn't crash the gateway.
+- **On admin save** (`PUT /api/v1/admin/config/consolidation`): immediately syncs the schedule with the new config.
+- **Manual trigger** (`POST /api/v1/admin/config/consolidation/trigger`): fires one immediate run via `handle.trigger(ALLOW_ALL)`.
+
+Schedule config is stored in `workflow_defaults` (singleton row, id=`'default'`) alongside branch prefix and PR templates. Fields:
+
+| DB column | Default | Meaning |
+|---|---|---|
+| `consolidation_enabled` | `true` | Whether the schedule is active (unpaused) |
+| `consolidation_cron` | `0 3 * * 0` | Cron expression — default: Sundays 03:00 UTC |
+| `consolidation_min_cluster_size` | `3` | Minimum lessons per cluster |
+| `consolidation_similarity_threshold` | `0.85` | Cosine similarity threshold |
+
+### Per-repo opt-out
+
+Each `Repository` row has `consolidation_enabled BOOLEAN DEFAULT true`. Set to `false` via the repository edit form (PATCH `/api/v1/repositories/:id`) to exclude a repo from scheduled runs. On-demand consolidation via `POST /api/v1/lessons/consolidate` always runs regardless of this flag.
+
+### Admin UI
+
+`/admin/workflow` → "Lesson consolidation" card:
+- Enable/disable toggle (pauses/unpauses the Temporal Schedule)
+- Cron expression input
+- Min cluster size + similarity threshold inputs
+- "Run now" button (triggers schedule immediately; disabled until schedule exists)
+- Next scheduled run time (live from Temporal)
