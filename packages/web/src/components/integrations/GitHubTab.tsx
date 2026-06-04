@@ -6,25 +6,25 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
 import {
   type GitHubConfigInput,
+  testGitHubConnection,
   useGitHubConfig,
-  useTestGitHubConnection,
   useUpdateGitHubConfig,
 } from '@/hooks/useAdminConfig';
 import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
+import { UrlRow } from './UrlRow';
 
-const WEBHOOK_URL = `${API_BASE}/api/v1/webhooks/git`;
-const CI_WEBHOOK_URL = `${API_BASE}/api/v1/webhooks/ci`;
-const GITHUB_OAUTH_CALLBACK = `${API_BASE}/api/auth/github/callback`;
+function errMsg(err: unknown, fallback = 'Request failed'): string {
+  return err instanceof Error ? err.message : fallback;
+}
 
 export function GitHubTab() {
   const { data: resp, isLoading } = useGitHubConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateGitHubConfig();
-  const testConn = useTestGitHubConnection();
 
   const [token, setToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
@@ -36,7 +36,12 @@ export function GitHubTab() {
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
+  const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
+  const githubOauthCallback = `${API_BASE}/api/auth/github/callback`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,12 +83,15 @@ export function GitHubTab() {
   };
 
   const handleTest = async () => {
+    setTesting(true);
     setTestResult(null);
     try {
-      const res = await testConn.mutateAsync();
+      const res = await testGitHubConnection();
       setTestResult(res);
     } catch (err) {
-      setTestResult({ detail: err instanceof Error ? err.message : 'Request failed', ok: false });
+      setTestResult({ detail: errMsg(err), ok: false });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -119,8 +127,8 @@ export function GitHubTab() {
           <div className="space-y-2 pt-1">
             <div className="text-xs uppercase text-paper-500">Webhook endpoints</div>
             <div className="space-y-1.5">
-              <WebhookUrlRow label="PR / merge events" url={WEBHOOK_URL} />
-              <WebhookUrlRow label="CI check runs" url={CI_WEBHOOK_URL} />
+              <UrlRow label="PR / merge events" url={webhookUrl} />
+              <UrlRow label="CI check runs" url={ciWebhookUrl} />
             </div>
             <p className="text-[11px] text-paper-600">
               Register both URLs in your GitHub repository or organization webhook settings. Use
@@ -131,13 +139,13 @@ export function GitHubTab() {
 
         <div className="mt-4 flex justify-end">
           <Button
-            disabled={testConn.isPending || (!data?.token && !token)}
+            disabled={testing || (!data?.token && !token)}
             onClick={handleTest}
             size="sm"
             type="button"
             variant="secondary"
           >
-            {testConn.isPending ? 'Testing…' : 'Test connection'}
+            {testing ? 'Testing…' : 'Test connection'}
           </Button>
         </div>
 
@@ -242,9 +250,9 @@ export function GitHubTab() {
             <div className="text-xs uppercase text-paper-500">OAuth callback URL</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
-                {GITHUB_OAUTH_CALLBACK}
+                {githubOauthCallback}
               </code>
-              <CopyButton value={GITHUB_OAUTH_CALLBACK} />
+              <CopyButton value={githubOauthCallback} />
             </div>
             <p className="text-[11px] text-paper-600">
               Add this as the Authorization callback URL in your GitHub OAuth App settings.
@@ -263,17 +271,5 @@ export function GitHubTab() {
         </Button>
       </div>
     </form>
-  );
-}
-
-function WebhookUrlRow({ label, url }: { label: string; url: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-28 shrink-0 text-[11px] text-paper-500">{label}</span>
-      <code className="min-w-0 flex-1 truncate rounded-sm border border-ink-700 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
-        {url}
-      </code>
-      <CopyButton value={url} />
-    </div>
   );
 }

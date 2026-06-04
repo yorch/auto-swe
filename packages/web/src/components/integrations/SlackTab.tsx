@@ -3,28 +3,27 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { CopyButton } from '@/components/ui/CopyButton';
 import {
   type SlackConfigInput,
+  testSlackConnection,
   useSlackConfig,
-  useTestSlackConnection,
   useUpdateSlackConfig,
 } from '@/hooks/useAdminConfig';
 import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
+import { UrlRow } from './UrlRow';
 
-const SLACK_REDIRECT_URI = `${API_BASE}/api/auth/slack/callback`;
-const SLACK_EVENT_URL = `${API_BASE}/api/v1/webhooks/slack/events`;
-const SLACK_INTERACTIVITY_URL = `${API_BASE}/api/v1/webhooks/slack/interactivity`;
+function errMsg(err: unknown, fallback = 'Request failed'): string {
+  return err instanceof Error ? err.message : fallback;
+}
 
 export function SlackTab() {
   const { data: resp, isLoading } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateSlackConfig();
-  const testConn = useTestSlackConnection();
 
   const [botToken, setBotToken] = useState('');
   const [clientId, setClientId] = useState('');
@@ -34,7 +33,12 @@ export function SlackTab() {
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const slackRedirectUri = `${API_BASE}/api/auth/slack/callback`;
+  const slackEventUrl = `${API_BASE}/api/v1/webhooks/slack/events`;
+  const slackInteractivityUrl = `${API_BASE}/api/v1/webhooks/slack/interactivity`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,12 +74,15 @@ export function SlackTab() {
   };
 
   const handleTest = async () => {
+    setTesting(true);
     setTestResult(null);
     try {
-      const res = await testConn.mutateAsync();
+      const res = await testSlackConnection();
       setTestResult(res);
     } catch (err) {
-      setTestResult({ detail: err instanceof Error ? err.message : 'Request failed', ok: false });
+      setTestResult({ detail: errMsg(err), ok: false });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -144,13 +151,13 @@ export function SlackTab() {
 
         <div className="mt-4 flex justify-end">
           <Button
-            disabled={testConn.isPending || (!data?.botToken && !botToken)}
+            disabled={testing || (!data?.botToken && !botToken)}
             onClick={handleTest}
             size="sm"
             type="button"
             variant="secondary"
           >
-            {testConn.isPending ? 'Testing…' : 'Test connection'}
+            {testing ? 'Testing…' : 'Test connection'}
           </Button>
         </div>
 
@@ -169,9 +176,9 @@ export function SlackTab() {
           Add these in your Slack App settings under OAuth &amp; Permissions / Event Subscriptions.
         </p>
         <div className="space-y-3">
-          <SlackUrlRow label="OAuth redirect URI" url={SLACK_REDIRECT_URI} />
-          <SlackUrlRow label="Event subscriptions" url={SLACK_EVENT_URL} />
-          <SlackUrlRow label="Interactivity" url={SLACK_INTERACTIVITY_URL} />
+          <UrlRow label="OAuth redirect URI" url={slackRedirectUri} />
+          <UrlRow label="Event subscriptions" url={slackEventUrl} />
+          <UrlRow label="Interactivity" url={slackInteractivityUrl} />
         </div>
       </Card>
 
@@ -185,17 +192,5 @@ export function SlackTab() {
         </Button>
       </div>
     </form>
-  );
-}
-
-function SlackUrlRow({ label, url }: { label: string; url: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-36 shrink-0 text-[11px] text-paper-500">{label}</span>
-      <code className="min-w-0 flex-1 truncate rounded-sm border border-ink-700 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
-        {url}
-      </code>
-      <CopyButton value={url} />
-    </div>
   );
 }

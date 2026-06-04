@@ -81,6 +81,13 @@ function src(dbPresent: boolean, envKey: string): ConfigSource {
   return null;
 }
 
+/// Builds the list of field names that were provided in a PUT body.
+/// Pairs are [fieldName, value]; a field is included when its value is truthy
+/// (secrets) or !== undefined (clearable non-secret fields like oauthClientId).
+function changedKeys(pairs: [string, unknown][]): string[] {
+  return pairs.filter(([, v]) => v !== undefined && v !== '' && v !== null).map(([k]) => k);
+}
+
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const GitHubPutBody = z.object({
@@ -194,31 +201,34 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
-      // Audit: log which fields changed (no plaintext secrets)
-      const changedFields = [
-        ...(token ? ['token'] : []),
-        ...(webhookSecret ? ['webhookSecret'] : []),
-        ...(oauthClientId !== undefined ? ['oauthClientId'] : []),
-        ...(oauthClientSecret ? ['oauthClientSecret'] : []),
-        ...(apiUrl !== undefined ? ['apiUrl'] : []),
-        ...(baseUrl !== undefined ? ['baseUrl'] : []),
-      ];
+      const changedFields = changedKeys([
+        ['token', token],
+        ['webhookSecret', webhookSecret],
+        ['oauthClientId', oauthClientId],
+        ['oauthClientSecret', oauthClientSecret],
+        ['apiUrl', apiUrl],
+        ['baseUrl', baseUrl],
+      ]);
       if (changedFields.length > 0) {
         const actor = requireUser(req);
-        await prisma.configAuditLog.create({
-          data: {
-            action: existing ? 'UPDATE' : 'CREATE',
-            actorId: actor.sub,
-            afterJson: {
-              apiUrl: row.apiUrl,
-              baseUrl: row.baseUrl,
-              changedFields,
-              oauthClientId: row.oauthClientId,
-            } as never,
-            entityId: SYSTEM_CONFIG_IDS.github,
-            entityType: 'GitHubConfig',
-          },
-        });
+        try {
+          await prisma.configAuditLog.create({
+            data: {
+              action: existing ? 'UPDATE' : 'CREATE',
+              actorId: actor.sub,
+              afterJson: {
+                apiUrl: row.apiUrl,
+                baseUrl: row.baseUrl,
+                changedFields,
+                oauthClientId: row.oauthClientId,
+              } as never,
+              entityId: SYSTEM_CONFIG_IDS.github,
+              entityType: 'GitHubConfig',
+            },
+          });
+        } catch (auditErr) {
+          fastify.log.warn({ err: auditErr }, 'Failed to write GitHubConfig audit log');
+        }
       }
 
       return reply.send({
@@ -311,23 +321,27 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
-      const changedFields = [
-        ...(botToken ? ['botToken'] : []),
-        ...(clientId !== undefined ? ['clientId'] : []),
-        ...(clientSecret ? ['clientSecret'] : []),
-        ...(signingSecret ? ['signingSecret'] : []),
-      ];
+      const changedFields = changedKeys([
+        ['botToken', botToken],
+        ['clientId', clientId],
+        ['clientSecret', clientSecret],
+        ['signingSecret', signingSecret],
+      ]);
       if (changedFields.length > 0) {
         const actor = requireUser(req);
-        await prisma.configAuditLog.create({
-          data: {
-            action: existing ? 'UPDATE' : 'CREATE',
-            actorId: actor.sub,
-            afterJson: { changedFields, clientId: row.clientId } as never,
-            entityId: SYSTEM_CONFIG_IDS.slack,
-            entityType: 'SlackConfig',
-          },
-        });
+        try {
+          await prisma.configAuditLog.create({
+            data: {
+              action: existing ? 'UPDATE' : 'CREATE',
+              actorId: actor.sub,
+              afterJson: { changedFields, clientId: row.clientId } as never,
+              entityId: SYSTEM_CONFIG_IDS.slack,
+              entityType: 'SlackConfig',
+            },
+          });
+        } catch (auditErr) {
+          fastify.log.warn({ err: auditErr }, 'Failed to write SlackConfig audit log');
+        }
       }
 
       return reply.send({
@@ -453,36 +467,40 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
-      const changedFields = [
-        ...(backend !== undefined ? ['backend'] : []),
-        ...(s3Bucket !== undefined ? ['s3Bucket'] : []),
-        ...(s3Region !== undefined ? ['s3Region'] : []),
-        ...(s3Endpoint !== undefined ? ['s3Endpoint'] : []),
-        ...(s3Prefix !== undefined ? ['s3Prefix'] : []),
-        ...(s3ForcePathStyle !== undefined ? ['s3ForcePathStyle'] : []),
-        ...(awsAccessKeyId !== undefined ? ['awsAccessKeyId'] : []),
-        ...(awsSecretAccessKey ? ['awsSecretAccessKey'] : []),
-      ];
+      const changedFields = changedKeys([
+        ['backend', backend],
+        ['s3Bucket', s3Bucket],
+        ['s3Region', s3Region],
+        ['s3Endpoint', s3Endpoint],
+        ['s3Prefix', s3Prefix],
+        ['s3ForcePathStyle', s3ForcePathStyle],
+        ['awsAccessKeyId', awsAccessKeyId],
+        ['awsSecretAccessKey', awsSecretAccessKey],
+      ]);
       if (changedFields.length > 0) {
         const actor = requireUser(req);
-        await prisma.configAuditLog.create({
-          data: {
-            action: existing ? 'UPDATE' : 'CREATE',
-            actorId: actor.sub,
-            afterJson: {
-              awsAccessKeyId: row.awsAccessKeyId,
-              backend: row.backend,
-              changedFields,
-              s3Bucket: row.s3Bucket,
-              s3Endpoint: row.s3Endpoint,
-              s3ForcePathStyle: row.s3ForcePathStyle,
-              s3Prefix: row.s3Prefix,
-              s3Region: row.s3Region,
-            } as never,
-            entityId: SYSTEM_CONFIG_IDS.storage,
-            entityType: 'StorageConfig',
-          },
-        });
+        try {
+          await prisma.configAuditLog.create({
+            data: {
+              action: existing ? 'UPDATE' : 'CREATE',
+              actorId: actor.sub,
+              afterJson: {
+                awsAccessKeyId: row.awsAccessKeyId,
+                backend: row.backend,
+                changedFields,
+                s3Bucket: row.s3Bucket,
+                s3Endpoint: row.s3Endpoint,
+                s3ForcePathStyle: row.s3ForcePathStyle,
+                s3Prefix: row.s3Prefix,
+                s3Region: row.s3Region,
+              } as never,
+              entityId: SYSTEM_CONFIG_IDS.storage,
+              entityType: 'StorageConfig',
+            },
+          });
+        } catch (auditErr) {
+          fastify.log.warn({ err: auditErr }, 'Failed to write StorageConfig audit log');
+        }
       }
 
       return reply.send({
@@ -519,16 +537,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
       const endpoint = config.s3Endpoint;
       const region = config.s3Region ?? 'us-east-1';
-      const url =
-        endpoint && config.s3ForcePathStyle
-          ? `${endpoint}/${config.s3Bucket}`
-          : endpoint
-            ? `${endpoint}/${config.s3Bucket}`
-            : `https://${config.s3Bucket}.s3.${region}.amazonaws.com/`;
+      const url = endpoint
+        ? `${endpoint}/${config.s3Bucket}`
+        : `https://${config.s3Bucket}.s3.${region}.amazonaws.com/`;
 
       try {
+        // Use GET rather than HEAD — some S3-compatible services (MinIO, R2) return
+        // 405 for HEAD on bucket paths, masking real reachability.
         const res = await fetch(url, {
-          method: 'HEAD',
+          method: 'GET',
           signal: AbortSignal.timeout(8_000),
         });
         // 403 / 400 → endpoint reachable, auth error (expected without signed request)
@@ -613,21 +630,25 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         where: { id: 'default' },
       });
 
-      const changedFields = [
-        ...(clientId !== undefined ? ['clientId'] : []),
-        ...(clientSecret ? ['clientSecret'] : []),
-      ];
+      const changedFields = changedKeys([
+        ['clientId', clientId],
+        ['clientSecret', clientSecret],
+      ]);
       if (changedFields.length > 0) {
         const actor = requireUser(req);
-        await prisma.configAuditLog.create({
-          data: {
-            action: existing ? 'UPDATE' : 'CREATE',
-            actorId: actor.sub,
-            afterJson: { changedFields, clientId: row.clientId } as never,
-            entityId: SYSTEM_CONFIG_IDS.googleOAuth,
-            entityType: 'GoogleOAuthConfig',
-          },
-        });
+        try {
+          await prisma.configAuditLog.create({
+            data: {
+              action: existing ? 'UPDATE' : 'CREATE',
+              actorId: actor.sub,
+              afterJson: { changedFields, clientId: row.clientId } as never,
+              entityId: SYSTEM_CONFIG_IDS.googleOAuth,
+              entityType: 'GoogleOAuthConfig',
+            },
+          });
+        } catch (auditErr) {
+          fastify.log.warn({ err: auditErr }, 'Failed to write GoogleOAuthConfig audit log');
+        }
       }
 
       return reply.send({
@@ -656,17 +677,17 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     const actors =
       actorIds.length > 0
         ? await prisma.user.findMany({
-            select: { email: true, id: true, name: true },
+            select: { email: true, id: true },
             where: { id: { in: actorIds } },
           })
         : [];
-    const actorMap = new Map(actors.map((a) => [a.id, a]));
+    const actorMap = new Map(actors.map((a) => [a.id, a.email]));
 
     return reply.send({
       data: entries.map((e) => ({
         ...e,
-        actorEmail: e.actorId ? (actorMap.get(e.actorId)?.email ?? null) : null,
-        actorName: e.actorId ? (actorMap.get(e.actorId)?.name ?? null) : null,
+        actorEmail: e.actorId ? (actorMap.get(e.actorId) ?? null) : null,
+        createdAt: e.createdAt.toISOString(),
       })),
     });
   });

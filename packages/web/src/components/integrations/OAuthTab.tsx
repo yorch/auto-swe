@@ -14,8 +14,6 @@ import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 
-const GOOGLE_OAUTH_CALLBACK = `${API_BASE}/api/auth/google/callback`;
-
 export function OAuthTab() {
   const { data: resp, isLoading } = useGoogleOAuthConfig();
   const data = resp?.data;
@@ -24,6 +22,8 @@ export function OAuthTab() {
 
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+
+  const googleOauthCallback = `${API_BASE}/api/auth/google/callback`;
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -102,9 +102,9 @@ export function OAuthTab() {
             <div className="text-xs uppercase text-paper-500">OAuth callback URL</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
-                {GOOGLE_OAUTH_CALLBACK}
+                {googleOauthCallback}
               </code>
-              <CopyButton value={GOOGLE_OAUTH_CALLBACK} />
+              <CopyButton value={googleOauthCallback} />
             </div>
             <p className="text-[11px] text-paper-600">
               Add this as an Authorized redirect URI in your Google Cloud OAuth 2.0 Client settings.

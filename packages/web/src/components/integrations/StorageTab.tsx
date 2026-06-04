@@ -6,8 +6,8 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
   type StorageBackend,
   type StorageConfigInput,
+  testStorageConnection,
   useStorageConfig,
-  useTestStorageConnection,
   useUpdateStorageConfig,
 } from '@/hooks/useAdminConfig';
 import { SecretInput } from './SecretInput';
@@ -18,7 +18,6 @@ export function StorageTab() {
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateStorageConfig();
-  const testConn = useTestStorageConnection();
 
   const [backend, setBackend] = useState<StorageBackend>('inline');
   const [s3Bucket, setS3Bucket] = useState('');
@@ -31,6 +30,7 @@ export function StorageTab() {
 
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
   // Seed form from loaded data (once)
@@ -86,12 +86,15 @@ export function StorageTab() {
   };
 
   const handleTest = async () => {
+    setTesting(true);
     setTestResult(null);
     try {
-      const res = await testConn.mutateAsync();
+      const res = await testStorageConnection();
       setTestResult(res);
     } catch (err) {
       setTestResult({ detail: err instanceof Error ? err.message : 'Request failed', ok: false });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -281,13 +284,13 @@ export function StorageTab() {
 
           <div className="mt-4 flex justify-end">
             <Button
-              disabled={testConn.isPending || !data?.s3Bucket}
+              disabled={testing || !data?.s3Bucket}
               onClick={handleTest}
               size="sm"
               type="button"
               variant="secondary"
             >
-              {testConn.isPending ? 'Testing…' : 'Test connection'}
+              {testing ? 'Testing…' : 'Test connection'}
             </Button>
           </div>
 

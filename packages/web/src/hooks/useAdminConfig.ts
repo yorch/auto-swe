@@ -18,6 +18,8 @@ export type ConfigSource = 'db' | 'env' | null;
 
 export type ConfigSources<K extends string> = Partial<Record<K, ConfigSource>>;
 
+export type ConfigResponse<T> = { data: T; sources: ConfigSources<keyof T & string> };
+
 // ── GitHub config ──
 
 export interface GitHubConfig {
@@ -39,14 +41,9 @@ export interface GitHubConfigInput {
   apiUrl?: string;
 }
 
-export interface GitHubConfigResponse {
-  data: GitHubConfig;
-  sources: ConfigSources<keyof GitHubConfig>;
-}
-
 export function useGitHubConfig() {
   return useQuery({
-    queryFn: () => api.get<GitHubConfigResponse>('/api/v1/admin/config/github'),
+    queryFn: () => api.get<ConfigResponse<GitHubConfig>>('/api/v1/admin/config/github'),
     queryKey: ['admin-config-github'],
   });
 }
@@ -63,11 +60,8 @@ export function useUpdateGitHubConfig() {
   });
 }
 
-export function useTestGitHubConnection() {
-  return useMutation({
-    mutationFn: () =>
-      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/github/test', {}),
-  });
+export function testGitHubConnection() {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/github/test', {});
 }
 
 // ── Slack config ──
@@ -87,14 +81,9 @@ export interface SlackConfigInput {
   signingSecret?: string;
 }
 
-export interface SlackConfigResponse {
-  data: SlackConfig;
-  sources: ConfigSources<keyof SlackConfig>;
-}
-
 export function useSlackConfig() {
   return useQuery({
-    queryFn: () => api.get<SlackConfigResponse>('/api/v1/admin/config/slack'),
+    queryFn: () => api.get<ConfigResponse<SlackConfig>>('/api/v1/admin/config/slack'),
     queryKey: ['admin-config-slack'],
   });
 }
@@ -111,11 +100,8 @@ export function useUpdateSlackConfig() {
   });
 }
 
-export function useTestSlackConnection() {
-  return useMutation({
-    mutationFn: () =>
-      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/slack/test', {}),
-  });
+export function testSlackConnection() {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/slack/test', {});
 }
 
 // ── Storage config ──
@@ -144,14 +130,9 @@ export interface StorageConfigInput {
   awsSecretAccessKey?: string;
 }
 
-export interface StorageConfigResponse {
-  data: StorageConfig;
-  sources: ConfigSources<keyof StorageConfig>;
-}
-
 export function useStorageConfig() {
   return useQuery({
-    queryFn: () => api.get<StorageConfigResponse>('/api/v1/admin/config/storage'),
+    queryFn: () => api.get<ConfigResponse<StorageConfig>>('/api/v1/admin/config/storage'),
     queryKey: ['admin-config-storage'],
   });
 }
@@ -165,11 +146,8 @@ export function useUpdateStorageConfig() {
   });
 }
 
-export function useTestStorageConnection() {
-  return useMutation({
-    mutationFn: () =>
-      api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/storage/test', {}),
-  });
+export function testStorageConnection() {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/storage/test', {});
 }
 
 // ── Workflow defaults ──
@@ -220,14 +198,9 @@ export interface GoogleOAuthConfigInput {
   clientSecret?: string;
 }
 
-export interface GoogleOAuthConfigResponse {
-  data: GoogleOAuthConfig;
-  sources: ConfigSources<keyof GoogleOAuthConfig>;
-}
-
 export function useGoogleOAuthConfig() {
   return useQuery({
-    queryFn: () => api.get<GoogleOAuthConfigResponse>('/api/v1/admin/config/oauth/google'),
+    queryFn: () => api.get<ConfigResponse<GoogleOAuthConfig>>('/api/v1/admin/config/oauth/google'),
     queryKey: ['admin-config-oauth-google'],
   });
 }

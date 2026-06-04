@@ -1,6 +1,7 @@
 'use client';
 
 import { useConfigAuditLog } from '@/hooks/useAdminConfig';
+import { formatDate } from '@/lib/utils';
 
 const ACTION_COLORS = {
   CREATE: 'text-emerald-400',
@@ -17,17 +18,6 @@ const ENTITY_LABELS: Record<string, string> = {
   SlackConfig: 'Slack',
   StorageConfig: 'Storage',
 };
-
-function formatDate(iso: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: 'short',
-    second: '2-digit',
-    year: 'numeric',
-  }).format(new Date(iso));
-}
 
 function ChangedFields({ json }: { json: unknown }) {
   if (!json || typeof json !== 'object') {
@@ -85,7 +75,7 @@ export function AuditLogTab() {
             {entries.map((entry) => (
               <tr className="border-b border-ink-800 hover:bg-ink-800/50" key={entry.id}>
                 <td className="whitespace-nowrap px-3 py-2 font-mono text-paper-400">
-                  {formatDate(entry.createdAt)}
+                  {formatDate(entry.createdAt, { showSeconds: true })}
                 </td>
                 <td className="px-3 py-2 text-paper-300">
                   {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
@@ -96,9 +86,7 @@ export function AuditLogTab() {
                   {entry.action}
                 </td>
                 <td className="px-3 py-2 text-paper-400">
-                  {entry.actorEmail ??
-                    entry.actorName ??
-                    (entry.actorId ? entry.actorId.slice(0, 8) : '—')}
+                  {entry.actorEmail ?? (entry.actorId ? entry.actorId.slice(0, 8) : '—')}
                 </td>
                 <td className="px-3 py-2 font-mono">
                   <ChangedFields json={entry.afterJson} />
