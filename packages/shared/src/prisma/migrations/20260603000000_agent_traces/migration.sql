@@ -4,6 +4,7 @@ CREATE TABLE "agent_traces" (
     "run_id" UUID NOT NULL,
     "node_id" TEXT NOT NULL,
     "agent_role" TEXT NOT NULL,
+    "attempt" INTEGER NOT NULL DEFAULT 1,
     "seq" INTEGER NOT NULL,
     "type" TEXT NOT NULL,
     "tool_name" TEXT,
