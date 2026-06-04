@@ -153,4 +153,6 @@ You MUST respond with valid JSON matching this schema:
 export const ROLE_PROMPT_NOTES: Partial<Record<ModelRole, string>> = {
   REVIEWER:
     'This override replaces all three reviewer agent prompts (security, domain logic, performance) simultaneously.',
+  SECURITY_REVIEW:
+    'The model-spec and credential settings apply. System prompt override is not yet wired into the pre-commit security gate — only the model selection takes effect.',
 };

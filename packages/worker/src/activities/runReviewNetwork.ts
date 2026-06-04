@@ -17,6 +17,9 @@ export async function runReviewNetwork(
   heartbeat('starting review network');
   const tracer = new AgentTracer();
 
+  // Use '' as fallback so that when no DB/step-level prompt is set the empty
+  // string converts to undefined via `|| undefined`, causing each reviewer
+  // agent to fall back to its own hardcoded default prompt.
   const resolvedPrompt = await resolveSystemPrompt('reviewer', '', systemPromptOverride);
   const result = await runReview(codeResult, successCriteria, tracer, resolvedPrompt || undefined);
 

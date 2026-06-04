@@ -56,19 +56,12 @@ async function resolveModelConfigUncached(
 
   // Helper: check whether a row provides a systemPrompt value.
   const hasPrompt = (r: ModelRoleConfigWithCredential) => r.systemPrompt != null;
-  // Helper: check whether a row explicitly has the systemPrompt column (i.e.
-  // the DB returned it). A row where the property is absent (old mocks /
-  // migrated code without the column) is treated the same as "no prompt set
-  // at this scope — stop cascading." A row where the column exists but is
-  // null triggers a cascade to the next scope.
-  const hasSystemPromptColumn = (r: ModelRoleConfigWithCredential) => 'systemPrompt' in r;
 
   // Track whether we need to keep looking for a systemPrompt at lower scopes.
-  // We cascade to the next scope only when the current row has the column but
-  // its value is null (i.e. the operator deliberately left it unset at this
-  // scope). When the field is absent from the row object (old mocks / code
-  // predating the column), we treat it as "not set — stop cascading," so this
-  // feature is backwards-compatible and does not cause extra DB calls.
+  // We cascade when the current row has the column (systemPrompt !== undefined)
+  // but its value is null (operator left it unset at this scope).
+  // A row where the property is absent entirely (e.g. test mocks predating the
+  // migration) is treated as "stop cascading" — no extra DB calls.
   let needPromptCascade = false;
 
   // 1. Workflow template scope
@@ -87,7 +80,7 @@ async function resolveModelConfigUncached(
         systemPrompt = row.systemPrompt as string;
       } else {
         // Column present but null — cascade to lower scope for systemPrompt.
-        needPromptCascade = hasSystemPromptColumn(row);
+        needPromptCascade = row.systemPrompt !== undefined;
       }
     }
   }
@@ -112,7 +105,7 @@ async function resolveModelConfigUncached(
           systemPrompt = row.systemPrompt as string;
           needPromptCascade = false;
         } else {
-          needPromptCascade = hasSystemPromptColumn(row);
+          needPromptCascade = row.systemPrompt !== undefined;
         }
       }
     }
@@ -136,8 +129,8 @@ async function resolveModelConfigUncached(
         if (hasPrompt(globalRow)) {
           systemPrompt = globalRow.systemPrompt as string;
         } else if (needPromptCascade) {
-          // We're cascading but this row has no prompt — mark as exhausted.
-          needPromptCascade = hasSystemPromptColumn(globalRow);
+          // Column absent from row (pre-migration mock) — mark cascade exhausted.
+          needPromptCascade = globalRow.systemPrompt !== undefined;
         }
       }
     }
