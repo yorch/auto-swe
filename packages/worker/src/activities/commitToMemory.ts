@@ -2,6 +2,8 @@ import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
+import { currentActivityType, currentWorkflowRunId } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
@@ -64,6 +66,9 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
     throw new Error(`Workflow not found: ${temporalWorkflowId}`);
   }
 
+  const agentTracer = new AgentTracer();
+  const start = Date.now();
+
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
     instructions: MEMORY_SUMMARIZER_PROMPT,
@@ -106,7 +111,17 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
   }
   const lesson = result.object as z.infer<typeof LessonOutputSchema>;
 
-  return writeAgentLessonRow({
+  agentTracer.addLlmResponse({
+    durationMs: Date.now() - start,
+    outputJson: {
+      failureType: lesson.failureType,
+      lessonSummary: lesson.lessonSummary,
+      rationale: lesson.rationale,
+    },
+    role: 'commitToMemory',
+  });
+
+  const lessonId = await writeAgentLessonRow({
     failureType: lesson.failureType,
     lessonSummary: lesson.lessonSummary,
     metadata: lesson.metadata,
@@ -114,6 +129,15 @@ export async function commitToMemory(temporalWorkflowId: string, repoId: string)
     repoId,
     workflowId: workflow.id,
   });
+
+  agentTracer.addActivityEvent({
+    name: 'memory.lesson_written',
+    outputJson: { failureType: lesson.failureType, lessonId },
+  });
+
+  await agentTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'commitToMemory');
+
+  return lessonId;
 }
 
 /**

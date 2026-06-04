@@ -3,11 +3,12 @@ import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
+import type { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+const otelTracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schema for structured output ──
 
@@ -25,12 +26,14 @@ const PlannerOutputSchema = z.object({
 
 export async function decomposeEpic(
   epicDescription: string,
-  availableRepos: RepoInfo[]
+  availableRepos: RepoInfo[],
+  tracer?: AgentTracer
 ): Promise<PlannedRepo[]> {
-  return tracer.startActiveSpan(
+  return otelTracer.startActiveSpan(
     'llm.epic_planning',
     { attributes: { 'epic.repo_count': availableRepos.length } },
     async (span) => {
+      const start = Date.now();
       try {
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
@@ -70,11 +73,27 @@ export async function decomposeEpic(
 
         // Validate that dependsOn references only repos in the plan
         const plannedRepoIds = new Set(validatedRepos.map((r) => r.repoId));
-        return validatedRepos.map((r) => ({
+        const finalRepos = validatedRepos.map((r) => ({
           ...r,
           dependsOn: r.dependsOn.filter((dep) => plannedRepoIds.has(dep)),
         }));
+
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          outputJson: {
+            repoCount: finalRepos.length,
+            repos: finalRepos.map((r) => ({ dependsOn: r.dependsOn, repoId: r.repoId })),
+          },
+          role: 'planner',
+        });
+
+        return finalRepos;
       } catch (e) {
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          role: 'planner',
+        });
         span.recordException(e as Error);
         throw e;
       } finally {

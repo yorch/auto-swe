@@ -1,12 +1,17 @@
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentWorkflowId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+const otelTracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schemas for structured output ──
 
@@ -30,7 +35,9 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 // ── Security Review Agent ──
 
 export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
-  return tracer.startActiveSpan('llm.security_scan', async (span) => {
+  return otelTracer.startActiveSpan('llm.security_scan', async (span) => {
+    const tracer = new AgentTracer();
+    const start = Date.now();
     try {
       const modelSpec = await getModelSpec('securityReview');
       const model = await getModel('securityReview');
@@ -68,15 +75,33 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
 
       // Enforce invariant: passed must be false if any CRITICAL finding exists
       const hasCritical = scanResult.findings.some((f) => f.severity === 'CRITICAL');
-      return {
+      const finalResult = {
         ...scanResult,
         passed: hasCritical ? false : scanResult.passed,
       };
+
+      tracer.addLlmResponse({
+        durationMs: Date.now() - start,
+        outputJson: {
+          findings: finalResult.findings,
+          findingsCount: finalResult.findings.length,
+          passed: finalResult.passed,
+        },
+        role: 'securityReview',
+      });
+
+      return finalResult;
     } catch (e) {
+      tracer.addLlmResponse({
+        durationMs: Date.now() - start,
+        error: (e as Error).message,
+        role: 'securityReview',
+      });
       span.recordException(e as Error);
       throw e;
     } finally {
       span.end();
+      await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'securityReview');
     }
   });
 }

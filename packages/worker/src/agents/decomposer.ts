@@ -26,11 +26,12 @@ import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
+import type { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+const otelTracer = trace.getTracer('auto-swe-worker');
 
 export const MAX_SUBTASKS = 8;
 const SUBTASK_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
@@ -47,11 +48,15 @@ const DecomposerOutputSchema = z.object({
   subtasks: z.array(SubtaskSchema).min(1).max(MAX_SUBTASKS),
 });
 
-export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
-  return tracer.startActiveSpan(
+export async function planDecomposition(
+  request: RepoWorkRequest,
+  tracer?: AgentTracer
+): Promise<DecompositionResult> {
+  return otelTracer.startActiveSpan(
     'llm.plan_decomposition',
     { attributes: { 'request.ticket': request.externalTicketId } },
     async (span) => {
+      const start = Date.now();
       try {
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
@@ -83,20 +88,41 @@ export async function planDecomposition(request: RepoWorkRequest): Promise<Decom
 
         if (!result.object) {
           // Fall back to a single-subtask plan rather than failing the run.
-          // The cost of an extra branch + merge is small; the cost of a
-          // hard failure here is the entire work request.
-          return singletonFallback(request, 'decomposer returned no structured output');
+          const fallback = singletonFallback(request, 'decomposer returned no structured output');
+          tracer?.addLlmResponse({
+            durationMs: Date.now() - start,
+            error: 'no structured output — used singleton fallback',
+            outputJson: fallback,
+            role: 'planner',
+          });
+          return fallback;
         }
 
         const parsed = result.object as z.infer<typeof DecomposerOutputSchema>;
         const subtasks = dedupeIds(parsed.subtasks);
-
-        span.setAttribute('decomposer.subtask_count', subtasks.length);
-        return {
+        const decompositionResult = {
           ...(parsed.rationale ? { rationale: parsed.rationale } : {}),
           subtasks,
         };
+
+        span.setAttribute('decomposer.subtask_count', subtasks.length);
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          outputJson: {
+            rationale: parsed.rationale,
+            subtaskCount: subtasks.length,
+            subtasks: subtasks.map((s) => ({ id: s.id, title: s.title })),
+          },
+          role: 'planner',
+        });
+
+        return decompositionResult;
       } catch (e) {
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          role: 'planner',
+        });
         span.recordException(e as Error);
         throw e;
       } finally {

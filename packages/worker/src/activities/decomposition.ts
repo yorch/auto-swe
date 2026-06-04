@@ -22,6 +22,7 @@ import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import {
   currentWorkflowId,
   currentWorkflowRunId,
+  persistActivityTrace,
   persistImplementerTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -33,7 +34,10 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
   heartbeat('plan decomposition: calling agent');
-  return decomposerPlan(request);
+  const tracer = new AgentTracer();
+  const result = await decomposerPlan(request, tracer);
+  await persistActivityTrace(tracer, 'planner');
+  return result;
 }
 
 export interface MergeBranchesInput {

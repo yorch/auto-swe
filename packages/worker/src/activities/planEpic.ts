@@ -2,6 +2,8 @@ import { prisma } from '@auto-swe/shared/db';
 import type { EpicPlanRequest, EpicRepoEntry, RepoInfo } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { decomposeEpic } from '../agents/plannerAgent.js';
+import { currentActivityType, currentWorkflowRunId } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 
 /**
  * Activity that uses the Planner Agent to decompose an epic into per-repo work items.
@@ -27,7 +29,9 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
 
   heartbeat('decomposing epic via planner agent');
 
-  const plannedRepos = await decomposeEpic(epicRequest.description, repoInfos);
+  const tracer = new AgentTracer();
+  const plannedRepos = await decomposeEpic(epicRequest.description, repoInfos, tracer);
+  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'planner');
 
   return plannedRepos.map((pr) => ({
     dependsOn: pr.dependsOn,

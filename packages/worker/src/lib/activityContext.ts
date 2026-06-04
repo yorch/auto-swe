@@ -60,3 +60,7 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
 export async function persistImplementerTrace(tracer: AgentTracer): Promise<void> {
   await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'implementer');
 }
+
+export async function persistActivityTrace(tracer: AgentTracer, agentRole: string): Promise<void> {
+  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), agentRole);
+}

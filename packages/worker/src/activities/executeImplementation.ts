@@ -77,6 +77,13 @@ export async function executeImplementation(
         lessonsContext =
           '\n\n## Lessons from Previous Workflows\n' +
           lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`).join('\n');
+        tracer.addActivityEvent({
+          name: 'lessons.retrieved',
+          outputJson: {
+            count: lessons.length,
+            lessons: lessons.map((l) => ({ failureType: l.failureType, summary: l.summary })),
+          },
+        });
       }
     } catch {
       // Lesson retrieval failure should not block implementation
@@ -129,11 +136,32 @@ export async function executeImplementation(
         );
       }
 
+      // Record implementer's reasoning text (the LLM response between tool calls)
+      if (genResult.text) {
+        tracer.addLlmResponse({
+          durationMs: 0,
+          inputJson: { iteration },
+          outputJson: { text: genResult.text },
+          role: 'implementer',
+        });
+      }
+
       // Run tests
+      const testStart = Date.now();
       try {
-        const startTime = Date.now();
         const testOutput = workspace.exec(testCommand);
-        testResult = parseTestOutput(testOutput, Date.now() - startTime);
+        testResult = parseTestOutput(testOutput, Date.now() - testStart);
+        tracer.addActivityEvent({
+          durationMs: Date.now() - testStart,
+          inputJson: { iteration },
+          name: 'tdd.test_run',
+          outputJson: {
+            failing: testResult.failing,
+            passed: testResult.passed,
+            passing: testResult.passing,
+            total: testResult.total,
+          },
+        });
         if (testResult.passed) {
           break;
         }
@@ -146,6 +174,12 @@ export async function executeImplementation(
           stdout: getExecErrorStdout(err),
           total: 0,
         };
+        tracer.addActivityEvent({
+          error: getExecErrorStdout(err).slice(0, 1000),
+          inputJson: { iteration },
+          name: 'tdd.test_run',
+          outputJson: { passed: false },
+        });
       }
     }
 
@@ -160,6 +194,11 @@ export async function executeImplementation(
     // Collect results
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    tracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch, commitMessage: commitSummary, headSha },
+    });
 
     // Persist traces before the security gate so they survive a gate rejection.
     const runId = await currentWorkflowRunId();

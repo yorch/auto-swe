@@ -1,6 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
+import { currentActivityType, currentWorkflowRunId } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -8,6 +10,7 @@ export async function createOrUpdatePullRequest(
   codeResult: CodeResult
 ): Promise<{ prNumber: number; prUrl: string }> {
   const { Octokit } = await import('@octokit/rest');
+  const tracer = new AgentTracer();
 
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -42,10 +45,18 @@ export async function createOrUpdatePullRequest(
     });
 
     const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-    return {
-      prNumber: existingPR.prNumber,
-      prUrl: `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`,
-    };
+    const prUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`;
+    tracer.addActivityEvent({
+      name: 'pr.updated',
+      outputJson: {
+        branch: codeResult.branch,
+        headSha: codeResult.headSha,
+        prNumber: existingPR.prNumber,
+        prUrl,
+      },
+    });
+    await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'pr');
+    return { prNumber: existingPR.prNumber, prUrl };
   }
 
   // Reuse an already-open PR for this head branch if GitHub has one. This makes
@@ -102,6 +113,17 @@ export async function createOrUpdatePullRequest(
     prUrl: pr.html_url,
     workRequestId: request.workRequestId,
   });
+
+  tracer.addActivityEvent({
+    name: 'pr.created',
+    outputJson: {
+      branch: codeResult.branch,
+      headSha: codeResult.headSha,
+      prNumber: pr.number,
+      prUrl: pr.html_url,
+    },
+  });
+  await tracer.persist(await currentWorkflowRunId(), currentActivityType(), 'pr');
 
   return { prNumber: pr.number, prUrl: pr.html_url };
 }

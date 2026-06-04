@@ -17,9 +17,27 @@ interface PageProps {
 // ── Agent trace helpers ──────────────────────────────────────────────────────
 
 const TOOL_ICONS: Record<string, string> = {
+  // tool_call
   bash: '⚡',
+  commitToMemory: '💾',
+  // llm_response roles
+  DOMAIN_LOGIC: '🧠',
+  // activity_event names
+  'git.commit_push': '📦',
+  implementer: '🤖',
+  'lessons.retrieved': '📚',
   listDirectory: '📂',
+  'memory.lesson_written': '📝',
+  PERFORMANCE: '🚀',
+  planner: '🗺️',
+  'pr.created': '🔀',
+  'pr.updated': '🔄',
   readFile: '📄',
+  reviewer: '👀',
+  SECURITY: '🔒',
+  securityReview: '🛡️',
+  'tdd.test_run': '🧪',
+  validateContext: '✅',
   writeFile: '✏️',
 };
 
@@ -30,23 +48,46 @@ const TOOL_LABELS: Record<string, string> = {
   writeFile: 'write',
 };
 
-function toolSummary(trace: AgentTraceRecord): { label: string; detail: string } {
+function traceSummary(trace: AgentTraceRecord): { icon: string; label: string; detail: string } {
   const input = trace.inputJson as Record<string, unknown> | null;
-  if (!input) return { detail: '', label: trace.toolName ?? 'call' };
+  const name = trace.toolName ?? '';
+  const icon =
+    TOOL_ICONS[name] ??
+    (trace.type === 'llm_response' ? '🤖' : trace.type === 'activity_event' ? '⚙️' : '🔧');
 
-  switch (trace.toolName) {
+  if (trace.type === 'llm_response') {
+    return { detail: trace.agentRole, icon, label: name || trace.agentRole };
+  }
+
+  if (trace.type === 'activity_event') {
+    const output = trace.outputJson as Record<string, unknown> | null;
+    let detail = '';
+    if (name === 'tdd.test_run' && output) {
+      detail = output.passed
+        ? `pass ${output.passing}/${output.total}`
+        : `fail ${output.failing}/${output.total ?? 0}`;
+    } else if ((name === 'pr.created' || name === 'pr.updated') && output) {
+      detail = output.prUrl ? String(output.prUrl) : `#${output.prNumber}`;
+    } else if (name === 'git.commit_push' && output) {
+      detail = String(output.headSha ?? '').slice(0, 8);
+    } else if (name === 'lessons.retrieved' && output) {
+      detail = `${output.count} lesson${Number(output.count) !== 1 ? 's' : ''}`;
+    }
+    return { detail, icon, label: TOOL_LABELS[name] ?? name };
+  }
+
+  // tool_call
+  if (!input) return { detail: '', icon, label: TOOL_LABELS[name] ?? name };
+  switch (name) {
     case 'readFile':
     case 'writeFile':
-      return { detail: String(input.path ?? ''), label: trace.toolName };
+      return { detail: String(input.path ?? ''), icon, label: TOOL_LABELS[name] ?? name };
     case 'listDirectory':
-      return { detail: String(input.path ?? '.'), label: 'ls' };
+      return { detail: String(input.path ?? '.'), icon, label: 'ls' };
     case 'bash':
-      return {
-        detail: String(input.command ?? '').slice(0, 80),
-        label: 'bash',
-      };
+      return { detail: String(input.command ?? '').slice(0, 80), icon, label: 'bash' };
     default:
-      return { detail: '', label: trace.toolName ?? 'call' };
+      return { detail: '', icon, label: TOOL_LABELS[name] ?? (name || 'call') };
   }
 }
 
@@ -61,15 +102,17 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   }
   if (!output) return null;
   const text =
-    typeof output.output === 'string'
-      ? output.output
-      : typeof output.content === 'string'
-        ? output.content
-        : typeof output.listing === 'string'
-          ? output.listing
-          : typeof output.result === 'string'
-            ? output.result
-            : JSON.stringify(output);
+    typeof output.text === 'string'
+      ? output.text
+      : typeof output.output === 'string'
+        ? output.output
+        : typeof output.content === 'string'
+          ? output.content
+          : typeof output.listing === 'string'
+            ? output.listing
+            : typeof output.result === 'string'
+              ? output.result
+              : JSON.stringify(output, null, 2);
   if (!text) return null;
   return (
     <pre className="text-[10px] leading-tight bg-[var(--muted)] p-1.5 rounded overflow-x-auto max-h-28 mt-1 whitespace-pre-wrap break-all">
@@ -79,21 +122,26 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   );
 }
 
+const TYPE_BADGE: Record<string, string> = {
+  activity_event: 'bg-blue-100 text-blue-700',
+  llm_response: 'bg-purple-100 text-purple-700',
+  tool_call: 'bg-gray-100 text-gray-600',
+};
+
 function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (traces.length === 0) {
-    return <p className="text-xs text-[var(--muted-foreground)] py-1">No tool calls recorded.</p>;
+    return <p className="text-xs text-[var(--muted-foreground)] py-1">No trace events recorded.</p>;
   }
 
   return (
     <ol className="space-y-1 max-h-96 overflow-y-auto">
       {traces.map((t) => {
-        const { label, detail } = toolSummary(t);
-        const icon = TOOL_ICONS[t.toolName ?? ''] ?? '🔧';
-        const displayLabel = TOOL_LABELS[t.toolName ?? ''] ?? label;
+        const { icon, label, detail } = traceSummary(t);
         const isExpanded = expandedId === t.id;
-        const durationLabel = t.durationMs != null ? `${t.durationMs}ms` : '';
+        const durationLabel = t.durationMs != null && t.durationMs > 0 ? `${t.durationMs}ms` : '';
+        const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
 
         return (
           <li key={t.id}>
@@ -104,7 +152,10 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
             >
               <div className="flex items-center gap-1.5 text-xs">
                 <span className="text-base leading-none">{icon}</span>
-                <span className="font-mono font-semibold shrink-0">{displayLabel}</span>
+                <span className={`text-[10px] px-1 rounded font-mono shrink-0 ${badgeClass}`}>
+                  {t.type === 'tool_call' ? 'tool' : t.type === 'llm_response' ? 'llm' : 'event'}
+                </span>
+                <span className="font-mono font-semibold shrink-0">{label}</span>
                 {detail && (
                   <span className="text-[var(--muted-foreground)] truncate font-mono">
                     {detail}
@@ -339,7 +390,7 @@ export default function RunDetailPage({ params }: PageProps) {
               {nodeTraces.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-[var(--border)]">
                   <p className="text-xs font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wide">
-                    Agent trace · {nodeTraces.length} tool call{nodeTraces.length !== 1 ? 's' : ''}
+                    Agent trace · {nodeTraces.length} event{nodeTraces.length !== 1 ? 's' : ''}
                   </p>
                   <AgentTracePanel traces={nodeTraces} />
                 </div>

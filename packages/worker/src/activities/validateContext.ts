@@ -5,11 +5,16 @@ import { trace } from '@opentelemetry/api';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import {
+  currentActivityType,
+  currentWorkflowId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+const otelTracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schema for structured output ──
 
@@ -24,10 +29,12 @@ export async function validateContext(
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
+  const agentTracer = new AgentTracer();
   let successCriteria: string[] = [];
 
   try {
-    successCriteria = await tracer.startActiveSpan('llm.context_validation', async (span) => {
+    successCriteria = await otelTracer.startActiveSpan('llm.context_validation', async (span) => {
+      const start = Date.now();
       try {
         const modelSpec = await getModelSpec('validateContext');
         const model = await getModel('validateContext');
@@ -63,11 +70,31 @@ export async function validateContext(
         }
 
         if (!result.object) {
+          agentTracer.addLlmResponse({
+            durationMs: Date.now() - start,
+            error: 'no structured output',
+            role: 'validateContext',
+          });
           return [];
         }
         const parsed = result.object as z.infer<typeof ContextValidationSchema>;
+
+        agentTracer.addLlmResponse({
+          durationMs: Date.now() - start,
+          outputJson: {
+            criteriaCount: parsed.successCriteria.length,
+            successCriteria: parsed.successCriteria,
+          },
+          role: 'validateContext',
+        });
+
         return parsed.successCriteria;
       } catch (e) {
+        agentTracer.addLlmResponse({
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          role: 'validateContext',
+        });
         span.recordException(e as Error);
         throw e;
       } finally {
@@ -77,6 +104,8 @@ export async function validateContext(
   } catch {
     // Graceful degradation: empty criteria still allows workflow to proceed
   }
+
+  await agentTracer.persist(await currentWorkflowRunId(), currentActivityType(), 'validateContext');
 
   heartbeat('persisting context snapshot');
 
