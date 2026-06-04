@@ -262,24 +262,20 @@ function TeamRoleEditModal({
             ))}
           </datalist>
         </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="cred">
-            Pin credential (optional)
-          </label>
-          <Select
-            className="border-ink-600 bg-ink-900"
-            id="cred"
-            onChange={(e) => setCredentialId(e.target.value)}
-            value={credentialId}
-          >
-            <option value="">— Use scope cascade —</option>
-            {credentials.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.scope} · {c.provider}/****{c.lastFour}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <Select
+          className="border-ink-600 bg-ink-900"
+          id="cred"
+          label="Pin credential (optional)"
+          onChange={(e) => setCredentialId(e.target.value)}
+          value={credentialId}
+        >
+          <option value="">— Use scope cascade —</option>
+          {credentials.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.scope} · {c.provider}/****{c.lastFour}
+            </option>
+          ))}
+        </Select>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">

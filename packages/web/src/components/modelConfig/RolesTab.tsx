@@ -261,40 +261,32 @@ function EditRoleModal({
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
         {!existing && (
-          <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="role">
-              Role
-            </label>
-            <Select
-              className="border-ink-600 bg-ink-900"
-              id="role"
-              onChange={(e) => setRole(e.target.value as ModelRole)}
-              value={role}
-            >
-              {MODEL_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <Select
+            className="border-ink-600 bg-ink-900"
+            id="role"
+            label="Role"
+            onChange={(e) => setRole(e.target.value as ModelRole)}
+            value={role}
+          >
+            {MODEL_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </Select>
         )}
         {!existing && (
-          <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="scope">
-              Scope
-            </label>
-            <Select
-              className="border-ink-600 bg-ink-900"
-              id="scope"
-              onChange={(e) => setScope(e.target.value as ConfigScope)}
-              value={scope}
-            >
-              <option value="GLOBAL">Global (system-wide default)</option>
-              <option value="TEAM">Team</option>
-              <option value="WORKFLOW_TEMPLATE">Workflow template</option>
-            </Select>
-          </div>
+          <Select
+            className="border-ink-600 bg-ink-900"
+            id="scope"
+            label="Scope"
+            onChange={(e) => setScope(e.target.value as ConfigScope)}
+            value={scope}
+          >
+            <option value="GLOBAL">Global (system-wide default)</option>
+            <option value="TEAM">Team</option>
+            <option value="WORKFLOW_TEMPLATE">Workflow template</option>
+          </Select>
         )}
         {scope === 'TEAM' && (
           <div>
@@ -350,25 +342,21 @@ function EditRoleModal({
             Format: <code>{'<provider>/<model-id>'}</code>. Pick a suggestion or enter any string.
           </p>
         </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="credId">
-            Pinned credential (optional)
-          </label>
-          <Select
-            className="border-ink-600 bg-ink-900"
-            id="credId"
-            onChange={(e) => setCredentialId(e.target.value)}
-            value={credentialId}
-          >
-            <option value="">— Use scope cascade —</option>
-            {credentials.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.scope} · {c.provider}/****{c.lastFour}
-                {c.teamId && ` (team ${c.teamId.slice(0, 6)}…)`}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <Select
+          className="border-ink-600 bg-ink-900"
+          id="credId"
+          label="Pinned credential (optional)"
+          onChange={(e) => setCredentialId(e.target.value)}
+          value={credentialId}
+        >
+          <option value="">— Use scope cascade —</option>
+          {credentials.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.scope} · {c.provider}/****{c.lastFour}
+              {c.teamId && ` (team ${c.teamId.slice(0, 6)}…)`}
+            </option>
+          ))}
+        </Select>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">

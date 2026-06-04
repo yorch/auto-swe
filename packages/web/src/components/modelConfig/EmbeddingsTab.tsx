@@ -85,27 +85,23 @@ export function EmbeddingsTab() {
             ))}
           </datalist>
         </div>
-        <div>
-          <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="embedCred">
-            Pinned credential (optional)
-          </label>
-          <Select
-            className="border-ink-600 bg-ink-900"
-            id="embedCred"
-            onChange={(e) => {
-              setCredentialId(e.target.value);
-              setDirty(true);
-            }}
-            value={credentialId}
-          >
-            <option value="">— Resolve by provider name —</option>
-            {(credentials ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.scope} · {c.provider}/****{c.lastFour}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <Select
+          className="border-ink-600 bg-ink-900"
+          id="embedCred"
+          label="Pinned credential (optional)"
+          onChange={(e) => {
+            setCredentialId(e.target.value);
+            setDirty(true);
+          }}
+          value={credentialId}
+        >
+          <option value="">— Resolve by provider name —</option>
+          {(credentials ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.scope} · {c.provider}/****{c.lastFour}
+            </option>
+          ))}
+        </Select>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end pt-2">
           <Button disabled={!dirty || update.isPending} type="submit" variant="primary">

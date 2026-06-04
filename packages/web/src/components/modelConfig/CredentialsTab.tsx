@@ -253,20 +253,16 @@ function CredentialModal({
                     : 'Built-in: anthropic, openai, google (no API base needed). Anything else is OpenAI-compatible and requires an API base URL.'}
               </p>
             </div>
-            <div>
-              <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="scope">
-                Scope
-              </label>
-              <Select
-                className="border-ink-600 bg-ink-900"
-                id="scope"
-                onChange={(e) => setScope(e.target.value as 'GLOBAL' | 'TEAM')}
-                value={scope}
-              >
-                <option value="GLOBAL">Global (used by every team unless overridden)</option>
-                <option value="TEAM">Team</option>
-              </Select>
-            </div>
+            <Select
+              className="border-ink-600 bg-ink-900"
+              id="scope"
+              label="Scope"
+              onChange={(e) => setScope(e.target.value as 'GLOBAL' | 'TEAM')}
+              value={scope}
+            >
+              <option value="GLOBAL">Global (used by every team unless overridden)</option>
+              <option value="TEAM">Team</option>
+            </Select>
             {scope === 'TEAM' && (
               <div>
                 <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="teamId">

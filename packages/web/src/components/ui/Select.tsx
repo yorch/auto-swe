@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { FieldWrapper } from './FieldWrapper';
 
 type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
   label?: string;
@@ -7,7 +8,7 @@ type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
 };
 
 export function Select({ label, hint, error, className, id, children, ...props }: SelectProps) {
-  const selectId = id ?? (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  const selectId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
 
   const selectEl = (
     <select
@@ -29,22 +30,8 @@ export function Select({ label, hint, error, className, id, children, ...props }
   }
 
   return (
-    <div className="space-y-1.5">
-      {label && (
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor={selectId}
-        >
-          {label}
-        </label>
-      )}
+    <FieldWrapper error={error} hint={hint} id={selectId} label={label}>
       {selectEl}
-      {hint && !error && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">{hint}</p>
-      )}
-      {error && (
-        <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">{error}</p>
-      )}
-    </div>
+    </FieldWrapper>
   );
 }

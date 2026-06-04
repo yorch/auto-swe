@@ -590,27 +590,21 @@ function EdgeConnectionsSection({
         const current = (nodeRecord[kind] as string | undefined) ?? '';
         const selectId = `edge-${kind}`;
         return (
-          <div className="space-y-1" key={kind}>
-            <label
-              className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-              htmlFor={selectId}
-            >
-              {HANDLE_LABEL_FULL[kind]}
-            </label>
-            <Select
-              className="h-9 px-2 font-mono text-xs"
-              id={selectId}
-              onChange={(e) => onSetEdge(kind, e.target.value || null)}
-              value={current}
-            >
-              <option value="">— none —</option>
-              {otherIds.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <Select
+            className="h-9 px-2 font-mono text-xs"
+            id={selectId}
+            key={kind}
+            label={HANDLE_LABEL_FULL[kind]}
+            onChange={(e) => onSetEdge(kind, e.target.value || null)}
+            value={current}
+          >
+            <option value="">— none —</option>
+            {otherIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </Select>
         );
       })}
     </div>
@@ -758,25 +752,18 @@ function FanOutSection({
         placeholder="subtask"
         value={node.itemKey ?? 'subtask'}
       />
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="fanout-branch-fail"
-        >
-          On branch fail
-        </label>
-        <Select
-          className="mt-1.5 h-9 px-2 font-mono text-xs"
-          id="fanout-branch-fail"
-          onChange={(e) =>
-            onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
-          }
-          value={node.onBranchFail ?? 'block'}
-        >
-          <option value="block">Block (default) — stop on first failure</option>
-          <option value="continue">Continue — collect all results</option>
-        </Select>
-      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="fanout-branch-fail"
+        label="On branch fail"
+        onChange={(e) =>
+          onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
+        }
+        value={node.onBranchFail ?? 'block'}
+      >
+        <option value="block">Block (default) — stop on first failure</option>
+        <option value="continue">Continue — collect all results</option>
+      </Select>
       <div>
         <label
           className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
@@ -871,26 +858,19 @@ function ShellSection({
           value={node.command ?? ''}
         />
       </div>
-      <div>
-        <label
-          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-          htmlFor="shell-network"
-        >
-          Network
-        </label>
-        <Select
-          className="mt-1.5 h-9 px-2 font-mono text-xs"
-          id="shell-network"
-          onChange={(e) => {
-            const v = e.target.value as 'none' | 'egress';
-            onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
-          }}
-          value={node.network ?? 'none'}
-        >
-          <option value="none">None (default) — no outbound access</option>
-          <option value="egress">Egress — outbound via team allowlist</option>
-        </Select>
-      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="shell-network"
+        label="Network"
+        onChange={(e) => {
+          const v = e.target.value as 'none' | 'egress';
+          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+        }}
+        value={node.network ?? 'none'}
+      >
+        <option value="none">None (default) — no outbound access</option>
+        <option value="egress">Egress — outbound via team allowlist</option>
+      </Select>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label
@@ -950,26 +930,18 @@ function TerminateSection({
   onChange: (v: TerminateStatus) => void;
 }) {
   return (
-    <div>
-      <label
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor="terminate-status"
-      >
-        Status
-      </label>
-      <Select
-        className="mt-1.5"
-        id="terminate-status"
-        onChange={(e) => onChange(e.target.value as TerminateStatus)}
-        value={status}
-      >
-        {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </Select>
-    </div>
+    <Select
+      id="terminate-status"
+      label="Status"
+      onChange={(e) => onChange(e.target.value as TerminateStatus)}
+      value={status}
+    >
+      {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </Select>
   );
 }
 
