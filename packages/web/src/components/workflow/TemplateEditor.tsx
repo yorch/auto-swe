@@ -361,6 +361,7 @@ function EditorInner({
           onDelete={handleDeleteNode}
           onRename={handleRename}
           stepMeta={selectedStepMeta}
+          stepRegistry={stepRegistry}
         />
       </div>
     </div>
@@ -373,6 +374,7 @@ interface InspectorProps {
   nodeId: string | null;
   node: SpecNode | null;
   stepMeta: StepMetadata | null | undefined;
+  stepRegistry: StepMetadata[];
   isEntry: boolean;
   allNodeIds: string[];
   onChangeNode: (next: SpecNode) => void;
@@ -394,6 +396,7 @@ function NodeInspector({
   nodeId,
   node,
   stepMeta,
+  stepRegistry,
   isEntry,
   allNodeIds,
   onChangeNode,
@@ -455,7 +458,12 @@ function NodeInspector({
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {/* Step-specific schema-aware form */}
         {node.type === 'step' && (
-          <StepConfigSection node={node} onChange={onChangeNode} stepMeta={stepMeta ?? null} />
+          <StepConfigSection
+            node={node}
+            onChange={onChangeNode}
+            stepMeta={stepMeta ?? null}
+            stepRegistry={stepRegistry}
+          />
         )}
         {node.type === 'cond' && (
           <CondSection expr={node.expr} onChange={(expr) => onChangeNode({ ...node, expr })} />
@@ -580,17 +588,27 @@ function EdgeConnectionsSection({
 function StepConfigSection({
   node,
   stepMeta,
+  stepRegistry,
   onChange,
 }: {
   node: Extract<SpecNode, { type: 'step' }>;
   stepMeta: StepMetadata | null;
+  stepRegistry: StepMetadata[];
   onChange: (next: SpecNode) => void;
 }) {
   return (
     <div className="space-y-4">
+      <datalist id="step-registry-datalist">
+        {stepRegistry.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.label}
+          </option>
+        ))}
+      </datalist>
       <Input
-        hint={stepMeta?.label ?? 'Reference a registered step name'}
+        hint={stepMeta?.label ?? 'type or pick a step from the registry'}
         label="Step"
+        list="step-registry-datalist"
         onChange={(e) => onChange({ ...node, step: e.target.value } as SpecNode)}
         value={node.step}
       />
@@ -615,7 +633,7 @@ function StepConfigSection({
           — no configurable fields —
         </p>
       )}
-      {!stepMeta && (
+      {node.step && !stepMeta && (
         <p className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
           ! Step not in registry — config schema unknown
         </p>
