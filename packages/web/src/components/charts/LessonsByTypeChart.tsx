@@ -17,7 +17,9 @@ interface Props {
 }
 
 export function LessonsByTypeChart({ data }: Props) {
-  if (data.length === 0) return <EmptyChart label="no lesson data" />;
+  if (data.length === 0) {
+    return <EmptyChart label="no lesson data" />;
+  }
 
   return (
     <ResponsiveContainer height={280} width="100%">

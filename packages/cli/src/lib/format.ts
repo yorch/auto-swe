@@ -3,7 +3,9 @@
 /** Left-pad a column value to a fixed width; truncate (with a trailing space)
  * when the value is longer. */
 export function pad(s: string, w: number): string {
-  if (s.length >= w) return `${s.slice(0, w - 1)} `;
+  if (s.length >= w) {
+    return `${s.slice(0, w - 1)} `;
+  }
   return s + ' '.repeat(w - s.length);
 }
 
@@ -19,10 +21,16 @@ export function pad(s: string, w: number): string {
  * Callers print a usage hint + `return 1` on `'invalid'`.
  */
 export function parsePositiveInt(raw: string | undefined, fallback: number): number | 'invalid' {
-  if (raw === undefined) return fallback;
-  if (raw === 'true') return 'invalid';
+  if (raw === undefined) {
+    return fallback;
+  }
+  if (raw === 'true') {
+    return 'invalid';
+  }
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) return 'invalid';
+  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) {
+    return 'invalid';
+  }
   return n;
 }
 
@@ -30,9 +38,15 @@ export function parsePositiveInt(raw: string | undefined, fallback: number): num
  * `undefined` (instead of a fallback). Used by flags like `--version` where
  * "not specified" means "use the active version". */
 export function parseOptionalPositiveInt(raw: string | undefined): number | undefined | 'invalid' {
-  if (raw === undefined) return undefined;
-  if (raw === 'true') return 'invalid';
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === 'true') {
+    return 'invalid';
+  }
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) return 'invalid';
+  if (!Number.isFinite(n) || n < 1 || String(n) !== raw.trim()) {
+    return 'invalid';
+  }
   return n;
 }

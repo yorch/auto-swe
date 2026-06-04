@@ -34,9 +34,15 @@ export async function runRunsCommand(args: string[], env: CliEnv): Promise<numbe
     return 0;
   }
   try {
-    if (sub === 'list') return await cmdList(rest, env);
-    if (sub === 'show') return await cmdShow(rest, env);
-    if (sub === 'tail') return await cmdTail(rest, env);
+    if (sub === 'list') {
+      return await cmdList(rest, env);
+    }
+    if (sub === 'show') {
+      return await cmdShow(rest, env);
+    }
+    if (sub === 'tail') {
+      return await cmdTail(rest, env);
+    }
   } catch (err) {
     if (err instanceof GatewayError) {
       process.stderr.write(`${err.code}: ${err.message}\n`);
@@ -58,9 +64,15 @@ async function cmdList(args: string[], env: CliEnv): Promise<number> {
   }
   const params = new URLSearchParams();
   params.set('limit', String(limit));
-  if (flags.status) params.set('status', flags.status);
-  if (flags['template-id']) params.set('templateId', flags['template-id']);
-  if (flags['work-request-id']) params.set('workRequestId', flags['work-request-id']);
+  if (flags.status) {
+    params.set('status', flags.status);
+  }
+  if (flags['template-id']) {
+    params.set('templateId', flags['template-id']);
+  }
+  if (flags['work-request-id']) {
+    params.set('workRequestId', flags['work-request-id']);
+  }
   const url = `/api/v1/workflow-runs?${params.toString()}`;
 
   const rows = await apiRequest<WorkflowRunSummary[]>(env, 'GET', url);
@@ -127,7 +139,9 @@ async function cmdTail(args: string[], env: CliEnv): Promise<number> {
         `[${detail.status}] ${detail.steps.length} steps recorded.${lastLine}\n`
       );
     }
-    if (TERMINAL_STATUSES.has(detail.status)) return detail.status === 'SUCCESS' ? 0 : 2;
+    if (TERMINAL_STATUSES.has(detail.status)) {
+      return detail.status === 'SUCCESS' ? 0 : 2;
+    }
     await sleep(intervalSec * 1000);
   }
   process.stderr.write(`runs tail: gave up after ${maxPolls} polls\n`);

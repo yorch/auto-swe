@@ -23,9 +23,15 @@ export function Modal({
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (!dialog) {
+      return;
+    }
+    if (open && !dialog.open) {
+      dialog.showModal();
+    }
+    if (!open && dialog.open) {
+      dialog.close();
+    }
   }, [open]);
 
   const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';

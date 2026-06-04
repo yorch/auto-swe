@@ -161,8 +161,12 @@ export async function runSpec(
   maxTransitions = DEFAULT_MAX_TRANSITIONS
 ): Promise<InterpreterResult> {
   const ctx: Context = { ...initialContext };
-  if (!('nodes' in ctx)) ctx.nodes = {};
-  if (!('context' in ctx)) ctx.context = {};
+  if (!('nodes' in ctx)) {
+    ctx.nodes = {};
+  }
+  if (!('context' in ctx)) {
+    ctx.context = {};
+  }
 
   const cursor: Cursor = { cap: maxTransitions, count: 0 };
   const outcome = await walk(spec, spec.entry, ctx, dispatcher, cursor, '');
@@ -336,7 +340,9 @@ function resolveInputs(
   ctx: Context
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
-  if (!map) return inputs;
+  if (!map) {
+    return inputs;
+  }
   for (const [k, b] of Object.entries(map)) {
     inputs[k] = resolveBinding(b, ctx);
   }
@@ -391,7 +397,9 @@ async function runRetryable(args: {
           outputs: output,
           status: 'FAILED',
         });
-        if (attempt < maxAttempts) continue;
+        if (attempt < maxAttempts) {
+          continue;
+        }
         break;
       }
 
@@ -438,7 +446,8 @@ async function runRetryable(args: {
         nodeId,
         status: 'FAILED',
       });
-      if (attempt < maxAttempts) continue;
+      if (attempt < maxAttempts) {
+      }
       // Fall through to terminal handling.
     }
   }
@@ -450,7 +459,9 @@ async function runRetryable(args: {
   if (!terminalBlock) {
     // warn: surface the failure in context but continue.
     setPath(ctx, `nodes.${nodeId}.output`, lastOutput ?? null);
-    if (lastError) setPath(ctx, `nodes.${nodeId}.error`, String(lastError));
+    if (lastError) {
+      setPath(ctx, `nodes.${nodeId}.error`, String(lastError));
+    }
     return next;
   }
 
@@ -464,7 +475,9 @@ async function runRetryable(args: {
 function gateFailureMessage(output: unknown): string {
   if (typeof output === 'object' && output !== null) {
     const summary = (output as { summary?: unknown }).summary;
-    if (typeof summary === 'string' && summary.length > 0) return summary;
+    if (typeof summary === 'string' && summary.length > 0) {
+      return summary;
+    }
   }
   return 'step returned passed=false';
 }
@@ -491,7 +504,9 @@ async function runSignal(
     await safeRecord(dispatcher, { nodeId, status: 'SKIPPED' });
     return node.onTimeout;
   }
-  if (node.storeAs) setPath(ctx, node.storeAs, payload);
+  if (node.storeAs) {
+    setPath(ctx, node.storeAs, payload);
+  }
   setPath(ctx, `nodes.${nodeId}.output`, payload);
   await safeRecord(dispatcher, { nodeId, outputs: payload, status: 'PASSED' });
   return node.onReceive;
@@ -576,7 +591,9 @@ async function runFanOut(
 
   function cancelAllExcept(exceptIndex: number): void {
     for (const [idx, sink] of branchSinks.entries()) {
-      if (idx === exceptIndex) continue;
+      if (idx === exceptIndex) {
+        continue;
+      }
       if (sink.token) {
         try {
           sink.token.cancel();
@@ -591,7 +608,9 @@ async function runFanOut(
   async function worker(): Promise<void> {
     while (!stop) {
       const i = nextIndex++;
-      if (i >= raw.length) return;
+      if (i >= raw.length) {
+        return;
+      }
       const item = raw[i];
       const branchPrefix = `${parentPrefix}${nodeId}[${i}]/`;
       const childCtx = makeChildContext(ctx, node.itemKey, item, i);
@@ -646,7 +665,9 @@ async function runFanOut(
   // for everything that did run.
   const results: Entry[] = [];
   for (const slot of slots) {
-    if (slot !== undefined) results.push(slot);
+    if (slot !== undefined) {
+      results.push(slot);
+    }
   }
   const succeeded = results.filter((r) => r.status === 'SUCCESS').length;
   const failed = results.length - succeeded;
@@ -712,7 +733,9 @@ function collectExports(
   paths: readonly string[] | undefined,
   childCtx: Context
 ): Record<string, unknown> | undefined {
-  if (!paths || paths.length === 0) return undefined;
+  if (!paths || paths.length === 0) {
+    return undefined;
+  }
   const out: Record<string, unknown> = {};
   for (const p of paths) {
     out[p] = lookupPath(childCtx, p);
@@ -722,7 +745,9 @@ function collectExports(
 
 /** Don't dump giant arrays into workflow_steps.inputs; record a length-only summary. */
 function summarizeForRecord(arr: unknown[]): unknown {
-  if (arr.length <= 4) return arr;
+  if (arr.length <= 4) {
+    return arr;
+  }
   return { length: arr.length, sample: arr.slice(0, 2) };
 }
 

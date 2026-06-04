@@ -62,7 +62,9 @@ function setupFetchMock(handlers: Record<string, (body?: unknown) => unknown>) {
     const url = typeof input === 'string' ? input : input.toString();
     const path = url.replace(/^https?:\/\/[^/]+/, '');
     const handler = handlers[path];
-    if (!handler) throw new Error(`No fetch mock for ${path}`);
+    if (!handler) {
+      throw new Error(`No fetch mock for ${path}`);
+    }
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     const result = handler(body);
     return new Response(JSON.stringify(result), {
@@ -109,7 +111,9 @@ describe('SubmitWorkRequestModal', () => {
     const workReqCall = fetchSpy.mock.calls.find(([url]) =>
       String(url).endsWith('/api/v1/work-requests')
     );
-    if (!workReqCall) throw new Error('expected a POST to /api/v1/work-requests');
+    if (!workReqCall) {
+      throw new Error('expected a POST to /api/v1/work-requests');
+    }
     const body = JSON.parse((workReqCall[1] as RequestInit).body as string);
     expect(body).toEqual({
       budgetTier: 'LARGE',

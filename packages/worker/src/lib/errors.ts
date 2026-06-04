@@ -22,9 +22,15 @@ export function getExecErrorStdout(err: unknown, maxBytes = 10_000): string {
 export function getExecErrorOutput(err: unknown, maxBytes = 10_000): string {
   const e = err as ExecLikeError;
   const parts: string[] = [];
-  if (typeof e.stdout === 'string') parts.push(e.stdout);
-  if (typeof e.stderr === 'string') parts.push(e.stderr);
-  if (parts.length === 0) return getErrorMessage(err);
+  if (typeof e.stdout === 'string') {
+    parts.push(e.stdout);
+  }
+  if (typeof e.stderr === 'string') {
+    parts.push(e.stderr);
+  }
+  if (parts.length === 0) {
+    return getErrorMessage(err);
+  }
   return parts.join('\n').slice(-maxBytes);
 }
 

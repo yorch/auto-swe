@@ -90,10 +90,12 @@ describe('runWorkRequestsCommand', () => {
     const calls: string[] = [];
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       calls.push(url as string);
-      if ((url as string).includes('/repositories'))
+      if ((url as string).includes('/repositories')) {
         return Promise.resolve({ ok: true, status: 200, text: async () => reposPayload });
-      if ((url as string).includes('/teams'))
+      }
+      if ((url as string).includes('/teams')) {
         return Promise.resolve({ ok: true, status: 200, text: async () => teamsPayload });
+      }
       return Promise.resolve({ ok: true, status: 200, text: async () => wrPayload });
     }) as unknown as typeof fetch;
 

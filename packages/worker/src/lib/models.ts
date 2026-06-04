@@ -65,7 +65,9 @@ function cacheKeyForBuild(spec: string, apiKey: string, apiBase: string | undefi
 function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
   const key = cacheKeyForBuild(spec, apiKey, apiBase);
   const cached = modelCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
 
   const built = buildModelUncached(spec, apiKey, apiBase);
   modelCache.set(key, built);

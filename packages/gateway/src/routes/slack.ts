@@ -49,7 +49,9 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         try {
           const params = new URLSearchParams(body as string);
           const out: Record<string, string> = {};
-          for (const [k, v] of params) out[k] = v;
+          for (const [k, v] of params) {
+            out[k] = v;
+          }
           done(null, out);
         } catch (err) {
           done(err as Error, undefined);
@@ -349,7 +351,9 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
             return ephemeral('Usage: `/auto-swe workflows show <name>`');
           }
           const tpl = await findTemplateByName(fastify, user, name);
-          if (!tpl) return ephemeral(`No workflow template named "${name}" is visible to you.`);
+          if (!tpl) {
+            return ephemeral(`No workflow template named "${name}" is visible to you.`);
+          }
           return ephemeral(formatTemplateShow(tpl));
         }
         if (sub === 'run') {
@@ -443,7 +447,9 @@ async function findTemplateByName(
 > {
   const tpls = await listVisibleTemplates(fastify, user);
   const tpl = tpls.find((t) => t.name === name);
-  if (!tpl) return null;
+  if (!tpl) {
+    return null;
+  }
   const v = tpl.activeVersion
     ? await fastify.prisma.workflowTemplateVersion.findUnique({
         where: { templateId_version: { templateId: tpl.id, version: tpl.activeVersion } },
@@ -457,7 +463,9 @@ async function findTemplateByName(
 }
 
 function formatTemplateList(rows: SimpleTemplateRow[]): string {
-  if (rows.length === 0) return 'No workflow templates visible to you.';
+  if (rows.length === 0) {
+    return 'No workflow templates visible to you.';
+  }
   const lines = rows.map((r) => {
     const teamLabel = r.team ? r.team.slug : 'global';
     const defaultLabel = r.isDefault ? ' *(default)*' : '';
@@ -476,7 +484,9 @@ function formatTemplateShow(
     : 'no active version';
   const header = `*${tpl.name}* — ${teamLabel} (${versionLabel})${tpl.isDefault ? ' — default' : ''}`;
   const desc = tpl.description ? `\n${tpl.description}` : '';
-  if (!tpl.spec) return `${header}${desc}`;
+  if (!tpl.spec) {
+    return `${header}${desc}`;
+  }
   // Truncate to fit within Slack's 3000-char text limit for an ephemeral message.
   const json = JSON.stringify(tpl.spec, null, 2);
   const max = 2600;
@@ -607,9 +617,15 @@ async function handleRunModalSubmission(
   const templateId = values.template_block?.template_select?.selected_option?.value ?? '';
 
   const errors: Record<string, string> = {};
-  if (!ticket) errors.ticket_block = 'Ticket ID is required';
-  if (!description) errors.description_block = 'Description is required';
-  if (!repoId) errors.repo_block = 'Repository is required';
+  if (!ticket) {
+    errors.ticket_block = 'Ticket ID is required';
+  }
+  if (!description) {
+    errors.description_block = 'Description is required';
+  }
+  if (!repoId) {
+    errors.repo_block = 'Repository is required';
+  }
   if (Object.keys(errors).length > 0) {
     return { errors, response_action: 'errors' };
   }

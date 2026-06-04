@@ -67,32 +67,34 @@ describe('runRunsCommand', () => {
   });
 
   it('tail terminates on SUCCESS status', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      return {
-        ok: true,
-        status: 200,
-        text: async () =>
-          JSON.stringify({
-            data: {
-              id: 'r-1',
-              status: 'SUCCESS',
-              steps: [{ nodeId: 'lint', status: 'PASSED' }],
-            },
-          }),
-      } as unknown as Response;
-    }) as typeof fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: {
+                id: 'r-1',
+                status: 'SUCCESS',
+                steps: [{ nodeId: 'lint', status: 'PASSED' }],
+              },
+            }),
+        }) as unknown as Response
+    ) as typeof fetch;
     const code = await runRunsCommand(['tail', 'r-1', '--interval=1', '--max=1'], ENV);
     expect(code).toBe(0);
   });
 
   it('tail returns 2 on FAILED terminal status', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      return {
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ data: { id: 'r-2', status: 'FAILED', steps: [] } }),
-      } as unknown as Response;
-    }) as typeof fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: { id: 'r-2', status: 'FAILED', steps: [] } }),
+        }) as unknown as Response
+    ) as typeof fetch;
     const code = await runRunsCommand(['tail', 'r-2', '--interval=1', '--max=1'], ENV);
     expect(code).toBe(2);
   });

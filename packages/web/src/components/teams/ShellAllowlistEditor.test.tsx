@@ -43,7 +43,9 @@ describe('ShellAllowlistEditor', () => {
     const putCall = spy.mock.calls.find(
       ([, init]) => (init as RequestInit | undefined)?.method === 'PUT'
     );
-    if (!putCall) throw new Error('expected a PUT');
+    if (!putCall) {
+      throw new Error('expected a PUT');
+    }
     const body = JSON.parse((putCall[1] as RequestInit).body as string);
     expect(body).toEqual({
       shellImageAllowlist: ['ghcr.io/acme/new:1', 'docker.io/library/python:3.13-slim'],

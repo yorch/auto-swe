@@ -52,7 +52,9 @@ const NAV_GROUPS: NavGroup[] = [
 const ROLE_HIERARCHY: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === '/') return pathname === '/';
+  if (href === '/') {
+    return pathname === '/';
+  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -88,7 +90,9 @@ export function Sidebar() {
           const visible = group.items.filter((item) =>
             item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel)
           );
-          if (visible.length === 0) return null;
+          if (visible.length === 0) {
+            return null;
+          }
 
           return (
             <div className="mb-6" key={group.label}>

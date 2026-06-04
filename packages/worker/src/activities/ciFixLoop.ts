@@ -14,7 +14,9 @@ import { createWorkspace, shellQuote } from './workspace.js';
  * Truncates to last 50KB to fit in LLM context.
  */
 export async function fetchCILogs(logsUrl?: string): Promise<string> {
-  if (!logsUrl) return 'No logs URL provided by CI webhook';
+  if (!logsUrl) {
+    return 'No logs URL provided by CI webhook';
+  }
 
   const response = await fetch(logsUrl, {
     headers: {

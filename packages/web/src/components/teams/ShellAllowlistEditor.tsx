@@ -13,7 +13,9 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (data) setText(data.shellImageAllowlist.join('\n'));
+    if (data) {
+      setText(data.shellImageAllowlist.join('\n'));
+    }
   }, [data]);
 
   async function handleSave() {

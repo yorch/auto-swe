@@ -103,6 +103,8 @@ export function specToFlow(
 export function relayoutNodes(spec: WorkflowSpec): Record<string, { x: number; y: number }> {
   const layout = layoutSpec(spec);
   const out: Record<string, { x: number; y: number }> = {};
-  for (const n of layout.nodes) out[n.id] = { x: n.x, y: n.y };
+  for (const n of layout.nodes) {
+    out[n.id] = { x: n.x, y: n.y };
+  }
   return out;
 }

@@ -78,7 +78,9 @@ const TERMINAL_FAILURE_STATUSES = new Set(['FAILED', 'TIMED_OUT', 'CANCELLED']);
 const STEP_STATUSES_TO_SKIP = new Set(['SKIPPED', 'PENDING']);
 
 function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null;
+  if (sorted.length === 0) {
+    return null;
+  }
   const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
   return sorted[idx] ?? null;
 }
@@ -113,10 +115,14 @@ export function computeAnalytics(
 
   const perNode = new Map<string, { failed: number; total: number }>();
   for (const s of steps) {
-    if (STEP_STATUSES_TO_SKIP.has(s.status)) continue;
+    if (STEP_STATUSES_TO_SKIP.has(s.status)) {
+      continue;
+    }
     const entry = perNode.get(s.nodeId) ?? { failed: 0, total: 0 };
     entry.total += 1;
-    if (s.status === 'FAILED') entry.failed += 1;
+    if (s.status === 'FAILED') {
+      entry.failed += 1;
+    }
     perNode.set(s.nodeId, entry);
   }
 
@@ -162,23 +168,31 @@ export function computeAnalytics(
  */
 function computeSignificanceHint(runs: AnalyticsRunRow[]): SignificanceHint | null {
   const finished = runs.filter((r) => r.status !== 'RUNNING');
-  if (finished.length === 0) return null;
+  if (finished.length === 0) {
+    return null;
+  }
 
   const byVersion = new Map<number, { total: number; succeeded: number }>();
   for (const r of finished) {
     const cell = byVersion.get(r.templateVersion) ?? { succeeded: 0, total: 0 };
     cell.total += 1;
-    if (r.status === 'SUCCESS') cell.succeeded += 1;
+    if (r.status === 'SUCCESS') {
+      cell.succeeded += 1;
+    }
     byVersion.set(r.templateVersion, cell);
   }
   // Most-trafficked two arms; tie-break by version number for determinism.
   const arms = Array.from(byVersion.entries())
     .map(([version, { total, succeeded }]) => ({ succeeded, total, version }))
     .sort((a, b) => b.total - a.total || a.version - b.version);
-  if (arms.length < 2) return null;
+  if (arms.length < 2) {
+    return null;
+  }
   const a = arms[0];
   const b = arms[1];
-  if (!a || !b) return null;
+  if (!a || !b) {
+    return null;
+  }
   if (a.total < MIN_SAMPLES_FOR_SIGNIFICANCE || b.total < MIN_SAMPLES_FOR_SIGNIFICANCE) {
     return null;
   }
@@ -264,7 +278,9 @@ export function computeGlobalAnalytics(
     cell.totalCost += r.costUsdAccrued || 0;
     if (r.status !== 'RUNNING') {
       cell.finished += 1;
-      if (r.status === 'SUCCESS') cell.succeeded += 1;
+      if (r.status === 'SUCCESS') {
+        cell.succeeded += 1;
+      }
     }
     byTemplate.set(r.templateId, cell);
   }

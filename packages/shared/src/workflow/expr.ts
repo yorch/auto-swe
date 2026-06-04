@@ -22,7 +22,9 @@ export type Context = Record<string, unknown>;
 // ── Public API ────────────────────────────────────────────────────────────
 
 export function resolveBinding(binding: Binding, ctx: Context): unknown {
-  if ('literal' in binding) return binding.literal;
+  if ('literal' in binding) {
+    return binding.literal;
+  }
   if ('from' in binding) {
     const v = lookupPath(ctx, binding.from);
     return v === undefined ? binding.default : v;
@@ -37,12 +39,18 @@ export function lookupPath(ctx: Context, path: string): unknown {
   const tokens = tokenizePath(path);
   let current: unknown = ctx;
   for (const tok of tokens) {
-    if (current == null) return undefined;
+    if (current == null) {
+      return undefined;
+    }
     if (typeof tok === 'number') {
-      if (!Array.isArray(current)) return undefined;
+      if (!Array.isArray(current)) {
+        return undefined;
+      }
       current = current[tok];
     } else {
-      if (typeof current !== 'object') return undefined;
+      if (typeof current !== 'object') {
+        return undefined;
+      }
       current = (current as Record<string, unknown>)[tok];
     }
   }
@@ -74,7 +82,9 @@ function tokenizePath(path: string): Array<string | number> {
     }
     if (path[i] === '[') {
       const end = path.indexOf(']', i);
-      if (end < 0) throw new Error(`unterminated [ in path: ${path}`);
+      if (end < 0) {
+        throw new Error(`unterminated [ in path: ${path}`);
+      }
       const idx = path.slice(i + 1, end).trim();
       if (/^-?\d+$/.test(idx)) {
         out.push(Number.parseInt(idx, 10));
@@ -91,9 +101,13 @@ function tokenizePath(path: string): Array<string | number> {
     }
     // identifier
     let j = i;
-    while (j < path.length && path[j] !== '.' && path[j] !== '[') j++;
+    while (j < path.length && path[j] !== '.' && path[j] !== '[') {
+      j++;
+    }
     const id = path.slice(i, j);
-    if (!id) throw new Error(`empty segment in path: ${path}`);
+    if (!id) {
+      throw new Error(`empty segment in path: ${path}`);
+    }
     out.push(id);
     i = j;
   }
@@ -135,7 +149,9 @@ function tokenizeExpr(input: string): Tok[] {
   const len = input.length;
   while (i < len) {
     const c = input[i];
-    if (c === undefined) break;
+    if (c === undefined) {
+      break;
+    }
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
       i++;
       continue;
@@ -155,7 +171,9 @@ function tokenizeExpr(input: string): Tok[] {
           j++;
         }
       }
-      if (j >= len) throw new Error(`unterminated string in expr: ${input}`);
+      if (j >= len) {
+        throw new Error(`unterminated string in expr: ${input}`);
+      }
       tokens.push({ kind: 'str', val });
       i = j + 1;
       continue;
@@ -220,12 +238,19 @@ function tokenizeExpr(input: string): Tok[] {
     // identifier / path / keyword
     if (/[A-Za-z_$]/.test(c)) {
       let j = i + 1;
-      while (j < len && /[A-Za-z0-9_$.[\]'"]/.test(input[j] as string)) j++;
+      while (j < len && /[A-Za-z0-9_$.[\]'"]/.test(input[j] as string)) {
+        j++;
+      }
       const id = input.slice(i, j);
-      if (id === 'true') tokens.push({ kind: 'bool', val: true });
-      else if (id === 'false') tokens.push({ kind: 'bool', val: false });
-      else if (id === 'null') tokens.push({ kind: 'null' });
-      else tokens.push({ kind: 'path', val: id });
+      if (id === 'true') {
+        tokens.push({ kind: 'bool', val: true });
+      } else if (id === 'false') {
+        tokens.push({ kind: 'bool', val: false });
+      } else if (id === 'null') {
+        tokens.push({ kind: 'null' });
+      } else {
+        tokens.push({ kind: 'path', val: id });
+      }
       i = j;
       continue;
     }
@@ -294,7 +319,9 @@ class Parser {
       } else if (this.matchOp('-')) {
         const right = this.parseMul();
         left = requireNumber(left, '-') - requireNumber(right, '-');
-      } else break;
+      } else {
+        break;
+      }
     }
     return left;
   }
@@ -308,7 +335,9 @@ class Parser {
       } else if (this.matchOp('/')) {
         const right = this.parseUnary();
         left = requireNumber(left, '/') / requireNumber(right, '/');
-      } else break;
+      } else {
+        break;
+      }
     }
     return left;
   }
@@ -327,11 +356,15 @@ class Parser {
 
   parsePrimary(): unknown {
     const tok = this.toks[this.pos];
-    if (!tok) throw new Error('unexpected end of expression');
+    if (!tok) {
+      throw new Error('unexpected end of expression');
+    }
     if (tok.kind === 'op' && tok.val === '(') {
       this.pos++;
       const v = this.parseOr();
-      if (!this.matchOp(')')) throw new Error('expected )');
+      if (!this.matchOp(')')) {
+        throw new Error('expected )');
+      }
       return v;
     }
     this.pos++;
@@ -370,10 +403,18 @@ function requireNumber(v: unknown, op: string): number {
 }
 
 export function describeOperand(v: unknown): string {
-  if (v === null) return 'null';
-  if (v === undefined) return 'undefined';
-  if (Array.isArray(v)) return `array(${v.length})`;
-  if (typeof v === 'string') return `string '${v.slice(0, 32)}'`;
+  if (v === null) {
+    return 'null';
+  }
+  if (v === undefined) {
+    return 'undefined';
+  }
+  if (Array.isArray(v)) {
+    return `array(${v.length})`;
+  }
+  if (typeof v === 'string') {
+    return `string '${v.slice(0, 32)}'`;
+  }
   return `${typeof v}`;
 }
 

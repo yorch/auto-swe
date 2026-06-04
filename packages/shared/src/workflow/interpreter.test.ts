@@ -38,10 +38,14 @@ function makeDispatcher(opts: {
       const merged = { ...config, ...inputs };
       calls.push({ config: { ...config }, inputs: merged, step });
       const out = opts.stepOutputs[step];
-      if (out === undefined) throw new Error(`no canned output for step ${step}`);
+      if (out === undefined) {
+        throw new Error(`no canned output for step ${step}`);
+      }
       const raw =
         typeof out === 'function' ? (out as (i: Record<string, unknown>) => unknown)(merged) : out;
-      if (!opts.supportsCancellation || !cancellation) return raw;
+      if (!opts.supportsCancellation || !cancellation) {
+        return raw;
+      }
       // Mock: race the canned output against the cancellation token. Mirrors
       // the Temporal dispatcher's contract — it rethrows CancelledFailure
       // as a BranchCancelledError so the interpreter can bypass onFail.
@@ -57,7 +61,9 @@ function makeDispatcher(opts: {
     },
     async waitSignal(name) {
       const q = opts.signalQueue[name];
-      if (!q || q.length === 0) return undefined;
+      if (!q || q.length === 0) {
+        return undefined;
+      }
       return q.shift();
     },
   };
@@ -575,7 +581,9 @@ describe('runSpec', () => {
       stepOutputs: {
         flaky: () => {
           const i = n++;
-          if (i === 1) throw new Error('odd one out');
+          if (i === 1) {
+            throw new Error('odd one out');
+          }
           return { ok: true };
         },
       },
@@ -834,7 +842,9 @@ describe('runSpec', () => {
       stepOutputs: {
         maybe: () => {
           const i = n++;
-          if (i === 2) return Promise.reject(new Error('boom'));
+          if (i === 2) {
+            return Promise.reject(new Error('boom'));
+          }
           return Promise.resolve({ ok: true });
         },
       },
@@ -947,7 +957,9 @@ describe('runSpec', () => {
         // fixes.
         maybeCancel: () => {
           const i = n++;
-          if (i === 0) return Promise.reject(new Error('branch 0 boom'));
+          if (i === 0) {
+            return Promise.reject(new Error('branch 0 boom'));
+          }
           return new Promise((resolve) => {
             slowResolvers.push(resolve);
           });
@@ -987,7 +999,9 @@ describe('runSpec', () => {
       stepOutputs: {
         mixed: () => {
           const i = n++;
-          if (i === 0) throw new Error('boom');
+          if (i === 0) {
+            throw new Error('boom');
+          }
           return { ok: true };
         },
       },

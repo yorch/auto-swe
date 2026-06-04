@@ -54,7 +54,9 @@ export function RolesTab() {
     SECURITY_REVIEW: [],
     VALIDATE_CONTEXT: [],
   };
-  for (const row of rows ?? []) byRole[row.role].push(row);
+  for (const row of rows ?? []) {
+    byRole[row.role].push(row);
+  }
 
   return (
     <div className="space-y-6">
@@ -101,8 +103,12 @@ export function RolesTab() {
                 credentials={credentials ?? []}
                 key={row.id}
                 onDelete={() => {
-                  if (row.scope === 'GLOBAL') return;
-                  if (!window.confirm(`Delete ${row.scope} override for ${role}?`)) return;
+                  if (row.scope === 'GLOBAL') {
+                    return;
+                  }
+                  if (!window.confirm(`Delete ${row.scope} override for ${role}?`)) {
+                    return;
+                  }
                   del.mutate(row.id);
                 }}
                 onEdit={() => setEditing(row)}

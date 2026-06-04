@@ -69,11 +69,16 @@ export function diffSpecs(before: WorkflowSpec, after: WorkflowSpec): SpecDiff {
     }
     const a = before.nodes[id];
     const b = after.nodes[id];
-    if (a && b && nodesEqual(a, b)) unchangedNodes.push(id);
-    else changedNodes.push(id);
+    if (a && b && nodesEqual(a, b)) {
+      unchangedNodes.push(id);
+    } else {
+      changedNodes.push(id);
+    }
   }
   for (const id of beforeIds) {
-    if (!afterIds.has(id)) removedNodes.push(id);
+    if (!afterIds.has(id)) {
+      removedNodes.push(id);
+    }
   }
 
   const metaChanges: SpecMetaChange[] = [];

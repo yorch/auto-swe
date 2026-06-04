@@ -52,7 +52,9 @@ interface S3Helper {
 let s3ClientPromise: Promise<S3Helper> | null = null;
 
 async function s3Client(): Promise<S3Helper> {
-  if (s3ClientPromise) return s3ClientPromise;
+  if (s3ClientPromise) {
+    return s3ClientPromise;
+  }
   s3ClientPromise = (async () => {
     // Use a dynamic specifier so TS doesn't try to resolve the type at compile time.
     const moduleName = '@aws-sdk/client-s3';
@@ -85,7 +87,9 @@ async function s3Client(): Promise<S3Helper> {
     return {
       async getObject(key) {
         const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-        if (!resp.Body) throw new Error(`artifact body missing for s3://${bucket}/${key}`);
+        if (!resp.Body) {
+          throw new Error(`artifact body missing for s3://${bucket}/${key}`);
+        }
         const bytes = await resp.Body.transformToByteArray();
         // Copy into a fresh Buffer/ArrayBuffer to satisfy strict typing on
         // Node's evolving Buffer types (avoids the SharedArrayBuffer mismatch).
@@ -151,12 +155,16 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
     sizeBytes: row.sizeBytes,
   };
   if (row.backend === 's3') {
-    if (!row.s3Key) throw new Error(`artifact ${id} has backend=s3 but no s3Key`);
+    if (!row.s3Key) {
+      throw new Error(`artifact ${id} has backend=s3 but no s3Key`);
+    }
     const client = await s3Client();
     const body = await client.getObject(row.s3Key);
     return { body, ref };
   }
-  if (!row.inlineBlob) throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
+  if (!row.inlineBlob) {
+    throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
+  }
   return { body: Buffer.from(row.inlineBlob), ref };
 }
 

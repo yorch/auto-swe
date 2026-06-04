@@ -33,23 +33,24 @@ describe('runTokensCommand', () => {
   });
 
   it('create prints the plaintext token on stdout exactly once', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      return {
-        ok: true,
-        status: 201,
-        text: async () =>
-          JSON.stringify({
-            data: {
-              createdAt: '2026-01-01',
-              expiresAt: null,
-              id: 'pat-1',
-              name: 'ci',
-              prefix: 'ats_xxxxxxxx',
-              token: 'ats_secretsecretsecretsecret',
-            },
-          }),
-      } as unknown as Response;
-    }) as typeof fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 201,
+          text: async () =>
+            JSON.stringify({
+              data: {
+                createdAt: '2026-01-01',
+                expiresAt: null,
+                id: 'pat-1',
+                name: 'ci',
+                prefix: 'ats_xxxxxxxx',
+                token: 'ats_secretsecretsecretsecret',
+              },
+            }),
+        }) as unknown as Response
+    ) as typeof fetch;
     const code = await runTokensCommand(['create', 'ci'], ENV);
     expect(code).toBe(0);
     const out = stdoutWrites.join('');
@@ -79,26 +80,27 @@ describe('runTokensCommand', () => {
   });
 
   it('list shows column headers + status when token has a revokedAt', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      return {
-        ok: true,
-        status: 200,
-        text: async () =>
-          JSON.stringify({
-            data: [
-              {
-                createdAt: '2026-01-01',
-                expiresAt: null,
-                id: 'pat-1',
-                lastUsedAt: null,
-                name: 'a',
-                prefix: 'ats_aaaaaaaa',
-                revokedAt: '2026-02-01',
-              },
-            ],
-          }),
-      } as unknown as Response;
-    }) as typeof fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: [
+                {
+                  createdAt: '2026-01-01',
+                  expiresAt: null,
+                  id: 'pat-1',
+                  lastUsedAt: null,
+                  name: 'a',
+                  prefix: 'ats_aaaaaaaa',
+                  revokedAt: '2026-02-01',
+                },
+              ],
+            }),
+        }) as unknown as Response
+    ) as typeof fetch;
     const code = await runTokensCommand(['list'], ENV);
     expect(code).toBe(0);
     expect(stdoutWrites.join('')).toContain('revoked');

@@ -12,7 +12,9 @@
  * mis-classify a real bug as a network failure than to miss the common case.
  */
 export function isNetworkError(err: unknown): boolean {
-  if (!(err instanceof TypeError)) return false;
+  if (!(err instanceof TypeError)) {
+    return false;
+  }
   return /failed to fetch|networkerror|load failed/i.test(err.message);
 }
 
@@ -23,7 +25,9 @@ export function isNetworkError(err: unknown): boolean {
  * error so callers can fall through to whatever message the server sent.
  */
 export function gatewayUnreachableMessage(err: unknown, apiBase: string): string | null {
-  if (!isNetworkError(err)) return null;
+  if (!isNetworkError(err)) {
+    return null;
+  }
   return `Can't reach the auto-swe gateway at ${apiBase}. Check that it's running and that CORS_ORIGIN includes this page's origin.`;
 }
 
@@ -38,7 +42,9 @@ export async function withGatewayDiagnostics<T>(apiBase: string, fn: () => Promi
     return await fn();
   } catch (err) {
     const friendly = gatewayUnreachableMessage(err, apiBase);
-    if (friendly) throw new Error(friendly);
+    if (friendly) {
+      throw new Error(friendly);
+    }
     throw err;
   }
 }

@@ -33,9 +33,13 @@ const UpdateUserSchema = z.object({
  * and update handlers so the mapping lives in one place.
  */
 function replyOnUserUniqueViolation(err: unknown, reply: FastifyReply): FastifyReply | null {
-  if (typeof err !== 'object' || err === null) return null;
+  if (typeof err !== 'object' || err === null) {
+    return null;
+  }
   const e = err as { code?: string; meta?: { target?: unknown } };
-  if (e.code !== 'P2002') return null;
+  if (e.code !== 'P2002') {
+    return null;
+  }
   const t = e.meta?.target;
   const target = Array.isArray(t) ? t.join(',') : typeof t === 'string' ? t : '';
   const isSlack = target.includes('slack');
@@ -132,7 +136,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         // The pre-checks above cover the common case; this maps a concurrent
         // collision (caught by the DB @unique constraints) to the right 409.
         const conflict = replyOnUserUniqueViolation(err, reply);
-        if (conflict) return conflict;
+        if (conflict) {
+          return conflict;
+        }
         throw err;
       }
 
@@ -258,7 +264,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: updated };
       } catch (err) {
         const conflict = replyOnUserUniqueViolation(err, reply);
-        if (conflict) return conflict;
+        if (conflict) {
+          return conflict;
+        }
         throw err;
       }
     }

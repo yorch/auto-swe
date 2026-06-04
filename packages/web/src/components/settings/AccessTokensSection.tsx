@@ -44,7 +44,9 @@ export function AccessTokensSection() {
   }
 
   async function handleCopy() {
-    if (!revealed) return;
+    if (!revealed) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(revealed.token);
       setCopied(true);
@@ -55,7 +57,9 @@ export function AccessTokensSection() {
   }
 
   function handleRevoke(id: string, label: string) {
-    if (!window.confirm(`Revoke "${label}"? Anything using this token will stop working.`)) return;
+    if (!window.confirm(`Revoke "${label}"? Anything using this token will stop working.`)) {
+      return;
+    }
     revoke.mutate(id);
   }
 

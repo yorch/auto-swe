@@ -58,7 +58,9 @@ export class SignalSlots {
    */
   take(name: string): unknown | undefined {
     const slot = this.slots.get(name);
-    if (!slot) return undefined;
+    if (!slot) {
+      return undefined;
+    }
     this.slots.delete(name);
     return slot.payload;
   }

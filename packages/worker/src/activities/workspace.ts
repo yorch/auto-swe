@@ -44,12 +44,8 @@ export function createWorkspace(
   );
 
   // Initial exec function (root of container)
-  const rootExec = (command: string): string => {
-    return execSync(
-      `docker exec ${containerName} sh -c ${shellQuote(command)}`,
-      EXEC_OPTS
-    ) as string;
-  };
+  const rootExec = (command: string): string =>
+    execSync(`docker exec ${containerName} sh -c ${shellQuote(command)}`, EXEC_OPTS) as string;
 
   // Wrap provisioning in try/catch — destroy the container if any setup step fails
   // to prevent accumulation of orphaned containers on repeated failures.
@@ -85,12 +81,11 @@ export function createWorkspace(
         // Container may already be gone
       }
     },
-    exec: (command: string) => {
-      return execSync(
+    exec: (command: string) =>
+      execSync(
         `docker exec -w /workspace/target-repo ${containerName} sh -c ${shellQuote(command)}`,
         EXEC_OPTS
-      ) as string;
-    },
+      ) as string,
     execCapture: (command: string, options) => {
       const timeoutMs = options?.timeoutMs ?? 600_000;
       const result = spawnSync(

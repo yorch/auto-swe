@@ -20,7 +20,9 @@ export default function RunDetailPage({ params }: PageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const dagOverlay = useMemo(() => {
-    if (!run?.steps) return undefined;
+    if (!run?.steps) {
+      return undefined;
+    }
     const byNodeId: Record<string, { status: string; attempt: number }> = {};
     for (const s of run.steps) {
       // Strip fan-out branch prefix (e.g. "fan[0]/impl") so the parent DAG

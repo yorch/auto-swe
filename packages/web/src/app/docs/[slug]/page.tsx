@@ -25,7 +25,9 @@ export async function generateMetadata({ params }: { params: Promise<Params> }) 
 export default async function DocPage({ params }: { params: Promise<Params> }) {
   const { slug } = await params;
   const doc = await getDoc(slug);
-  if (!doc) notFound();
+  if (!doc) {
+    notFound();
+  }
 
   return (
     <div className="space-y-4 max-w-4xl">

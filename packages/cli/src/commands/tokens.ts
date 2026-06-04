@@ -39,9 +39,15 @@ export async function runTokensCommand(args: string[], env: CliEnv): Promise<num
     return 0;
   }
   try {
-    if (sub === 'list') return await cmdList(env);
-    if (sub === 'create') return await cmdCreate(rest, env);
-    if (sub === 'revoke') return await cmdRevoke(rest, env);
+    if (sub === 'list') {
+      return await cmdList(env);
+    }
+    if (sub === 'create') {
+      return await cmdCreate(rest, env);
+    }
+    if (sub === 'revoke') {
+      return await cmdRevoke(rest, env);
+    }
   } catch (err) {
     if (err instanceof GatewayError) {
       process.stderr.write(`${err.code}: ${err.message}\n`);
@@ -92,7 +98,9 @@ async function cmdCreate(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
   const body: { name: string; expiresInDays?: number } = { name };
-  if (expiresInDays !== undefined) body.expiresInDays = expiresInDays;
+  if (expiresInDays !== undefined) {
+    body.expiresInDays = expiresInDays;
+  }
   const issued = await apiRequest<IssuedToken>(env, 'POST', '/api/v1/auth/tokens', body);
   process.stdout.write(`${issued.token}\n`);
   process.stderr.write(
@@ -115,6 +123,8 @@ async function cmdRevoke(args: string[], env: CliEnv): Promise<number> {
 }
 
 function isExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return false;
+  if (!expiresAt) {
+    return false;
+  }
   return new Date(expiresAt) < new Date();
 }

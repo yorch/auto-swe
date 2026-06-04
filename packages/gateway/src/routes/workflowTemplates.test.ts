@@ -120,14 +120,20 @@ function buildApp(state: {
           state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
         findMany: async ({ where, distinct }: { where?: Mutable; distinct?: string[] }) => {
           const filtered = state.runs.filter((r) => {
-            if (!where?.templateId) return true;
+            if (!where?.templateId) {
+              return true;
+            }
             const ids = (where.templateId as { in?: string[] }).in;
             return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
           });
-          if (!distinct) return filtered;
+          if (!distinct) {
+            return filtered;
+          }
           const seen = new Set<string>();
           return filtered.filter((r) => {
-            if (seen.has(r.templateId)) return false;
+            if (seen.has(r.templateId)) {
+              return false;
+            }
             seen.add(r.templateId);
             return true;
           });
@@ -195,14 +201,18 @@ function buildApp(state: {
         },
         findMany: async ({ where }: { where?: Mutable }) => {
           const filtered = state.templates.filter((t) => {
-            if (where?.teamId && t.teamId !== where.teamId) return false;
+            if (where?.teamId && t.teamId !== where.teamId) {
+              return false;
+            }
             return true;
           });
           return filtered.map((t) => ({ ...t, _count: { versions: t.versions.length } }));
         },
         update: async ({ data, where }: { data: Mutable; where: Mutable }) => {
           const tpl = findTemplate(where);
-          if (!tpl) throw new Error('not found');
+          if (!tpl) {
+            throw new Error('not found');
+          }
           Object.assign(tpl, data);
           tpl.updatedAt = new Date();
           return { ...tpl, _count: { versions: tpl.versions.length } };
@@ -210,8 +220,12 @@ function buildApp(state: {
         updateMany: async ({ data, where }: { data: Mutable; where: Mutable }) => {
           let count = 0;
           for (const t of state.templates) {
-            if (where.teamId !== undefined && t.teamId !== where.teamId) continue;
-            if (where.id && (where.id as { not?: string }).not === t.id) continue;
+            if (where.teamId !== undefined && t.teamId !== where.teamId) {
+              continue;
+            }
+            if (where.id && (where.id as { not?: string }).not === t.id) {
+              continue;
+            }
             Object.assign(t, data);
             count++;
           }
@@ -222,7 +236,9 @@ function buildApp(state: {
         create: async ({ data }: { data: Mutable }) => {
           const id = `v-${data.templateId}-${data.version}`;
           const tpl = findTemplate({ id: data.templateId });
-          if (!tpl) throw new Error('template not found');
+          if (!tpl) {
+            throw new Error('template not found');
+          }
           tpl.versions.push({
             createdAt: new Date(),
             createdBy: 'user-1',
@@ -243,14 +259,18 @@ function buildApp(state: {
         },
         findFirst: async ({ where, orderBy: _ }: { where?: Mutable; orderBy?: Mutable }) => {
           const tpl = findTemplate({ id: where?.templateId });
-          if (!tpl) return null;
+          if (!tpl) {
+            return null;
+          }
           const sorted = [...tpl.versions].sort((a, b) => b.version - a.version);
           return sorted[0] ?? null;
         },
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.templateId_version as { templateId: string; version: number };
           const v = state.versions.get(`${composite.templateId}:${composite.version}`);
-          if (!v) return null;
+          if (!v) {
+            return null;
+          }
           return { ...v, templateId: composite.templateId, version: composite.version };
         },
       },
@@ -337,7 +357,9 @@ describe('workflow-templates routes', () => {
 
   it('creates a new version with monotonically increasing number', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'POST',
@@ -350,7 +372,9 @@ describe('workflow-templates routes', () => {
 
   it('rejects new version with invalid spec', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'POST',
@@ -362,7 +386,9 @@ describe('workflow-templates routes', () => {
 
   it('promotes a version to active', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'POST',
@@ -384,7 +410,9 @@ describe('workflow-templates routes', () => {
 
   it('returns a structural diff between two versions', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     // Create a third version that adds a node to make the diff non-trivial.
     await app.inject({
       headers: { authorization: 'Bearer x' },
@@ -418,7 +446,9 @@ describe('workflow-templates routes', () => {
 
   it('rejects experimentSplit > 0 without an experimentVersion', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'PATCH',
@@ -431,7 +461,9 @@ describe('workflow-templates routes', () => {
 
   it('rejects experimentVersion pointing at a missing version', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'PATCH',
@@ -444,7 +476,9 @@ describe('workflow-templates routes', () => {
 
   it('accepts a valid experiment config and round-trips it on detail', async () => {
     const tpl = state.templates[0];
-    if (!tpl) throw new Error('expected template');
+    if (!tpl) {
+      throw new Error('expected template');
+    }
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'PATCH',

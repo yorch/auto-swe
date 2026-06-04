@@ -15,7 +15,9 @@ describe('isSafeProbeUrl', () => {
   function assertBlocked(apiBase: string, reasonMatch: RegExp) {
     const r = isSafeProbeUrl(apiBase);
     expect(r.ok, `expected '${apiBase}' to be blocked`).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(reasonMatch);
+    if (!r.ok) {
+      expect(r.reason).toMatch(reasonMatch);
+    }
   }
 
   function assertAllowed(apiBase: string) {

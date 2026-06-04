@@ -59,7 +59,9 @@ async function resolveSlackChannel(
     },
     where: { id: runId },
   });
-  if (!run) return null;
+  if (!run) {
+    return null;
+  }
 
   const ticket = run.workRequest?.externalTicketId ?? '(no ticket)';
   const templateName = run.template?.name ?? '(template)';
@@ -83,13 +85,17 @@ async function resolveSlackChannel(
       })
     : null;
 
-  if (requireOptIn && !team?.slackNotifySuccess) return null;
+  if (requireOptIn && !team?.slackNotifySuccess) {
+    return null;
+  }
 
   if (!channel) {
     channel = team?.slackNotifyChannel ?? null;
     threadTs = null;
   }
-  if (!channel) return null;
+  if (!channel) {
+    return null;
+  }
 
   return {
     channel,
@@ -108,7 +114,9 @@ async function postToSlack(
   logLabel: string
 ): Promise<void> {
   const body: Record<string, unknown> = { channel, text };
-  if (threadTs) body.thread_ts = threadTs;
+  if (threadTs) {
+    body.thread_ts = threadTs;
+  }
 
   // AbortController guards against a hung connection holding up the activity.
   const controller = new AbortController();
@@ -153,7 +161,9 @@ async function resolveSlackChannelByWorkRequest(
     },
     where: { id: workRequestId },
   });
-  if (!workRequest) return null;
+  if (!workRequest) {
+    return null;
+  }
 
   const ticket = workRequest.externalTicketId;
   let channel = workRequest.slackChannelId ?? null;
@@ -171,7 +181,9 @@ async function resolveSlackChannelByWorkRequest(
     threadTs = null;
   }
 
-  if (!channel) return null;
+  if (!channel) {
+    return null;
+  }
   return { channel, threadTs, ticket };
 }
 
@@ -187,14 +199,20 @@ export async function notifySlackStepFailure(input: {
   error?: string | undefined;
 }): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return;
+  if (!token) {
+    return;
+  }
   // Notify only on the FIRST failure for a given (runId, nodeId). Retries that
   // keep failing would otherwise spam the channel.
-  if (input.attempt > 1) return;
+  if (input.attempt > 1) {
+    return;
+  }
 
   try {
     const resolved = await resolveSlackChannel(input.runId, false);
-    if (!resolved) return;
+    if (!resolved) {
+      return;
+    }
     const errLine = input.error ? `: ${truncate(input.error, 400)}` : '';
     const text = `*[${resolved.ticket}]* \`${resolved.templateName}\` → step \`${input.nodeId}\` failed (attempt ${input.attempt})${errLine}`;
     await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify');
@@ -214,11 +232,15 @@ export async function notifySlackPrReady(input: {
   prUrl: string;
 }): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return;
+  if (!token) {
+    return;
+  }
 
   try {
     const ctx = await resolveSlackChannelByWorkRequest(input.workRequestId);
-    if (!ctx) return;
+    if (!ctx) {
+      return;
+    }
     const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
     await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
   } catch {
@@ -236,11 +258,15 @@ export async function notifySlackRunComplete(input: {
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED';
 }): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return;
+  if (!token) {
+    return;
+  }
 
   try {
     const resolved = await resolveSlackChannel(input.runId, true);
-    if (!resolved) return;
+    if (!resolved) {
+      return;
+    }
     const emoji =
       input.status === 'SUCCESS'
         ? ':white_check_mark:'

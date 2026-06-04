@@ -49,13 +49,16 @@ export default function AdminAccessTokensPage() {
   const [pruneError, setPruneError] = useState<string | null>(null);
 
   const handleRevoke = (id: string, name: string) => {
-    if (!window.confirm(`Revoke token "${name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Revoke token "${name}"? This cannot be undone.`)) {
+      return;
+    }
     revokeToken.mutate(id);
   };
 
   const handlePrune = async () => {
-    if (!window.confirm('Delete shell-audit rows older than 90 days? This cannot be undone.'))
+    if (!window.confirm('Delete shell-audit rows older than 90 days? This cannot be undone.')) {
       return;
+    }
     setPruneError(null);
     setPruneResult(null);
     try {

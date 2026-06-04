@@ -74,6 +74,8 @@
       "recommended": true,
       "style": {
         "noNonNullAssertion": "error",
+        "useBlockStatements": "error",
+        "useConsistentArrowReturn": "error",
         "useConst": "error",
         "useTemplate": "warn"
       },

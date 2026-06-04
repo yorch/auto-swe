@@ -464,7 +464,9 @@ async function runWithCancellation<T>(
   cancellation: { token?: CancellationToken } | undefined,
   body: () => Promise<T>
 ): Promise<T> {
-  if (!cancellation) return body();
+  if (!cancellation) {
+    return body();
+  }
   const scope = new CancellationScope({ cancellable: true });
   cancellation.token = { cancel: () => scope.cancel() };
   try {

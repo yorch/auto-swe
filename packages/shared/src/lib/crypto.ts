@@ -15,7 +15,9 @@ const CURRENT_KEY_VERSION = 1;
 let cachedKey: Buffer | undefined;
 
 function loadKey(): Buffer {
-  if (cachedKey) return cachedKey;
+  if (cachedKey) {
+    return cachedKey;
+  }
   const raw = process.env.CONFIG_ENCRYPTION_KEY?.trim();
   if (!raw) {
     throw new Error(

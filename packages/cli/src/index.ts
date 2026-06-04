@@ -55,10 +55,18 @@ async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
-  if (cmd === 'run') return await runWorkRequestsCommand(rest, env);
-  if (cmd === 'workflows') return await runWorkflowsCommand(rest, env);
-  if (cmd === 'runs') return await runRunsCommand(rest, env);
-  if (cmd === 'tokens') return await runTokensCommand(rest, env);
+  if (cmd === 'run') {
+    return await runWorkRequestsCommand(rest, env);
+  }
+  if (cmd === 'workflows') {
+    return await runWorkflowsCommand(rest, env);
+  }
+  if (cmd === 'runs') {
+    return await runRunsCommand(rest, env);
+  }
+  if (cmd === 'tokens') {
+    return await runTokensCommand(rest, env);
+  }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;
 }

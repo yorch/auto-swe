@@ -19,11 +19,19 @@ function diffMarkers(
 ): Record<string, DiffKind> {
   const out: Record<string, DiffKind> = {};
   if (side === 'a') {
-    for (const id of diff.removedNodes) out[id] = 'removed';
-    for (const id of diff.changedNodes) out[id] = 'changed';
+    for (const id of diff.removedNodes) {
+      out[id] = 'removed';
+    }
+    for (const id of diff.changedNodes) {
+      out[id] = 'changed';
+    }
   } else {
-    for (const id of diff.addedNodes) out[id] = 'added';
-    for (const id of diff.changedNodes) out[id] = 'changed';
+    for (const id of diff.addedNodes) {
+      out[id] = 'added';
+    }
+    for (const id of diff.changedNodes) {
+      out[id] = 'changed';
+    }
   }
   return out;
 }
@@ -39,9 +47,13 @@ export default function TemplateDiffPage({ params }: PageProps) {
   const [b, setB] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!template || sortedVersions.length === 0) return;
+    if (!template || sortedVersions.length === 0) {
+      return;
+    }
     const defaultA = template.activeVersion ?? sortedVersions[0]?.version ?? null;
-    if (a === null) setA(defaultA);
+    if (a === null) {
+      setA(defaultA);
+    }
     if (b === null) {
       const defaultB = sortedVersions.find((v) => v.version !== defaultA)?.version ?? defaultA;
       setB(defaultB);

@@ -75,8 +75,12 @@ export interface EmbeddingConfigRow {
 
 export function useAdminModelConfigs(filter?: { scope?: ConfigScope; teamId?: string }) {
   const qs = new URLSearchParams();
-  if (filter?.scope) qs.set('scope', filter.scope);
-  if (filter?.teamId) qs.set('teamId', filter.teamId);
+  if (filter?.scope) {
+    qs.set('scope', filter.scope);
+  }
+  if (filter?.teamId) {
+    qs.set('teamId', filter.teamId);
+  }
   const query = qs.toString();
   return useQuery({
     queryFn: () =>
@@ -124,8 +128,12 @@ export function useAdminEffectiveModelConfig(args: {
   workflowTemplateId?: string;
 }) {
   const qs = new URLSearchParams({ role: args.role });
-  if (args.teamId) qs.set('teamId', args.teamId);
-  if (args.workflowTemplateId) qs.set('workflowTemplateId', args.workflowTemplateId);
+  if (args.teamId) {
+    qs.set('teamId', args.teamId);
+  }
+  if (args.workflowTemplateId) {
+    qs.set('workflowTemplateId', args.workflowTemplateId);
+  }
   return useQuery({
     queryFn: () =>
       api
@@ -209,9 +217,15 @@ export function useAdminConfigAuditLog(filter?: {
   limit?: number;
 }) {
   const qs = new URLSearchParams();
-  if (filter?.entityType) qs.set('entityType', filter.entityType);
-  if (filter?.entityId) qs.set('entityId', filter.entityId);
-  if (filter?.limit !== undefined) qs.set('limit', String(filter.limit));
+  if (filter?.entityType) {
+    qs.set('entityType', filter.entityType);
+  }
+  if (filter?.entityId) {
+    qs.set('entityId', filter.entityId);
+  }
+  if (filter?.limit !== undefined) {
+    qs.set('limit', String(filter.limit));
+  }
   return useQuery({
     queryFn: () =>
       api

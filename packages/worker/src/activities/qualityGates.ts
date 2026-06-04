@@ -90,7 +90,9 @@ const ARTIFACT_KIND: Record<GateName, string> = {
  */
 export function truncate(s: string, maxBytes: number): string {
   const buf = Buffer.from(s, 'utf8');
-  if (buf.byteLength <= maxBytes) return s;
+  if (buf.byteLength <= maxBytes) {
+    return s;
+  }
   const half = Math.floor(maxBytes / 2);
   // Decoding ignores invalid trailing bytes from a mid-codepoint cut, so a
   // worst-case 3-byte loss is acceptable here.
@@ -109,7 +111,9 @@ export async function resolveCommand(
   request: RepoWorkRequest,
   override: string | undefined
 ): Promise<string | null> {
-  if (override && override.trim().length > 0) return override;
+  if (override && override.trim().length > 0) {
+    return override;
+  }
 
   const repo = await prisma.repository.findUniqueOrThrow({
     select: { gateCommands: true },

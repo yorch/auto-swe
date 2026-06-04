@@ -49,7 +49,9 @@ function setupFetchMock(handlers: Record<string, (body?: unknown) => unknown>) {
     const url = typeof input === 'string' ? input : input.toString();
     const path = url.replace(/^https?:\/\/[^/]+/, '');
     const handler = handlers[path];
-    if (!handler) throw new Error(`No fetch mock for ${path}`);
+    if (!handler) {
+      throw new Error(`No fetch mock for ${path}`);
+    }
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     return new Response(JSON.stringify(handler(body)), {
       headers: { 'content-type': 'application/json' },
@@ -99,7 +101,9 @@ describe('CreateUserModal', () => {
 
     // Verify the request shape
     const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/api/v1/users'));
-    if (!call) throw new Error('expected a POST to /api/v1/users');
+    if (!call) {
+      throw new Error('expected a POST to /api/v1/users');
+    }
     const body = JSON.parse((call[1] as RequestInit).body as string);
     expect(body).toEqual({
       email: 'sa@example.com',

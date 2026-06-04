@@ -21,11 +21,14 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
     }
   }, [data]);
 
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
+  useEffect(
+    () => () => {
+      if (savedTimerRef.current !== null) {
+        clearTimeout(savedTimerRef.current);
+      }
+    },
+    []
+  );
 
   async function handleSave() {
     setError(null);
@@ -38,7 +41,9 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
       await update.mutateAsync(list);
       isDirtyRef.current = false;
       setSaved(true);
-      if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
+      if (savedTimerRef.current !== null) {
+        clearTimeout(savedTimerRef.current);
+      }
       savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update allowlist');

@@ -52,13 +52,23 @@ export function isShellImageAllowed(
   image: string,
   teamAllowlist: readonly string[] | null | undefined
 ): boolean {
-  if (!image || image.trim().length === 0) return false;
-  if (BUILTIN_SHELL_IMAGES.includes(image)) return true;
-  if (!teamAllowlist || teamAllowlist.length === 0) return false;
+  if (!image || image.trim().length === 0) {
+    return false;
+  }
+  if (BUILTIN_SHELL_IMAGES.includes(image)) {
+    return true;
+  }
+  if (!teamAllowlist || teamAllowlist.length === 0) {
+    return false;
+  }
   for (const entry of teamAllowlist) {
-    if (typeof entry !== 'string') continue;
+    if (typeof entry !== 'string') {
+      continue;
+    }
     const trimmed = entry.trim();
-    if (trimmed.length > 0 && trimmed === image) return true;
+    if (trimmed.length > 0 && trimmed === image) {
+      return true;
+    }
   }
   return false;
 }

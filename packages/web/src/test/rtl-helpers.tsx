@@ -51,7 +51,9 @@ export function setupFetchMock(
     const path = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
     const handler = handlers[`${method} ${path}`] ?? handlers[path];
-    if (!handler) throw new Error(`No fetch mock for ${method} ${path}`);
+    if (!handler) {
+      throw new Error(`No fetch mock for ${method} ${path}`);
+    }
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     return new Response(JSON.stringify(handler(body)), {
       headers: { 'content-type': 'application/json' },
@@ -72,6 +74,8 @@ export function bodyOf(
     const u = typeof url === 'string' ? url : url.toString();
     return u.includes(pathSuffix) && (init as RequestInit | undefined)?.method === method;
   });
-  if (!call) throw new Error(`expected a ${method} to ${pathSuffix}`);
+  if (!call) {
+    throw new Error(`expected a ${method} to ${pathSuffix}`);
+  }
   return JSON.parse((call[1] as RequestInit).body as string);
 }

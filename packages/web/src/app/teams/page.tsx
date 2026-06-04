@@ -14,8 +14,9 @@ export default function TeamsPage() {
   const canCreate = role === 'ADMIN';
   const [creating, setCreating] = useState(false);
 
-  if (isLoading)
+  if (isLoading) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6">

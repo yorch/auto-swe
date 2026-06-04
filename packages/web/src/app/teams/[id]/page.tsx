@@ -32,10 +32,12 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
 
-  if (isLoading)
+  if (isLoading) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
-  if (!team)
+  }
+  if (!team) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Team not found</div>;
+  }
 
   const memberships = team.memberships ?? [];
   const existingUserIds = memberships.map((m) => m.user?.id ?? '').filter(Boolean);
@@ -108,7 +110,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                           disabled={removeMember.isPending}
                           onClick={() => {
                             const userId = m.user?.id;
-                            if (!userId) return;
+                            if (!userId) {
+                              return;
+                            }
                             if (
                               window.confirm(
                                 `Remove ${m.user?.email ?? 'this user'} from ${team.name}?`

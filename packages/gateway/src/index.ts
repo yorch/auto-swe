@@ -15,9 +15,13 @@ import authPlugin, { invalidateSessionCache } from './plugins/auth.js';
 
 /** Extract the better-auth session token from a cookie header string. */
 function extractSessionCookie(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) return null;
+  if (!cookieHeader) {
+    return null;
+  }
   const idx = cookieHeader.indexOf('better-auth.session_token=');
-  if (idx === -1) return null;
+  if (idx === -1) {
+    return null;
+  }
   const start = idx + 'better-auth.session_token='.length;
   const end = cookieHeader.indexOf(';', start);
   return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));

@@ -148,13 +148,17 @@ export function checkContentSecurity(filePath: string, content: string): PreWrit
     // Skip if rule is extension-restricted and file doesn't match
     if (rule.fileExtensions) {
       const ext = `.${filePath.split('.').pop()}`;
-      if (!rule.fileExtensions.includes(ext)) continue;
+      if (!rule.fileExtensions.includes(ext)) {
+        continue;
+      }
     }
 
     // Skip if file matches an excluded path
     if (rule.excludePaths) {
       const normalized = filePath.replace(/\\/g, '/');
-      if (rule.excludePaths.some((p) => normalized.includes(p))) continue;
+      if (rule.excludePaths.some((p) => normalized.includes(p))) {
+        continue;
+      }
     }
 
     for (let i = 0; i < lines.length; i++) {

@@ -72,8 +72,12 @@ export default function SettingsPage() {
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ]).then(([p, accts]) => {
-      if (p) setProviders(p as ProviderFlags);
-      if (Array.isArray(accts)) setLinked(accts as LinkedAccount[]);
+      if (p) {
+        setProviders(p as ProviderFlags);
+      }
+      if (Array.isArray(accts)) {
+        setLinked(accts as LinkedAccount[]);
+      }
     });
   }, []);
 

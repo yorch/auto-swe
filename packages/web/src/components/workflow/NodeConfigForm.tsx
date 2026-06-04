@@ -20,7 +20,9 @@ function parseJsonLoose(text: string): unknown {
 }
 
 export function NodeConfigForm({ fields, values, onChange }: Props) {
-  if (fields.length === 0) return null;
+  if (fields.length === 0) {
+    return null;
+  }
   return (
     <div className="space-y-2 pt-2">
       <div className="text-xs font-medium">Config</div>

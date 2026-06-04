@@ -19,11 +19,14 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
     if (
       err instanceof Error &&
       /activity context (not initialized|is not available)/i.test(err.message)
-    )
+    ) {
       return {};
+    }
     throw err;
   }
-  if (!wid) return {};
+  if (!wid) {
+    return {};
+  }
 
   // Don't cache an empty result: if the lookup raced ahead of
   // `createWorkflowRun`/`ActiveWorkflow` (both fields undefined), caching it

@@ -114,12 +114,18 @@ function EditorInner({
    *  source node's outgoing field for that handle kind. */
   const handleConnect = useCallback(
     (c: Connection) => {
-      if (!c.source || !c.target || !c.sourceHandle) return;
+      if (!c.source || !c.target || !c.sourceHandle) {
+        return;
+      }
       const handleKind = c.sourceHandle as HandleKind;
       const sourceNode = spec.nodes[c.source];
-      if (!sourceNode) return;
+      if (!sourceNode) {
+        return;
+      }
       const valid = handleKindsFor(sourceNode);
-      if (!valid.includes(handleKind)) return;
+      if (!valid.includes(handleKind)) {
+        return;
+      }
       const patched = {
         ...(sourceNode as unknown as Record<string, unknown>),
         [handleKind]: c.target,
@@ -143,7 +149,9 @@ function EditorInner({
     (event: React.DragEvent) => {
       event.preventDefault();
       const payloadRaw = event.dataTransfer.getData(PALETTE_MIME);
-      if (!payloadRaw) return;
+      if (!payloadRaw) {
+        return;
+      }
       let payload: PaletteDragKind;
       try {
         payload = JSON.parse(payloadRaw) as PaletteDragKind;
@@ -195,14 +203,20 @@ function EditorInner({
       const removed = changes.filter(
         (c): c is Extract<EdgeChange, { type: 'remove' }> => c.type === 'remove'
       );
-      if (removed.length === 0) return;
+      if (removed.length === 0) {
+        return;
+      }
       const nextNodes = { ...spec.nodes };
       let mutated = false;
       for (const r of removed) {
         const edge = edges.find((e) => e.id === r.id);
-        if (!edge?.sourceHandle) continue;
+        if (!edge?.sourceHandle) {
+          continue;
+        }
         const source = nextNodes[edge.source];
-        if (!source) continue;
+        if (!source) {
+          continue;
+        }
         const patched = { ...(source as unknown as Record<string, unknown>) };
         if (patched[edge.sourceHandle] === edge.target) {
           delete patched[edge.sourceHandle];
@@ -210,13 +224,17 @@ function EditorInner({
           mutated = true;
         }
       }
-      if (mutated) onChange({ ...spec, nodes: nextNodes });
+      if (mutated) {
+        onChange({ ...spec, nodes: nextNodes });
+      }
     },
     [onEdgesChange, edges, spec, onChange]
   );
 
   const handleDeleteNode = useCallback(() => {
-    if (!selectedNodeId || selectedNodeId === spec.entry) return;
+    if (!selectedNodeId || selectedNodeId === spec.entry) {
+      return;
+    }
     const { [selectedNodeId]: _removed, ...rest } = spec.nodes;
     // Clear any references pointing at the deleted node.
     const cleaned = Object.fromEntries(
@@ -231,7 +249,9 @@ function EditorInner({
           'subgraph',
           'join',
         ] as const) {
-          if (patched[k] === selectedNodeId) delete patched[k];
+          if (patched[k] === selectedNodeId) {
+            delete patched[k];
+          }
         }
         return [nid, patched];
       })
@@ -242,7 +262,9 @@ function EditorInner({
 
   const handleRename = useCallback(
     (oldId: string, newId: string) => {
-      if (!newId || oldId === newId || spec.nodes[newId]) return;
+      if (!newId || oldId === newId || spec.nodes[newId]) {
+        return;
+      }
       const renamed: WorkflowSpec['nodes'] = {};
       for (const [k, v] of Object.entries(spec.nodes)) {
         const patched = { ...(v as unknown as Record<string, unknown>) };
@@ -255,7 +277,9 @@ function EditorInner({
           'subgraph',
           'join',
         ] as const) {
-          if (patched[f] === oldId) patched[f] = newId;
+          if (patched[f] === oldId) {
+            patched[f] = newId;
+          }
         }
         renamed[k === oldId ? newId : k] = patched as WorkflowSpec['nodes'][string];
       }
@@ -352,7 +376,9 @@ function EditorInner({
           node={selectedNode}
           nodeId={selectedNodeId}
           onChangeNode={(next) => {
-            if (!selectedNodeId) return;
+            if (!selectedNodeId) {
+              return;
+            }
             onChange({
               ...spec,
               nodes: { ...spec.nodes, [selectedNodeId]: next },
@@ -437,7 +463,9 @@ function NodeInspector({
               label="Node ID"
               onBlur={(e) => {
                 const v = e.target.value.trim();
-                if (v && v !== nodeId) onRename(nodeId, v);
+                if (v && v !== nodeId) {
+                  onRename(nodeId, v);
+                }
               }}
               onChange={(e) => setIdDraft(e.target.value)}
               value={idDraft}
@@ -511,8 +539,11 @@ function NodeInspector({
           nodeId={nodeId}
           onSetEdge={(field, target) => {
             const patched = { ...(node as unknown as Record<string, unknown>) };
-            if (target) patched[field] = target;
-            else delete patched[field];
+            if (target) {
+              patched[field] = target;
+            } else {
+              delete patched[field];
+            }
             onChangeNode(patched as unknown as SpecNode);
           }}
         />
@@ -543,7 +574,9 @@ function EdgeConnectionsSection({
   onSetEdge: (field: HandleKind, target: string | null) => void;
 }) {
   const handles = handleKindsFor(node);
-  if (handles.length === 0) return null;
+  if (handles.length === 0) {
+    return null;
+  }
   const otherIds = allNodeIds.filter((id) => id !== nodeId);
   const nodeRecord = node as unknown as Record<string, unknown>;
 
@@ -621,8 +654,11 @@ function StepConfigSection({
           onChange={(k, v) => {
             const cur = node.config ?? {};
             const next = { ...cur };
-            if (v === undefined) delete next[k];
-            else next[k] = v;
+            if (v === undefined) {
+              delete next[k];
+            } else {
+              next[k] = v;
+            }
             onChange({ ...node, config: next } as SpecNode);
           }}
           values={(node.config ?? {}) as Record<string, unknown>}
@@ -1074,7 +1110,9 @@ function SchemaField({
           id={id}
           onChange={(e) => {
             const t = e.target.value;
-            if (t === '') return onChange(undefined);
+            if (t === '') {
+              return onChange(undefined);
+            }
             try {
               onChange(JSON.parse(t));
             } catch {
@@ -1128,9 +1166,13 @@ function OnFailSection({
         className="h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
         onChange={(e) => {
           const v = e.target.value;
-          if (v === 'block') onChange(undefined);
-          else if (v === 'warn') onChange('warn');
-          else onChange({ retry: retryCount });
+          if (v === 'block') {
+            onChange(undefined);
+          } else if (v === 'warn') {
+            onChange('warn');
+          } else {
+            onChange({ retry: retryCount });
+          }
         }}
         value={mode}
       >
@@ -1182,7 +1224,9 @@ function InputsBindingsSection({
     let k = 'input';
     let n = 2;
     const existing = inputs ?? {};
-    while (existing[k] !== undefined) k = `input_${n++}`;
+    while (existing[k] !== undefined) {
+      k = `input_${n++}`;
+    }
     onChange({ ...existing, [k]: '' });
   };
 
@@ -1215,7 +1259,9 @@ function InputsBindingsSection({
                 defaultValue={key}
                 onBlur={(e) => {
                   const newKey = e.target.value.trim();
-                  if (!newKey || newKey === key) return;
+                  if (!newKey || newKey === key) {
+                    return;
+                  }
                   const next = { ...(inputs ?? {}) };
                   delete next[key];
                   next[newKey] = val;
@@ -1226,8 +1272,11 @@ function InputsBindingsSection({
               <select
                 className="h-7 rounded-sm border border-ink-500 bg-ink-900/60 px-1 font-mono text-[10px] text-paper-100 outline-none focus:border-ember-400"
                 onChange={(e) => {
-                  if (e.target.value === 'from') setEntry(key, { from: displayVal });
-                  else setEntry(key, displayVal);
+                  if (e.target.value === 'from') {
+                    setEntry(key, { from: displayVal });
+                  } else {
+                    setEntry(key, displayVal);
+                  }
                 }}
                 value={isFrom ? 'from' : 'literal'}
               >

@@ -45,7 +45,9 @@ async function canManageTeamRepos(
   user: { sub: string; role: string },
   teamId: string
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') return true;
+  if (user.role === 'ADMIN') {
+    return true;
+  }
   const membership = await prisma.teamMembership.findUnique({
     include: { team: { select: { isActive: true } } },
     where: { userId_teamId: { teamId, userId: user.sub } },

@@ -56,7 +56,9 @@ function collectEdges(node: Node, id: string): LayoutEdge[] {
     case 'step':
     case 'set':
     case 'shell':
-      if (node.next) edges.push({ from: id, kind: 'next', to: node.next });
+      if (node.next) {
+        edges.push({ from: id, kind: 'next', to: node.next });
+      }
       break;
     case 'cond':
       edges.push({ from: id, kind: 'onTrue', to: node.onTrue });
@@ -89,7 +91,9 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
     for (const e of collectEdges(spec.nodes[id] as Node, id)) {
       // Drop edges to unknown nodes (shouldn't happen with a parsed spec, but
       // partially-edited specs in the editor may dangle).
-      if (e.to in spec.nodes) allEdges.push(e);
+      if (e.to in spec.nodes) {
+        allEdges.push(e);
+      }
     }
   }
 
@@ -185,7 +189,9 @@ export function diffStrokeColor(kind: DiffKind | undefined): string | null {
 }
 
 export function statusFill(status: string | undefined): string | undefined {
-  if (!status) return undefined;
+  if (!status) {
+    return undefined;
+  }
   switch (status) {
     case 'RUNNING':
       return '#3b82f6';

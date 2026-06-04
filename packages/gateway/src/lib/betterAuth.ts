@@ -60,7 +60,9 @@ const smtpPass = process.env.SMTP_PASS;
  *  AND the first magic link wants delivery. Reused across calls. */
 let smtpTransporter: Transporter | null = null;
 function getSmtpTransporter(): Transporter | null {
-  if (!(smtpHost && smtpPort && fromEmail)) return null;
+  if (!(smtpHost && smtpPort && fromEmail)) {
+    return null;
+  }
   if (!smtpTransporter) {
     smtpTransporter = nodemailer.createTransport({
       auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
@@ -105,7 +107,9 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       }
       return;
     } catch (err) {
-      if (IS_PRODUCTION) throw err;
+      if (IS_PRODUCTION) {
+        throw err;
+      }
       console.warn(`[magic-link] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
@@ -131,7 +135,9 @@ async function deliverMagicLink({ email, url }: { email: string; url: string }):
       }
       return;
     } catch (err) {
-      if (IS_PRODUCTION) throw err;
+      if (IS_PRODUCTION) {
+        throw err;
+      }
       console.warn(`[magic-link] Resend failed (${(err as Error).message}); falling back to log`);
     }
   }
@@ -160,7 +166,9 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
       }
       return;
     } catch (err) {
-      if (IS_PRODUCTION) throw err;
+      if (IS_PRODUCTION) {
+        throw err;
+      }
       console.warn(`[password-reset] SMTP failed (${(err as Error).message}); falling back`);
     }
   }
@@ -179,7 +187,9 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
       }
       return;
     } catch (err) {
-      if (IS_PRODUCTION) throw err;
+      if (IS_PRODUCTION) {
+        throw err;
+      }
       console.warn(`[password-reset] Resend failed (${(err as Error).message}); falling back`);
     }
   }

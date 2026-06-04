@@ -50,7 +50,9 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
   }
 
   async function handleCopy() {
-    if (!revealed?.temporaryPassword) return;
+    if (!revealed?.temporaryPassword) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(revealed.temporaryPassword);
       setCopied(true);

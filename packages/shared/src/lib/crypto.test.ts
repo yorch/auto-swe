@@ -11,8 +11,11 @@ describe('crypto', () => {
   });
 
   afterEach(() => {
-    if (previousKey === undefined) delete process.env.CONFIG_ENCRYPTION_KEY;
-    else process.env.CONFIG_ENCRYPTION_KEY = previousKey;
+    if (previousKey === undefined) {
+      delete process.env.CONFIG_ENCRYPTION_KEY;
+    } else {
+      process.env.CONFIG_ENCRYPTION_KEY = previousKey;
+    }
     _resetKeyCacheForTests();
   });
 

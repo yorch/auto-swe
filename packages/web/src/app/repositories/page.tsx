@@ -16,8 +16,9 @@ export default function RepositoriesPage() {
   const canManage = role === 'ADMIN' || role === 'LEAD';
   const [mode, setMode] = useState<ModalMode>(null);
 
-  if (isLoading)
+  if (isLoading) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6">

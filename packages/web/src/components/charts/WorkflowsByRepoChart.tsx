@@ -17,7 +17,9 @@ interface Props {
 }
 
 export function WorkflowsByRepoChart({ data }: Props) {
-  if (data.length === 0) return <EmptyChart label="no repository data" />;
+  if (data.length === 0) {
+    return <EmptyChart label="no repository data" />;
+  }
 
   return (
     <ResponsiveContainer height={Math.max(200, data.length * 40)} width="100%">

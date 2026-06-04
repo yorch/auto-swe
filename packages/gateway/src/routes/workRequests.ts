@@ -52,7 +52,9 @@ export async function resolveDefaultTemplate(
       orderBy: [{ activeVersion: 'desc' }, { updatedAt: 'desc' }],
       where: { isDefault: true, status: 'ACTIVE', teamId: null },
     }));
-  if (!tpl?.activeVersion) return null;
+  if (!tpl?.activeVersion) {
+    return null;
+  }
 
   const split = tpl.experimentSplit ?? 0;
   const expVersion = tpl.experimentVersion ?? null;

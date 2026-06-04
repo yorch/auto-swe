@@ -19,33 +19,55 @@ export function formatRelativeTime(date: string | Date): string {
   const then = new Date(date).getTime();
   const diff = now - then;
 
-  if (diff < 60_000) return 'just now';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
+  if (diff < 60_000) {
+    return 'just now';
+  }
+  if (diff < 3600_000) {
+    return `${Math.floor(diff / 60_000)}m ago`;
+  }
+  if (diff < 86400_000) {
+    return `${Math.floor(diff / 3600_000)}h ago`;
+  }
   return `${Math.floor(diff / 86400_000)}d ago`;
 }
 
 export function formatCost(usd: number): string {
-  if (usd === 0) return '—';
-  if (usd < 0.01) return '<$0.01';
+  if (usd === 0) {
+    return '—';
+  }
+  if (usd < 0.01) {
+    return '<$0.01';
+  }
   return `$${usd.toFixed(2)}`;
 }
 
 export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  }
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(0)}K`;
+  }
   return `${n}`;
 }
 
 export function formatDuration(ms: number | null): string {
-  if (ms === null) return '—';
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms === null) {
+    return '—';
+  }
+  if (ms < 60_000) {
+    return `${Math.round(ms / 1000)}s`;
+  }
+  if (ms < 3_600_000) {
+    return `${(ms / 60_000).toFixed(1)}m`;
+  }
   return `${(ms / 3_600_000).toFixed(2)}h`;
 }
 
 export function formatPercent(p: number | null): string {
-  if (p === null) return '—';
+  if (p === null) {
+    return '—';
+  }
   return `${(p * 100).toFixed(1)}%`;
 }
 

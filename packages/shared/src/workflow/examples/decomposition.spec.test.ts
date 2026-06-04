@@ -11,14 +11,18 @@ describe('DECOMPOSITION_EXAMPLE_SPEC', () => {
     const { nodes } = DECOMPOSITION_EXAMPLE_SPEC;
     const plan = nodes.plan;
     expect(plan?.type).toBe('step');
-    if (plan?.type === 'step') expect(plan.step).toBe('planDecomposition');
+    if (plan?.type === 'step') {
+      expect(plan.step).toBe('planDecomposition');
+    }
 
     const fan = nodes.fanOutSubtasks;
     expect(fan?.type).toBe('fanOut');
 
     const merge = nodes.merge;
     expect(merge?.type).toBe('step');
-    if (merge?.type === 'step') expect(merge.step).toBe('mergeBranches');
+    if (merge?.type === 'step') {
+      expect(merge.step).toBe('mergeBranches');
+    }
   });
 
   it('fanOut projects each branch result.branch so mergeBranches can bind a string[] directly', () => {

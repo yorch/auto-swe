@@ -131,7 +131,9 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
   // Does not block IP-direct connections; wildcard entries are informational only.
   if (input.network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0) {
     for (const hostname of input.egressAllowlist) {
-      if (hostname.startsWith('*')) continue;
+      if (hostname.startsWith('*')) {
+        continue;
+      }
       try {
         const { address } = await dnsPromises.lookup(hostname);
         // Insert --add-host flags before the image argument (last 3 args are: image, sh, -c, command)

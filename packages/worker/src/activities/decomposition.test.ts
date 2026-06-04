@@ -132,7 +132,9 @@ describe('mergeBranches', () => {
   it('merges every source branch on the happy path and pushes the target', async () => {
     primeRepo();
     fakeWorkspace.exec.mockImplementation((cmd: string) => {
-      if (cmd.includes('git rev-parse HEAD')) return 'abc123\n';
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'abc123\n';
+      }
       return '';
     });
 
@@ -167,7 +169,9 @@ describe('mergeBranches', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.includes('git rev-parse HEAD')) return 'sha\n';
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'sha\n';
+      }
       return '';
     });
 
@@ -224,7 +228,9 @@ describe('resolveMergeConflict', () => {
   it('skips the resolver when all branches merge cleanly', async () => {
     primeRepo();
     fakeWorkspace.exec.mockImplementation((cmd: string) => {
-      if (cmd.includes('git rev-parse HEAD')) return 'abc\n';
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'abc\n';
+      }
       return '';
     });
 
@@ -256,14 +262,24 @@ describe('resolveMergeConflict', () => {
         return conflictResolved ? '' : 'foo.ts\n';
       }
       if (cmd.startsWith('git diff --check')) {
-        if (conflictResolved) return '';
+        if (conflictResolved) {
+          return '';
+        }
         const err = new Error('markers present');
         throw err;
       }
-      if (cmd.startsWith('cat ')) return 'before\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>>\nafter\n';
-      if (cmd === 'git add -A') return '';
-      if (cmd.startsWith('git commit')) return 'committed';
-      if (cmd.includes('git rev-parse HEAD')) return 'resolved-sha\n';
+      if (cmd.startsWith('cat ')) {
+        return 'before\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>>\nafter\n';
+      }
+      if (cmd === 'git add -A') {
+        return '';
+      }
+      if (cmd.startsWith('git commit')) {
+        return 'committed';
+      }
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'resolved-sha\n';
+      }
       return '';
     });
 
@@ -296,9 +312,15 @@ describe('resolveMergeConflict', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
-      if (cmd.startsWith('git diff --check')) throw new Error('markers present');
-      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
+        return 'foo.ts\n';
+      }
+      if (cmd.startsWith('git diff --check')) {
+        throw new Error('markers present');
+      }
+      if (cmd.startsWith('cat ')) {
+        return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      }
       return '';
     });
     generateMock.mockResolvedValue({ usage: { totalTokens: 50 } });
@@ -326,16 +348,27 @@ describe('resolveMergeConflict', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.startsWith('git diff --name-only --diff-filter=U'))
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
         return conflictResolved ? '' : 'foo.ts\n';
+      }
       if (cmd.startsWith('git diff --check')) {
-        if (conflictResolved) return '';
+        if (conflictResolved) {
+          return '';
+        }
         throw new Error('markers present');
       }
-      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
-      if (cmd === 'git add -A') return '';
-      if (cmd.startsWith('git commit')) return '';
-      if (cmd.includes('git rev-parse HEAD')) return 'sha\n';
+      if (cmd.startsWith('cat ')) {
+        return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      }
+      if (cmd === 'git add -A') {
+        return '';
+      }
+      if (cmd.startsWith('git commit')) {
+        return '';
+      }
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'sha\n';
+      }
       return '';
     });
     generateMock.mockImplementation(async () => {
@@ -368,9 +401,15 @@ describe('resolveMergeConflict', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
-      if (cmd.startsWith('git diff --check')) throw new Error('markers present');
-      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
+        return 'foo.ts\n';
+      }
+      if (cmd.startsWith('git diff --check')) {
+        throw new Error('markers present');
+      }
+      if (cmd.startsWith('cat ')) {
+        return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      }
       return '';
     });
     generateMock.mockResolvedValue({ usage: { totalTokens: 50 } });
@@ -395,12 +434,18 @@ describe('resolveMergeConflict', () => {
         err.stderr = '';
         throw err;
       }
-      if (cmd.startsWith('git diff --name-only --diff-filter=U')) return 'foo.ts\n';
+      if (cmd.startsWith('git diff --name-only --diff-filter=U')) {
+        return 'foo.ts\n';
+      }
       if (cmd.startsWith('git diff --check')) {
         throw new Error('still has markers');
       }
-      if (cmd.startsWith('cat ')) return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
-      if (cmd.includes('git rev-parse HEAD')) return 'sha\n';
+      if (cmd.startsWith('cat ')) {
+        return '<<<<<<<\nA\n=======\nB\n>>>>>>>';
+      }
+      if (cmd.includes('git rev-parse HEAD')) {
+        return 'sha\n';
+      }
       return '';
     });
     // Resolver call returns without actually fixing the file.

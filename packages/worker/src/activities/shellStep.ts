@@ -72,9 +72,13 @@ const GIT_HELPER_IMAGE = 'alpine/git:latest';
  * the token into the Temporal workflow history.
  */
 function redactToken(s: unknown): string {
-  if (typeof s !== 'string') return String(s);
+  if (typeof s !== 'string') {
+    return String(s);
+  }
   const token = process.env.GITHUB_TOKEN;
-  if (!token) return s;
+  if (!token) {
+    return s;
+  }
   return s.split(token).join('***');
 }
 
@@ -88,10 +92,16 @@ function runDocker(args: string[]): string {
   try {
     return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
   } catch (err) {
-    if (err instanceof Error) err.message = redactToken(err.message);
+    if (err instanceof Error) {
+      err.message = redactToken(err.message);
+    }
     const e = err as { stdout?: unknown; stderr?: unknown };
-    if (typeof e.stdout === 'string') e.stdout = redactToken(e.stdout);
-    if (typeof e.stderr === 'string') e.stderr = redactToken(e.stderr);
+    if (typeof e.stdout === 'string') {
+      e.stdout = redactToken(e.stdout);
+    }
+    if (typeof e.stderr === 'string') {
+      e.stderr = redactToken(e.stderr);
+    }
     throw err;
   }
 }
@@ -155,7 +165,9 @@ function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): vo
   try {
     tryClone(branch);
   } catch (err) {
-    if (!isBranchNotFoundError(err)) throw err;
+    if (!isBranchNotFoundError(err)) {
+      throw err;
+    }
     tryClone(meta.defaultBranch);
   }
 }
@@ -217,7 +229,9 @@ function finalizeWorkspaceVolume(
     '-c',
     script,
   ]);
-  if (out.includes('NO_CHANGES')) return { filesChanged: [] };
+  if (out.includes('NO_CHANGES')) {
+    return { filesChanged: [] };
+  }
   const lines = out
     .trim()
     .split('\n')

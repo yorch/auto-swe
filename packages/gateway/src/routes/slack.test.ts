@@ -57,9 +57,8 @@ function buildApp(state: FakeState): FastifyInstance {
       findUnique: async () => null,
     },
     user: {
-      findFirst: async ({ where }: { where: { slackId?: string } }) => {
-        return state.users.find((u) => u.slackId === where.slackId) ?? null;
-      },
+      findFirst: async ({ where }: { where: { slackId?: string } }) =>
+        state.users.find((u) => u.slackId === where.slackId) ?? null,
       update: async () => ({}),
     },
     workflowTemplate: {
@@ -103,11 +102,15 @@ beforeAll(() => {
 
 afterAll(async () => {
   delete process.env.SLACK_SIGNING_SECRET;
-  if (app) await app.close();
+  if (app) {
+    await app.close();
+  }
 });
 
 beforeEach(async () => {
-  if (app) await app.close();
+  if (app) {
+    await app.close();
+  }
   state = {
     templates: [
       {

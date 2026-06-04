@@ -74,7 +74,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
     [stepRegistry]
   );
   const costEstimate = useMemo(() => {
-    if (!visualSpec || !stepRegistryByName) return null;
+    if (!visualSpec || !stepRegistryByName) {
+      return null;
+    }
     return estimateSpecCost(visualSpec, { stepLookup: (name) => stepRegistryByName.get(name) });
   }, [visualSpec, stepRegistryByName]);
 
@@ -98,7 +100,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
       const ok = window.confirm(
         `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
       );
-      if (!ok) return;
+      if (!ok) {
+        return;
+      }
     }
     try {
       const result = await createVersion.mutateAsync(specToSave);
@@ -121,21 +125,29 @@ export default function TemplateDetailPage({ params }: PageProps) {
   };
 
   const handlePromote = async () => {
-    if (effectiveVersion === null) return;
+    if (effectiveVersion === null) {
+      return;
+    }
     await promoteVersion.mutateAsync(effectiveVersion);
   };
 
   const handleSpecChange = (next: WorkflowSpec) => {
     setEditorSpec(next);
     setEditorJson(JSON.stringify(next, null, 2));
-    if (mode !== 'edit') setMode('edit');
+    if (mode !== 'edit') {
+      setMode('edit');
+    }
   };
 
   const handleJsonChange = (text: string) => {
     setEditorJson(text);
     const parsed = tryParseSpec(text);
-    if (parsed.ok) setEditorSpec(parsed.spec);
-    if (mode !== 'edit') setMode('edit');
+    if (parsed.ok) {
+      setEditorSpec(parsed.spec);
+    }
+    if (mode !== 'edit') {
+      setMode('edit');
+    }
   };
 
   const isDirty =

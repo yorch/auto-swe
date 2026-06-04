@@ -30,13 +30,17 @@ export function AddMemberModal({
   // means typing or selecting doesn't get stomped when `users` / `eligible`
   // re-resolve to a new array reference on the next render.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     setRole('ENGINEER');
     setError(null);
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     // Default-select the first eligible user, but only once — preserve any
     // explicit choice the admin already made.
     setUserId((prev) => prev || (eligible[0]?.id ?? ''));

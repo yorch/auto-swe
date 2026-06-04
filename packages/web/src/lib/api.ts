@@ -57,7 +57,9 @@ export class ApiClient {
       // Network-level failure (gateway down, CORS rejected, DNS failure, …)
       // Rewrap with a message that says exactly what wasn't reachable.
       const friendly = gatewayUnreachableMessage(err, API_BASE);
-      if (friendly) throw new Error(friendly);
+      if (friendly) {
+        throw new Error(friendly);
+      }
       throw err;
     }
 
@@ -101,7 +103,9 @@ export class ApiClient {
         method: 'POST',
       });
 
-      if (!response.ok) return false;
+      if (!response.ok) {
+        return false;
+      }
 
       const { data } = await response.json();
       this.setToken(data.accessToken);

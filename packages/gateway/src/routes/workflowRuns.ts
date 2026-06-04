@@ -15,7 +15,9 @@ const ListRunsQuery = RunListPaginationQuery.extend({
 });
 
 function runVisibilityFilter(user: { sub: string; role: string }): Prisma.WorkflowRunWhereInput {
-  if (user.role === 'ADMIN') return {};
+  if (user.role === 'ADMIN') {
+    return {};
+  }
   // A run is visible if either the template is global / on the user's team, or
   // the originating work request targets a repo on the user's team.
   return {

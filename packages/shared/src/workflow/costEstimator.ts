@@ -56,9 +56,13 @@ interface EstimatorOptions {
 
 function stepUsd(meta: StepMetadata | undefined, pricing: typeof DEFAULT_ROLE_PRICING): number {
   const hint = meta?.costHint;
-  if (!hint?.role) return 0;
+  if (!hint?.role) {
+    return 0;
+  }
   const rates = pricing[hint.role];
-  if (!rates) return 0;
+  if (!rates) {
+    return 0;
+  }
   const inUsd = ((hint.tokensIn ?? 0) / 1_000_000) * rates.inputUsdPerM;
   const outUsd = ((hint.tokensOut ?? 0) / 1_000_000) * rates.outputUsdPerM;
   return inUsd + outUsd;
@@ -74,15 +78,21 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
   // surface a tooltip / drill-down later.
   const visited = new Set<string>();
   const walk = (nodeId: string | undefined): number => {
-    if (!nodeId || visited.has(nodeId)) return 0;
+    if (!nodeId || visited.has(nodeId)) {
+      return 0;
+    }
     const node = spec.nodes[nodeId] as Node | undefined;
-    if (!node) return 0;
+    if (!node) {
+      return 0;
+    }
     visited.add(nodeId);
     switch (node.type) {
       case 'step': {
         const meta = options.stepLookup(node.step);
         const usd = stepUsd(meta, pricing);
-        if (usd > 0) perStep.push({ nodeId, step: node.step, usd });
+        if (usd > 0) {
+          perStep.push({ nodeId, step: node.step, usd });
+        }
         return usd + walk(node.next);
       }
       case 'set':

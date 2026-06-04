@@ -24,10 +24,18 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     return 0;
   }
   try {
-    if (sub === 'list') return await cmdList(env);
-    if (sub === 'show') return await cmdShow(rest, env);
-    if (sub === 'export') return await cmdExport(rest, env);
-    if (sub === 'import') return await cmdImport(rest, env);
+    if (sub === 'list') {
+      return await cmdList(env);
+    }
+    if (sub === 'show') {
+      return await cmdShow(rest, env);
+    }
+    if (sub === 'export') {
+      return await cmdExport(rest, env);
+    }
+    if (sub === 'import') {
+      return await cmdImport(rest, env);
+    }
   } catch (err) {
     if (err instanceof GatewayError) {
       process.stderr.write(`${err.code}: ${err.message}\n`);
@@ -182,7 +190,9 @@ async function fetchSpec(
   version: number | undefined
 ): Promise<{ spec: unknown; template: WorkflowTemplateSummary; version: number }> {
   const tpl = await findTemplateByName(env, name);
-  if (!tpl) throw new Error(`No template named "${name}" is visible.`);
+  if (!tpl) {
+    throw new Error(`No template named "${name}" is visible.`);
+  }
   const requested = version ?? tpl.activeVersion;
   if (!requested) {
     throw new Error(`Template "${name}" has no active version. Pass --version=N to pick one.`);
@@ -242,7 +252,9 @@ export function parseFlags(args: string[]): ParsedFlags {
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === undefined) continue;
+    if (a === undefined) {
+      continue;
+    }
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       if (eq > -1) {

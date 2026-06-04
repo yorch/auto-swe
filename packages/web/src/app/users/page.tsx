@@ -28,8 +28,11 @@ export default function UsersPage() {
     const p: NonNullable<typeof users> = [];
     const a: NonNullable<typeof users> = [];
     for (const u of users ?? []) {
-      if (u.isActive) a.push(u);
-      else p.push(u);
+      if (u.isActive) {
+        a.push(u);
+      } else {
+        p.push(u);
+      }
     }
     return { active: a, pending: p };
   }, [users]);

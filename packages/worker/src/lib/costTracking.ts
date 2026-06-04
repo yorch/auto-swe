@@ -68,13 +68,19 @@ const ZERO_PRICE: ModelPrice = { input: 0, output: 0 };
 
 function parsePriceOverride(value: string): ModelPrice | null {
   const parts = value.split(':');
-  if (parts.length !== 2) return null;
+  if (parts.length !== 2) {
+    return null;
+  }
   const input = Number(parts[0]);
   const output = Number(parts[1]);
-  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
+  if (!Number.isFinite(input) || !Number.isFinite(output)) {
+    return null;
+  }
   // Reject negative or NaN-derived rates: a negative override would invert cost
   // accumulation and could be used to bypass BUDGET_EXCEEDED.
-  if (input < 0 || output < 0) return null;
+  if (input < 0 || output < 0) {
+    return null;
+  }
   return { input, output };
 }
 
@@ -91,10 +97,14 @@ export function getModelPrice(spec: string): { price: ModelPrice; known: boolean
   const envValue = process.env[envKey];
   if (envValue) {
     const override = parsePriceOverride(envValue);
-    if (override) return { known: true, price: override };
+    if (override) {
+      return { known: true, price: override };
+    }
   }
   const price = MODEL_PRICES[spec];
-  if (price) return { known: true, price };
+  if (price) {
+    return { known: true, price };
+  }
   return { known: false, price: ZERO_PRICE };
 }
 

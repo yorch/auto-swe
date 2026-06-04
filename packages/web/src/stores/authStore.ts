@@ -51,21 +51,27 @@ interface AuthState {
 const MARKER_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 function setLegacyTokenCookie(token: string): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    return;
+  }
   const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
   // biome-ignore lint/suspicious/noDocumentCookie: same-origin cookie read by the Next.js proxy to gate routes; gateway re-verifies the JWT.
   document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
 }
 
 function setSessionMarkerCookie(): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    return;
+  }
   const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
   // biome-ignore lint/suspicious/noDocumentCookie: presence-only marker for the Next.js proxy; the real session cookie lives on the gateway origin.
   document.cookie = `${COOKIE_SESSION_MARKER}=1; path=/; max-age=${MARKER_TTL_SECONDS}; SameSite=Lax${isSecure}`;
 }
 
 function clearAllAuthCookies(): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    return;
+  }
   // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
   document.cookie = `${COOKIE_ACCESS_TOKEN}=; path=/; max-age=0`;
   // biome-ignore lint/suspicious/noDocumentCookie: clearing the same cookies set above.
@@ -74,7 +80,9 @@ function clearAllAuthCookies(): void {
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
   const parts = token.split('.');
-  if (parts.length !== 3) throw new Error('Malformed JWT: expected 3 segments');
+  if (parts.length !== 3) {
+    throw new Error('Malformed JWT: expected 3 segments');
+  }
   return JSON.parse(atob(parts[1]));
 }
 
@@ -127,9 +135,13 @@ async function fetchBetterAuthSession(): Promise<AuthState['user']> {
   } catch {
     return null;
   }
-  if (!res.ok) return null;
+  if (!res.ok) {
+    return null;
+  }
   const body = (await res.json().catch(() => null)) as BetterAuthSessionResponse | null;
-  if (!body?.user) return null;
+  if (!body?.user) {
+    return null;
+  }
   return {
     // Default to true so a stale cache / pre-better-auth user (where
     // isActive may be missing from the response) renders as active.
@@ -175,7 +187,9 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   hydrateFromSession: async () => {
     const user = await fetchBetterAuthSession();
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
     setSessionMarkerCookie();
     set({ isAuthenticated: true, user });
     return true;
@@ -240,7 +254,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   signInWithProvider: (provider) => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      return;
+    }
     const callbackURL = `${window.location.origin}/login?bridge=1`;
     const form = document.createElement('form');
     form.method = 'POST';

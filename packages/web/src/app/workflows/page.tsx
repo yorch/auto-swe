@@ -15,8 +15,9 @@ export default function WorkflowsPage() {
   const [submitOpen, setSubmitOpen] = useState(false);
   const canSubmit = (repos ?? []).length > 0;
 
-  if (isLoading)
+  if (isLoading) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6">

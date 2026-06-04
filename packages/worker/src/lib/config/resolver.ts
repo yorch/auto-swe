@@ -47,7 +47,9 @@ async function resolveModelConfigUncached(
         workflowTemplateId: ctx.workflowTemplateId,
       },
     });
-    if (row) return materializeRow(row, 'WORKFLOW_TEMPLATE', ctx);
+    if (row) {
+      return materializeRow(row, 'WORKFLOW_TEMPLATE', ctx);
+    }
   }
 
   // 2. Team scope
@@ -56,7 +58,9 @@ async function resolveModelConfigUncached(
       include: { credential: true },
       where: { role: prismaRole, scope: 'TEAM', teamId: ctx.teamId },
     });
-    if (row) return materializeRow(row, 'TEAM', ctx);
+    if (row) {
+      return materializeRow(row, 'TEAM', ctx);
+    }
   }
 
   // 3. Global scope
@@ -64,7 +68,9 @@ async function resolveModelConfigUncached(
     include: { credential: true },
     where: { role: prismaRole, scope: 'GLOBAL' },
   });
-  if (globalRow) return materializeRow(globalRow, 'GLOBAL', ctx);
+  if (globalRow) {
+    return materializeRow(globalRow, 'GLOBAL', ctx);
+  }
 
   // No fallback. The worker's startup check should have refused to start
   // without a GLOBAL row for every role; reaching this branch means an
@@ -92,7 +98,9 @@ export async function resolveProviderCredential(
   // the next call re-queries and picks up the new row. (Same idea as the
   // ENV_FALLBACK invalidate in resolveModelConfig — don't pin a stale
   // fallback while an operator might be adding the row they expect to win.)
-  if (ctx?.teamId && resolved._scope === 'GLOBAL') invalidate(cacheKey);
+  if (ctx?.teamId && resolved._scope === 'GLOBAL') {
+    invalidate(cacheKey);
+  }
   return { apiBase: resolved.apiBase, apiKey: resolved.apiKey };
 }
 

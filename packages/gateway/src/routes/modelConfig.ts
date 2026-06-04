@@ -174,7 +174,9 @@ const PROBE_TIMEOUT_MS = 5_000;
 /// else so the caller can fall through to its normal IPv6 checks.
 function extractIpv4FromMapped(host: string): string | null {
   const m1 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
-  if (m1) return m1[1];
+  if (m1) {
+    return m1[1];
+  }
   const m2 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
   if (m2) {
     const hi = Number.parseInt(m2[1], 16);
@@ -363,7 +365,9 @@ async function upsertModelRoleConfig(
     });
     return reply.status(201).send({ data: created });
   } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
+    if (!isUniqueConstraintError(err)) {
+      throw err;
+    }
     // Lost the create race — the row now exists. Update it.
     const row = await fastify.prisma.modelRoleConfig.findFirst({
       where: {
@@ -373,7 +377,9 @@ async function upsertModelRoleConfig(
         workflowTemplateId: input.workflowTemplateId,
       },
     });
-    if (!row) throw err; // race recovery failed — surface the original
+    if (!row) {
+      throw err; // race recovery failed — surface the original
+    }
     const updated = await fastify.prisma.modelRoleConfig.update({
       data: { credentialId: input.credentialId, modelSpec: input.modelSpec },
       where: { id: row.id },
@@ -500,20 +506,26 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           include: { credential: { select: { id: true, lastFour: true, provider: true } } },
           where: { role, scope: 'WORKFLOW_TEMPLATE', workflowTemplateId },
         });
-        if (row) return { data: { row, scope: 'WORKFLOW_TEMPLATE' } };
+        if (row) {
+          return { data: { row, scope: 'WORKFLOW_TEMPLATE' } };
+        }
       }
       if (teamId) {
         const row = await fastify.prisma.modelRoleConfig.findFirst({
           include: { credential: { select: { id: true, lastFour: true, provider: true } } },
           where: { role, scope: 'TEAM', teamId },
         });
-        if (row) return { data: { row, scope: 'TEAM' } };
+        if (row) {
+          return { data: { row, scope: 'TEAM' } };
+        }
       }
       const row = await fastify.prisma.modelRoleConfig.findFirst({
         include: { credential: { select: { id: true, lastFour: true, provider: true } } },
         where: { role, scope: 'GLOBAL' },
       });
-      if (row) return { data: { row, scope: 'GLOBAL' } };
+      if (row) {
+        return { data: { row, scope: 'GLOBAL' } };
+      }
       return { data: { row: null, scope: null } };
     }
   );
@@ -606,7 +618,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       const { apiBase, apiKey } = request.body;
       // biome-ignore lint/suspicious/noExplicitAny: dynamic update shape
       const data: Record<string, any> = {};
-      if (apiBase !== undefined) data.apiBase = apiBase;
+      if (apiBase !== undefined) {
+        data.apiBase = apiBase;
+      }
       if (apiKey) {
         const sealed = encryptSecret(apiKey);
         data.apiKeyCiphertext = sealed.ciphertext;
@@ -812,7 +826,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.modelRoleConfig.findFirst({
         where: { role: role as keyof typeof defaults, scope: 'GLOBAL' },
       });
-      if (existing) continue;
+      if (existing) {
+        continue;
+      }
       // Two admins double-clicking the button race on the count-then-create;
       // the partial unique index on (role) WHERE scope='GLOBAL' makes the
       // second insert fail. Swallow it — the first writer wins.
@@ -834,7 +850,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         });
         rolesSeeded += 1;
       } catch (err) {
-        if (!isUniqueConstraintError(err)) throw err;
+        if (!isUniqueConstraintError(err)) {
+          throw err;
+        }
       }
     }
 
@@ -855,7 +873,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         // Same race — id='default' is the singleton primary key, so a
         // concurrent insert produces P2002. Treat as "already seeded".
-        if (!isUniqueConstraintError(err)) throw err;
+        if (!isUniqueConstraintError(err)) {
+          throw err;
+        }
       }
     }
 
@@ -1073,7 +1093,9 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
       const { apiBase, apiKey } = request.body;
       // biome-ignore lint/suspicious/noExplicitAny: dynamic update shape
       const data: Record<string, any> = {};
-      if (apiBase !== undefined) data.apiBase = apiBase;
+      if (apiBase !== undefined) {
+        data.apiBase = apiBase;
+      }
       if (apiKey) {
         const sealed = encryptSecret(apiKey);
         data.apiKeyCiphertext = sealed.ciphertext;

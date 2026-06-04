@@ -243,7 +243,9 @@ register({
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);
-  if (!meta) throw new Error(`unknown step: ${name}`);
+  if (!meta) {
+    throw new Error(`unknown step: ${name}`);
+  }
   return meta;
 }
 

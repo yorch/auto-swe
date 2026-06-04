@@ -96,7 +96,9 @@ export function TeamModelConfigSection({ teamId }: { teamId: string }) {
                     {row && (
                       <Button
                         onClick={() => {
-                          if (!window.confirm(`Remove ${role} override?`)) return;
+                          if (!window.confirm(`Remove ${role} override?`)) {
+                            return;
+                          }
                           del.mutate(row.id);
                         }}
                         size="sm"
@@ -165,7 +167,9 @@ function TeamCredentialsSubsection({ teamId }: { teamId: string }) {
                   </Button>
                   <Button
                     onClick={() => {
-                      if (!window.confirm(`Delete ${c.provider} team credential?`)) return;
+                      if (!window.confirm(`Delete ${c.provider} team credential?`)) {
+                        return;
+                      }
                       del.mutate(c.id);
                     }}
                     size="sm"

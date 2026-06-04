@@ -7,7 +7,9 @@ interface AppConfig {
 // Browser-only: reads window.__APP_CONFIG__ injected by the root Server Component
 // layout before the JS bundle evaluates. Returns {} during SSR (window undefined).
 function windowConfig(): Partial<AppConfig> {
-  if (typeof window === 'undefined') return {};
+  if (typeof window === 'undefined') {
+    return {};
+  }
   return (window as unknown as { __APP_CONFIG__?: Partial<AppConfig> }).__APP_CONFIG__ ?? {};
 }
 

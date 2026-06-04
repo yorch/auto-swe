@@ -598,8 +598,12 @@ export function useAllWorkflowRuns(
   filters: { status?: string; templateId?: string; limit?: number; offset?: number } = {}
 ) {
   const params = new URLSearchParams();
-  if (filters.status) params.set('status', filters.status);
-  if (filters.templateId) params.set('templateId', filters.templateId);
+  if (filters.status) {
+    params.set('status', filters.status);
+  }
+  if (filters.templateId) {
+    params.set('templateId', filters.templateId);
+  }
   params.set('limit', String(filters.limit ?? 50));
   params.set('offset', String(filters.offset ?? 0));
   return useQuery({

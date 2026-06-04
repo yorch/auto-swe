@@ -114,7 +114,9 @@ function dedupeIds(subtasks: Subtask[]): Subtask[] {
   const seen = new Set<string>();
   const out: Subtask[] = [];
   for (const s of subtasks) {
-    if (seen.has(s.id)) continue;
+    if (seen.has(s.id)) {
+      continue;
+    }
     seen.add(s.id);
     out.push(s);
   }

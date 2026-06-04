@@ -38,7 +38,9 @@ export function RepositoryFormModal({
   // query resolved (or any parent re-render produced a new array identity)
   // and stomped user input.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     setOrganizationName(initial?.organizationName ?? '');
     setRepoName(initial?.repoName ?? '');
     setDefaultBranch(initial?.defaultBranch ?? 'main');
@@ -52,7 +54,9 @@ export function RepositoryFormModal({
   // Default-select the first team only when nothing is selected yet, so a
   // late-resolving useTeams() doesn't override an in-flight admin selection.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     setTeamId((prev) => prev || initial?.team?.id || teams[0]?.id || '');
   }, [open, initial, teams]);
 

@@ -41,7 +41,9 @@ describe('EgressAllowlistEditor', () => {
     const putCall = spy.mock.calls.find(
       ([, init]) => (init as RequestInit | undefined)?.method === 'PUT'
     );
-    if (!putCall) throw new Error('expected a PUT');
+    if (!putCall) {
+      throw new Error('expected a PUT');
+    }
     const body = JSON.parse((putCall[1] as RequestInit).body as string);
     expect(body).toEqual({
       egressAllowlist: ['registry.npmjs.org', 'api.github.com'],

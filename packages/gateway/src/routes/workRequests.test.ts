@@ -13,7 +13,9 @@ describe('POST /api/v1/work-requests', () => {
     // Mock auth plugin — verifyAccessToken accepts any non-empty token in tests
     app.decorate('auth', {
       verifyAccessToken: (token: string) => {
-        if (!token) throw new Error('No token');
+        if (!token) {
+          throw new Error('No token');
+        }
         return { exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' };
       },
     } as unknown as never);

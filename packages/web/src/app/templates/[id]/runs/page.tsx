@@ -13,7 +13,9 @@ interface PageProps {
 }
 
 function runDuration(start: string, end: string | null): string {
-  if (!end) return 'running';
+  if (!end) {
+    return 'running';
+  }
   return formatDuration(new Date(end).getTime() - new Date(start).getTime());
 }
 

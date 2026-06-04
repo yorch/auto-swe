@@ -30,7 +30,9 @@ function formatDateLabel(label: unknown) {
 }
 
 export function LessonsOverTimeChart({ data }: Props) {
-  if (data.every((d) => d.count === 0)) return <EmptyChart label="no lesson data" />;
+  if (data.every((d) => d.count === 0)) {
+    return <EmptyChart label="no lesson data" />;
+  }
 
   return (
     <ResponsiveContainer height={280} width="100%">

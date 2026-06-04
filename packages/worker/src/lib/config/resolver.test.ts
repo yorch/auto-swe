@@ -58,7 +58,9 @@ function credRow(apiKey: string, apiBase: string | null = null) {
 describe('resolveModelConfig — cascade', () => {
   it('returns WORKFLOW_TEMPLATE row first when present', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'WORKFLOW_TEMPLATE') return row('anthropic/opus-template');
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return row('anthropic/opus-template');
+      }
       return row('anthropic/opus-global');
     });
     credFindFirstMock.mockResolvedValue(credRow('sk-cred'));
@@ -70,8 +72,12 @@ describe('resolveModelConfig — cascade', () => {
 
   it('falls back to TEAM row when no WORKFLOW_TEMPLATE row exists', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'WORKFLOW_TEMPLATE') return null;
-      if (args.where.scope === 'TEAM') return row('openai/team');
+      if (args.where.scope === 'WORKFLOW_TEMPLATE') {
+        return null;
+      }
+      if (args.where.scope === 'TEAM') {
+        return row('openai/team');
+      }
       return row('anthropic/global');
     });
     credFindFirstMock.mockResolvedValue(credRow('sk-cred'));
@@ -83,7 +89,9 @@ describe('resolveModelConfig — cascade', () => {
 
   it('falls back to GLOBAL row when no team or template row exists', async () => {
     findFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'GLOBAL') return row('anthropic/global');
+      if (args.where.scope === 'GLOBAL') {
+        return row('anthropic/global');
+      }
       return null;
     });
     credFindFirstMock.mockResolvedValue(credRow('sk-cred'));
@@ -114,7 +122,9 @@ describe('resolveModelConfig — credentials', () => {
   it('cascades to provider credentials when role row has no pinned credential', async () => {
     findFirstMock.mockResolvedValue(row('anthropic/opus'));
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'TEAM') return credRow('sk-team');
+      if (args.where.scope === 'TEAM') {
+        return credRow('sk-team');
+      }
       return credRow('sk-global');
     });
 
@@ -125,7 +135,9 @@ describe('resolveModelConfig — credentials', () => {
   it('falls back to global credential when team credential is absent', async () => {
     findFirstMock.mockResolvedValue(row('anthropic/opus'));
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'GLOBAL') return credRow('sk-global');
+      if (args.where.scope === 'GLOBAL') {
+        return credRow('sk-global');
+      }
       return null;
     });
 
@@ -145,7 +157,9 @@ describe('resolveModelConfig — credentials', () => {
 describe('resolveProviderCredential', () => {
   it('returns the team credential first', async () => {
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'TEAM') return credRow('sk-team');
+      if (args.where.scope === 'TEAM') {
+        return credRow('sk-team');
+      }
       return credRow('sk-global');
     });
 
@@ -155,7 +169,9 @@ describe('resolveProviderCredential', () => {
 
   it('falls back to global when team credential is absent', async () => {
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'GLOBAL') return credRow('sk-global');
+      if (args.where.scope === 'GLOBAL') {
+        return credRow('sk-global');
+      }
       return null;
     });
 
@@ -226,7 +242,9 @@ describe('resolver cache', () => {
     // caches the result under 'cred:anthropic:t1'.
     let teamHasCred = false;
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'TEAM') return teamHasCred ? credRow('sk-team-new') : null;
+      if (args.where.scope === 'TEAM') {
+        return teamHasCred ? credRow('sk-team-new') : null;
+      }
       return credRow('sk-global');
     });
 
@@ -244,7 +262,9 @@ describe('resolver cache', () => {
 
   it('keeps caching when the team-scope row WAS the one returned', async () => {
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'TEAM') return credRow('sk-team');
+      if (args.where.scope === 'TEAM') {
+        return credRow('sk-team');
+      }
       return credRow('sk-global');
     });
 

@@ -11,12 +11,14 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const { id } = use(params);
   const { data: workflow, isLoading } = useWorkflow(id);
 
-  if (isLoading)
+  if (isLoading) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
-  if (!workflow)
+  }
+  if (!workflow) {
     return (
       <div className="text-center py-12 text-[var(--muted-foreground)]">Workflow not found</div>
     );
+  }
 
   return (
     <div className="space-y-6">

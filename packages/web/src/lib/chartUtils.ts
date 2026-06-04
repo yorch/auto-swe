@@ -39,14 +39,22 @@ export function groupWorkflowsByDate(
 ): { date: string; completed: number; failed: number; active: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
-  for (const d of buckets) map[d] = { active: 0, completed: 0, failed: 0 };
+  for (const d of buckets) {
+    map[d] = { active: 0, completed: 0, failed: 0 };
+  }
 
   for (const w of workflows) {
     const key = toDateKey(w.updatedAt);
-    if (!map[key]) continue;
-    if (w.currentStatus === 'COMPLETED') map[key].completed++;
-    else if (w.currentStatus === 'FAILED' || w.currentStatus === 'TIMED_OUT') map[key].failed++;
-    else map[key].active++;
+    if (!map[key]) {
+      continue;
+    }
+    if (w.currentStatus === 'COMPLETED') {
+      map[key].completed++;
+    } else if (w.currentStatus === 'FAILED' || w.currentStatus === 'TIMED_OUT') {
+      map[key].failed++;
+    } else {
+      map[key].active++;
+    }
   }
   return buckets.map((date) => ({ date, ...map[date] }));
 }
@@ -83,11 +91,15 @@ export function groupLessonsByDate(
 ): { date: string; count: number }[] {
   const buckets = last30Days().slice(-days);
   const map: Record<string, number> = {};
-  for (const d of buckets) map[d] = 0;
+  for (const d of buckets) {
+    map[d] = 0;
+  }
 
   for (const l of lessons) {
     const key = toDateKey(l.createdAt);
-    if (map[key] !== undefined) map[key]++;
+    if (map[key] !== undefined) {
+      map[key]++;
+    }
   }
   return buckets.map((date) => ({ count: map[date], date }));
 }

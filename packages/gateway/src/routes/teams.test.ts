@@ -93,11 +93,8 @@ function buildApp(state: State): FastifyInstance {
 
   app.decorate('prisma', {
     team: {
-      findUnique: async ({ where }: { where: { id?: string; slug?: string } }) => {
-        return (
-          state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null
-        );
-      },
+      findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
+        state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null,
       update: async ({
         where,
         data,
@@ -106,7 +103,9 @@ function buildApp(state: State): FastifyInstance {
         data: { shellImageAllowlist?: string[]; egressAllowlist?: string[] };
       }) => {
         const row = state.teams.find((t) => t.id === where.id);
-        if (!row) throw new Error('team not found');
+        if (!row) {
+          throw new Error('team not found');
+        }
         if (data.shellImageAllowlist !== undefined) {
           row.shellImageAllowlist = data.shellImageAllowlist;
         }
@@ -119,7 +118,9 @@ function buildApp(state: State): FastifyInstance {
     teamMembership: {
       delete: async ({ where }: { where: { id: string } }) => {
         const idx = state.memberships.findIndex((m) => m.id === where.id);
-        if (idx < 0) throw new Error('membership not found');
+        if (idx < 0) {
+          throw new Error('membership not found');
+        }
         const [removed] = state.memberships.splice(idx, 1);
         return removed;
       },
@@ -129,7 +130,9 @@ function buildApp(state: State): FastifyInstance {
         where: { userId_teamId?: { userId: string; teamId: string } };
       }) => {
         const k = where.userId_teamId;
-        if (!k) return null;
+        if (!k) {
+          return null;
+        }
         return (
           state.memberships.find((m) => m.userId === k.userId && m.teamId === k.teamId) ?? null
         );

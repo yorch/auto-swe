@@ -14,9 +14,15 @@ export function detectTestCommand(packageJsonStr: string): string {
     // No test script or npm's default placeholder — try to detect framework
     if (!testScript || testScript === 'echo "Error: no test specified" && exit 1') {
       const deps = { ...pkg.devDependencies, ...pkg.dependencies };
-      if (deps.vitest) return 'npx vitest run';
-      if (deps.jest) return 'npx jest';
-      if (deps.mocha) return 'npx mocha';
+      if (deps.vitest) {
+        return 'npx vitest run';
+      }
+      if (deps.jest) {
+        return 'npx jest';
+      }
+      if (deps.mocha) {
+        return 'npx mocha';
+      }
       return 'npm test';
     }
 

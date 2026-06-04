@@ -58,7 +58,9 @@ export function NodePalette({ steps }: Props) {
   const [query, setQuery] = useState('');
 
   const filteredSteps = useMemo(() => {
-    if (!query.trim()) return steps;
+    if (!query.trim()) {
+      return steps;
+    }
     const q = query.toLowerCase();
     return steps.filter(
       (s) =>

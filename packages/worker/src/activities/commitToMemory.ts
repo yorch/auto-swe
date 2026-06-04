@@ -135,7 +135,9 @@ export async function recordLessonDirectly(input: {
     const workflow = await prisma.activeWorkflow.findFirst({
       where: { temporalWorkflowId: input.temporalWorkflowId },
     });
-    if (!workflow) return null;
+    if (!workflow) {
+      return null;
+    }
     return await writeAgentLessonRow({
       failureType: input.failureType ?? null,
       lessonSummary: input.lessonSummary,

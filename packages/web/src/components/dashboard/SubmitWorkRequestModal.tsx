@@ -36,13 +36,21 @@ export function SubmitWorkRequestModal({
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (!dialog) {
+      return;
+    }
+    if (open && !dialog.open) {
+      dialog.showModal();
+    }
+    if (!open && dialog.open) {
+      dialog.close();
+    }
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     setRepoId(defaultRepoId ?? repos[0]?.id ?? '');
   }, [open, defaultRepoId, repos]);
 
@@ -76,7 +84,9 @@ export function SubmitWorkRequestModal({
       const newId = res.data.workflowIds[0];
       reset();
       onClose();
-      if (newId) router.push(`/workflows/${newId}`);
+      if (newId) {
+        router.push(`/workflows/${newId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit work request');
     }

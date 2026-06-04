@@ -57,7 +57,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      if (!verifyWebhookOrReject(request, reply)) return;
+      if (!verifyWebhookOrReject(request, reply)) {
+        return;
+      }
 
       const parsed = PullRequestWebhookSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -134,7 +136,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       config: { rawBody: true },
     },
     async (request, reply) => {
-      if (!verifyWebhookOrReject(request, reply)) return;
+      if (!verifyWebhookOrReject(request, reply)) {
+        return;
+      }
 
       const parsed = CheckRunWebhookSchema.safeParse(request.body);
       if (!parsed.success) {

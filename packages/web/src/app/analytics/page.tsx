@@ -14,12 +14,16 @@ const WINDOWS = [
 type SortKey = 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 
 function fmt(n: number | null, digits = 1): string {
-  if (n === null) return '—';
+  if (n === null) {
+    return '—';
+  }
   return n.toFixed(digits);
 }
 
 function fmtPct(n: number | null): string {
-  if (n === null) return '—';
+  if (n === null) {
+    return '—';
+  }
   return `${(n * 100).toFixed(1)}%`;
 }
 
@@ -82,8 +86,9 @@ export default function GlobalAnalyticsPage() {
   const { data, isLoading } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
-    if (k === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    else {
+    if (k === sortKey) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
       setSortKey(k);
       setSortDir('desc');
     }
@@ -96,7 +101,9 @@ export default function GlobalAnalyticsPage() {
   };
 
   const rows = useMemo(() => {
-    if (!data) return [];
+    if (!data) {
+      return [];
+    }
     const filterLower = filter.toLowerCase();
     const filtered = filter
       ? data.perTemplate.filter((r) => r.templateName.toLowerCase().includes(filterLower))

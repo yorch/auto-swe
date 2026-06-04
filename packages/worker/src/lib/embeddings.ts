@@ -27,7 +27,9 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   const { provider, modelId } = parseProviderModelSpec(spec);
 
   const cacheKey = `${spec}|${apiKey.slice(-6)}|${apiBase ?? ''}`;
-  if (cachedModel?.cacheKey === cacheKey) return cachedModel;
+  if (cachedModel?.cacheKey === cacheKey) {
+    return cachedModel;
+  }
 
   if (provider === 'openai') {
     cachedModel = {

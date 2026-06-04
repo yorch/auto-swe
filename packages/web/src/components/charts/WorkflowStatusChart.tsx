@@ -15,7 +15,9 @@ interface Props {
 }
 
 export function WorkflowStatusChart({ data }: Props) {
-  if (data.length === 0) return <EmptyChart label="no workflow data" />;
+  if (data.length === 0) {
+    return <EmptyChart label="no workflow data" />;
+  }
 
   return (
     <ResponsiveContainer height={280} width="100%">

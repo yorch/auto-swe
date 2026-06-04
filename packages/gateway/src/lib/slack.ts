@@ -35,7 +35,9 @@ export function verifySlackSignature(
   try {
     const sigBuf = Buffer.from(signature);
     const expBuf = Buffer.from(expected);
-    if (sigBuf.length !== expBuf.length) return false;
+    if (sigBuf.length !== expBuf.length) {
+      return false;
+    }
     return crypto.timingSafeEqual(sigBuf, expBuf);
   } catch {
     return false;
@@ -69,13 +71,19 @@ export async function postSlackMessage(
   options: SlackPostMessageOptions,
   token: string | undefined = process.env.SLACK_BOT_TOKEN
 ): Promise<string | null> {
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
   const body: Record<string, unknown> = {
     channel: options.channel,
     text: options.text,
   };
-  if (options.threadTs) body.thread_ts = options.threadTs;
-  if (options.blocks) body.blocks = options.blocks;
+  if (options.threadTs) {
+    body.thread_ts = options.threadTs;
+  }
+  if (options.blocks) {
+    body.blocks = options.blocks;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
@@ -117,7 +125,9 @@ export async function openSlackView(
   options: SlackViewsOpenOptions,
   token: string | undefined = process.env.SLACK_BOT_TOKEN
 ): Promise<{ ok: boolean; viewId?: string; error?: string }> {
-  if (!token) return { error: 'SLACK_BOT_TOKEN not configured', ok: false };
+  if (!token) {
+    return { error: 'SLACK_BOT_TOKEN not configured', ok: false };
+  }
   try {
     const res = await fetch('https://slack.com/api/views.open', {
       body: JSON.stringify({ trigger_id: options.triggerId, view: options.view }),

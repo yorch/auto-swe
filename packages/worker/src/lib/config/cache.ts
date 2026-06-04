@@ -32,7 +32,9 @@ function maxEntries(): number {
   const env = process.env.CONFIG_CACHE_MAX_ENTRIES;
   if (env) {
     const parsed = Number(env);
-    if (Number.isFinite(parsed) && parsed >= 1) return parsed;
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return parsed;
+    }
   }
   return DEFAULT_MAX_ENTRIES;
 }
@@ -42,7 +44,9 @@ function maxEntries(): number {
 /// cost is O(1) per insert.
 function purgeExpired(now: number): void {
   for (const [k, v] of store) {
-    if (v.expiresAt <= now) store.delete(k);
+    if (v.expiresAt <= now) {
+      store.delete(k);
+    }
   }
 }
 
@@ -52,7 +56,9 @@ function enforceCap(): void {
     // Map iteration order = insertion order. After `purgeExpired` ran, the
     // oldest remaining key is the LRU candidate.
     const oldest = store.keys().next().value;
-    if (oldest === undefined) return;
+    if (oldest === undefined) {
+      return;
+    }
     store.delete(oldest);
   }
 }
@@ -99,7 +105,9 @@ export function configCacheTtlMs(): number {
   const envValue = process.env.CONFIG_CACHE_TTL_MS;
   if (envValue) {
     const parsed = Number(envValue);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
   }
   return DEFAULT_TTL_MS;
 }

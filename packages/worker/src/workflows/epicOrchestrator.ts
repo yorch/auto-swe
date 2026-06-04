@@ -81,7 +81,9 @@ export function computeTransitiveDependents(
   const stack = [failedRepoId];
   while (stack.length > 0) {
     const id = stack.pop();
-    if (id === undefined) continue;
+    if (id === undefined) {
+      continue;
+    }
     for (const dependent of dependentsByDep.get(id) ?? []) {
       if (!visited.has(dependent)) {
         visited.add(dependent);

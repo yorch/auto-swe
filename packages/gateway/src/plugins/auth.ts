@@ -239,11 +239,15 @@ const sessionPayloadCache = new Map<string, { payload: JwtPayload; expiresAt: nu
 
 function extractSessionCookieValue(headers: FastifyRequest['headers']): string | null {
   const raw = headers.cookie;
-  if (typeof raw !== 'string') return null;
+  if (typeof raw !== 'string') {
+    return null;
+  }
   // Quick scan for the better-auth session cookie name. We don't bother
   // parsing the full cookie string — just the one value we care about.
   const idx = raw.indexOf('better-auth.session_token=');
-  if (idx === -1) return null;
+  if (idx === -1) {
+    return null;
+  }
   const start = idx + 'better-auth.session_token='.length;
   const end = raw.indexOf(';', start);
   return decodeURIComponent(raw.slice(start, end === -1 ? undefined : end));
@@ -258,8 +262,12 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   const sessionToken = extractSessionCookieValue(request.headers);
   if (sessionToken) {
     const hit = sessionPayloadCache.get(sessionToken);
-    if (hit && hit.expiresAt > Date.now()) return hit.payload;
-    if (hit) sessionPayloadCache.delete(sessionToken);
+    if (hit && hit.expiresAt > Date.now()) {
+      return hit.payload;
+    }
+    if (hit) {
+      sessionPayloadCache.delete(sessionToken);
+    }
   }
 
   // Lazy-load to avoid pulling the better-auth module graph into the auth
@@ -272,7 +280,9 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   const session = await betterAuth.api.getSession({
     headers: fromNodeHeaders(request.headers),
   });
-  if (!session) return null;
+  if (!session) {
+    return null;
+  }
   // `session.user` carries the additionalFields we declared in betterAuth.ts
   // (role, isActive, slackId), so we no longer need a second Prisma roundtrip
   // to the users table. Type the relevant subset to satisfy TS without `any`.
@@ -282,7 +292,9 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
     isActive: boolean;
     slackId?: string | null;
   };
-  if (!u.isActive) return null;
+  if (!u.isActive) {
+    return null;
+  }
   const now = Math.floor(Date.now() / 1000);
   const payload: JwtPayload = {
     exp: now + 60,
@@ -297,7 +309,9 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
     if (sessionPayloadCache.size >= SESSION_CACHE_MAX) {
       // FIFO eviction — Map iteration order is insertion order.
       const firstKey = sessionPayloadCache.keys().next().value;
-      if (firstKey !== undefined) sessionPayloadCache.delete(firstKey);
+      if (firstKey !== undefined) {
+        sessionPayloadCache.delete(firstKey);
+      }
     }
     sessionPayloadCache.set(sessionToken, {
       expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
@@ -362,7 +376,9 @@ export function requireAuth(options: RBACOptions = {}) {
     // Team role check: resolve membership and enforce
     if (options.requiredTeamRole) {
       // Platform ADMIN bypasses team checks
-      if (payload.role === 'ADMIN') return;
+      if (payload.role === 'ADMIN') {
+        return;
+      }
 
       const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
       if (!teamId) {

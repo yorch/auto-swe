@@ -28,7 +28,9 @@ export function TeamFormModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     if (mode.kind === 'edit') {
       setName(mode.initial.name);
       setSlug('');

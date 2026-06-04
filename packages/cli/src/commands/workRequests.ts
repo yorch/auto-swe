@@ -46,25 +46,39 @@ function parseRunFlags(args: string[]): ParsedRunFlags {
     const eqIdx = arg.indexOf('=');
     const key = eqIdx !== -1 ? arg.slice(2, eqIdx) : arg.slice(2);
     const val = eqIdx !== -1 ? arg.slice(eqIdx + 1) : (args[i + 1] ?? '');
-    if (eqIdx === -1 && !arg.startsWith('--')) continue;
+    if (eqIdx === -1 && !arg.startsWith('--')) {
+      continue;
+    }
     if (key === 'ticket') {
       flags.ticket = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     } else if (key === 'description') {
       flags.description = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     } else if (key === 'repo') {
       flags.repo = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     } else if (key === 'repo-id') {
       flags.repoId = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     } else if (key === 'workflow') {
       flags.workflow = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     } else if (key === 'budget') {
       flags.budget = val;
-      if (eqIdx === -1) i++;
+      if (eqIdx === -1) {
+        i++;
+      }
     }
   }
   return flags;
@@ -176,7 +190,9 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     externalTicketId: flags.ticket,
     repoIds: [resolvedRepoId],
   };
-  if (templateId) body.templateId = templateId;
+  if (templateId) {
+    body.templateId = templateId;
+  }
 
   const result = await apiRequest<WorkRequestResponse>(env, 'POST', '/api/v1/work-requests', body);
 

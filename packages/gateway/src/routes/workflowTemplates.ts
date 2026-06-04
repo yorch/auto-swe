@@ -25,7 +25,9 @@ interface ShellNodeWithId {
 function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
   const out: ShellNodeWithId[] = [];
   for (const [id, node] of Object.entries(spec.nodes)) {
-    if (node.type === 'shell') out.push({ id, node });
+    if (node.type === 'shell') {
+      out.push({ id, node });
+    }
   }
   return out;
 }
@@ -45,8 +47,12 @@ async function assertShellAuthoringAllowed(
   teamId: string | null,
   shellNodes: ShellNodeWithId[]
 ): Promise<{ statusCode: number; body: unknown } | null> {
-  if (shellNodes.length === 0) return null;
-  if (user.role === 'ADMIN') return null;
+  if (shellNodes.length === 0) {
+    return null;
+  }
+  if (user.role === 'ADMIN') {
+    return null;
+  }
   if (teamId === null) {
     return {
       body: {
@@ -82,7 +88,9 @@ async function assertShellImagesAllowed(
 ): Promise<
   { ok: true; egressAllowlist: string[] } | { ok: false; statusCode: number; body: unknown }
 > {
-  if (shellNodes.length === 0) return { egressAllowlist: [], ok: true };
+  if (shellNodes.length === 0) {
+    return { egressAllowlist: [], ok: true };
+  }
   const team = teamId
     ? await fastify.prisma.team.findUnique({
         select: { egressAllowlist: true, shellImageAllowlist: true },
@@ -127,7 +135,9 @@ async function recordShellAudit(
   shellNodes: ShellNodeWithId[],
   egressAllowlist: string[]
 ): Promise<void> {
-  if (shellNodes.length === 0) return;
+  if (shellNodes.length === 0) {
+    return;
+  }
   await tx.workflowShellAudit.createMany({
     data: shellNodes.map(({ id, node }) => ({
       authorUserId,
@@ -175,7 +185,9 @@ function teamMembershipFilter(user: {
   sub: string;
   role: string;
 }): Prisma.WorkflowTemplateWhereInput {
-  if (user.role === 'ADMIN') return {};
+  if (user.role === 'ADMIN') {
+    return {};
+  }
   return {
     OR: [
       { teamId: null }, // Global templates visible to everyone
@@ -196,7 +208,9 @@ async function loadLastRuns(
   fastify: FastifyInstance,
   templateIds: string[]
 ): Promise<Map<string, LastRunRow>> {
-  if (templateIds.length === 0) return new Map();
+  if (templateIds.length === 0) {
+    return new Map();
+  }
   // One query per template using groupBy would also work, but findMany distinct on
   // (templateId) ordered by startedAt desc is the simpler portable pattern.
   const rows = (await fastify.prisma.workflowRun.findMany({
@@ -399,8 +413,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
         assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
       ]);
-      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      if (!imgGate.ok) return reply.status(imgGate.statusCode).send(imgGate.body);
+      if (rbac) {
+        return reply.status(rbac.statusCode).send(rbac.body);
+      }
+      if (!imgGate.ok) {
+        return reply.status(imgGate.statusCode).send(imgGate.body);
+      }
       const { egressAllowlist } = imgGate;
 
       try {
@@ -638,8 +656,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes),
         assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
       ]);
-      if (rbac) return reply.status(rbac.statusCode).send(rbac.body);
-      if (!imgGate.ok) return reply.status(imgGate.statusCode).send(imgGate.body);
+      if (rbac) {
+        return reply.status(rbac.statusCode).send(rbac.body);
+      }
+      if (!imgGate.ok) {
+        return reply.status(imgGate.statusCode).send(imgGate.body);
+      }
       const { egressAllowlist } = imgGate;
 
       // SELECT max(version)+1 / INSERT is racy under concurrent saves — two
@@ -675,7 +697,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           break;
         } catch (err: unknown) {
           const e = err as { code?: string };
-          if (e.code !== 'P2002' || attempt === MAX_RETRIES - 1) throw err;
+          if (e.code !== 'P2002' || attempt === MAX_RETRIES - 1) {
+            throw err;
+          }
         }
       }
       if (!created) {

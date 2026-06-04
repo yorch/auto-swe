@@ -62,7 +62,9 @@ export async function validateContext(
           );
         }
 
-        if (!result.object) return [];
+        if (!result.object) {
+          return [];
+        }
         const parsed = result.object as z.infer<typeof ContextValidationSchema>;
         return parsed.successCriteria;
       } catch (e) {

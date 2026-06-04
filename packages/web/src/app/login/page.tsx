@@ -20,7 +20,9 @@ interface ProviderFlags {
  * container or a misconfigured reverse proxy).
  */
 function looksLikeProviderResponse(data: unknown): data is ProviderFlags {
-  if (typeof data !== 'object' || data === null) return false;
+  if (typeof data !== 'object' || data === null) {
+    return false;
+  }
   const o = data as Record<string, unknown>;
   return (
     typeof o.github === 'boolean' &&
@@ -87,11 +89,15 @@ function LoginPageInner() {
   // ?bridge=1, resolve the session and either route into the dashboard or
   // surface the pending-approval screen depending on isActive.
   useEffect(() => {
-    if (searchParams.get('bridge') !== '1') return;
+    if (searchParams.get('bridge') !== '1') {
+      return;
+    }
     let cancelled = false;
     (async () => {
       const ok = await hydrate();
-      if (cancelled) return;
+      if (cancelled) {
+        return;
+      }
       if (!ok) {
         setError('Sign-in completed but no session was found — try again.');
         return;

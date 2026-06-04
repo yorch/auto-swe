@@ -127,7 +127,9 @@ export async function executeImplementation(
         const startTime = Date.now();
         const testOutput = workspace.exec(testCommand);
         testResult = parseTestOutput(testOutput, Date.now() - startTime);
-        if (testResult.passed) break;
+        if (testResult.passed) {
+          break;
+        }
       } catch (err: unknown) {
         testResult = {
           duration_ms: 0,

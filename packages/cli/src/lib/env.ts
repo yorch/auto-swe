@@ -25,7 +25,9 @@ interface AuthLoginResponse {
 export async function loadCliEnv(): Promise<CliEnv> {
   const apiUrl = (process.env.AUTO_SWE_API_URL ?? 'http://localhost:8080').replace(/\/$/, '');
   const raw = process.env.AUTO_SWE_TOKEN?.trim();
-  if (raw) return { apiUrl, token: raw };
+  if (raw) {
+    return { apiUrl, token: raw };
+  }
   const username = process.env.AUTO_SWE_USERNAME?.trim();
   const password = process.env.AUTO_SWE_PASSWORD;
   if (username && password) {
