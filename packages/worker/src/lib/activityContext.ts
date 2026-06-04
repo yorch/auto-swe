@@ -1,5 +1,23 @@
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
+import type { AgentTracer } from './agentTracer.js';
+
+/**
+ * Returns the Temporal activity type (function name) for the currently
+ * executing activity, e.g. "executeImplementation". Used as the nodeId
+ * correlator for AgentTrace records.
+ */
+export function currentActivityType(): string {
+  return activityInfo().activityType;
+}
+
+/**
+ * Returns the current Temporal activity attempt number (1-based). Stored on
+ * AgentTrace rows so the UI can separate traces from different retry attempts.
+ */
+export function currentAttempt(): number {
+  return activityInfo().attempt;
+}
 
 /**
  * Returns the Temporal workflow ID that scheduled the current activity.
@@ -37,4 +55,17 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Persist all in-memory traces for the currently executing activity.
+ * Best-effort: errors are swallowed inside `AgentTracer.persist`.
+ */
+export async function persistActivityTrace(tracer: AgentTracer, agentRole: string): Promise<void> {
+  await tracer.persist(
+    await currentWorkflowRunId(),
+    currentActivityType(),
+    agentRole,
+    currentAttempt()
+  );
 }

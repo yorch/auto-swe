@@ -1,5 +1,6 @@
 'use client';
 
+import type { AgentTraceRecord, WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
@@ -7,11 +8,189 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useCancelWorkflowRun, useWorkflowRun } from '@/hooks/useWorkflows';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
+
+// ── Agent trace helpers ──────────────────────────────────────────────────────
+
+const TOOL_LABELS: Record<string, string> = {
+  bash: 'bash',
+  listDirectory: 'ls',
+  readFile: 'read',
+  writeFile: 'write',
+};
+
+const TYPE_DOT: Record<string, string> = {
+  activity_event: 'bg-blue-500',
+  llm_response: 'bg-purple-500',
+  tool_call: 'bg-gray-400',
+};
+
+const TYPE_BADGE: Record<string, string> = {
+  activity_event: 'bg-blue-100 text-blue-700',
+  llm_response: 'bg-purple-100 text-purple-700',
+  tool_call: 'bg-gray-100 text-gray-600',
+};
+
+function traceSummary(trace: AgentTraceRecord): { label: string; detail: string } {
+  const input = trace.inputJson as Record<string, unknown> | null;
+  const name = trace.toolName ?? '';
+
+  if (trace.type === 'llm_response') {
+    return { detail: trace.agentRole, label: name || trace.agentRole };
+  }
+
+  if (trace.type === 'activity_event') {
+    const output = trace.outputJson as Record<string, unknown> | null;
+    let detail = '';
+    if (name === 'tdd.test_run' && output) {
+      detail = output.passed
+        ? `pass ${output.passing}/${output.total}`
+        : `fail ${output.failing}/${output.total ?? 0}`;
+    } else if ((name === 'pr.created' || name === 'pr.updated') && output) {
+      detail = output.prUrl ? String(output.prUrl) : `#${output.prNumber}`;
+    } else if (name === 'git.commit_push' && output) {
+      detail = String(output.headSha ?? '').slice(0, 8);
+    } else if (name === 'lessons.retrieved' && output) {
+      detail = `${output.count} lesson${Number(output.count) !== 1 ? 's' : ''}`;
+    }
+    return { detail, label: TOOL_LABELS[name] ?? name };
+  }
+
+  // tool_call
+  if (!input) {
+    return { detail: '', label: TOOL_LABELS[name] ?? name };
+  }
+  switch (name) {
+    case 'readFile':
+    case 'writeFile':
+      return { detail: String(input.path ?? ''), label: TOOL_LABELS[name] ?? name };
+    case 'listDirectory':
+      return { detail: String(input.path ?? '.'), label: 'ls' };
+    case 'bash':
+      return { detail: String(input.command ?? '').slice(0, 80), label: 'bash' };
+    default:
+      return { detail: '', label: TOOL_LABELS[name] ?? (name || 'call') };
+  }
+}
+
+const OUTPUT_TEXT_FIELDS = ['text', 'output', 'content', 'listing', 'result'] as const;
+
+function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
+  const output = trace.outputJson as Record<string, unknown> | null;
+  const text = output
+    ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
+        | string
+        | undefined) ?? JSON.stringify(output, null, 2))
+    : null;
+
+  if (!trace.error && !text) {
+    return null;
+  }
+  return (
+    <div>
+      {trace.error && (
+        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-1">
+          {trace.error}
+        </div>
+      )}
+      {text && (
+        <pre className="text-[10px] leading-tight bg-[var(--muted)] p-1.5 rounded overflow-x-auto max-h-28 whitespace-pre-wrap break-all">
+          {text.slice(0, 1200)}
+          {text.length > 1200 ? '\n…' : ''}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  if (traces.length === 0) {
+    return <p className="text-xs text-[var(--muted-foreground)] py-1">No trace events recorded.</p>;
+  }
+
+  // Group by attempt so retries are visually separated
+  const byAttempt = traces.reduce<Record<number, AgentTraceRecord[]>>((acc, t) => {
+    const a = t.attempt ?? 1;
+    if (!acc[a]) {
+      acc[a] = [];
+    }
+    acc[a].push(t);
+    return acc;
+  }, {});
+  const attempts = Object.keys(byAttempt)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  return (
+    <div className="space-y-2">
+      {attempts.map((attempt) => (
+        <div key={attempt}>
+          {attempts.length > 1 && (
+            <p className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wide mb-1">
+              Attempt {attempt}
+            </p>
+          )}
+          <ol className="space-y-1 max-h-80 overflow-y-auto">
+            {byAttempt[attempt].map((t) => {
+              const { label, detail } = traceSummary(t);
+              const isExpanded = expandedId === t.id;
+              const durationLabel =
+                t.durationMs != null && t.durationMs > 0 ? formatDuration(t.durationMs) : '';
+              const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
+              const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
+
+              return (
+                <li key={t.id}>
+                  <button
+                    className="w-full text-left rounded hover:bg-[var(--muted)] px-2 py-1 transition-colors"
+                    onClick={() => setExpandedId(isExpanded ? null : t.id)}
+                    type="button"
+                  >
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dotClass}`} />
+                      <span className={`text-[10px] px-1 rounded font-mono shrink-0 ${badgeClass}`}>
+                        {t.type === 'tool_call'
+                          ? 'tool'
+                          : t.type === 'llm_response'
+                            ? 'llm'
+                            : 'event'}
+                      </span>
+                      <span className="font-mono font-semibold shrink-0">{label}</span>
+                      {detail && (
+                        <span className="text-[var(--muted-foreground)] truncate font-mono">
+                          {detail}
+                        </span>
+                      )}
+                      <span className="ml-auto text-[var(--muted-foreground)] shrink-0 text-[10px]">
+                        {durationLabel}
+                      </span>
+                      {t.error && (
+                        <span className="text-red-600 shrink-0 text-[10px] font-mono">err</span>
+                      )}
+                    </div>
+                    {isExpanded && (
+                      <div className="mt-1.5">
+                        <TraceOutput trace={t} />
+                      </div>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
@@ -25,9 +204,6 @@ export default function RunDetailPage({ params }: PageProps) {
     }
     const byNodeId: Record<string, { status: string; attempt: number }> = {};
     for (const s of run.steps) {
-      // Strip fan-out branch prefix (e.g. "fan[0]/impl") so the parent DAG
-      // can show aggregate status. The detail panel still shows per-branch
-      // attempts for inspection.
       const baseId = s.nodeId.includes('/') ? (s.nodeId.split('/').pop() ?? s.nodeId) : s.nodeId;
       const existing = byNodeId[baseId];
       if (!existing || s.attempt >= existing.attempt) {
@@ -36,6 +212,19 @@ export default function RunDetailPage({ params }: PageProps) {
     }
     return { byNodeId };
   }, [run?.steps]);
+
+  // Traces for the currently selected node — derived directly from spec + selected node id
+  const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
+    if (!selectedNodeId || !run?.traces || !run?.specSnapshot) {
+      return [];
+    }
+    const spec = run.specSnapshot as WorkflowSpec;
+    const node = spec.nodes[selectedNodeId];
+    if (node?.type !== 'step') {
+      return [];
+    }
+    return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === node.step);
+  }, [selectedNodeId, run?.traces, run?.specSnapshot]);
 
   if (isLoading || !run) {
     return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
@@ -48,6 +237,8 @@ export default function RunDetailPage({ params }: PageProps) {
           (s) => s.nodeId === selectedNodeId || s.nodeId.endsWith(`/${selectedNodeId}`)
         )
       : [];
+
+  const totalTraces = (run as WorkflowRunDetail).traces?.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -135,6 +326,12 @@ export default function RunDetailPage({ params }: PageProps) {
                 <dt className="text-[var(--muted-foreground)]">Workflow ID</dt>
                 <dd className="font-mono text-xs">{run.workflowId}</dd>
               </div>
+              {totalTraces > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-[var(--muted-foreground)]">Tool calls</dt>
+                  <dd className="font-mono text-xs">{totalTraces}</dd>
+                </div>
+              )}
               {run.workRequest && (
                 <>
                   <div className="flex justify-between">
@@ -190,6 +387,15 @@ export default function RunDetailPage({ params }: PageProps) {
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {nodeTraces.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-[var(--border)]">
+                  <p className="text-xs font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wide">
+                    Agent trace · {nodeTraces.length} event{nodeTraces.length !== 1 ? 's' : ''}
+                  </p>
+                  <AgentTracePanel traces={nodeTraces} />
                 </div>
               )}
             </Card>

@@ -7,6 +7,7 @@ import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
+import type { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {
@@ -15,7 +16,7 @@ import {
   SECURITY_AUDITOR_PROMPT,
 } from './prompts.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+const otelTracer = trace.getTracer('auto-swe-worker');
 
 // ── Zod schemas for structured output ──
 
@@ -39,12 +40,14 @@ const ReviewVerdictSchema = z.object({
 async function runReviewerAgent(
   prompt: string,
   reviewerType: ReviewVerdict['reviewer'],
-  codeResult: CodeResult
+  codeResult: CodeResult,
+  tracer?: AgentTracer
 ): Promise<ReviewVerdict> {
-  return tracer.startActiveSpan(
+  return otelTracer.startActiveSpan(
     `llm.review.${reviewerType}`,
     { attributes: { 'llm.reviewer_type': reviewerType } },
     async (span) => {
+      const start = Date.now();
       try {
         const modelSpec = await getModelSpec('reviewer');
         const model = await getModel('reviewer');
@@ -84,12 +87,21 @@ async function runReviewerAgent(
           throw new Error(`${reviewerType} reviewer agent did not return structured output`);
         }
         const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
+        const verdictWithType = { ...verdict, reviewer: reviewerType };
 
-        return {
-          ...verdict,
-          reviewer: reviewerType,
-        };
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          outputJson: verdictWithType,
+          role: reviewerType,
+        });
+
+        return verdictWithType;
       } catch (e) {
+        tracer?.addLlmResponse({
+          durationMs: Date.now() - start,
+          error: (e as Error).message,
+          role: reviewerType,
+        });
         span.recordException(e as Error);
         throw e;
       } finally {
@@ -103,7 +115,8 @@ async function runReviewerAgent(
 
 export async function runReviewNetwork(
   codeResult: CodeResult,
-  successCriteria?: string[]
+  successCriteria?: string[],
+  tracer?: AgentTracer
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -113,9 +126,9 @@ export async function runReviewNetwork(
 
   // Run all three reviewers in parallel
   const results = await Promise.allSettled([
-    runReviewerAgent(SECURITY_AUDITOR_PROMPT, 'SECURITY', codeResult),
-    runReviewerAgent(domainLogicPrompt, 'DOMAIN_LOGIC', codeResult),
-    runReviewerAgent(PERFORMANCE_REVIEWER_PROMPT, 'PERFORMANCE', codeResult),
+    runReviewerAgent(SECURITY_AUDITOR_PROMPT, 'SECURITY', codeResult, tracer),
+    runReviewerAgent(domainLogicPrompt, 'DOMAIN_LOGIC', codeResult, tracer),
+    runReviewerAgent(PERFORMANCE_REVIEWER_PROMPT, 'PERFORMANCE', codeResult, tracer),
   ]);
 
   const verdicts: ReviewVerdict[] = results.map((result, index) => {

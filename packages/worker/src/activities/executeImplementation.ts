@@ -9,7 +9,8 @@ import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
@@ -52,6 +53,8 @@ export async function executeImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const tracer = new AgentTracer();
+
   try {
     heartbeat('workspace provisioned');
 
@@ -59,8 +62,8 @@ export async function executeImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Create Mastra agent with tools bound to workspace
-    const { agent } = await createImplementerAgent(workspace);
+    // Create Mastra agent with tools bound to workspace (tracer captures every call)
+    const { agent } = await createImplementerAgent(workspace, tracer);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -70,6 +73,13 @@ export async function executeImplementation(
         lessonsContext =
           '\n\n## Lessons from Previous Workflows\n' +
           lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`).join('\n');
+        tracer.addActivityEvent({
+          name: 'lessons.retrieved',
+          outputJson: {
+            count: lessons.length,
+            lessons: lessons.map((l) => ({ failureType: l.failureType, summary: l.summary })),
+          },
+        });
       }
     } catch {
       // Lesson retrieval failure should not block implementation
@@ -122,11 +132,32 @@ export async function executeImplementation(
         );
       }
 
+      // Record implementer's reasoning text (the LLM response between tool calls)
+      if (genResult.text) {
+        tracer.addLlmResponse({
+          durationMs: 0,
+          inputJson: { iteration },
+          outputJson: { text: genResult.text },
+          role: 'implementer',
+        });
+      }
+
       // Run tests
+      const testStart = Date.now();
       try {
-        const startTime = Date.now();
         const testOutput = workspace.exec(testCommand);
-        testResult = parseTestOutput(testOutput, Date.now() - startTime);
+        testResult = parseTestOutput(testOutput, Date.now() - testStart);
+        tracer.addActivityEvent({
+          durationMs: Date.now() - testStart,
+          inputJson: { iteration },
+          name: 'tdd.test_run',
+          outputJson: {
+            failing: testResult.failing,
+            passed: testResult.passed,
+            passing: testResult.passing,
+            total: testResult.total,
+          },
+        });
         if (testResult.passed) {
           break;
         }
@@ -139,6 +170,12 @@ export async function executeImplementation(
           stdout: getExecErrorStdout(err),
           total: 0,
         };
+        tracer.addActivityEvent({
+          error: getExecErrorStdout(err).slice(0, 1000),
+          inputJson: { iteration },
+          name: 'tdd.test_run',
+          outputJson: { passed: false },
+        });
       }
     }
 
@@ -153,6 +190,14 @@ export async function executeImplementation(
     // Collect results
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    tracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch, commitMessage: commitSummary, headSha },
+    });
+
+    // Persist traces before the security gate so they survive a gate rejection.
+    await persistActivityTrace(tracer, 'implementer');
 
     // Security scan — gate before returning code result
     heartbeat('running security scan');

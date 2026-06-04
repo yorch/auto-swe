@@ -135,7 +135,13 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/`. As of 2026-05-18 it's two migrations: a single canonical `init` plus the pgvector HNSW index migration (the latter is separate because Prisma 7's schema DSL can't model HNSW).
+The shipped schema lives in `packages/shared/src/prisma/migrations/`. There are three migrations:
+
+| Migration | What it adds |
+| --------- | ------------ |
+| `00000000000000_init` | All core tables (users, teams, repositories, work\_requests, active\_workflows, pull\_requests, context\_snapshots, agent\_lessons, workflow\_runs, workflow\_steps, workflow\_templates, …) |
+| `00000000000001_custom_constraints_and_indexes` | HNSW vector index on `agent_lessons.embedding` (separate because Prisma 7's schema DSL can't express HNSW directly) |
+| `20260603000000_agent_traces` | `agent_traces` table — records every tool call, LLM response, and activity event emitted during a workflow run, linked to `workflow_runs` with `ON DELETE CASCADE` |
 
 ```bash
 # 1. Create the database with the pgvector extension

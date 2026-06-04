@@ -19,7 +19,12 @@ import { heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
+import {
+  currentWorkflowId,
+  currentWorkflowRunId,
+  persistActivityTrace,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
@@ -28,7 +33,10 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export async function planDecomposition(request: RepoWorkRequest): Promise<DecompositionResult> {
   heartbeat('plan decomposition: calling agent');
-  return decomposerPlan(request);
+  const tracer = new AgentTracer();
+  const result = await decomposerPlan(request, tracer);
+  await persistActivityTrace(tracer, 'planner');
+  return result;
 }
 
 export interface MergeBranchesInput {
@@ -134,7 +142,7 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
       unmergedBranches: unmerged,
     };
   } finally {
-    workspace.destroy();
+    workspace.destroy(); // mergeBranches does not use an agent tracer
   }
 }
 
@@ -201,6 +209,7 @@ export async function resolveMergeConflict(
   const merged: string[] = [];
   const unmerged: string[] = [];
   const conflicts: Array<{ branch: string; output: string }> = [];
+  const tracer = new AgentTracer();
 
   try {
     for (let idx = 0; idx < sourceBranches.length; idx++) {
@@ -210,6 +219,7 @@ export async function resolveMergeConflict(
         log,
         maxAttempts: maxAttemptsPerBranch,
         messagePrefix,
+        tracer,
       });
       if (resolved.passed) {
         merged.push(source);
@@ -265,7 +275,9 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
+    const done = persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
+    await done;
   }
 }
 
@@ -338,6 +350,7 @@ async function mergeOneWithResolver(
     log: string[];
     maxAttempts: number;
     messagePrefix: string;
+    tracer: AgentTracer;
   }
 ): Promise<{ passed: boolean; output: string }> {
   const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
@@ -367,7 +380,7 @@ async function mergeOneWithResolver(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, opts.tracer);
     const result = await agent.generate(
       [
         { content: MERGE_CONFLICT_RESOLVER_PROMPT, role: 'system' },

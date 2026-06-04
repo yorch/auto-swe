@@ -30,6 +30,7 @@ vi.mock('../lib/errors.js', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue(undefined),
   currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
+  persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@temporalio/activity', () => ({

@@ -24,7 +24,12 @@ import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/share
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
+import {
+  currentWorkflowId,
+  currentWorkflowRunId,
+  persistActivityTrace,
+} from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
@@ -294,6 +299,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
+  const gateTracer = new AgentTracer();
 
   try {
     heartbeat('gate fix workspace provisioned');
@@ -309,8 +315,9 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, gateTracer);
 
+    const agentStart = Date.now();
     const gateFix = await agent.generate(
       [
         { content: GATE_FIX_SYSTEM_PROMPT, role: 'system' },
@@ -332,6 +339,14 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
 
     if (gateFix.usage) {
       await recordLlmUsage(currentWorkflowId(), 'implementer', gateFix.usage, 'llm.gate_fix');
+    }
+
+    if (gateFix.text) {
+      gateTracer.addLlmResponse({
+        durationMs: Date.now() - agentStart,
+        outputJson: { text: gateFix.text },
+        role: 'implementer',
+      });
     }
 
     // Re-run the failed gate against the fixed code (mirrors the system
@@ -360,10 +375,10 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     }
 
     let testResult: TestRunResult;
+    const testStart = Date.now();
     try {
-      const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - startTime);
+      testResult = parseTestOutput(testOutput, Date.now() - testStart);
     } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
@@ -374,6 +389,16 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
         total: 0,
       };
     }
+    gateTracer.addActivityEvent({
+      durationMs: Date.now() - testStart,
+      name: 'tdd.test_run',
+      outputJson: {
+        failing: testResult.failing,
+        passed: testResult.passed,
+        passing: testResult.passing,
+        total: testResult.total,
+      },
+    });
 
     workspace.exec('git add -A');
     workspace.exec(
@@ -383,6 +408,11 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
 
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
+
+    gateTracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch: previousCodeResult.branch, headSha },
+    });
 
     const gateNote =
       gateRerunPassed === null
@@ -397,6 +427,8 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       testResults: testResult,
     };
   } finally {
+    const done = persistActivityTrace(gateTracer, 'implementer');
     workspace.destroy();
+    await done;
   }
 }

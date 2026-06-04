@@ -3,7 +3,8 @@ import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow'
 import { heartbeat } from '@temporalio/activity';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId } from '../lib/activityContext.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout, requireEnv } from '../lib/errors.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
@@ -65,6 +66,8 @@ export async function executeCIFixImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const tracer = new AgentTracer();
+
   try {
     heartbeat('CI fix workspace provisioned');
 
@@ -72,9 +75,10 @@ export async function executeCIFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, tracer);
 
     // Run the agent in CI fix mode
+    const agentStart = Date.now();
     const ciFix = await agent.generate(
       [
         { content: CI_FIX_SYSTEM_PROMPT, role: 'system' },
@@ -97,12 +101,20 @@ export async function executeCIFixImplementation(
       await recordLlmUsage(currentWorkflowId(), 'implementer', ciFix.usage, 'llm.ci_fix');
     }
 
+    if (ciFix.text) {
+      tracer.addLlmResponse({
+        durationMs: Date.now() - agentStart,
+        outputJson: { text: ciFix.text },
+        role: 'implementer',
+      });
+    }
+
     // Run tests locally after fix
     let testResult: TestRunResult;
+    const testStart = Date.now();
     try {
-      const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - startTime);
+      testResult = parseTestOutput(testOutput, Date.now() - testStart);
     } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
@@ -113,6 +125,16 @@ export async function executeCIFixImplementation(
         total: 0,
       };
     }
+    tracer.addActivityEvent({
+      durationMs: Date.now() - testStart,
+      name: 'tdd.test_run',
+      outputJson: {
+        failing: testResult.failing,
+        passed: testResult.passed,
+        passing: testResult.passing,
+        total: testResult.total,
+      },
+    });
 
     // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
     workspace.exec('git add -A');
@@ -124,6 +146,11 @@ export async function executeCIFixImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
+    tracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch: previousCodeResult.branch, headSha },
+    });
+
     return {
       branch: previousCodeResult.branch,
       diff,
@@ -133,7 +160,9 @@ export async function executeCIFixImplementation(
       testResults: testResult,
     };
   } finally {
+    const done = persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
+    await done;
   }
 }
 
@@ -170,14 +199,17 @@ export async function executeReviewFixImplementation(
     repo.executorImage ?? 'node:24-alpine'
   );
 
+  const reviewTracer = new AgentTracer();
+
   try {
     heartbeat('review fix workspace provisioned');
 
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace);
+    const { agent } = await createImplementerAgent(workspace, reviewTracer);
 
+    const agentStart = Date.now();
     const reviewFix = await agent.generate(
       [
         { content: REVIEW_FIX_SYSTEM_PROMPT, role: 'system' },
@@ -200,11 +232,19 @@ export async function executeReviewFixImplementation(
       await recordLlmUsage(currentWorkflowId(), 'implementer', reviewFix.usage, 'llm.review_fix');
     }
 
+    if (reviewFix.text) {
+      reviewTracer.addLlmResponse({
+        durationMs: Date.now() - agentStart,
+        outputJson: { text: reviewFix.text },
+        role: 'implementer',
+      });
+    }
+
     let testResult: TestRunResult;
+    const testStart = Date.now();
     try {
-      const startTime = Date.now();
       const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - startTime);
+      testResult = parseTestOutput(testOutput, Date.now() - testStart);
     } catch (err: unknown) {
       testResult = {
         duration_ms: 0,
@@ -215,6 +255,16 @@ export async function executeReviewFixImplementation(
         total: 0,
       };
     }
+    reviewTracer.addActivityEvent({
+      durationMs: Date.now() - testStart,
+      name: 'tdd.test_run',
+      outputJson: {
+        failing: testResult.failing,
+        passed: testResult.passed,
+        passing: testResult.passing,
+        total: testResult.total,
+      },
+    });
 
     workspace.exec('git add -A');
     workspace.exec(
@@ -225,6 +275,11 @@ export async function executeReviewFixImplementation(
     const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = workspace.exec('git rev-parse HEAD').trim();
 
+    reviewTracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch: previousCodeResult.branch, headSha },
+    });
+
     return {
       branch: previousCodeResult.branch,
       diff,
@@ -234,6 +289,8 @@ export async function executeReviewFixImplementation(
       testResults: testResult,
     };
   } finally {
+    const done = persistActivityTrace(reviewTracer, 'implementer');
     workspace.destroy();
+    await done;
   }
 }

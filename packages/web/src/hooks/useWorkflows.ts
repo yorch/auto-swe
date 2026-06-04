@@ -177,12 +177,16 @@ export function useTemplateRuns(id: string, limit = 50) {
   });
 }
 
-export function useWorkflowRun(id: string) {
+export function useWorkflowRun(id: string, includeTraces = true) {
   return useQuery({
     enabled: !!id,
     queryFn: () =>
-      api.get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}`).then((r) => r.data),
-    queryKey: ['workflow-run', id],
+      api
+        .get<{ data: WorkflowRunDetail }>(
+          `/api/v1/workflow-runs/${id}${includeTraces ? '?includeTraces=true' : ''}`
+        )
+        .then((r) => r.data),
+    queryKey: ['workflow-run', id, includeTraces],
     refetchInterval: (q) => {
       const data = q.state.data as WorkflowRunDetail | undefined;
       return data?.status === 'RUNNING' ? 3_000 : 30_000;
