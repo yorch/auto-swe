@@ -1,4 +1,5 @@
-import type { MaskedField } from '@/hooks/useAdminConfig';
+import type { ConfigSource, MaskedField } from '@/hooks/useAdminConfig';
+import { SourceBadge } from './SourceBadge';
 
 interface SecretInputProps {
   id: string;
@@ -7,6 +8,7 @@ interface SecretInputProps {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  source?: ConfigSource;
 }
 
 /**
@@ -22,15 +24,17 @@ export function SecretInput({
   value,
   onChange,
   placeholder,
+  source,
 }: SecretInputProps) {
   const setPlaceholder = current ? `••••${current.lastFour}` : (placeholder ?? 'Enter value…');
 
   return (
     <div>
-      <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor={id}>
+      <label className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500" htmlFor={id}>
         {label}
+        <SourceBadge source={source} />
         {current && (
-          <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-600">
+          <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
             (leave blank to keep existing)
           </span>
         )}

@@ -3,20 +3,27 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { CopyButton } from '@/components/ui/CopyButton';
 import {
   type GoogleOAuthConfigInput,
   useGoogleOAuthConfig,
   useUpdateGoogleOAuthConfig,
 } from '@/hooks/useAdminConfig';
+import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
+import { SourceBadge } from './SourceBadge';
 
 export function OAuthTab() {
-  const { data, isLoading } = useGoogleOAuthConfig();
+  const { data: resp, isLoading } = useGoogleOAuthConfig();
+  const data = resp?.data;
+  const sources = resp?.sources ?? {};
   const update = useUpdateGoogleOAuthConfig();
 
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+
+  const googleOauthCallback = `${API_BASE}/api/auth/google/callback`;
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -63,12 +70,13 @@ export function OAuthTab() {
         <div className="space-y-4">
           <div>
             <label
-              className="mb-1 block text-xs uppercase text-paper-500"
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
               htmlFor="google-client-id"
             >
               Client ID
+              <SourceBadge source={sources.clientId} />
               {data?.clientId && (
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
                   current: {data.clientId}
                 </span>
               )}
@@ -86,8 +94,22 @@ export function OAuthTab() {
             id="google-client-secret"
             label="Client secret"
             onChange={setClientSecret}
+            source={sources.clientSecret}
             value={clientSecret}
           />
+
+          <div className="space-y-1">
+            <div className="text-xs uppercase text-paper-500">OAuth callback URL</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
+                {googleOauthCallback}
+              </code>
+              <CopyButton value={googleOauthCallback} />
+            </div>
+            <p className="text-[11px] text-paper-600">
+              Add this as an Authorized redirect URI in your Google Cloud OAuth 2.0 Client settings.
+            </p>
+          </div>
         </div>
       </Card>
 

@@ -3,16 +3,27 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { CopyButton } from '@/components/ui/CopyButton';
 import {
   type GitHubConfigInput,
+  testGitHubConnection,
   useGitHubConfig,
   useUpdateGitHubConfig,
 } from '@/hooks/useAdminConfig';
+import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
+import { SourceBadge } from './SourceBadge';
+import { UrlRow } from './UrlRow';
+
+function errMsg(err: unknown, fallback = 'Request failed'): string {
+  return err instanceof Error ? err.message : fallback;
+}
 
 export function GitHubTab() {
-  const { data, isLoading } = useGitHubConfig();
+  const { data: resp, isLoading } = useGitHubConfig();
+  const data = resp?.data;
+  const sources = resp?.sources ?? {};
   const update = useUpdateGitHubConfig();
 
   const [token, setToken] = useState('');
@@ -25,12 +36,19 @@ export function GitHubTab() {
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
+  const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
+  const githubOauthCallback = `${API_BASE}/api/auth/github/callback`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSaved(false);
     setRequiresRestart(false);
+    setTestResult(null);
 
     const body: GitHubConfigInput = {};
     if (token) {
@@ -56,12 +74,24 @@ export function GitHubTab() {
       const res = await update.mutateAsync(body);
       setSaved(true);
       setRequiresRestart(!!res.data.requiresRestart);
-      // Clear typed secrets after save
       setToken('');
       setWebhookSecret('');
       setOauthClientSecret('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testGitHubConnection();
+      setTestResult(res);
+    } catch (err) {
+      setTestResult({ detail: errMsg(err), ok: false });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -82,6 +112,7 @@ export function GitHubTab() {
             label="Personal access token"
             onChange={setToken}
             placeholder="ghp_..."
+            source={sources.token}
             value={token}
           />
           <SecretInput
@@ -89,9 +120,40 @@ export function GitHubTab() {
             id="gh-webhook-secret"
             label="Webhook secret"
             onChange={setWebhookSecret}
+            source={sources.webhookSecret}
             value={webhookSecret}
           />
+
+          <div className="space-y-2 pt-1">
+            <div className="text-xs uppercase text-paper-500">Webhook endpoints</div>
+            <div className="space-y-1.5">
+              <UrlRow label="PR / merge events" url={webhookUrl} />
+              <UrlRow label="CI check runs" url={ciWebhookUrl} />
+            </div>
+            <p className="text-[11px] text-paper-600">
+              Register both URLs in your GitHub repository or organization webhook settings. Use
+              Content-Type: application/json.
+            </p>
+          </div>
         </div>
+
+        <div className="mt-4 flex justify-end">
+          <Button
+            disabled={testing || (!data?.token && !token)}
+            onClick={handleTest}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {testing ? 'Testing…' : 'Test connection'}
+          </Button>
+        </div>
+
+        {testResult && (
+          <p className={`mt-2 text-sm ${testResult.ok ? 'text-emerald-400' : 'text-brick-400'}`}>
+            {testResult.ok ? '✓' : '✗'} {testResult.detail}
+          </p>
+        )}
       </Card>
 
       <Card>
@@ -101,10 +163,14 @@ export function GitHubTab() {
         <p className="mb-4 text-xs text-paper-500">Leave blank to use github.com defaults.</p>
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="gh-base-url">
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-base-url"
+            >
               Base URL
+              <SourceBadge source={sources.baseUrl} />
               {data?.baseUrl && (
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
                   current: {data.baseUrl}
                 </span>
               )}
@@ -118,10 +184,14 @@ export function GitHubTab() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="gh-api-url">
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-api-url"
+            >
               API URL
+              <SourceBadge source={sources.apiUrl} />
               {data?.apiUrl && (
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
                   current: {data.apiUrl}
                 </span>
               )}
@@ -148,12 +218,13 @@ export function GitHubTab() {
         <div className="space-y-4">
           <div>
             <label
-              className="mb-1 block text-xs uppercase text-paper-500"
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
               htmlFor="gh-oauth-client-id"
             >
               Client ID
+              <SourceBadge source={sources.oauthClientId} />
               {data?.oauthClientId && (
-                <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
                   current: {data.oauthClientId}
                 </span>
               )}
@@ -171,8 +242,22 @@ export function GitHubTab() {
             id="gh-oauth-client-secret"
             label="Client secret"
             onChange={setOauthClientSecret}
+            source={sources.oauthClientSecret}
             value={oauthClientSecret}
           />
+
+          <div className="space-y-1">
+            <div className="text-xs uppercase text-paper-500">OAuth callback URL</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded-sm border border-ink-700 bg-ink-900 px-3 py-1.5 font-mono text-xs text-paper-300">
+                {githubOauthCallback}
+              </code>
+              <CopyButton value={githubOauthCallback} />
+            </div>
+            <p className="text-[11px] text-paper-600">
+              Add this as the Authorization callback URL in your GitHub OAuth App settings.
+            </p>
+          </div>
         </div>
       </Card>
 
