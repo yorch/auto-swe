@@ -58,9 +58,7 @@ function LoginPageInner() {
   // open-redirect.
   const redirectParam = searchParams.get('redirect');
   const destination =
-    redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
-      ? redirectParam
-      : '/';
+    redirectParam?.startsWith('/') && !redirectParam.startsWith('//') ? redirectParam : '/';
 
   const [tab, setTab] = useState<Tab>('magic');
   const [providers, setProviders] = useState<ProviderFlags>({

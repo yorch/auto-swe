@@ -61,7 +61,7 @@ async function assertShellAuthoringAllowed(
   const membership = await fastify.prisma.teamMembership.findUnique({
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  if (!membership || membership.role !== 'ADMIN') {
+  if (membership?.role !== 'ADMIN') {
     return {
       body: {
         error: {
