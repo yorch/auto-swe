@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
+import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import { DEFAULT_ENGINEERING_SPEC } from '../workflow/defaultEngineeringSpec.js';
 
 const connectionString = process.env.DATABASE_URL;
@@ -123,6 +124,40 @@ async function main() {
     where: { templateId_version: { templateId: tpl.id, version: 1 } },
   });
   console.log(`Seed: default workflow template seeded (${tpl.id}@v1)`);
+
+  // Seed built-in HITL example templates.
+  for (const tmpl of BUILTIN_TEMPLATES) {
+    const existing = await prisma.workflowTemplate.findFirst({
+      where: { name: tmpl.name, teamId: null },
+    });
+    const t = existing
+      ? await prisma.workflowTemplate.update({
+          data: { activeVersion: 1, status: 'ACTIVE' },
+          where: { id: existing.id },
+        })
+      : await prisma.workflowTemplate.create({
+          data: {
+            activeVersion: 1,
+            description: tmpl.description,
+            isDefault: false,
+            name: tmpl.name,
+            status: 'ACTIVE',
+            teamId: null,
+          },
+        });
+    await prisma.workflowTemplateVersion.upsert({
+      create: {
+        createdBy: admin.id,
+        spec: tmpl.spec as unknown as object,
+        templateId: t.id,
+        version: 1,
+      },
+      update: { spec: tmpl.spec as unknown as object },
+      where: { templateId_version: { templateId: t.id, version: 1 } },
+    });
+    console.log(`Seed: built-in template '${tmpl.name}' seeded (${t.id}@v1)`);
+  }
+
   console.log('');
   console.log('  To submit a work request, use this repo ID:');
   console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);
