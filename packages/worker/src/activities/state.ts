@@ -32,6 +32,18 @@ export async function resolveHumanStep(input: {
   });
 }
 
+/**
+ * Mark ALL pending human steps for a run as CANCELLED.
+ * Called during workflow finalization so that steps left waiting by a
+ * cancellation, hard failure, or other abnormal exit don't linger in the inbox.
+ */
+export async function cancelPendingHumanSteps(runId: string): Promise<void> {
+  await prisma.workflowHumanStep.updateMany({
+    data: { resolvedAt: new Date(), status: 'CANCELLED' },
+    where: { runId, status: 'PENDING' },
+  });
+}
+
 export interface CreateHumanStepInput {
   runId: string;
   nodeId: string;
@@ -57,6 +69,16 @@ const SLACK_POST_TIMEOUT_MS = 2_000;
  * Called by the Temporal-backed dispatcher when a HITL node is reached.
  */
 export async function createHumanStep(input: CreateHumanStepInput): Promise<void> {
+  // Idempotency guard: if a PENDING row already exists for this (runId, nodeId),
+  // a previous Temporal attempt already completed the DB write — skip the create.
+  const existing = await prisma.workflowHumanStep.findFirst({
+    select: { id: true },
+    where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
+  });
+  if (existing) {
+    return;
+  }
+
   await prisma.workflowHumanStep.create({
     data: {
       context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,

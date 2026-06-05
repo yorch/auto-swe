@@ -86,8 +86,15 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                           const next = e.target.checked
                             ? [...selected.filter((x) => x !== v), v]
                             : selected.filter((x) => x !== v);
-                          // Store undefined when all tools selected (means "all enabled")
-                          onChange(f.key, next.length === all.length ? undefined : next);
+                          // Store undefined when all (or none) selected — both
+                          // mean "all enabled" (undefined = no restriction).
+                          // This prevents [] from being persisted, which would
+                          // render all boxes checked on reload but mean "no tools"
+                          // to the worker on any code path that doesn't guard it.
+                          onChange(
+                            f.key,
+                            next.length === 0 || next.length === all.length ? undefined : next
+                          );
                         }}
                         type="checkbox"
                       />

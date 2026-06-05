@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -136,14 +137,18 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { action, value } = request.body;
 
-      // Validate action against step kind to prevent silent misrouting
-      const validActions: Record<string, string[]> = {
-        APPROVAL: ['approve', 'reject'],
-        DECISION: ['select'],
-        INPUT: ['submit'],
-        REVIEW: ['submit'],
-      };
-      const allowed = validActions[step.kind] ?? [];
+      // Validate action against step kind using the shared HITL_VALID_ACTIONS map.
+      // The map is Record<HitlKind, …> so TypeScript enforces exhaustiveness whenever
+      // a new kind is added to the interpreter — this file stays in sync automatically.
+      const allowed = HITL_VALID_ACTIONS[step.kind as HitlKind];
+      if (!allowed) {
+        return reply.status(400).send({
+          error: {
+            code: 'UNKNOWN_KIND',
+            message: `Unknown step kind: ${step.kind}`,
+          },
+        });
+      }
       if (!allowed.includes(action)) {
         return reply.status(400).send({
           error: {

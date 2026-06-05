@@ -39,7 +39,12 @@ export { runReviewNetwork } from './runReviewNetwork.js';
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';
 export { runShellStep } from './shellStep.js';
 export type { CreateHumanStepInput } from './state.js';
-export { createHumanStep, resolveHumanStep, updateDomainState } from './state.js';
+export {
+  cancelPendingHumanSteps,
+  createHumanStep,
+  resolveHumanStep,
+  updateDomainState,
+} from './state.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,

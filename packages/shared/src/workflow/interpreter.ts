@@ -164,12 +164,27 @@ export interface InterpreterResult {
 export const DEFAULT_MAX_TRANSITIONS = 500;
 
 /** Maps HITL node type names to their DB enum kind values. */
-const HITL_KINDS = {
+export const HITL_KINDS = {
   humanApproval: 'APPROVAL',
   humanDecision: 'DECISION',
   humanInput: 'INPUT',
   humanReview: 'REVIEW',
 } as const;
+
+export type HitlKind = (typeof HITL_KINDS)[keyof typeof HITL_KINDS];
+
+/**
+ * Valid `action` values per HITL kind. Used by the gateway respond endpoint to
+ * validate incoming responses before writing to the DB and signalling Temporal.
+ * Keeping this alongside HITL_KINDS ensures the two stay in sync — a new kind
+ * added here must also get a valid-actions entry or TypeScript will error.
+ */
+export const HITL_VALID_ACTIONS: Record<HitlKind, readonly string[]> = {
+  APPROVAL: ['approve', 'reject'],
+  DECISION: ['select'],
+  INPUT: ['submit'],
+  REVIEW: ['submit'],
+};
 
 /**
  * Default per-fanOut concurrency cap when a spec doesn't supply one. Bounded

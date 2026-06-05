@@ -41,6 +41,7 @@ const stateActivities = proxyActivities<
     | 'finalizeWorkflowRun'
     | 'createHumanStep'
     | 'resolveHumanStep'
+    | 'cancelPendingHumanSteps'
   >
 >({
   retry: {
@@ -290,6 +291,15 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const finalContext = outcome
     ? summarizeContext(outcome.finalContext)
     : { error: String(runError) };
+  // Cancel any PENDING human-step rows before finalizing. This cleans up steps
+  // left waiting by a workflow cancellation, hard failure, or other abnormal exit
+  // so they don't linger in the inbox as un-actionable ghost tasks.
+  // Best-effort: a failure here must not prevent finalization.
+  try {
+    await stateActivities.cancelPendingHumanSteps(runId);
+  } catch {
+    // non-fatal
+  }
   await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
 
   if (runError) {
