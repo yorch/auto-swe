@@ -36,3 +36,9 @@ ALTER TABLE "workflow_human_steps" ADD CONSTRAINT "workflow_human_steps_run_id_f
 
 -- AddForeignKey
 ALTER TABLE "workflow_human_steps" ADD CONSTRAINT "workflow_human_steps_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Idempotency guard: prevents duplicate PENDING rows for the same (run_id, node_id) pair
+-- while allowing multiple historical resolved/cancelled rows (e.g. re-execution in retry loops).
+CREATE UNIQUE INDEX workflow_human_steps_pending_unique
+  ON workflow_human_steps (run_id, node_id)
+  WHERE status = 'PENDING';
