@@ -222,19 +222,26 @@ function UuidInput({
   onChange: (v: string) => void;
   hasError: boolean;
 }) {
+  const errorId = `${id}-error`;
   return (
     <div>
       <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor={id}>
         {label} <span className="normal-case text-paper-500">(optional)</span>
       </label>
       <input
+        aria-describedby={hasError ? errorId : undefined}
+        aria-invalid={hasError || undefined}
         className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${hasError ? 'border-brick-400' : 'border-ink-600'}`}
         id={id}
         onChange={(e) => onChange(e.target.value)}
         placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
         value={value}
       />
-      {hasError && <p className="mt-0.5 text-[11px] text-brick-400">Must be a valid UUID</p>}
+      {hasError && (
+        <p className="mt-0.5 text-[11px] text-brick-400" id={errorId}>
+          Must be a valid UUID
+        </p>
+      )}
     </div>
   );
 }
@@ -253,9 +260,9 @@ function CascadePreview() {
   const templateIdFormatError = trimmedTemplate.length > 0 && !validTemplateId;
   const bothContextsProvided = validTeamId !== undefined && validTemplateId !== undefined;
 
-  const { data, isLoading, isError, isFetching } = useAdminEffectiveModelConfig({
+  const { data, isLoading, isError, error, isFetching } = useAdminEffectiveModelConfig({
     role,
-    teamId: validTeamId,
+    teamId: validTemplateId ? undefined : validTeamId,
     workflowTemplateId: validTemplateId,
   });
 
@@ -306,7 +313,7 @@ function CascadePreview() {
         {isLoading && <p className="text-xs text-paper-400">Resolving…</p>}
         {isError && (
           <p className="text-xs text-brick-400">
-            Lookup failed — check that any IDs entered are valid UUIDs.
+            {error instanceof Error ? error.message : 'Lookup failed — please verify IDs and try again.'}
           </p>
         )}
         {data && !isError && (
@@ -315,7 +322,7 @@ function CascadePreview() {
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-paper-400">Resolved via</span>
-                  <ScopeBadge scope={data.scope!} />
+                  {data.scope && <ScopeBadge scope={data.scope} />}
                   {isFetching && (
                     <span className="ml-auto text-[10px] text-paper-500">refreshing…</span>
                   )}
