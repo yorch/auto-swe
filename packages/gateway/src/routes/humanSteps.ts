@@ -1,4 +1,4 @@
-import type { Prisma } from '@auto-swe/shared/generated/prisma';
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -15,7 +15,9 @@ function runVisibilityFilter(user: {
   sub: string;
   role: string;
 }): Prisma.WorkflowHumanStepWhereInput {
-  if (user.role === 'ADMIN') return {};
+  if (user.role === 'ADMIN') {
+    return {};
+  }
   return {
     run: {
       OR: [
@@ -37,47 +39,43 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // List pending human steps for current user
-  app.get(
-    '/',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request) => {
-      const user = requireUser(request);
-      const steps = await fastify.prisma.workflowHumanStep.findMany({
-        include: {
-          run: {
-            select: {
-              id: true,
-              status: true,
-              workflowId: true,
-              workRequest: { select: { description: true, externalTicketId: true } },
-            },
+  app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
+    const user = requireUser(request);
+    const steps = await fastify.prisma.workflowHumanStep.findMany({
+      include: {
+        run: {
+          select: {
+            id: true,
+            status: true,
+            workflowId: true,
+            workRequest: { select: { description: true, externalTicketId: true } },
           },
         },
-        orderBy: { requestedAt: 'desc' },
-        take: 100,
-        where: {
-          status: 'PENDING',
-          ...runVisibilityFilter(user),
-        },
-      });
-      return {
-        data: steps.map((s) => ({
-          context: s.context,
-          description: s.description,
-          fields: s.fields,
-          id: s.id,
-          kind: s.kind,
-          nodeId: s.nodeId,
-          options: s.options,
-          requestedAt: s.requestedAt,
-          run: s.run,
-          runId: s.runId,
-          status: s.status,
-          title: s.title,
-        })),
-      };
-    }
-  );
+      },
+      orderBy: { requestedAt: 'desc' },
+      take: 100,
+      where: {
+        status: 'PENDING',
+        ...runVisibilityFilter(user),
+      },
+    });
+    return {
+      data: steps.map((s) => ({
+        context: s.context,
+        description: s.description,
+        fields: s.fields,
+        id: s.id,
+        kind: s.kind,
+        nodeId: s.nodeId,
+        options: s.options,
+        requestedAt: s.requestedAt,
+        run: s.run,
+        runId: s.runId,
+        status: s.status,
+        title: s.title,
+      })),
+    };
+  });
 
   // Get one step
   app.get(
@@ -137,12 +135,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { action, value } = request.body;
-      const payload = { action, resolvedBy: user.sub, value };
+      const signalPayload = { action, resolvedBy: user.sub, value };
 
       // Update DB first — authoritative record
       await fastify.prisma.workflowHumanStep.update({
         data: {
-          payload,
+          payload: signalPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
           status: 'RESOLVED',
@@ -152,7 +150,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Send Temporal signal (best-effort — DB update is authoritative)
       fastify.temporal
-        .signalWorkflow(step.run.workflowId, step.signalName, [payload])
+        .signalWorkflow(step.run.workflowId, step.signalName, [signalPayload])
         .catch((err: unknown) => {
           request.log.error({ err, stepId: step.id }, 'HITL Temporal signal failed');
         });

@@ -41,6 +41,30 @@ const PRIMITIVES: PrimitiveDef[] = [
     type: 'shell',
   },
   { hint: 'End the workflow', label: 'Terminate', swatch: 'bg-paper-500', type: 'terminate' },
+  {
+    hint: 'Pause for human approval',
+    label: 'Human approval',
+    swatch: 'bg-amber-500',
+    type: 'humanApproval',
+  },
+  {
+    hint: 'Pause for human decision',
+    label: 'Human decision',
+    swatch: 'bg-amber-500',
+    type: 'humanDecision',
+  },
+  {
+    hint: 'Pause for human input',
+    label: 'Human input',
+    swatch: 'bg-amber-500',
+    type: 'humanInput',
+  },
+  {
+    hint: 'Pause for human review',
+    label: 'Human review',
+    swatch: 'bg-amber-500',
+    type: 'humanReview',
+  },
 ];
 
 interface StepEntry {

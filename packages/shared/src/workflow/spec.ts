@@ -367,7 +367,11 @@ export const WorkflowSpecSchema = z
           refs.push(['subgraph', node.subgraph], ['join', node.join]);
           break;
         case 'humanApproval':
-          refs.push(['onApprove', node.onApprove], ['onReject', node.onReject], ['onTimeout', node.onTimeout]);
+          refs.push(
+            ['onApprove', node.onApprove],
+            ['onReject', node.onReject],
+            ['onTimeout', node.onTimeout]
+          );
           break;
         case 'humanDecision':
           refs.push(['onTimeout', node.onTimeout]);

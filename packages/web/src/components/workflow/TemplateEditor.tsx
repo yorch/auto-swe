@@ -412,8 +412,11 @@ interface InspectorProps {
 const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
   join: 'Join',
   next: 'Next',
+  onApprove: 'On approve',
   onFalse: 'On false',
   onReceive: 'On receive',
+  onReject: 'On reject',
+  onSubmit: 'On submit',
   onTimeout: 'On timeout',
   onTrue: 'On true',
   subgraph: 'Subgraph',
@@ -1314,5 +1317,43 @@ function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
       return { command: '', image: 'node:24-alpine', type: 'shell' } as SpecNode;
     case 'terminate':
       return { status: 'SUCCESS', type: 'terminate' } as SpecNode;
+    case 'humanApproval':
+      return {
+        onApprove: '',
+        onReject: '',
+        onTimeout: '',
+        timeout: '24h',
+        title: '',
+        type: 'humanApproval',
+      } as SpecNode;
+    case 'humanDecision':
+      return {
+        onTimeout: '',
+        options: [
+          { label: 'Option A', next: '', value: 'a' },
+          { label: 'Option B', next: '', value: 'b' },
+        ],
+        timeout: '24h',
+        title: '',
+        type: 'humanDecision',
+      } as SpecNode;
+    case 'humanInput':
+      return {
+        fields: [{ key: 'value', label: 'Value', type: 'text' }],
+        onSubmit: '',
+        onTimeout: '',
+        timeout: '24h',
+        title: '',
+        type: 'humanInput',
+      } as SpecNode;
+    case 'humanReview':
+      return {
+        contentFrom: '',
+        onSubmit: '',
+        onTimeout: '',
+        timeout: '24h',
+        title: '',
+        type: 'humanReview',
+      } as SpecNode;
   }
 }

@@ -1,5 +1,5 @@
+import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import type { Prisma } from '@auto-swe/shared/generated/prisma';
 import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
@@ -30,7 +30,13 @@ export interface CreateHumanStepInput {
   description?: string;
   context?: unknown;
   options?: Array<{ label: string; value: string }>;
-  fields?: Array<{ key: string; label: string; type: string; required?: boolean; options?: string[] }>;
+  fields?: Array<{
+    key: string;
+    label: string;
+    type: string;
+    required?: boolean;
+    options?: string[];
+  }>;
 }
 
 const SLACK_POST_TIMEOUT_MS = 2_000;
@@ -76,8 +82,7 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
       where: { id: input.runId },
     });
 
-    const teamId =
-      run?.workRequest?.activeWorkflows[0]?.repository?.teamId ?? null;
+    const teamId = run?.workRequest?.activeWorkflows[0]?.repository?.teamId ?? null;
     const team = teamId
       ? await prisma.team.findUnique({
           select: { slackNotifyChannel: true },

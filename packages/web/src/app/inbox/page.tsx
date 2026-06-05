@@ -25,7 +25,9 @@ export default function InboxPage() {
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [reviewText, setReviewText] = useState<Record<string, string>>({});
 
-  if (isLoading) return <div className="p-8 text-sm text-[var(--muted-foreground)]">Loading…</div>;
+  if (isLoading) {
+    return <div className="p-8 text-sm text-[var(--muted-foreground)]">Loading…</div>;
+  }
 
   if (!steps?.length) {
     return (
@@ -46,7 +48,7 @@ export default function InboxPage() {
       <h1 className="text-lg font-semibold mb-4">Inbox</h1>
       <div className="space-y-3">
         {steps.map((step) => (
-          <div key={step.id} className="border border-[var(--border)] rounded-lg p-4 space-y-3">
+          <div className="border border-[var(--border)] rounded-lg p-4 space-y-3" key={step.id}>
             <div className="flex items-start gap-3">
               <span
                 className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${KIND_COLOR[step.kind] ?? 'bg-gray-100 text-gray-600'}`}
@@ -64,7 +66,7 @@ export default function InboxPage() {
                   {step.run.workRequest?.externalTicketId && (
                     <span className="font-mono">{step.run.workRequest.externalTicketId} · </span>
                   )}
-                  <Link href={`/runs/${step.run.id}`} className="underline">
+                  <Link className="underline" href={`/runs/${step.run.id}`}>
                     View run
                   </Link>
                 </div>
@@ -106,9 +108,9 @@ export default function InboxPage() {
                     {(step.options as Array<{ label: string; value: string }> | null)?.map(
                       (opt) => (
                         <button
-                          key={opt.value}
                           className="px-3 py-1.5 border border-[var(--border)] text-sm rounded hover:bg-[var(--muted)] disabled:opacity-50"
                           disabled={respond.isPending}
+                          key={opt.value}
                           onClick={() => handleRespond(step.id, 'decide', opt.value)}
                           type="button"
                         >
@@ -130,14 +132,14 @@ export default function InboxPage() {
                         options?: string[];
                       }> | null
                     )?.map((field) => (
-                      <div key={field.key} className="space-y-0.5">
-                        <label className="text-xs font-medium block">
+                      // biome-ignore lint/a11y/noLabelWithoutControl: label wraps a conditional input/select/checkbox — biome can't statically trace through the ternary
+                      <label className="block space-y-0.5" key={field.key}>
+                        <span className="text-xs font-medium block">
                           {field.label}
                           {field.required && <span className="text-red-500 ml-0.5">*</span>}
-                        </label>
+                        </span>
                         {field.type === 'boolean' ? (
                           <input
-                            type="checkbox"
                             checked={Boolean(inputValues[`${step.id}.${field.key}`])}
                             onChange={(e) =>
                               setInputValues((p) => ({
@@ -145,17 +147,18 @@ export default function InboxPage() {
                                 [`${step.id}.${field.key}`]: e.target.checked,
                               }))
                             }
+                            type="checkbox"
                           />
                         ) : field.type === 'select' ? (
                           <select
                             className="w-full text-sm border border-[var(--border)] rounded px-2 py-1"
-                            value={String(inputValues[`${step.id}.${field.key}`] ?? '')}
                             onChange={(e) =>
                               setInputValues((p) => ({
                                 ...p,
                                 [`${step.id}.${field.key}`]: e.target.value,
                               }))
                             }
+                            value={String(inputValues[`${step.id}.${field.key}`] ?? '')}
                           >
                             <option value="">—</option>
                             {field.options?.map((o) => (
@@ -167,8 +170,6 @@ export default function InboxPage() {
                         ) : (
                           <input
                             className="w-full text-sm border border-[var(--border)] rounded px-2 py-1 font-mono"
-                            type={field.type === 'number' ? 'number' : 'text'}
-                            value={String(inputValues[`${step.id}.${field.key}`] ?? '')}
                             onChange={(e) =>
                               setInputValues((p) => ({
                                 ...p,
@@ -176,9 +177,11 @@ export default function InboxPage() {
                                   field.type === 'number' ? Number(e.target.value) : e.target.value,
                               }))
                             }
+                            type={field.type === 'number' ? 'number' : 'text'}
+                            value={String(inputValues[`${step.id}.${field.key}`] ?? '')}
                           />
                         )}
-                      </div>
+                      </label>
                     ))}
                     <button
                       className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
@@ -204,11 +207,9 @@ export default function InboxPage() {
                   <div className="space-y-2">
                     <textarea
                       className="w-full text-sm border border-[var(--border)] rounded px-2 py-1 font-mono resize-y"
+                      onChange={(e) => setReviewText((p) => ({ ...p, [step.id]: e.target.value }))}
                       rows={8}
                       value={reviewText[step.id] ?? String(step.context ?? '')}
-                      onChange={(e) =>
-                        setReviewText((p) => ({ ...p, [step.id]: e.target.value }))
-                      }
                     />
                     <button
                       className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"

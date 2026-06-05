@@ -629,8 +629,7 @@ export function useAllWorkflowRuns(
 
 export function useInbox() {
   return useQuery({
-    queryFn: () =>
-      api.get<{ data: HumanStepSummary[] }>('/api/v1/inbox').then((r) => r.data),
+    queryFn: () => api.get<{ data: HumanStepSummary[] }>('/api/v1/inbox').then((r) => r.data),
     queryKey: ['inbox'],
     refetchInterval: 10_000,
   });

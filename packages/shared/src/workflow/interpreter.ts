@@ -565,8 +565,7 @@ async function runHumanNode(
   // Snapshot context if specified
   const contextData =
     'contextFrom' in node && node.contextFrom ? lookupPath(ctx, node.contextFrom) : undefined;
-  const contentData =
-    node.type === 'humanReview' ? lookupPath(ctx, node.contentFrom) : undefined;
+  const contentData = node.type === 'humanReview' ? lookupPath(ctx, node.contentFrom) : undefined;
 
   // Record the pending state before waiting
   await safeRecord(dispatcher, { nodeId, status: 'PENDING' });
