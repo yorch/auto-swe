@@ -12,6 +12,10 @@ import { describeOperand, evalBoolean, lookupPath, resolveBinding } from './expr
 import type {
   CondNode,
   FanOutNode,
+  HumanApprovalNode,
+  HumanDecisionNode,
+  HumanInputNode,
+  HumanReviewNode,
   Node,
   SetNode,
   ShellNode,
@@ -120,6 +124,34 @@ export interface Dispatcher {
     error?: string;
     attempt?: number;
   }): Promise<void>;
+
+  /**
+   * Create a pending human step record in the DB and send notifications.
+   * Optional — test dispatchers that don't need DB access can skip it.
+   * Returns after the DB record is created (best-effort; Slack failure is swallowed).
+   */
+  notifyHumanStep?(args: {
+    nodeId: string;
+    signalName: string;
+    kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+    title: string;
+    description?: string;
+    context?: unknown;
+    options?: Array<{ label: string; value: string }>;
+    fields?: Array<{
+      key: string;
+      label: string;
+      type: string;
+      required?: boolean;
+      options?: string[];
+    }>;
+  }): Promise<void>;
+
+  /**
+   * Mark a pending human step record as TIMED_OUT in the DB.
+   * Called when the HITL node times out. Optional — test dispatchers may skip it.
+   */
+  resolveHumanStep?(args: { nodeId: string; status: 'TIMED_OUT' }): Promise<void>;
 }
 
 export interface InterpreterResult {
@@ -130,6 +162,29 @@ export interface InterpreterResult {
 }
 
 export const DEFAULT_MAX_TRANSITIONS = 500;
+
+/** Maps HITL node type names to their DB enum kind values. */
+export const HITL_KINDS = {
+  humanApproval: 'APPROVAL',
+  humanDecision: 'DECISION',
+  humanInput: 'INPUT',
+  humanReview: 'REVIEW',
+} as const;
+
+export type HitlKind = (typeof HITL_KINDS)[keyof typeof HITL_KINDS];
+
+/**
+ * Valid `action` values per HITL kind. Used by the gateway respond endpoint to
+ * validate incoming responses before writing to the DB and signalling Temporal.
+ * Keeping this alongside HITL_KINDS ensures the two stay in sync — a new kind
+ * added here must also get a valid-actions entry or TypeScript will error.
+ */
+export const HITL_VALID_ACTIONS: Record<HitlKind, readonly string[]> = {
+  APPROVAL: ['approve', 'reject'],
+  DECISION: ['select'],
+  INPUT: ['submit'],
+  REVIEW: ['submit'],
+};
 
 /**
  * Default per-fanOut concurrency cap when a spec doesn't supply one. Bounded
@@ -249,6 +304,13 @@ async function walk(
         }
         case 'shell': {
           currentNodeId = await runShell(recordingId, node, ctx, dispatcher, cancellationSink);
+          break;
+        }
+        case 'humanApproval':
+        case 'humanDecision':
+        case 'humanInput':
+        case 'humanReview': {
+          currentNodeId = await runHumanNode(recordingId, nodeId, node, ctx, dispatcher);
           break;
         }
       }
@@ -512,6 +574,86 @@ async function runSignal(
   return node.onReceive;
 }
 
+async function runHumanNode(
+  recordingId: string,
+  specNodeId: string,
+  node: HumanApprovalNode | HumanDecisionNode | HumanInputNode | HumanReviewNode,
+  ctx: Context,
+  dispatcher: Dispatcher
+): Promise<string | undefined> {
+  // Signal name must use the unprefixed spec key so it matches the handler
+  // registered at workflow startup (which iterates spec.nodes keys directly).
+  // Inside a fanOut branch, recordingId carries a prefix but the Temporal
+  // signal handler was registered under `hitl_${specNodeId}`.
+  const signalName = `hitl_${specNodeId}`;
+  const kind = HITL_KINDS[node.type];
+
+  // Snapshot context if specified
+  const contextData =
+    'contextFrom' in node && node.contextFrom ? lookupPath(ctx, node.contextFrom) : undefined;
+  const contentData = node.type === 'humanReview' ? lookupPath(ctx, node.contentFrom) : undefined;
+
+  // Record the pending state before waiting
+  await safeRecord(dispatcher, { nodeId: recordingId, status: 'PENDING' });
+
+  // Notify — creates DB record + Slack. Best-effort: don't let notification
+  // failure block the workflow; the step is already recorded as PENDING.
+  const { notifyHumanStep } = dispatcher;
+  await safeDispatch(
+    notifyHumanStep
+      ? () =>
+          notifyHumanStep({
+            context: contextData ?? contentData,
+            description: node.description,
+            fields: node.type === 'humanInput' ? node.fields : undefined,
+            kind,
+            nodeId: specNodeId,
+            options:
+              node.type === 'humanDecision'
+                ? node.options.map((o) => ({ label: o.label, value: o.value }))
+                : undefined,
+            signalName,
+            title: node.title,
+          })
+      : undefined
+  );
+
+  // Wait for human response
+  const payload = await dispatcher.waitSignal(signalName, node.timeout);
+
+  if (payload === undefined) {
+    // Timed out — update the step record, mark the DB row, and route to timeout path
+    await safeRecord(dispatcher, { nodeId: recordingId, status: 'SKIPPED' });
+    const { resolveHumanStep } = dispatcher;
+    await safeDispatch(
+      resolveHumanStep
+        ? () => resolveHumanStep({ nodeId: specNodeId, status: 'TIMED_OUT' })
+        : undefined
+    );
+    return node.onTimeout;
+  }
+
+  // Store result in context if requested
+  const storeAs = 'storeAs' in node ? node.storeAs : undefined;
+  if (storeAs) {
+    setPath(ctx, storeAs, payload);
+  }
+  setPath(ctx, `nodes.${specNodeId}.output`, payload);
+  await safeRecord(dispatcher, { nodeId: recordingId, outputs: payload, status: 'PASSED' });
+
+  // Route based on node type
+  const p = payload as { action?: string; value?: unknown };
+  if (node.type === 'humanApproval') {
+    return p.action === 'reject' ? node.onReject : node.onApprove;
+  }
+  if (node.type === 'humanDecision') {
+    const chosen = node.options.find((o) => o.value === p.value);
+    return chosen?.next ?? node.onTimeout;
+  }
+  // humanInput + humanReview
+  return node.onSubmit;
+}
+
 function runTerminate(
   node: TerminateNode,
   ctx: Context
@@ -759,6 +901,18 @@ async function safeRecord(
     await dispatcher.recordStep(args);
   } catch {
     // Recording is best-effort; do not let DB hiccups poison the workflow.
+  }
+}
+
+/** Call an optional dispatcher hook best-effort — failures must not abort the workflow. */
+async function safeDispatch(fn: (() => Promise<void>) | undefined): Promise<void> {
+  if (!fn) {
+    return;
+  }
+  try {
+    await fn();
+  } catch {
+    // best-effort
   }
 }
 

@@ -28,6 +28,17 @@ const SYSTEM_PROMPT_FIELD = {
   type: 'string' as const,
 } as const;
 
+export const IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
+
+const IMPLEMENTER_TOOLS_FIELD = {
+  description:
+    'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
+  enumValues: IMPLEMENTER_TOOL_IDS,
+  key: 'tools',
+  label: 'Enabled tools',
+  type: 'stringArray' as const,
+} as const;
+
 function register(meta: StepMetadata): void {
   REGISTRY.set(meta.name, meta);
 }
@@ -59,7 +70,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run the implementer agent inside a fresh Docker workspace.',
   label: 'Execute implementation',
@@ -77,7 +88,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with reviewer rejection feedback.',
   label: 'Apply review fix',
@@ -86,7 +97,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with CI failure logs as context.',
   label: 'Apply CI fix',
@@ -190,7 +201,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with a failed gate output as context.',
   label: 'Apply gate fix',
@@ -242,6 +253,7 @@ register({
       type: 'number',
     },
     SYSTEM_PROMPT_FIELD,
+    IMPLEMENTER_TOOLS_FIELD,
   ],
   costHint: { role: 'implementer', tokensIn: 12000, tokensOut: 4000 },
   description:

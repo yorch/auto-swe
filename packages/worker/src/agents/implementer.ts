@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { IMPLEMENTER_TOOL_IDS } from '@auto-swe/shared/workflow/stepRegistry';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
@@ -32,9 +33,13 @@ function safePath(relPath: string): string {
  * If `tracer` is provided every tool execution is recorded so callers can
  * persist the full tool-call sequence to `agent_traces` after generation.
  */
+export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
+export { IMPLEMENTER_TOOL_IDS };
+
 export async function createImplementerAgent(
   workspace: Workspace,
-  tracer?: AgentTracer
+  tracer?: AgentTracer,
+  toolsOverride?: string[]
 ): Promise<{ agent: Agent; mastra: Mastra }> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
@@ -184,12 +189,20 @@ export async function createImplementerAgent(
     outputSchema: z.object({ output: z.string() }),
   });
 
+  const allTools = { bash, listDirectory, readFile, writeFile };
+  const enabledTools =
+    toolsOverride && toolsOverride.length > 0
+      ? (Object.fromEntries(
+          Object.entries(allTools).filter(([id]) => toolsOverride.includes(id))
+        ) as typeof allTools)
+      : allTools;
+
   const implementerAgent = new Agent({
     id: 'implementer',
     instructions: '', // Set per-call via system message
     model: await getModel('implementer'),
     name: 'implementer',
-    tools: { bash, listDirectory, readFile, writeFile },
+    tools: enabledTools,
   });
 
   const mastra = new Mastra({

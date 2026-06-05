@@ -15,8 +15,11 @@ import type { DagNodeData } from './dagNode';
 const EDGE_STROKE: Record<EdgeKind, string> = {
   join: '#e26b3c', // ember-400
   next: '#a8a395', // paper-400
+  onApprove: '#7ea67a', // moss-400
   onFalse: '#c44a4a', // brick-400
   onReceive: '#85a6c5', // dust-400
+  onReject: '#c44a4a', // brick-400
+  onSubmit: '#7ea67a', // moss-400
   onTimeout: '#d4a547', // amber-400
   onTrue: '#7ea67a', // moss-400
   subgraph: '#9b8bc4', // violet-400
@@ -42,6 +45,11 @@ function subLabelFor(node: SpecNode): string | undefined {
       );
     case 'shell':
       return `shell · ${node.image}`;
+    case 'humanApproval':
+    case 'humanDecision':
+    case 'humanInput':
+    case 'humanReview':
+      return node.title || undefined;
   }
 }
 

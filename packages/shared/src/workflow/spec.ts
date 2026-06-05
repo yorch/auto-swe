@@ -232,6 +232,77 @@ const ShellNodeSchema = z.object({
   type: z.literal('shell'),
 });
 
+/**
+ * HITL — `humanApproval`: pause the workflow and ask a human to approve or reject.
+ * The Temporal signal name is `hitl_${nodeId}`.
+ */
+const HumanApprovalNodeSchema = z.object({
+  contextFrom: z.string().optional(),
+  description: z.string().max(2000).optional(),
+  onApprove: NodeIdSchema,
+  onReject: NodeIdSchema,
+  onTimeout: NodeIdSchema,
+  timeout: z.string().min(1),
+  title: z.string().min(1).max(200),
+  type: z.literal('humanApproval'),
+});
+
+const HumanDecisionOptionSchema = z.object({
+  label: z.string().min(1).max(100),
+  next: NodeIdSchema,
+  value: z.string().min(1).max(100),
+});
+
+/**
+ * HITL — `humanDecision`: pause the workflow for a human to pick from N options (2–10).
+ */
+const HumanDecisionNodeSchema = z.object({
+  contextFrom: z.string().optional(),
+  description: z.string().max(2000).optional(),
+  onTimeout: NodeIdSchema,
+  options: z.array(HumanDecisionOptionSchema).min(2).max(10),
+  storeAs: z.string().min(1).optional(),
+  timeout: z.string().min(1),
+  title: z.string().min(1).max(200),
+  type: z.literal('humanDecision'),
+});
+
+const HumanInputFieldSchema = z.object({
+  key: z.string().min(1).max(64),
+  label: z.string().min(1).max(100),
+  options: z.array(z.string()).optional(),
+  required: z.boolean().optional(),
+  type: z.enum(['text', 'number', 'boolean', 'select']),
+});
+
+/**
+ * HITL — `humanInput`: pause the workflow and collect structured form data from a human.
+ */
+const HumanInputNodeSchema = z.object({
+  description: z.string().max(2000).optional(),
+  fields: z.array(HumanInputFieldSchema).min(1).max(20),
+  onSubmit: NodeIdSchema,
+  onTimeout: NodeIdSchema,
+  storeAs: z.string().min(1).optional(),
+  timeout: z.string().min(1),
+  title: z.string().min(1).max(200),
+  type: z.literal('humanInput'),
+});
+
+/**
+ * HITL — `humanReview`: show content for a human to read and optionally edit before continuing.
+ */
+const HumanReviewNodeSchema = z.object({
+  contentFrom: z.string().min(1),
+  description: z.string().max(2000).optional(),
+  onSubmit: NodeIdSchema,
+  onTimeout: NodeIdSchema,
+  storeAs: z.string().min(1).optional(),
+  timeout: z.string().min(1),
+  title: z.string().min(1).max(200),
+  type: z.literal('humanReview'),
+});
+
 export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
   SetNodeSchema,
@@ -240,6 +311,10 @@ export const NodeSchema = z.discriminatedUnion('type', [
   TerminateNodeSchema,
   FanOutNodeSchema,
   ShellNodeSchema,
+  HumanApprovalNodeSchema,
+  HumanDecisionNodeSchema,
+  HumanInputNodeSchema,
+  HumanReviewNodeSchema,
 ]);
 export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
@@ -249,6 +324,10 @@ export type SignalNode = z.infer<typeof SignalNodeSchema>;
 export type TerminateNode = z.infer<typeof TerminateNodeSchema>;
 export type FanOutNode = z.infer<typeof FanOutNodeSchema>;
 export type ShellNode = z.infer<typeof ShellNodeSchema>;
+export type HumanApprovalNode = z.infer<typeof HumanApprovalNodeSchema>;
+export type HumanDecisionNode = z.infer<typeof HumanDecisionNodeSchema>;
+export type HumanInputNode = z.infer<typeof HumanInputNodeSchema>;
+export type HumanReviewNode = z.infer<typeof HumanReviewNodeSchema>;
 
 export const WorkflowSpecSchema = z
   .object({
@@ -286,6 +365,25 @@ export const WorkflowSpecSchema = z
           break;
         case 'fanOut':
           refs.push(['subgraph', node.subgraph], ['join', node.join]);
+          break;
+        case 'humanApproval':
+          refs.push(
+            ['onApprove', node.onApprove],
+            ['onReject', node.onReject],
+            ['onTimeout', node.onTimeout]
+          );
+          break;
+        case 'humanDecision':
+          refs.push(['onTimeout', node.onTimeout]);
+          for (const [i, opt] of node.options.entries()) {
+            refs.push([`options[${i}].next`, opt.next]);
+          }
+          break;
+        case 'humanInput':
+          refs.push(['onSubmit', node.onSubmit], ['onTimeout', node.onTimeout]);
+          break;
+        case 'humanReview':
+          refs.push(['onSubmit', node.onSubmit], ['onTimeout', node.onTimeout]);
           break;
       }
       for (const [field, ref] of refs) {

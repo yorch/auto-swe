@@ -28,7 +28,10 @@ export type HandleKind =
   | 'onReceive'
   | 'onTimeout'
   | 'subgraph'
-  | 'join';
+  | 'join'
+  | 'onApprove'
+  | 'onReject'
+  | 'onSubmit';
 
 export interface DagNodeData {
   node: SpecNode;
@@ -46,6 +49,10 @@ export interface DagNodeData {
 const CATEGORY_RING: Record<SpecNode['type'], string> = {
   cond: 'border-l-violet-400',
   fanOut: 'border-l-moss-400',
+  humanApproval: 'border-l-amber-500',
+  humanDecision: 'border-l-amber-500',
+  humanInput: 'border-l-amber-500',
+  humanReview: 'border-l-amber-500',
   set: 'border-l-amber-400',
   shell: 'border-l-brick-400',
   signal: 'border-l-dust-400',
@@ -56,6 +63,10 @@ const CATEGORY_RING: Record<SpecNode['type'], string> = {
 const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
   cond: 'cond',
   fanOut: 'fan-out',
+  humanApproval: 'approval',
+  humanDecision: 'decision',
+  humanInput: 'input',
+  humanReview: 'review',
   set: 'set',
   shell: 'shell ⚠',
   signal: 'signal',
@@ -93,14 +104,24 @@ export function handleKindsFor(node: SpecNode): HandleKind[] {
       return ['subgraph', 'join'];
     case 'terminate':
       return [];
+    case 'humanApproval':
+      return ['onApprove', 'onReject', 'onTimeout'];
+    case 'humanDecision':
+      return ['onTimeout'];
+    case 'humanInput':
+    case 'humanReview':
+      return ['onSubmit', 'onTimeout'];
   }
 }
 
 const HANDLE_BG: Record<HandleKind, string> = {
   join: 'bg-ember-400',
   next: 'bg-paper-400',
+  onApprove: 'bg-moss-400',
   onFalse: 'bg-brick-400',
   onReceive: 'bg-dust-400',
+  onReject: 'bg-brick-400',
+  onSubmit: 'bg-moss-400',
   onTimeout: 'bg-amber-400',
   onTrue: 'bg-moss-400',
   subgraph: 'bg-violet-400',
@@ -109,8 +130,11 @@ const HANDLE_BG: Record<HandleKind, string> = {
 const HANDLE_LABEL: Record<HandleKind, string> = {
   join: 'join',
   next: '→',
+  onApprove: 'approve',
   onFalse: 'false',
   onReceive: 'recv',
+  onReject: 'reject',
+  onSubmit: 'submit',
   onTimeout: 'timeout',
   onTrue: 'true',
   subgraph: 'sub',

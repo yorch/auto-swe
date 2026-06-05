@@ -8,10 +8,10 @@ import { Select } from '@/components/ui/Select';
 import {
   type ConfigScope,
   MODEL_ROLES,
-  ROLE_LABELS,
   type ModelRole,
   type ModelRoleConfigRow,
   type ProviderCredentialRow,
+  ROLE_LABELS,
   SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
   useAdminDeleteModelConfig,
@@ -313,7 +313,9 @@ function CascadePreview() {
         {isLoading && <p className="text-xs text-paper-400">Resolving…</p>}
         {isError && (
           <p className="text-xs text-brick-400">
-            {error instanceof Error ? error.message : 'Lookup failed — please verify IDs and try again.'}
+            {error instanceof Error
+              ? error.message
+              : 'Lookup failed — please verify IDs and try again.'}
           </p>
         )}
         {data && !isError && (

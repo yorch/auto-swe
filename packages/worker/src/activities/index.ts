@@ -38,7 +38,13 @@ export { runReviewNetwork } from './runReviewNetwork.js';
 // Phase 6 — user-authored shell steps
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';
 export { runShellStep } from './shellStep.js';
-export { updateDomainState } from './state.js';
+export type { CreateHumanStepInput } from './state.js';
+export {
+  cancelPendingHumanSteps,
+  createHumanStep,
+  resolveHumanStep,
+  updateDomainState,
+} from './state.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,

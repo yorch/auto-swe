@@ -3,6 +3,7 @@
 import type {
   AdminTokenSummary,
   GlobalAnalyticsResponse,
+  HumanStepSummary,
   LessonListItem,
   RepositorySummary,
   SpecDiffResponse,
@@ -621,5 +622,27 @@ export function useAllWorkflowRuns(
         .then((r) => ({ data: r.data, meta: r.meta })),
     queryKey: ['workflow-runs', filters],
     refetchInterval: 10_000,
+  });
+}
+
+// ── Human-in-the-Loop inbox ──────────────────────────────────────────────
+
+export function useInbox() {
+  return useQuery({
+    queryFn: () => api.get<{ data: HumanStepSummary[] }>('/api/v1/inbox').then((r) => r.data),
+    queryKey: ['inbox'],
+    refetchInterval: 10_000,
+  });
+}
+
+export function useRespondToHumanStep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action, value }: { id: string; action: string; value?: unknown }) =>
+      api.post(`/api/v1/inbox/${id}/respond`, { action, value }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbox'] });
+      qc.invalidateQueries({ queryKey: ['workflow-run'] });
+    },
   });
 }

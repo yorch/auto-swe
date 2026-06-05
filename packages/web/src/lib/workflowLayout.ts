@@ -19,7 +19,10 @@ export type EdgeKind =
   | 'onReceive'
   | 'onTimeout'
   | 'subgraph'
-  | 'join';
+  | 'join'
+  | 'onApprove'
+  | 'onReject'
+  | 'onSubmit';
 
 export interface LayoutEdge {
   from: string;
@@ -73,6 +76,22 @@ function collectEdges(node: Node, id: string): LayoutEdge[] {
       edges.push({ from: id, kind: 'join', to: node.join });
       break;
     case 'terminate':
+      break;
+    case 'humanApproval':
+      edges.push({ from: id, kind: 'onApprove', to: node.onApprove });
+      edges.push({ from: id, kind: 'onReject', to: node.onReject });
+      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
+      break;
+    case 'humanDecision':
+      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
+      for (const opt of node.options) {
+        edges.push({ from: id, kind: 'onSubmit', to: opt.next });
+      }
+      break;
+    case 'humanInput':
+    case 'humanReview':
+      edges.push({ from: id, kind: 'onSubmit', to: node.onSubmit });
+      edges.push({ from: id, kind: 'onTimeout', to: node.onTimeout });
       break;
   }
   return edges;
@@ -170,6 +189,11 @@ export function nodeCategoryColor(node: Node): { fill: string; stroke: string; t
       return { fill: '#ffe4e6', stroke: '#e11d48', text: '#881337' };
     case 'terminate':
       return { fill: '#fee2e2', stroke: '#dc2626', text: '#7f1d1d' };
+    case 'humanApproval':
+    case 'humanDecision':
+    case 'humanInput':
+    case 'humanReview':
+      return { fill: '#fef9c3', stroke: '#ca8a04', text: '#713f12' };
   }
 }
 

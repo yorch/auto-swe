@@ -23,6 +23,7 @@ packages/web/next-env.d.ts
 # AI
 .claude/settings.local.json
 .claude/*.lock
+.claude/worktrees/
 tmp/
 
 # Generated codebase reference artifacts

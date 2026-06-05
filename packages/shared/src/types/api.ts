@@ -384,6 +384,28 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
   templateName: string;
+  humanSteps?: HumanStepSummary[];
+}
+
+/** Shape of a pending human action (humanApproval/Decision/Input/Review node). */
+export interface HumanStepSummary {
+  id: string;
+  runId: string;
+  nodeId: string;
+  kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+  title: string;
+  description?: string | null;
+  status: 'PENDING' | 'RESOLVED' | 'TIMED_OUT' | 'CANCELLED';
+  context?: unknown;
+  options?: unknown;
+  fields?: unknown;
+  requestedAt: string;
+  run: {
+    id: string;
+    status: string;
+    workflowId: string;
+    workRequest?: { externalTicketId: string; description: string } | null;
+  };
 }
 
 /** Step palette catalog returned by GET /api/v1/workflow-steps/registry */

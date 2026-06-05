@@ -45,7 +45,8 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
 export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  toolsOverride?: string[]
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -83,7 +84,7 @@ export async function executeCIFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, tracer);
+    const { agent } = await createImplementerAgent(workspace, tracer, toolsOverride);
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -190,7 +191,8 @@ export async function executeCIFixImplementation(
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  toolsOverride?: string[]
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -226,7 +228,7 @@ export async function executeReviewFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, reviewTracer);
+    const { agent } = await createImplementerAgent(workspace, reviewTracer, toolsOverride);
 
     const reviewSystemPrompt = await resolveSystemPrompt(
       'implementer',

@@ -16,6 +16,7 @@ import {
   condition,
   defineSignal,
   isCancellation,
+  log,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -35,7 +36,13 @@ import type * as activitiesType from '../activities/index.js';
 const stateActivities = proxyActivities<
   Pick<
     typeof activitiesType,
-    'updateDomainState' | 'createWorkflowRun' | 'recordWorkflowStep' | 'finalizeWorkflowRun'
+    | 'updateDomainState'
+    | 'createWorkflowRun'
+    | 'recordWorkflowStep'
+    | 'finalizeWorkflowRun'
+    | 'createHumanStep'
+    | 'resolveHumanStep'
+    | 'cancelPendingHumanSteps'
   >
 >({
   retry: {
@@ -187,13 +194,27 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // 2. Register signal handlers for every signal name referenced in the spec.
   // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
   // a thin wrapper (see packages/shared/src/workflow/signalSlots.ts).
+  // HITL nodes also get signal handlers — name is `hitl_${nodeId}`.
   const slots = new SignalSlots();
-  for (const node of Object.values(spec.nodes)) {
-    if (node.type === 'signal' && !slots.isRegistered(node.name)) {
-      slots.register(node.name);
-      const def = defineSignal<[unknown]>(node.name);
+  for (const [nodeId, node] of Object.entries(spec.nodes)) {
+    let signalName: string | null = null;
+    if (node.type === 'signal') {
+      signalName = node.name;
+    } else if (
+      node.type === 'humanApproval' ||
+      node.type === 'humanDecision' ||
+      node.type === 'humanInput' ||
+      node.type === 'humanReview'
+    ) {
+      signalName = `hitl_${nodeId}`;
+    }
+    if (signalName && !slots.isRegistered(signalName)) {
+      // Capture in a local const for the closure to bind correctly
+      const name = signalName;
+      slots.register(name);
+      const def = defineSignal<[unknown]>(name);
       setHandler(def, (payload: unknown) => {
-        slots.deliver(node.name, payload);
+        slots.deliver(name, payload);
       });
     }
   }
@@ -226,8 +247,14 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
         dispatchStepImpl(step, ctx, input.request, config, inputs)
       );
     },
+    async notifyHumanStep(args) {
+      await stateActivities.createHumanStep({ ...args, runId });
+    },
     async recordStep(args) {
       await stateActivities.recordWorkflowStep({ ...args, runId });
+    },
+    async resolveHumanStep(args) {
+      await stateActivities.resolveHumanStep({ ...args, runId });
     },
     async waitSignal(name, timeout) {
       // Clear any stale payload so we never satisfy this wait with a previous
@@ -265,6 +292,18 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const finalContext = outcome
     ? summarizeContext(outcome.finalContext)
     : { error: String(runError) };
+  // Cancel any PENDING human-step rows before finalizing. This cleans up steps
+  // left waiting by a workflow cancellation, hard failure, or other abnormal exit
+  // so they don't linger in the inbox as un-actionable ghost tasks.
+  // Best-effort: a failure here must not prevent finalization.
+  try {
+    await stateActivities.cancelPendingHumanSteps(runId);
+  } catch (err) {
+    log.warn('cancelPendingHumanSteps failed; lingering PENDING rows may remain in the inbox', {
+      err: err instanceof Error ? err.message : String(err),
+      runId,
+    });
+  }
   await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
 
   if (runError) {
@@ -287,6 +326,7 @@ async function dispatchStepImpl(
   inputs: Record<string, unknown>
 ): Promise<unknown> {
   const systemPromptOverride = config.systemPrompt as string | undefined;
+  const toolsOverride = Array.isArray(config.tools) ? (config.tools as string[]) : undefined;
   switch (step) {
     case 'updateDomainState': {
       const status = (inputs.status ?? config.status) as string;
@@ -301,8 +341,18 @@ async function dispatchStepImpl(
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
       return subtask
-        ? await agentActivities.executeImplementation(request, subtask, systemPromptOverride)
-        : await agentActivities.executeImplementation(request, undefined, systemPromptOverride);
+        ? await agentActivities.executeImplementation(
+            request,
+            subtask,
+            systemPromptOverride,
+            toolsOverride
+          )
+        : await agentActivities.executeImplementation(
+            request,
+            undefined,
+            systemPromptOverride,
+            toolsOverride
+          );
     }
     case 'runReviewNetwork': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
@@ -324,7 +374,8 @@ async function dispatchStepImpl(
       return await agentActivities.executeReviewFixImplementation(
         rejection,
         prev,
-        systemPromptOverride
+        systemPromptOverride,
+        toolsOverride
       );
     }
     case 'executeCIFixImplementation': {
@@ -336,7 +387,8 @@ async function dispatchStepImpl(
       return await agentActivities.executeCIFixImplementation(
         failureContext,
         prev,
-        systemPromptOverride
+        systemPromptOverride,
+        toolsOverride
       );
     }
     case 'createOrUpdatePullRequest': {
@@ -401,6 +453,7 @@ async function dispatchStepImpl(
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
         ...(typeof maxAttemptsPerBranch === 'number' ? { maxAttemptsPerBranch } : {}),
+        ...(toolsOverride ? { toolsOverride } : {}),
         request,
         sourceBranches,
         targetBranch,
@@ -425,6 +478,7 @@ async function dispatchStepImpl(
         gateOutput,
         previousCodeResult: prev,
         systemPromptOverride,
+        toolsOverride,
       });
     }
     default:

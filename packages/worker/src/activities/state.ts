@@ -1,4 +1,6 @@
+import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
  * Upsert the workflow's current status. Workflows that lack a pre-existing
@@ -17,4 +19,147 @@ export async function updateDomainState(temporalWorkflowId: string, status: stri
     update: { currentStatus: status },
     where: { temporalWorkflowId },
   });
+}
+
+export async function resolveHumanStep(input: {
+  runId: string;
+  nodeId: string;
+  status: 'TIMED_OUT';
+}): Promise<void> {
+  await prisma.workflowHumanStep.updateMany({
+    data: { resolvedAt: new Date(), status: input.status },
+    where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
+  });
+}
+
+/**
+ * Mark ALL pending human steps for a run as CANCELLED.
+ * Called during workflow finalization so that steps left waiting by a
+ * cancellation, hard failure, or other abnormal exit don't linger in the inbox.
+ */
+export async function cancelPendingHumanSteps(runId: string): Promise<void> {
+  await prisma.workflowHumanStep.updateMany({
+    data: { resolvedAt: new Date(), status: 'CANCELLED' },
+    where: { runId, status: 'PENDING' },
+  });
+}
+
+export interface CreateHumanStepInput {
+  runId: string;
+  nodeId: string;
+  signalName: string;
+  kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+  title: string;
+  description?: string;
+  context?: unknown;
+  options?: Array<{ label: string; value: string }>;
+  fields?: Array<{
+    key: string;
+    label: string;
+    type: string;
+    required?: boolean;
+    options?: string[];
+  }>;
+}
+
+const SLACK_POST_TIMEOUT_MS = 2_000;
+
+/**
+ * Create a WorkflowHumanStep record in the DB and send a best-effort Slack notification.
+ * Called by the Temporal-backed dispatcher when a HITL node is reached.
+ */
+export async function createHumanStep(input: CreateHumanStepInput): Promise<void> {
+  // Idempotency guard: the DB has a partial unique index on (run_id, node_id) WHERE
+  // status = 'PENDING'. On Temporal retry, the INSERT will throw P2002 (unique constraint
+  // violation); we swallow that and fall through to the Slack block so the notification
+  // is still sent even when the DB write was already done by an earlier attempt.
+  // Note: we intentionally do NOT return early on P2002 — the Slack notification must
+  // reach the user even when the DB create was skipped.
+  try {
+    await prisma.workflowHumanStep.create({
+      data: {
+        context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
+        description: input.description,
+        fields: input.fields !== undefined ? (input.fields as Prisma.InputJsonValue) : undefined,
+        kind: input.kind,
+        nodeId: input.nodeId,
+        options: input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
+        runId: input.runId,
+        signalName: input.signalName,
+        title: input.title,
+      },
+    });
+  } catch (err) {
+    // Unique constraint violation — another Temporal attempt already created the PENDING row.
+    // Fall through to attempt the Slack notification.
+    if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+      throw err;
+    }
+  }
+
+  // Best-effort Slack notification — resolve channel from the run's team.
+  try {
+    const slackConfig = await resolveSlackConfig();
+    if (!slackConfig.botToken) {
+      return;
+    }
+
+    // Find the team's Slack notify channel via the run → workRequest → activeWorkflows → team.
+    const run = await prisma.workflowRun.findUnique({
+      include: {
+        workRequest: {
+          include: {
+            activeWorkflows: {
+              include: { repository: { select: { teamId: true } } },
+              take: 1,
+            },
+          },
+        },
+      },
+      where: { id: input.runId },
+    });
+
+    const teamId = run?.workRequest?.activeWorkflows[0]?.repository?.teamId ?? null;
+    const team = teamId
+      ? await prisma.team.findUnique({
+          select: { slackNotifyChannel: true },
+          where: { id: teamId },
+        })
+      : null;
+    const channel = team?.slackNotifyChannel ?? null;
+    if (!channel) {
+      return;
+    }
+
+    const kindLabel: Record<string, string> = {
+      APPROVAL: 'Approval required',
+      DECISION: 'Decision required',
+      INPUT: 'Input required',
+      REVIEW: 'Review required',
+    };
+
+    const ticket = run?.workRequest?.externalTicketId;
+    const ticketPrefix = ticket ? `*[${ticket}]* ` : '';
+    const descriptionLine = input.description ? `\n${input.description}` : '';
+    const inboxUrl = `${process.env.WEB_URL ?? 'http://localhost:3000'}/inbox`;
+    const text = `${ticketPrefix}*${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+    try {
+      await fetch('https://slack.com/api/chat.postMessage', {
+        body: JSON.stringify({ channel, text }),
+        headers: {
+          Authorization: `Bearer ${slackConfig.botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        method: 'POST',
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // Slack failure must not fail the activity
+  }
 }

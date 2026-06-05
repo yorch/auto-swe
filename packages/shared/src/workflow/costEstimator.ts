@@ -109,6 +109,17 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         return walk(node.next);
       case 'terminate':
         return 0;
+      case 'humanApproval':
+        // HITL nodes don't have a token-based cost on their own.
+        return Math.max(walk(node.onApprove), walk(node.onReject), walk(node.onTimeout));
+      case 'humanDecision': {
+        const optionCosts = node.options.map((o) => walk(o.next));
+        return Math.max(walk(node.onTimeout), ...optionCosts);
+      }
+      case 'humanInput':
+        return Math.max(walk(node.onSubmit), walk(node.onTimeout));
+      case 'humanReview':
+        return Math.max(walk(node.onSubmit), walk(node.onTimeout));
     }
   };
 

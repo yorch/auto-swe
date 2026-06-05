@@ -30,6 +30,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
       {fields.map((f) => {
         const current = values[f.key];
         const id = `cfg-${f.key}`;
+        const all = (f.enumValues ?? []) as readonly string[];
         return (
           <div className="text-xs space-y-1" key={f.key}>
             <label className="block text-[var(--muted-foreground)]" htmlFor={id}>
@@ -70,6 +71,38 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                   </option>
                 ))}
               </Select>
+            ) : f.type === 'stringArray' ? (
+              <div className="space-y-1">
+                {all.map((v) => {
+                  // undefined means "all enabled" — initialize selected to the full list
+                  // so unchecking any item correctly produces a restricted subset.
+                  const selected = Array.isArray(current) ? (current as string[]) : [...all];
+                  const checked = selected.includes(v);
+                  return (
+                    <label className="flex items-center gap-2 cursor-pointer" key={v}>
+                      <input
+                        checked={checked}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...selected.filter((x) => x !== v), v]
+                            : selected.filter((x) => x !== v);
+                          // Store undefined when all (or none) selected — both
+                          // mean "all enabled" (undefined = no restriction).
+                          // This prevents [] from being persisted, which would
+                          // render all boxes checked on reload but mean "no tools"
+                          // to the worker on any code path that doesn't guard it.
+                          onChange(
+                            f.key,
+                            next.length === 0 || next.length === all.length ? undefined : next
+                          );
+                        }}
+                        type="checkbox"
+                      />
+                      <span className="font-mono">{v}</span>
+                    </label>
+                  );
+                })}
+              </div>
             ) : f.type === 'json' ? (
               <textarea
                 className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"
