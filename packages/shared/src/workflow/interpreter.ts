@@ -12,6 +12,10 @@ import { describeOperand, evalBoolean, lookupPath, resolveBinding } from './expr
 import type {
   CondNode,
   FanOutNode,
+  HumanApprovalNode,
+  HumanDecisionNode,
+  HumanInputNode,
+  HumanReviewNode,
   Node,
   SetNode,
   ShellNode,
@@ -120,6 +124,28 @@ export interface Dispatcher {
     error?: string;
     attempt?: number;
   }): Promise<void>;
+
+  /**
+   * Create a pending human step record in the DB and send notifications.
+   * Optional — test dispatchers that don't need DB access can skip it.
+   * Returns after the DB record is created (best-effort; Slack failure is swallowed).
+   */
+  notifyHumanStep?(args: {
+    nodeId: string;
+    signalName: string;
+    kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+    title: string;
+    description?: string;
+    context?: unknown;
+    options?: Array<{ label: string; value: string }>;
+    fields?: Array<{
+      key: string;
+      label: string;
+      type: string;
+      required?: boolean;
+      options?: string[];
+    }>;
+  }): Promise<void>;
 }
 
 export interface InterpreterResult {
@@ -130,6 +156,14 @@ export interface InterpreterResult {
 }
 
 export const DEFAULT_MAX_TRANSITIONS = 500;
+
+/** Maps HITL node type names to their DB enum kind values. */
+const HITL_KINDS = {
+  humanApproval: 'APPROVAL',
+  humanDecision: 'DECISION',
+  humanInput: 'INPUT',
+  humanReview: 'REVIEW',
+} as const;
 
 /**
  * Default per-fanOut concurrency cap when a spec doesn't supply one. Bounded
@@ -249,6 +283,13 @@ async function walk(
         }
         case 'shell': {
           currentNodeId = await runShell(recordingId, node, ctx, dispatcher, cancellationSink);
+          break;
+        }
+        case 'humanApproval':
+        case 'humanDecision':
+        case 'humanInput':
+        case 'humanReview': {
+          currentNodeId = await runHumanNode(recordingId, node, ctx, dispatcher);
           break;
         }
       }
@@ -510,6 +551,76 @@ async function runSignal(
   setPath(ctx, `nodes.${nodeId}.output`, payload);
   await safeRecord(dispatcher, { nodeId, outputs: payload, status: 'PASSED' });
   return node.onReceive;
+}
+
+async function runHumanNode(
+  nodeId: string,
+  node: HumanApprovalNode | HumanDecisionNode | HumanInputNode | HumanReviewNode,
+  ctx: Context,
+  dispatcher: Dispatcher
+): Promise<string | undefined> {
+  const signalName = `hitl_${nodeId}`;
+  const kind = HITL_KINDS[node.type];
+
+  // Snapshot context if specified
+  const contextData =
+    'contextFrom' in node && node.contextFrom ? lookupPath(ctx, node.contextFrom) : undefined;
+  const contentData =
+    node.type === 'humanReview' ? lookupPath(ctx, node.contentFrom) : undefined;
+
+  // Record the pending state before waiting
+  await safeRecord(dispatcher, { nodeId, status: 'PENDING' });
+
+  // Notify — creates DB record + Slack. Best-effort: don't let notification
+  // failure block the workflow; the step is already recorded as PENDING.
+  if (dispatcher.notifyHumanStep) {
+    try {
+      await dispatcher.notifyHumanStep({
+        context: contextData ?? contentData,
+        description: node.description,
+        fields: node.type === 'humanInput' ? node.fields : undefined,
+        kind,
+        nodeId,
+        options:
+          node.type === 'humanDecision'
+            ? node.options.map((o) => ({ label: o.label, value: o.value }))
+            : undefined,
+        signalName,
+        title: node.title,
+      });
+    } catch {
+      // Notification failure must not abort the workflow
+    }
+  }
+
+  // Wait for human response
+  const payload = await dispatcher.waitSignal(signalName, node.timeout);
+
+  if (payload === undefined) {
+    // Timed out — update the step record and route to timeout path
+    await safeRecord(dispatcher, { nodeId, status: 'SKIPPED' });
+    return node.onTimeout;
+  }
+
+  // Store result in context if requested
+  const storeAs = 'storeAs' in node ? node.storeAs : undefined;
+  if (storeAs) {
+    setPath(ctx, storeAs, payload);
+  }
+  setPath(ctx, `nodes.${nodeId}.output`, payload);
+  await safeRecord(dispatcher, { nodeId, outputs: payload, status: 'PASSED' });
+
+  // Route based on node type
+  const p = payload as { action?: string; value?: unknown };
+  if (node.type === 'humanApproval') {
+    return p.action === 'reject' ? node.onReject : node.onApprove;
+  }
+  if (node.type === 'humanDecision') {
+    const chosen = node.options.find((o) => o.value === p.value);
+    return chosen?.next ?? node.onTimeout;
+  }
+  // humanInput + humanReview
+  return node.onSubmit;
 }
 
 function runTerminate(

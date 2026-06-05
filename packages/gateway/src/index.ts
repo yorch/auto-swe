@@ -42,6 +42,7 @@ import { teamRoutes } from './routes/teams.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { humanStepRoutes } from './routes/humanSteps.js';
 import { stepRegistryRoutes, workflowRunRoutes } from './routes/workflowRuns.js';
 import { workflowRoutes } from './routes/workflows.js';
 import { workflowTemplateRoutes } from './routes/workflowTemplates.js';
@@ -219,6 +220,7 @@ async function start() {
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ host: '0.0.0.0', port });

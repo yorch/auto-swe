@@ -35,7 +35,11 @@ import type * as activitiesType from '../activities/index.js';
 const stateActivities = proxyActivities<
   Pick<
     typeof activitiesType,
-    'updateDomainState' | 'createWorkflowRun' | 'recordWorkflowStep' | 'finalizeWorkflowRun'
+    | 'updateDomainState'
+    | 'createWorkflowRun'
+    | 'recordWorkflowStep'
+    | 'finalizeWorkflowRun'
+    | 'createHumanStep'
   >
 >({
   retry: {
@@ -187,13 +191,27 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // 2. Register signal handlers for every signal name referenced in the spec.
   // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
   // a thin wrapper (see packages/shared/src/workflow/signalSlots.ts).
+  // HITL nodes also get signal handlers — name is `hitl_${nodeId}`.
   const slots = new SignalSlots();
-  for (const node of Object.values(spec.nodes)) {
-    if (node.type === 'signal' && !slots.isRegistered(node.name)) {
-      slots.register(node.name);
-      const def = defineSignal<[unknown]>(node.name);
+  for (const [nodeId, node] of Object.entries(spec.nodes)) {
+    let signalName: string | null = null;
+    if (node.type === 'signal') {
+      signalName = node.name;
+    } else if (
+      node.type === 'humanApproval' ||
+      node.type === 'humanDecision' ||
+      node.type === 'humanInput' ||
+      node.type === 'humanReview'
+    ) {
+      signalName = `hitl_${nodeId}`;
+    }
+    if (signalName && !slots.isRegistered(signalName)) {
+      // Capture in a local const for the closure to bind correctly
+      const name = signalName;
+      slots.register(name);
+      const def = defineSignal<[unknown]>(name);
       setHandler(def, (payload: unknown) => {
-        slots.deliver(node.name, payload);
+        slots.deliver(name, payload);
       });
     }
   }
@@ -225,6 +243,9 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       return runWithCancellation(cancellation, () =>
         dispatchStepImpl(step, ctx, input.request, config, inputs)
       );
+    },
+    async notifyHumanStep(args) {
+      await stateActivities.createHumanStep({ ...args, runId });
     },
     async recordStep(args) {
       await stateActivities.recordWorkflowStep({ ...args, runId });

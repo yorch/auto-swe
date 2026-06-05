@@ -59,6 +59,20 @@ enum ConfigAuditAction {
   DELETE
 }
 
+enum HumanStepKind {
+  APPROVAL
+  DECISION
+  INPUT
+  REVIEW
+}
+
+enum HumanStepStatus {
+  PENDING
+  RESOLVED
+  TIMED_OUT
+  CANCELLED
+}
+
 model ActiveWorkflow {
   id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   temporalWorkflowId String         @unique @map("temporal_workflow_id")
@@ -266,12 +280,13 @@ model User {
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  refreshTokens  RefreshToken[]
-  memberships    TeamMembership[]
-  accessTokens   PersonalAccessToken[]
+  refreshTokens         RefreshToken[]
+  memberships           TeamMembership[]
+  accessTokens          PersonalAccessToken[]
   /// Better-auth relations.
-  accounts       Account[]
-  sessions       Session[]
+  accounts              Account[]
+  sessions              Session[]
+  humanStepsResolved    WorkflowHumanStep[]
 
   @@map("users")
 }
@@ -405,6 +420,7 @@ model WorkflowRun {
   steps           WorkflowStep[]
   artifacts       WorkflowArtifact[]
   traces          AgentTrace[]
+  humanSteps      WorkflowHumanStep[]
 
   @@index([templateId])
   @@index([workRequestId])
@@ -457,6 +473,38 @@ model WorkflowStep {
   @@index([runId])
   @@index([runId, nodeId])
   @@map("workflow_steps")
+}
+
+/// A human action required to resume a workflow run. Created when the interpreter
+/// reaches a humanApproval / humanDecision / humanInput / humanReview node.
+/// The run stays RUNNING (workflow paused at condition()) until a human responds
+/// via POST /api/v1/inbox/:id/respond or the step times out.
+model WorkflowHumanStep {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId        String          @map("run_id") @db.Uuid
+  run          WorkflowRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId       String          @map("node_id")
+  signalName   String          @map("signal_name")
+  kind         HumanStepKind
+  title        String
+  description  String?
+  /// Snapshot of relevant workflow context (e.g. the code diff, PR description).
+  context      Json?
+  /// For DECISION: [{ label, value }] options the human can choose from.
+  options      Json?
+  /// For INPUT: [{ key, label, type, required?, options? }] field definitions.
+  fields       Json?
+  status       HumanStepStatus @default(PENDING)
+  resolvedAt   DateTime?       @map("resolved_at") @db.Timestamptz
+  resolvedBy   String?         @map("resolved_by") @db.Uuid
+  resolvedByUser User?         @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  /// The signal payload submitted by the human (action + optional value).
+  payload      Json?
+  requestedAt  DateTime        @default(now()) @map("requested_at") @db.Timestamptz
+
+  @@index([runId])
+  @@index([status])
+  @@map("workflow_human_steps")
 }
 
 /// A named, team-owned workflow template. Versions are immutable; "edit" creates
