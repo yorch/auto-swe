@@ -598,25 +598,25 @@ async function runHumanNode(
 
   // Notify — creates DB record + Slack. Best-effort: don't let notification
   // failure block the workflow; the step is already recorded as PENDING.
-  if (dispatcher.notifyHumanStep) {
-    try {
-      await dispatcher.notifyHumanStep({
-        context: contextData ?? contentData,
-        description: node.description,
-        fields: node.type === 'humanInput' ? node.fields : undefined,
-        kind,
-        nodeId: specNodeId,
-        options:
-          node.type === 'humanDecision'
-            ? node.options.map((o) => ({ label: o.label, value: o.value }))
-            : undefined,
-        signalName,
-        title: node.title,
-      });
-    } catch {
-      // Notification failure must not abort the workflow
-    }
-  }
+  const { notifyHumanStep } = dispatcher;
+  await safeDispatch(
+    notifyHumanStep
+      ? () =>
+          notifyHumanStep({
+            context: contextData ?? contentData,
+            description: node.description,
+            fields: node.type === 'humanInput' ? node.fields : undefined,
+            kind,
+            nodeId: specNodeId,
+            options:
+              node.type === 'humanDecision'
+                ? node.options.map((o) => ({ label: o.label, value: o.value }))
+                : undefined,
+            signalName,
+            title: node.title,
+          })
+      : undefined
+  );
 
   // Wait for human response
   const payload = await dispatcher.waitSignal(signalName, node.timeout);
@@ -624,13 +624,12 @@ async function runHumanNode(
   if (payload === undefined) {
     // Timed out — update the step record, mark the DB row, and route to timeout path
     await safeRecord(dispatcher, { nodeId: recordingId, status: 'SKIPPED' });
-    if (dispatcher.resolveHumanStep) {
-      try {
-        await dispatcher.resolveHumanStep({ nodeId: specNodeId, status: 'TIMED_OUT' });
-      } catch {
-        // best-effort — must not abort the workflow
-      }
-    }
+    const { resolveHumanStep } = dispatcher;
+    await safeDispatch(
+      resolveHumanStep
+        ? () => resolveHumanStep({ nodeId: specNodeId, status: 'TIMED_OUT' })
+        : undefined
+    );
     return node.onTimeout;
   }
 
@@ -902,6 +901,18 @@ async function safeRecord(
     await dispatcher.recordStep(args);
   } catch {
     // Recording is best-effort; do not let DB hiccups poison the workflow.
+  }
+}
+
+/** Call an optional dispatcher hook best-effort — failures must not abort the workflow. */
+async function safeDispatch(fn: (() => Promise<void>) | undefined): Promise<void> {
+  if (!fn) {
+    return;
+  }
+  try {
+    await fn();
+  } catch {
+    // best-effort
   }
 }
 

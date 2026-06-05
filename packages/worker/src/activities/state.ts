@@ -1,4 +1,4 @@
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
@@ -80,19 +80,19 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
       data: {
         context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
         description: input.description,
-        fields: input.fields ? (input.fields as Prisma.InputJsonValue) : undefined,
+        fields: input.fields !== undefined ? (input.fields as Prisma.InputJsonValue) : undefined,
         kind: input.kind,
         nodeId: input.nodeId,
-        options: input.options ? (input.options as Prisma.InputJsonValue) : undefined,
+        options: input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
         runId: input.runId,
         signalName: input.signalName,
         title: input.title,
       },
     });
   } catch (err) {
-    // P2002 = unique constraint violation — another Temporal attempt already created
-    // the PENDING row. Fall through to attempt the Slack notification.
-    if ((err as { code?: string }).code !== 'P2002') {
+    // Unique constraint violation — another Temporal attempt already created the PENDING row.
+    // Fall through to attempt the Slack notification.
+    if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
       throw err;
     }
   }
