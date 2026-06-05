@@ -7,10 +7,10 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
   MODEL_ROLES,
-  ROLE_LABELS,
   type ModelRole,
   type ModelRoleConfigRow,
   type ProviderCredentialRow,
+  ROLE_LABELS,
   SUGGESTED_MODEL_SPECS,
   useTeamAccessibleCredentials,
   useTeamCreateCredential,
@@ -22,7 +22,6 @@ import {
   useTeamUpsertModelConfig,
 } from '@/hooks/useModelConfig';
 import { MidRunWarning } from './MidRunWarning';
-
 
 /// Team owner's view of model config. Only TEAM-scope rows are editable here;
 /// GLOBAL/WORKFLOW_TEMPLATE rows are hidden (admins manage them elsewhere).
