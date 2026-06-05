@@ -8,26 +8,21 @@ import { Select } from '@/components/ui/Select';
 import {
   type ConfigScope,
   MODEL_ROLES,
+  ROLE_LABELS,
   type ModelRole,
   type ModelRoleConfigRow,
   type ProviderCredentialRow,
   SUGGESTED_MODEL_SPECS,
   useAdminCredentials,
   useAdminDeleteModelConfig,
+  useAdminEffectiveModelConfig,
   useAdminModelConfigs,
   useAdminUpsertModelConfig,
   useSeedDefaults,
 } from '@/hooks/useModelConfig';
 import { ROLE_DEFAULT_PROMPTS, ROLE_PROMPT_NOTES } from '@/lib/rolePromptDefaults';
 
-const ROLE_LABELS: Record<ModelRole, string> = {
-  COMMIT_TO_MEMORY: 'Memory summarizer',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security review',
-  VALIDATE_CONTEXT: 'Context validator',
-};
+const truncateStr = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 /// Admin Roles tab — shows every ModelRoleConfig row across all scopes, lets
 /// admins edit them in a single modal. Team/template rows are flagged with
@@ -120,6 +115,7 @@ export function RolesTab() {
           </div>
         </Card>
       ))}
+      <CascadePreview />
       {(editing || creatingFor) && (
         <EditRoleModal
           credentials={credentials ?? []}
@@ -175,8 +171,7 @@ function RoleRow({
         </div>
         {row.systemPrompt && (
           <div className="mt-1 text-[10px] text-paper-500 truncate font-mono">
-            prompt: {row.systemPrompt.slice(0, 60)}
-            {row.systemPrompt.length > 60 ? '…' : ''}
+            prompt: {truncateStr(row.systemPrompt, 60)}
           </div>
         )}
       </div>
@@ -209,6 +204,146 @@ function ScopeBadge({ scope }: { scope: ConfigScope }) {
     <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${color}`}>
       {scope.replace('_', ' ')}
     </span>
+  );
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function UuidInput({
+  id,
+  label,
+  value,
+  onChange,
+  hasError,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  hasError: boolean;
+}) {
+  const errorId = `${id}-error`;
+  return (
+    <div>
+      <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor={id}>
+        {label} <span className="normal-case text-paper-500">(optional)</span>
+      </label>
+      <input
+        aria-describedby={hasError ? errorId : undefined}
+        aria-invalid={hasError || undefined}
+        className={`w-full rounded-sm border bg-ink-900 px-3 py-2 font-mono text-xs ${hasError ? 'border-brick-400' : 'border-ink-600'}`}
+        id={id}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        value={value}
+      />
+      {hasError && (
+        <p className="mt-0.5 text-[11px] text-brick-400" id={errorId}>
+          Must be a valid UUID
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CascadePreview() {
+  const [role, setRole] = useState<ModelRole>('IMPLEMENTER');
+  const [teamId, setTeamId] = useState('');
+  const [templateId, setTemplateId] = useState('');
+
+  const trimmedTeam = teamId.trim();
+  const trimmedTemplate = templateId.trim();
+
+  const validTeamId = UUID_RE.test(trimmedTeam) ? trimmedTeam : undefined;
+  const validTemplateId = UUID_RE.test(trimmedTemplate) ? trimmedTemplate : undefined;
+  const teamIdFormatError = trimmedTeam.length > 0 && !validTeamId;
+  const templateIdFormatError = trimmedTemplate.length > 0 && !validTemplateId;
+  const bothContextsProvided = validTeamId !== undefined && validTemplateId !== undefined;
+
+  const { data, isLoading, isError, error, isFetching } = useAdminEffectiveModelConfig({
+    role,
+    teamId: validTemplateId ? undefined : validTeamId,
+    workflowTemplateId: validTemplateId,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle eyebrow="cascade resolver">Effective config preview</CardTitle>
+      </CardHeader>
+      <div className="space-y-3">
+        <p className="text-xs text-paper-400">
+          Shows which config row the worker resolves at runtime for a given role + optional
+          team/template context. Resolution order: workflow-template → team → global.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Select
+            className="border-ink-600 bg-ink-900"
+            id="preview-role"
+            label="Role"
+            onChange={(e) => setRole(e.target.value as ModelRole)}
+            value={role}
+          >
+            {MODEL_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </Select>
+          <UuidInput
+            hasError={teamIdFormatError}
+            id="preview-team"
+            label="Team ID"
+            onChange={setTeamId}
+            value={teamId}
+          />
+          <UuidInput
+            hasError={templateIdFormatError}
+            id="preview-tpl"
+            label="Template ID"
+            onChange={setTemplateId}
+            value={templateId}
+          />
+        </div>
+        {bothContextsProvided && (
+          <p className="text-[11px] text-amber-400">
+            Template takes priority when both are set — team context was not used in this lookup.
+          </p>
+        )}
+        {isLoading && <p className="text-xs text-paper-400">Resolving…</p>}
+        {isError && (
+          <p className="text-xs text-brick-400">
+            {error instanceof Error ? error.message : 'Lookup failed — please verify IDs and try again.'}
+          </p>
+        )}
+        {data && !isError && (
+          <div className="rounded-sm border border-ink-600 bg-ink-800/40 px-3 py-2">
+            {data.row ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-paper-400">Resolved via</span>
+                  {data.scope && <ScopeBadge scope={data.scope} />}
+                  {isFetching && (
+                    <span className="ml-auto text-[10px] text-paper-500">refreshing…</span>
+                  )}
+                </div>
+                <code className="block font-mono text-sm text-paper-100">{data.row.modelSpec}</code>
+                {data.row.systemPrompt && (
+                  <p className="truncate font-mono text-[11px] text-paper-500">
+                    prompt: {truncateStr(data.row.systemPrompt, 80)}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-brick-400">
+                No config found — the worker would throw{' '}
+                <code className="font-mono">ConfigMissingError</code>.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

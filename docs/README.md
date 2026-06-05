@@ -8,6 +8,7 @@
 | [deployment.md](./deployment.md) | **Living** | End-to-end "clone → deployed" runbook |
 | [model-configuration.md](./model-configuration.md) | **Living** | DB-backed LLM model + provider credential config |
 | [oauth-setup.md](./oauth-setup.md) | **Living** | GitHub / Google OAuth + magic-link setup |
+| [slack-app-setup.md](./slack-app-setup.md) | **Living** | Slack app manifest import and admin configuration |
 | [configurable-workflows.md](./configurable-workflows.md) | **Living** | Workflow engine roadmap — all 9 phases shipped; architecture decisions log |
 
 Top-level files:

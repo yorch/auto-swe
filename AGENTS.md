@@ -12,18 +12,26 @@
 
 ## 2. Design Documents
 
-For deeper context on architecture and design rationale, refer to:
+**Current and living references** — these match the running code:
 
-| Document                          | Covers                                               |
-| --------------------------------- | ---------------------------------------------------- |
-| `docs/mvp-architecture.md`        | Core architecture, component design, data flow       |
-| `docs/gateway-and-auth.md`        | JWT auth, RBAC, Team API, Slack OAuth, full API spec |
-| `docs/data-and-infra.md`          | Embedding pipeline, executor images, security review |
-| `docs/workflow-and-activities.md` | Review network, CI fix loop, memory commit           |
-| `docs/wireframes.md`              | Web dashboard wireframes and page layouts            |
-| `docs/configurable-workflows.md`  | Living roadmap for the configurable-workflow engine (phases, decisions, open questions) |
-| `docs/deployment.md`              | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
-| `docs/model-configuration.md`     | DB-backed model + credential config (scope cascade, encryption, day-2 ops) |
+| Document                         | Status  | Covers                                                                                     |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `docs/architecture.md`           | Current | System context, package map, request lifecycle, workflow engine, auth, data model, infra   |
+| `docs/deployment.md`             | Living  | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
+| `docs/model-configuration.md`    | Living  | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
+| `docs/configurable-workflows.md` | Living  | Workflow engine spec schema, node catalog, all 9 phases shipped; 39 architecture decisions |
+| `docs/oauth-setup.md`            | Living  | GitHub + Google OAuth app registration; magic-link setup                                   |
+| `docs/slack-app-setup.md`        | Living  | Slack app manifest import and admin configuration                                          |
+
+**Historical** — preserved for design rationale; code is authoritative where they diverge:
+
+| Document                          | Drift note                                                                                            |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
+| `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
+| `docs/data-and-infra.md`          | Schema section outdated (actual: 20+ models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
+| `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
+| `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
 
 ---
 
