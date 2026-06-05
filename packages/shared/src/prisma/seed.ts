@@ -3,7 +3,6 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
-import { DEFAULT_ENGINEERING_SPEC } from '../workflow/defaultEngineeringSpec.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -91,55 +90,22 @@ async function main() {
   });
   console.log(`Seed: sample repository created (${repo.id})`);
 
-  // Seed the global default engineering workflow template. teamId=null means
-  // "global default" — used when a team has no team-scoped default. Postgres
-  // unique indexes treat NULL as distinct from NULL, so we look up explicitly
-  // by (teamId IS NULL, name) rather than using upsert with the compound key.
-  const existingTpl = await prisma.workflowTemplate.findFirst({
-    where: { name: 'default-engineering', teamId: null },
-  });
-  const tpl = existingTpl
-    ? await prisma.workflowTemplate.update({
-        data: { activeVersion: 1, isDefault: true, status: 'ACTIVE' },
-        where: { id: existingTpl.id },
-      })
-    : await prisma.workflowTemplate.create({
-        data: {
-          activeVersion: 1,
-          description: 'Default engineering workflow (parity with EngineeringWorkflow).',
-          isDefault: true,
-          name: 'default-engineering',
-          status: 'ACTIVE',
-          teamId: null,
-        },
-      });
-  await prisma.workflowTemplateVersion.upsert({
-    create: {
-      createdBy: admin.id,
-      spec: DEFAULT_ENGINEERING_SPEC as unknown as object,
-      templateId: tpl.id,
-      version: 1,
-    },
-    update: { spec: DEFAULT_ENGINEERING_SPEC as unknown as object },
-    where: { templateId_version: { templateId: tpl.id, version: 1 } },
-  });
-  console.log(`Seed: default workflow template seeded (${tpl.id}@v1)`);
-
-  // Seed built-in HITL example templates.
+  // Seed all built-in workflow templates from the unified BUILTIN_TEMPLATES store.
+  // Postgres NULL != NULL so we look up by (teamId IS NULL, name) rather than upsert.
   for (const tmpl of BUILTIN_TEMPLATES) {
     const existing = await prisma.workflowTemplate.findFirst({
       where: { name: tmpl.name, teamId: null },
     });
     const t = existing
       ? await prisma.workflowTemplate.update({
-          data: { activeVersion: 1, status: 'ACTIVE' },
+          data: { activeVersion: 1, isDefault: tmpl.isDefault ?? false, status: 'ACTIVE' },
           where: { id: existing.id },
         })
       : await prisma.workflowTemplate.create({
           data: {
             activeVersion: 1,
             description: tmpl.description,
-            isDefault: false,
+            isDefault: tmpl.isDefault ?? false,
             name: tmpl.name,
             status: 'ACTIVE',
             teamId: null,
@@ -155,7 +121,9 @@ async function main() {
       update: { spec: tmpl.spec as unknown as object },
       where: { templateId_version: { templateId: t.id, version: 1 } },
     });
-    console.log(`Seed: built-in template '${tmpl.name}' seeded (${t.id}@v1)`);
+    console.log(
+      `Seed: template '${tmpl.name}' seeded (${t.id}@v1)${tmpl.isDefault ? ' [default]' : ''}`
+    );
   }
 
   console.log('');

@@ -1,3 +1,4 @@
+import { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from './spec.js';
 
 /**
@@ -735,7 +736,15 @@ export const BUILTIN_TEMPLATES: Array<{
   name: string;
   description: string;
   spec: WorkflowSpec;
+  /** The global default used when a team has no team-scoped template. */
+  isDefault?: boolean;
 }> = [
+  {
+    description: DEFAULT_ENGINEERING_SPEC.description,
+    isDefault: true,
+    name: DEFAULT_ENGINEERING_SPEC.name,
+    spec: DEFAULT_ENGINEERING_SPEC,
+  },
   {
     description: PR_APPROVAL_GATE_SPEC.description,
     name: PR_APPROVAL_GATE_SPEC.name,
