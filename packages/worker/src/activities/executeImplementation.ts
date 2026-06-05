@@ -35,7 +35,8 @@ const MAX_TDD_ITERATIONS = 5;
 export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  toolsOverride?: string[]
 ): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -72,7 +73,7 @@ export async function executeImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     // Create Mastra agent with tools bound to workspace (tracer captures every call)
-    const { agent } = await createImplementerAgent(workspace, tracer);
+    const { agent } = await createImplementerAgent(workspace, tracer, toolsOverride);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';

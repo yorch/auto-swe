@@ -70,6 +70,30 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                   </option>
                 ))}
               </Select>
+            ) : f.type === 'stringArray' ? (
+              <div className="space-y-1">
+                {(f.enumValues ?? []).map((v) => {
+                  const selected = Array.isArray(current) ? (current as string[]) : [];
+                  const checked = selected.length === 0 || selected.includes(v);
+                  return (
+                    <label className="flex items-center gap-2 cursor-pointer" key={v}>
+                      <input
+                        checked={checked}
+                        onChange={(e) => {
+                          const all = (f.enumValues ?? []) as readonly string[];
+                          const next = e.target.checked
+                            ? [...selected.filter((x) => x !== v), v]
+                            : selected.filter((x) => x !== v);
+                          // Store undefined when all tools selected (means "all enabled")
+                          onChange(f.key, next.length === all.length ? undefined : next);
+                        }}
+                        type="checkbox"
+                      />
+                      <span className="font-mono">{v}</span>
+                    </label>
+                  );
+                })}
+              </div>
             ) : f.type === 'json' ? (
               <textarea
                 className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"

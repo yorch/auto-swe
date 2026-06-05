@@ -271,10 +271,12 @@ export interface GateFixInput {
   previousCodeResult: CodeResult;
   /** Optional system prompt override from workflow step config. */
   systemPromptOverride?: string;
+  /** Restrict the implementer to a subset of tools. Omit to enable all tools. */
+  toolsOverride?: string[];
 }
 
 export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
-  const { gateName, gateOutput, previousCodeResult, systemPromptOverride } = input;
+  const { gateName, gateOutput, previousCodeResult, systemPromptOverride, toolsOverride } = input;
 
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -328,7 +330,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, gateTracer);
+    const { agent } = await createImplementerAgent(workspace, gateTracer, toolsOverride);
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',

@@ -287,6 +287,7 @@ async function dispatchStepImpl(
   inputs: Record<string, unknown>
 ): Promise<unknown> {
   const systemPromptOverride = config.systemPrompt as string | undefined;
+  const toolsOverride = Array.isArray(config.tools) ? (config.tools as string[]) : undefined;
   switch (step) {
     case 'updateDomainState': {
       const status = (inputs.status ?? config.status) as string;
@@ -301,8 +302,18 @@ async function dispatchStepImpl(
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
       return subtask
-        ? await agentActivities.executeImplementation(request, subtask, systemPromptOverride)
-        : await agentActivities.executeImplementation(request, undefined, systemPromptOverride);
+        ? await agentActivities.executeImplementation(
+            request,
+            subtask,
+            systemPromptOverride,
+            toolsOverride
+          )
+        : await agentActivities.executeImplementation(
+            request,
+            undefined,
+            systemPromptOverride,
+            toolsOverride
+          );
     }
     case 'runReviewNetwork': {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
@@ -324,7 +335,8 @@ async function dispatchStepImpl(
       return await agentActivities.executeReviewFixImplementation(
         rejection,
         prev,
-        systemPromptOverride
+        systemPromptOverride,
+        toolsOverride
       );
     }
     case 'executeCIFixImplementation': {
@@ -336,7 +348,8 @@ async function dispatchStepImpl(
       return await agentActivities.executeCIFixImplementation(
         failureContext,
         prev,
-        systemPromptOverride
+        systemPromptOverride,
+        toolsOverride
       );
     }
     case 'createOrUpdatePullRequest': {
@@ -401,6 +414,7 @@ async function dispatchStepImpl(
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
         ...(typeof maxAttemptsPerBranch === 'number' ? { maxAttemptsPerBranch } : {}),
+        ...(toolsOverride ? { toolsOverride } : {}),
         request,
         sourceBranches,
         targetBranch,
@@ -425,6 +439,7 @@ async function dispatchStepImpl(
         gateOutput,
         previousCodeResult: prev,
         systemPromptOverride,
+        toolsOverride,
       });
     }
     default:

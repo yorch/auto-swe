@@ -11,7 +11,7 @@ export type StepCategory = 'agent' | 'gate' | 'control' | 'vcs' | 'shell';
 export interface StepFieldDef {
   key: string;
   label: string;
-  type: 'string' | 'number' | 'boolean' | 'enum' | 'json';
+  type: 'string' | 'number' | 'boolean' | 'enum' | 'json' | 'stringArray';
   enumValues?: readonly string[];
   required?: boolean;
   default?: unknown;
