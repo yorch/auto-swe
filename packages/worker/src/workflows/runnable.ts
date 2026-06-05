@@ -16,6 +16,7 @@ import {
   condition,
   defineSignal,
   isCancellation,
+  log,
   proxyActivities,
   setHandler,
   workflowInfo,
@@ -297,8 +298,11 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // Best-effort: a failure here must not prevent finalization.
   try {
     await stateActivities.cancelPendingHumanSteps(runId);
-  } catch {
-    // non-fatal
+  } catch (err) {
+    log.warn('cancelPendingHumanSteps failed; lingering PENDING rows may remain in the inbox', {
+      err: err instanceof Error ? err.message : String(err),
+      runId,
+    });
   }
   await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
 

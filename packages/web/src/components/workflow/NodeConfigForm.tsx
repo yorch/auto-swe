@@ -30,6 +30,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
       {fields.map((f) => {
         const current = values[f.key];
         const id = `cfg-${f.key}`;
+        const all = (f.enumValues ?? []) as readonly string[];
         return (
           <div className="text-xs space-y-1" key={f.key}>
             <label className="block text-[var(--muted-foreground)]" htmlFor={id}>
@@ -72,8 +73,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               </Select>
             ) : f.type === 'stringArray' ? (
               <div className="space-y-1">
-                {(f.enumValues ?? []).map((v) => {
-                  const all = (f.enumValues ?? []) as readonly string[];
+                {all.map((v) => {
                   // undefined means "all enabled" — initialize selected to the full list
                   // so unchecking any item correctly produces a restricted subset.
                   const selected = Array.isArray(current) ? (current as string[]) : [...all];

@@ -69,29 +69,33 @@ const SLACK_POST_TIMEOUT_MS = 2_000;
  * Called by the Temporal-backed dispatcher when a HITL node is reached.
  */
 export async function createHumanStep(input: CreateHumanStepInput): Promise<void> {
-  // Idempotency guard: if a PENDING row already exists for this (runId, nodeId),
-  // a previous Temporal attempt already completed the DB write — skip the create.
-  const existing = await prisma.workflowHumanStep.findFirst({
-    select: { id: true },
-    where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
-  });
-  if (existing) {
-    return;
+  // Idempotency guard: the DB has a partial unique index on (run_id, node_id) WHERE
+  // status = 'PENDING'. On Temporal retry, the INSERT will throw P2002 (unique constraint
+  // violation); we swallow that and fall through to the Slack block so the notification
+  // is still sent even when the DB write was already done by an earlier attempt.
+  // Note: we intentionally do NOT return early on P2002 — the Slack notification must
+  // reach the user even when the DB create was skipped.
+  try {
+    await prisma.workflowHumanStep.create({
+      data: {
+        context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
+        description: input.description,
+        fields: input.fields ? (input.fields as Prisma.InputJsonValue) : undefined,
+        kind: input.kind,
+        nodeId: input.nodeId,
+        options: input.options ? (input.options as Prisma.InputJsonValue) : undefined,
+        runId: input.runId,
+        signalName: input.signalName,
+        title: input.title,
+      },
+    });
+  } catch (err) {
+    // P2002 = unique constraint violation — another Temporal attempt already created
+    // the PENDING row. Fall through to attempt the Slack notification.
+    if ((err as { code?: string }).code !== 'P2002') {
+      throw err;
+    }
   }
-
-  await prisma.workflowHumanStep.create({
-    data: {
-      context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
-      description: input.description,
-      fields: input.fields ? (input.fields as Prisma.InputJsonValue) : undefined,
-      kind: input.kind,
-      nodeId: input.nodeId,
-      options: input.options ? (input.options as Prisma.InputJsonValue) : undefined,
-      runId: input.runId,
-      signalName: input.signalName,
-      title: input.title,
-    },
-  });
 
   // Best-effort Slack notification — resolve channel from the run's team.
   try {
