@@ -21,6 +21,17 @@ export async function updateDomainState(temporalWorkflowId: string, status: stri
   });
 }
 
+export async function resolveHumanStep(input: {
+  runId: string;
+  nodeId: string;
+  status: 'TIMED_OUT';
+}): Promise<void> {
+  await prisma.workflowHumanStep.updateMany({
+    data: { resolvedAt: new Date(), status: input.status },
+    where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
+  });
+}
+
 export interface CreateHumanStepInput {
   runId: string;
   nodeId: string;

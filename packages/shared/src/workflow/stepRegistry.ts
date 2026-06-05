@@ -28,10 +28,12 @@ const SYSTEM_PROMPT_FIELD = {
   type: 'string' as const,
 } as const;
 
+export const IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
+
 const IMPLEMENTER_TOOLS_FIELD = {
   description:
     'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
-  enumValues: ['readFile', 'writeFile', 'listDirectory', 'bash'] as const,
+  enumValues: IMPLEMENTER_TOOL_IDS,
   key: 'tools',
   label: 'Enabled tools',
   type: 'stringArray' as const,

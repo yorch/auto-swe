@@ -146,6 +146,12 @@ export interface Dispatcher {
       options?: string[];
     }>;
   }): Promise<void>;
+
+  /**
+   * Mark a pending human step record as TIMED_OUT in the DB.
+   * Called when the HITL node times out. Optional — test dispatchers may skip it.
+   */
+  resolveHumanStep?(args: { nodeId: string; status: 'TIMED_OUT' }): Promise<void>;
 }
 
 export interface InterpreterResult {
@@ -289,7 +295,7 @@ async function walk(
         case 'humanDecision':
         case 'humanInput':
         case 'humanReview': {
-          currentNodeId = await runHumanNode(recordingId, node, ctx, dispatcher);
+          currentNodeId = await runHumanNode(recordingId, nodeId, node, ctx, dispatcher);
           break;
         }
       }
@@ -554,12 +560,17 @@ async function runSignal(
 }
 
 async function runHumanNode(
-  nodeId: string,
+  recordingId: string,
+  specNodeId: string,
   node: HumanApprovalNode | HumanDecisionNode | HumanInputNode | HumanReviewNode,
   ctx: Context,
   dispatcher: Dispatcher
 ): Promise<string | undefined> {
-  const signalName = `hitl_${nodeId}`;
+  // Signal name must use the unprefixed spec key so it matches the handler
+  // registered at workflow startup (which iterates spec.nodes keys directly).
+  // Inside a fanOut branch, recordingId carries a prefix but the Temporal
+  // signal handler was registered under `hitl_${specNodeId}`.
+  const signalName = `hitl_${specNodeId}`;
   const kind = HITL_KINDS[node.type];
 
   // Snapshot context if specified
@@ -568,7 +579,7 @@ async function runHumanNode(
   const contentData = node.type === 'humanReview' ? lookupPath(ctx, node.contentFrom) : undefined;
 
   // Record the pending state before waiting
-  await safeRecord(dispatcher, { nodeId, status: 'PENDING' });
+  await safeRecord(dispatcher, { nodeId: recordingId, status: 'PENDING' });
 
   // Notify — creates DB record + Slack. Best-effort: don't let notification
   // failure block the workflow; the step is already recorded as PENDING.
@@ -579,7 +590,7 @@ async function runHumanNode(
         description: node.description,
         fields: node.type === 'humanInput' ? node.fields : undefined,
         kind,
-        nodeId,
+        nodeId: specNodeId,
         options:
           node.type === 'humanDecision'
             ? node.options.map((o) => ({ label: o.label, value: o.value }))
@@ -596,8 +607,15 @@ async function runHumanNode(
   const payload = await dispatcher.waitSignal(signalName, node.timeout);
 
   if (payload === undefined) {
-    // Timed out — update the step record and route to timeout path
-    await safeRecord(dispatcher, { nodeId, status: 'SKIPPED' });
+    // Timed out — update the step record, mark the DB row, and route to timeout path
+    await safeRecord(dispatcher, { nodeId: recordingId, status: 'SKIPPED' });
+    if (dispatcher.resolveHumanStep) {
+      try {
+        await dispatcher.resolveHumanStep({ nodeId: specNodeId, status: 'TIMED_OUT' });
+      } catch {
+        // best-effort — must not abort the workflow
+      }
+    }
     return node.onTimeout;
   }
 
@@ -606,8 +624,8 @@ async function runHumanNode(
   if (storeAs) {
     setPath(ctx, storeAs, payload);
   }
-  setPath(ctx, `nodes.${nodeId}.output`, payload);
-  await safeRecord(dispatcher, { nodeId, outputs: payload, status: 'PASSED' });
+  setPath(ctx, `nodes.${specNodeId}.output`, payload);
+  await safeRecord(dispatcher, { nodeId: recordingId, outputs: payload, status: 'PASSED' });
 
   // Route based on node type
   const p = payload as { action?: string; value?: unknown };

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { IMPLEMENTER_TOOL_IDS } from '@auto-swe/shared/workflow/stepRegistry';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
@@ -32,8 +33,8 @@ function safePath(relPath: string): string {
  * If `tracer` is provided every tool execution is recorded so callers can
  * persist the full tool-call sequence to `agent_traces` after generation.
  */
-export const IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
 export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
+export { IMPLEMENTER_TOOL_IDS };
 
 export async function createImplementerAgent(
   workspace: Workspace,

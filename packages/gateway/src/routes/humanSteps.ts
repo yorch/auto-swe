@@ -135,18 +135,42 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { action, value } = request.body;
+
+      // Validate action against step kind to prevent silent misrouting
+      const validActions: Record<string, string[]> = {
+        APPROVAL: ['approve', 'reject'],
+        DECISION: ['select'],
+        INPUT: ['submit'],
+        REVIEW: ['submit'],
+      };
+      const allowed = validActions[step.kind] ?? [];
+      if (!allowed.includes(action)) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_ACTION',
+            message: `Action '${action}' is not valid for ${step.kind} steps. Expected: ${allowed.join(' or ')}`,
+          },
+        });
+      }
+
       const signalPayload = { action, resolvedBy: user.sub, value };
 
-      // Update DB first — authoritative record
-      await fastify.prisma.workflowHumanStep.update({
+      // Atomic update — guards against concurrent resolve (race condition).
+      // The prior status check is an optimistic fast-path; this is the real guard.
+      const result = await fastify.prisma.workflowHumanStep.updateMany({
         data: {
           payload: signalPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
           status: 'RESOLVED',
         },
-        where: { id: step.id },
+        where: { id: step.id, status: 'PENDING' },
       });
+      if (result.count === 0) {
+        return reply.status(409).send({
+          error: { code: 'ALREADY_RESOLVED', message: 'This step has already been resolved' },
+        });
+      }
 
       // Send Temporal signal (best-effort — DB update is authoritative)
       fastify.temporal

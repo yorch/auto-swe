@@ -73,14 +73,16 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
             ) : f.type === 'stringArray' ? (
               <div className="space-y-1">
                 {(f.enumValues ?? []).map((v) => {
-                  const selected = Array.isArray(current) ? (current as string[]) : [];
-                  const checked = selected.length === 0 || selected.includes(v);
+                  const all = (f.enumValues ?? []) as readonly string[];
+                  // undefined means "all enabled" — initialize selected to the full list
+                  // so unchecking any item correctly produces a restricted subset.
+                  const selected = Array.isArray(current) ? (current as string[]) : [...all];
+                  const checked = selected.includes(v);
                   return (
                     <label className="flex items-center gap-2 cursor-pointer" key={v}>
                       <input
                         checked={checked}
                         onChange={(e) => {
-                          const all = (f.enumValues ?? []) as readonly string[];
                           const next = e.target.checked
                             ? [...selected.filter((x) => x !== v), v]
                             : selected.filter((x) => x !== v);

@@ -40,6 +40,7 @@ const stateActivities = proxyActivities<
     | 'recordWorkflowStep'
     | 'finalizeWorkflowRun'
     | 'createHumanStep'
+    | 'resolveHumanStep'
   >
 >({
   retry: {
@@ -249,6 +250,9 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     },
     async recordStep(args) {
       await stateActivities.recordWorkflowStep({ ...args, runId });
+    },
+    async resolveHumanStep(args) {
+      await stateActivities.resolveHumanStep({ ...args, runId });
     },
     async waitSignal(name, timeout) {
       // Clear any stale payload so we never satisfy this wait with a previous
