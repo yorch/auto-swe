@@ -12,9 +12,12 @@ interface ApiErrorBody {
 
 export class ApiClient {
   private accessToken: string | null = null;
+  private refreshPromise: Promise<boolean> | null = null;
+  private tokenGeneration = 0;
 
   setToken(token: string) {
     this.accessToken = token;
+    this.tokenGeneration++;
     if (typeof window !== 'undefined') {
       localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
     }
@@ -29,6 +32,8 @@ export class ApiClient {
 
   clearToken() {
     this.accessToken = null;
+    this.tokenGeneration++;
+    this.refreshPromise = null;
     if (typeof window !== 'undefined') {
       localStorage.removeItem(COOKIE_ACCESS_TOKEN);
     }
@@ -64,39 +69,62 @@ export class ApiClient {
     }
 
     if (response.status === 401) {
-      // Try the legacy refresh path. Only meaningful when a JWT was already
-      // in play; for the better-auth cookie path a 401 means the session was
-      // revoked / expired and the user has to sign back in.
-      const refreshed = await this.tryRefresh();
-      if (refreshed) {
-        headers.Authorization = `Bearer ${this.accessToken}`;
-        const retryResponse = await fetch(`${API_BASE}${path}`, {
-          ...options,
-          credentials: 'include',
-          headers,
-        });
-        if (!retryResponse.ok) {
-          const err = await retryResponse.json().catch(() => ({}));
-          throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${retryResponse.status}`);
+      // Only attempt refresh when this request carried a token — a 401 on an
+      // unauthenticated call (e.g. the login endpoint for wrong credentials)
+      // means bad credentials, not an expired session, and should surface as a
+      // normal API error rather than a redirect loop.
+      if (token) {
+        const refreshed = await this.tryRefresh();
+        if (refreshed) {
+          headers.Authorization = `Bearer ${this.accessToken}`;
+          const retryResponse = await fetch(`${API_BASE}${path}`, {
+            ...options,
+            credentials: 'include',
+            headers,
+          });
+          // A 401 on the retry means the new token was also rejected — log out.
+          if (retryResponse.status === 401) this.expireSession();
+          if (!retryResponse.ok) {
+            throw new Error(await this.extractErrorMessage(retryResponse));
+          }
+          return retryResponse.json();
         }
-        return retryResponse.json();
+        this.expireSession();
       }
-      this.clearToken();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
-      throw new Error('Session expired');
+      // No token on the original request — fall through to the generic error path.
     }
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${response.status}`);
+      throw new Error(await this.extractErrorMessage(response));
     }
 
     return response.json();
   }
 
-  private async tryRefresh(): Promise<boolean> {
+  private expireSession(): never {
+    this.clearToken();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired');
+  }
+
+  private async extractErrorMessage(res: Response): Promise<string> {
+    const body = await res.json().catch(() => ({}));
+    return (body as ApiErrorBody).error?.message ?? `HTTP ${res.status}`;
+  }
+
+  private tryRefresh(): Promise<boolean> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.performRefresh().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private async performRefresh(): Promise<boolean> {
+    const generation = this.tokenGeneration;
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
         credentials: 'include',
@@ -108,6 +136,14 @@ export class ApiClient {
       }
 
       const { data } = await response.json();
+      if (!data?.accessToken) {
+        return false;
+      }
+      // Guard against any token change (logout or fresh login) that raced this
+      // in-flight request — don't overwrite a token that's newer than ours.
+      if (this.tokenGeneration !== generation) {
+        return false;
+      }
       this.setToken(data.accessToken);
       return true;
     } catch {
