@@ -2,7 +2,8 @@
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useWorkflows';
@@ -31,10 +32,25 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const [expanded, setExpanded] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [reviewText, setReviewText] = useState(() => String(step.context ?? ''));
+  // Guard against double-submit: isPending from TanStack Query updates asynchronously
+  // (after the next render), so a rapid second click reaches this handler before
+  // respond.isPending flips to true in the component's closure.
+  const inFlight = useRef(false);
 
   function handleRespond(action: string, value?: unknown) {
-    respond.mutate({ action, id: step.id, value });
-    setExpanded(false);
+    if (inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    respond.mutate(
+      { action, id: step.id, value },
+      {
+        onSettled: () => {
+          inFlight.current = false;
+        },
+        onSuccess: () => setExpanded(false),
+      }
+    );
   }
 
   return (
@@ -68,6 +84,11 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
 
       {expanded && (
         <div className="border-t border-ink-600 pt-3 space-y-3">
+          {respond.isError && (
+            <Alert variant="error">
+              {respond.error?.message ?? 'Submission failed. Please try again.'}
+            </Alert>
+          )}
           {step.kind === 'APPROVAL' && (
             <div className="flex gap-2">
               <Button

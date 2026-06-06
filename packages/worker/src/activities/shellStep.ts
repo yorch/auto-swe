@@ -26,7 +26,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
-import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
