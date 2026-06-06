@@ -44,6 +44,11 @@ enum ConfigScope {
   WORKFLOW_TEMPLATE
 }
 
+enum SkillType {
+  TOOL
+  PROMPT_FRAGMENT
+}
+
 enum AgentRole {
   IMPLEMENTER
   REVIEWER
@@ -238,12 +243,13 @@ model Team {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships         TeamMembership[]
-  repositories        Repository[]
-  workflowTemplates   WorkflowTemplate[]
-  shellAudits         WorkflowShellAudit[]
-  modelRoleConfigs    ModelRoleConfig[]
-  providerCredentials ProviderCredential[]
+  memberships            TeamMembership[]
+  repositories           Repository[]
+  workflowTemplates      WorkflowTemplate[]
+  shellAudits            WorkflowShellAudit[]
+  modelRoleConfigs       ModelRoleConfig[]
+  providerCredentials    ProviderCredential[]
+  agentSkillAssignments  AgentSkillAssignment[]
 
   @@map("teams")
 }
@@ -526,9 +532,10 @@ model WorkflowTemplate {
   createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  versions         WorkflowTemplateVersion[]
-  workflowRuns     WorkflowRun[]
-  modelRoleConfigs ModelRoleConfig[]
+  versions              WorkflowTemplateVersion[]
+  workflowRuns          WorkflowRun[]
+  modelRoleConfigs      ModelRoleConfig[]
+  agentSkillAssignments AgentSkillAssignment[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -792,6 +799,54 @@ model ConfigAuditLog {
   @@index([entityType, entityId])
   @@index([actorId])
   @@map("config_audit_log")
+}
+
+/// A reusable agent capability: either a named tool reference or a prompt
+/// fragment injected after the base system prompt. Skills are assigned to
+/// agent roles at GLOBAL / TEAM / WORKFLOW_TEMPLATE scope via
+/// AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
+/// Built-in skills (isBuiltIn=true) map to the four hardcoded workspace
+/// tools; they cannot be deleted through the API.
+model Skill {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String?
+  type        SkillType
+  /// TOOL: one of "readFile" | "writeFile" | "listDirectory" | "bash"
+  toolKey     String?   @map("tool_key")
+  /// PROMPT_FRAGMENT: text injected after the base system prompt
+  promptText  String?   @map("prompt_text")
+  isBuiltIn   Boolean   @default(false) @map("is_built_in")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  assignments AgentSkillAssignment[]
+
+  @@map("skills")
+}
+
+/// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
+/// (defined in raw SQL in the migration) enforce one assignment per
+/// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:
+/// WORKFLOW_TEMPLATE → TEAM → GLOBAL. The first scope that has any
+/// assignments for the role wins.
+model AgentSkillAssignment {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentRole          AgentRole         @map("agent_role")
+  skillId            String            @map("skill_id") @db.Uuid
+  scope              ConfigScope
+  teamId             String?           @map("team_id") @db.Uuid
+  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
+  sortOrder          Int               @default(0) @map("sort_order")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  skill              Skill             @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([agentRole, scope, teamId])
+  @@index([agentRole, scope, workflowTemplateId])
+  @@map("agent_skill_assignments")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template
