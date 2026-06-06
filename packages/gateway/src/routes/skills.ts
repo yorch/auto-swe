@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -137,6 +139,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { body: CreateSkillSchema },
     },
     async (request, reply) => {
+      const actor = requireUser(request);
       const { name, description, promptText } = request.body;
       const skill = await fastify.prisma.skill.create({
         data: {
@@ -145,6 +148,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           name,
           promptText,
         },
+      });
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor,
+        after: { description, name, promptText },
+        entityId: skill.id,
+        entityType: 'Skill',
       });
       return reply.status(201).send({ data: skill });
     }
@@ -177,6 +187,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { body: UpdateSkillSchema, params: SkillIdParams },
     },
     async (request, reply) => {
+      const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
         where: { id: request.params.id },
       });
@@ -195,6 +206,22 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         data: updateData,
         where: { id: request.params.id },
       });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: {
+          description: updated.description,
+          name: updated.name,
+          promptText: updated.promptText,
+        },
+        before: {
+          description: existing.description,
+          name: existing.name,
+          promptText: existing.promptText,
+        },
+        entityId: existing.id,
+        entityType: 'Skill',
+      });
       return { data: updated };
     }
   );
@@ -207,6 +234,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { params: SkillIdParams },
     },
     async (request, reply) => {
+      const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
         where: { id: request.params.id },
       });
@@ -222,6 +250,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         });
       }
       await fastify.prisma.skill.delete({ where: { id: request.params.id } });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor,
+        before: { description: existing.description, name: existing.name },
+        entityId: existing.id,
+        entityType: 'Skill',
+      });
       return reply.status(204).send();
     }
   );
@@ -359,6 +394,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           workflowTemplateId: workflowTemplateId ?? null,
         },
       });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: { agentRole: role, scope, skillIds, teamId, workflowTemplateId },
+        entityId: randomUUID(),
+        entityType: 'AgentSkillAssignment',
+      });
       return { data: updated };
     }
   );
@@ -371,6 +413,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { params: AgentRoleParams, querystring: SkillAssignmentQuery },
     },
     async (request, reply) => {
+      const actor = requireUser(request);
       const { role } = request.params;
       const { scope, teamId, workflowTemplateId } = request.query;
       await fastify.prisma.agentSkillAssignment.deleteMany({
@@ -380,6 +423,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           teamId: teamId ?? null,
           workflowTemplateId: workflowTemplateId ?? null,
         },
+      });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor,
+        before: { agentRole: role, scope, teamId, workflowTemplateId },
+        entityId: randomUUID(),
+        entityType: 'AgentSkillAssignment',
       });
       return reply.status(204).send();
     }
@@ -422,11 +472,20 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { body: ToolConfigBody, params: AgentRoleParams },
     },
     async (request) => {
+      const actor = requireUser(request);
       const { role } = request.params;
       const { scope, enabledTools, teamId, workflowTemplateId } = request.body;
 
       // deleteMany + create in a transaction (partial unique indexes prevent upsert on named constraint)
-      const config = await fastify.prisma.$transaction(async (tx) => {
+      const [existing, config] = await fastify.prisma.$transaction(async (tx) => {
+        const prev = await tx.agentToolConfig.findFirst({
+          where: {
+            agentRole: role,
+            scope,
+            teamId: teamId ?? null,
+            workflowTemplateId: workflowTemplateId ?? null,
+          },
+        });
         await tx.agentToolConfig.deleteMany({
           where: {
             agentRole: role,
@@ -435,7 +494,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
             workflowTemplateId: workflowTemplateId ?? null,
           },
         });
-        return tx.agentToolConfig.create({
+        const next = await tx.agentToolConfig.create({
           data: {
             agentRole: role,
             enabledTools,
@@ -444,6 +503,15 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
             workflowTemplateId: workflowTemplateId ?? null,
           },
         });
+        return [prev, next] as const;
+      });
+      await writeAuditLog(fastify, {
+        action: existing ? 'UPDATE' : 'CREATE',
+        actor,
+        after: { agentRole: role, enabledTools, scope, teamId, workflowTemplateId },
+        before: existing ? { enabledTools: existing.enabledTools } : undefined,
+        entityId: config.id,
+        entityType: 'AgentToolConfig',
       });
       return { data: config };
     }
@@ -457,8 +525,17 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       schema: { params: AgentRoleParams, querystring: ToolConfigQuery },
     },
     async (request, reply) => {
+      const actor = requireUser(request);
       const { role } = request.params;
       const { scope, teamId, workflowTemplateId } = request.query;
+      const existing = await fastify.prisma.agentToolConfig.findFirst({
+        where: {
+          agentRole: role,
+          scope,
+          teamId: teamId ?? null,
+          workflowTemplateId: workflowTemplateId ?? null,
+        },
+      });
       await fastify.prisma.agentToolConfig.deleteMany({
         where: {
           agentRole: role,
@@ -467,6 +544,21 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           workflowTemplateId: workflowTemplateId ?? null,
         },
       });
+      if (existing) {
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          before: {
+            agentRole: role,
+            enabledTools: existing.enabledTools,
+            scope,
+            teamId,
+            workflowTemplateId,
+          },
+          entityId: existing.id,
+          entityType: 'AgentToolConfig',
+        });
+      }
       return reply.status(204).send();
     }
   );
@@ -625,6 +717,13 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
         orderBy: { sortOrder: 'asc' },
         where: { agentRole: role, scope: 'TEAM', teamId },
       });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { agentRole: role, scope: 'TEAM', skillIds, teamId },
+        entityId: randomUUID(),
+        entityType: 'AgentSkillAssignment',
+      });
       return reply.send({ data: updated });
     }
   );
@@ -659,6 +758,13 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
       await fastify.prisma.agentSkillAssignment.deleteMany({
         where: { agentRole: role, scope: 'TEAM', teamId },
+      });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor: user,
+        before: { agentRole: role, scope: 'TEAM', teamId },
+        entityId: randomUUID(),
+        entityType: 'AgentSkillAssignment',
       });
       return reply.status(204).send();
     }
@@ -742,11 +848,14 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
         }
       }
 
-      const config = await fastify.prisma.$transaction(async (tx) => {
+      const [existingTeamTool, config] = await fastify.prisma.$transaction(async (tx) => {
+        const prev = await tx.agentToolConfig.findFirst({
+          where: { agentRole: role, scope: 'TEAM', teamId },
+        });
         await tx.agentToolConfig.deleteMany({
           where: { agentRole: role, scope: 'TEAM', teamId },
         });
-        return tx.agentToolConfig.create({
+        const next = await tx.agentToolConfig.create({
           data: {
             agentRole: role,
             enabledTools,
@@ -754,6 +863,15 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
             teamId,
           },
         });
+        return [prev, next] as const;
+      });
+      await writeAuditLog(fastify, {
+        action: existingTeamTool ? 'UPDATE' : 'CREATE',
+        actor: user,
+        after: { agentRole: role, enabledTools, scope: 'TEAM', teamId },
+        before: existingTeamTool ? { enabledTools: existingTeamTool.enabledTools } : undefined,
+        entityId: config.id,
+        entityType: 'AgentToolConfig',
       });
       return reply.send({ data: config });
     }
@@ -787,9 +905,26 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
         }
       }
 
+      const existingTeamToolDel = await fastify.prisma.agentToolConfig.findFirst({
+        where: { agentRole: role, scope: 'TEAM', teamId },
+      });
       await fastify.prisma.agentToolConfig.deleteMany({
         where: { agentRole: role, scope: 'TEAM', teamId },
       });
+      if (existingTeamToolDel) {
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor: user,
+          before: {
+            agentRole: role,
+            enabledTools: existingTeamToolDel.enabledTools,
+            scope: 'TEAM',
+            teamId,
+          },
+          entityId: existingTeamToolDel.id,
+          entityType: 'AgentToolConfig',
+        });
+      }
       return reply.status(204).send();
     }
   );

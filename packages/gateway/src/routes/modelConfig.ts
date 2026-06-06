@@ -2,6 +2,7 @@ import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -140,31 +141,6 @@ function redactCredential(row: {
     teamId: row.teamId,
     updatedAt: row.updatedAt,
   };
-}
-
-/// Records a config-mutation audit row. Secret material is redacted via
-/// `redactCredential` so the audit log never holds plaintext keys.
-async function writeAuditLog(
-  fastify: FastifyInstance,
-  args: {
-    entityType: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
-    entityId: string;
-    action: 'CREATE' | 'UPDATE' | 'DELETE';
-    actor: JwtPayload;
-    before?: unknown;
-    after?: unknown;
-  }
-): Promise<void> {
-  await fastify.prisma.configAuditLog.create({
-    data: {
-      action: args.action,
-      actorId: args.actor.sub,
-      afterJson: (args.after ?? null) as never,
-      beforeJson: (args.before ?? null) as never,
-      entityId: args.entityId,
-      entityType: args.entityType,
-    },
-  });
 }
 
 const PROBE_TIMEOUT_MS = 5_000;
