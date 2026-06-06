@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
@@ -135,7 +136,7 @@ export default function DashboardPage() {
             <ul className="divide-y divide-ink-600">
               {needsAttention.map((w) => (
                 <li key={w.id}>
-                  <a
+                  <Link
                     className="group flex items-center justify-between py-3 transition-colors hover:text-ember-400"
                     href={`/workflows/${w.id}`}
                   >
@@ -151,7 +152,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <StatusBadge status={w.currentStatus} />
-                  </a>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -166,7 +167,7 @@ export default function DashboardPage() {
           <ul className="divide-y divide-ink-600">
             {all.slice(0, 10).map((w) => (
               <li key={w.id}>
-                <a
+                <Link
                   className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
                   href={`/workflows/${w.id}`}
                 >
@@ -180,7 +181,7 @@ export default function DashboardPage() {
                   <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
                     {formatRelativeTime(w.updatedAt)}
                   </span>
-                </a>
+                </Link>
               </li>
             ))}
           </ul>
