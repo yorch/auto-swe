@@ -276,10 +276,35 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { body: SkillAssignmentBody, params: AgentRoleParams },
     },
-    async (request) => {
+    async (request, reply) => {
       const { role } = request.params;
       const { scope, skillIds, sortOrders, teamId, workflowTemplateId } = request.body;
       requireUser(request);
+
+      // Validate FK references before the transaction to surface a 400 instead
+      // of a FK constraint violation (which would be an unhandled 500).
+      if (teamId) {
+        const teamExists = await fastify.prisma.team.findUnique({
+          select: { id: true },
+          where: { id: teamId },
+        });
+        if (!teamExists) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
+        }
+      }
+      if (workflowTemplateId) {
+        const tplExists = await fastify.prisma.workflowTemplate.findUnique({
+          select: { id: true },
+          where: { id: workflowTemplateId },
+        });
+        if (!tplExists) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'NOT_FOUND', message: 'Workflow template not found' } });
+        }
+      }
 
       await fastify.prisma.$transaction(async (tx) => {
         // Delete existing assignments for this role+scope
@@ -346,8 +371,53 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
 // ── Team-scoped agent skill routes ─────────────────────────────────────────
 
+const TeamIdParams = z.object({ teamId: z.string().uuid() });
+
 export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // GET /api/v1/teams/:teamId/skills — non-admin read-only skill library for team members.
+  // Team owners (ENGINEER role) need to see all skills so they can assign them without
+  // hitting the admin-only /api/v1/admin/skills endpoint.
+  app.get(
+    '/:teamId/skills',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: TeamIdParams, querystring: ListSkillsQuery },
+    },
+    async (request, reply) => {
+      const { teamId } = request.params;
+      const { type } = request.query;
+      const user = requireUser(request);
+
+      // Check access: platform ADMIN or team member
+      if (user.role !== 'ADMIN') {
+        const membership = await fastify.prisma.teamMembership.findUnique({
+          where: { userId_teamId: { teamId, userId: user.sub } },
+        });
+        if (!membership) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Team membership required' },
+          });
+        }
+      }
+
+      const skills = await fastify.prisma.skill.findMany({
+        orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
+        select: {
+          description: true,
+          id: true,
+          isBuiltIn: true,
+          name: true,
+          promptText: true,
+          toolKey: true,
+          type: true,
+        },
+        where: type ? { type } : undefined,
+      });
+      return { data: skills };
+    }
+  );
 
   // GET /api/v1/teams/:teamId/agents/:role/skills
   app.get(
@@ -420,7 +490,12 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
         const membership = await fastify.prisma.teamMembership.findUnique({
           where: { userId_teamId: { teamId, userId: user.sub } },
         });
-        if (membership?.role !== 'ADMIN') {
+        if (!membership) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Team membership required' },
+          });
+        }
+        if (membership.role !== 'ADMIN') {
           return reply.status(403).send({
             error: { code: 'FORBIDDEN', message: 'Team admin role required' },
           });
@@ -471,7 +546,12 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
         const membership = await fastify.prisma.teamMembership.findUnique({
           where: { userId_teamId: { teamId, userId: user.sub } },
         });
-        if (membership?.role !== 'ADMIN') {
+        if (!membership) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Team membership required' },
+          });
+        }
+        if (membership.role !== 'ADMIN') {
           return reply.status(403).send({
             error: { code: 'FORBIDDEN', message: 'Team admin role required' },
           });

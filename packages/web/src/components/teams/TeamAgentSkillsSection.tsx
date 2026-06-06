@@ -65,8 +65,10 @@ function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT
   });
 
   const { data: allSkills } = useQuery({
-    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/admin/skills').then((r) => r.data),
-    queryKey: ['skills', 'all'],
+    // Use the team-scoped skills endpoint (requires only team membership, not platform ADMIN).
+    // The admin-only /api/v1/admin/skills would return 403 for ENGINEER-role users.
+    queryFn: () => api.get<{ data: Skill[] }>(`/api/v1/teams/${teamId}/skills`).then((r) => r.data),
+    queryKey: ['team-skills-library', teamId],
   });
 
   const saveOverride = useMutation({
