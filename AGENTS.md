@@ -189,15 +189,21 @@ All five tables follow the singleton pattern (single row, `id = 'default'`, enfo
 
 Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
 
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true`.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for prompt-injection and exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — warnings are non-blocking.
 - **Tool** = executable Mastra `createTool()` function. `AgentToolConfig` stores a `String[]` of enabled tool names per role/scope. `null` (no config) = all tools enabled.
+
+**Role types** accepted by `loadAgentSkills` and `loadAgentToolConfig` (`AnySkillRole`):
+- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row.
+- **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas that can have skill/tool assignments but do **not** need their own `ModelRoleConfig` row.
+
+**Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
 
 **Scope cascade** for skills and tool configs follows the same 3-level pattern as model config:
 1. `WORKFLOW_TEMPLATE` scope (if the run's template has an override)
 2. `TEAM` scope (if the team has an override)
 3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`).
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole`, `SkillOnlyRole`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`), `packages/shared/src/lib/skillScanner.ts`.
 
 Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
 

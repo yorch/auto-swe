@@ -209,9 +209,16 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
       // Built-in skills: only allow name and description to be updated.
       // Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
+      // Reset isVerified only when promptText changes — name/description edits don't
+      // invalidate the content trust signal.
       const updateData = existing.isBuiltIn
         ? { description, name }
-        : { description, name, promptText };
+        : {
+            description,
+            name,
+            promptText,
+            ...(promptText !== undefined ? { isVerified: false } : {}),
+          };
 
       const scanResult =
         !existing.isBuiltIn && promptText ? scanSkillContent(promptText) : { warnings: [] };
@@ -282,18 +289,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
   // GET /api/v1/admin/agents — list all roles with their GLOBAL skill counts + tool configs
   app.get('/agents', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const roles = [
-      'IMPLEMENTER',
-      'REVIEWER',
-      'PLANNER',
-      'SECURITY_REVIEW',
-      'VALIDATE_CONTEXT',
-      'COMMIT_TO_MEMORY',
-      'SECURITY_REVIEWER',
-      'DOMAIN_LOGIC_REVIEWER',
-      'PERFORMANCE_REVIEWER',
-      'DECOMPOSER',
-    ] as const;
+    const roles = AGENT_ROLES;
 
     const [assignments, toolConfigs] = await Promise.all([
       fastify.prisma.agentSkillAssignment.groupBy({

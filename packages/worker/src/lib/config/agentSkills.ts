@@ -17,15 +17,15 @@ export interface ResolvedSkill {
 
 const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
   commitToMemory: 'COMMIT_TO_MEMORY',
+  decomposer: 'DECOMPOSER',
+  domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
   implementer: 'IMPLEMENTER',
+  performanceReviewer: 'PERFORMANCE_REVIEWER',
   planner: 'PLANNER',
   reviewer: 'REVIEWER',
   securityReview: 'SECURITY_REVIEW',
-  validateContext: 'VALIDATE_CONTEXT',
   securityReviewer: 'SECURITY_REVIEWER',
-  domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
-  performanceReviewer: 'PERFORMANCE_REVIEWER',
-  decomposer: 'DECOMPOSER',
+  validateContext: 'VALIDATE_CONTEXT',
 };
 
 /**
@@ -38,7 +38,10 @@ const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
  * Called per-activity-invocation (not cached at startup) so that admin
  * edits take effect on the next LLM call within an already-running workflow.
  */
-export async function loadAgentSkills(role: AnySkillRole, ctx?: ResolveCtx): Promise<ResolvedSkill[]> {
+export async function loadAgentSkills(
+  role: AnySkillRole,
+  ctx?: ResolveCtx
+): Promise<ResolvedSkill[]> {
   const prismaRole = SKILL_ROLE_TO_PRISMA[role];
 
   // 1. Workflow template scope
@@ -81,12 +84,12 @@ async function fetchSkillAssignments(
     },
   });
   return assignments.map((a) => ({
+    description: a.skill.description ?? '',
     id: a.skill.id,
+    isVerified: a.skill.isVerified,
     name: a.skill.name,
-    description: a.skill.description,
     promptText: a.skill.promptText,
     sortOrder: a.sortOrder,
-    isVerified: a.skill.isVerified,
   }));
 }
 

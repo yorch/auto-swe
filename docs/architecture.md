@@ -343,16 +343,32 @@ For each LLM call / activity invocation:
   ↓ (fall through if missing)
   3. GLOBAL row
 
-Model config  → getModel()          in packages/worker/src/lib/models.ts          (GLOBAL required)
-Skills        → loadAgentSkills()   in packages/worker/src/lib/config/agentSkills.ts (falls back to empty)
-Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/resolver.ts  (null = all tools)
+Model config  → getModel()            in packages/worker/src/lib/models.ts            (GLOBAL required — 6 AgentRoles only)
+Skills        → loadAgentSkills()     in packages/worker/src/lib/config/agentSkills.ts (falls back to empty — all 10 AnySkillRoles)
+Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/resolver.ts    (null = all tools)
 ```
 
+**Role types:**
+
+There are two distinct role sets:
+
+- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each requires a `ModelRoleConfig` GLOBAL row (checked at worker boot by `assertConfigReady`).
+- **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas used within a parent activity. They can have skill and tool assignments but do **not** require their own `ModelRoleConfig` row.
+- **`AnySkillRole`** = `AgentRole | SkillOnlyRole` — accepted by `loadAgentSkills` and `loadAgentToolConfig`.
+
+Sub-role usage:
+- `securityReviewer`, `domainLogicReviewer`, `performanceReviewer` — loaded by `runReviewNetwork`; each reviewer agent gets its own skill suffix.
+- `decomposer` — loaded by `planDecomposition`; the decomposer agent gets its own skill suffix (model comes from the parent `planner` role config).
+
 **Skills vs tools:**
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for prompt-injection and exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings).
 - **Tool** = executable Mastra `createTool()` function (readFile, writeFile, listDirectory, bash). Controls *what* an agent can do.
 
-Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`).
+**Progressive skill disclosure (implementer agent):** Skills are not pre-injected wholesale. The implementer agent receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch the full `promptText` only when it decides to engage a skill. This avoids token bloat from unused skills. Other agents (reviewer sub-agents, planner, decomposer) continue to receive their skill fragments directly in the system prompt since they have no tools.
+
+**Lesson memory and skills:** When `commitToMemory` creates an `AgentLesson`, it records which skills were active during that run in the `skillsActive` column (`String[]`). This allows future observability and skill-effectiveness analysis without changing the lesson query path.
+
+Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`, `AgentLesson`).
 
 ---
 

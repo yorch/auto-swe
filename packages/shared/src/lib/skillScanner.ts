@@ -22,7 +22,7 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 
 const EXFILTRATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { label: 'http-url-in-instruction', pattern: /https?:\/\/[^\s]+/i },
-  { label: 'base64-block', pattern: /[A-Za-z0-9+/]{40,}={0,2}/ },
+  { label: 'base64-block', pattern: /(?:^|[\s"'`])[A-Za-z0-9+/]{60,}={0,2}(?:$|[\s"'`])/m },
   { label: 'curl-wget', pattern: /\b(curl|wget)\s+/i },
   {
     label: 'send-to-external',
@@ -42,17 +42,15 @@ export interface SkillScanResult {
 export function scanSkillContent(promptText: string): SkillScanResult {
   const warnings: string[] = [];
 
-  for (const { pattern, label } of INJECTION_PATTERNS) {
-    if (pattern.test(promptText)) {
-      warnings.push(`injection:${label}`);
+  const check = (patterns: Array<{ pattern: RegExp; label: string }>, prefix: string) => {
+    for (const { pattern, label } of patterns) {
+      if (pattern.test(promptText)) {
+        warnings.push(`${prefix}:${label}`);
+      }
     }
-  }
-
-  for (const { pattern, label } of EXFILTRATION_PATTERNS) {
-    if (pattern.test(promptText)) {
-      warnings.push(`exfiltration:${label}`);
-    }
-  }
+  };
+  check(INJECTION_PATTERNS, 'injection');
+  check(EXFILTRATION_PATTERNS, 'exfiltration');
 
   return { safe: warnings.length === 0, warnings };
 }

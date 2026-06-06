@@ -210,7 +210,9 @@ export async function createImplementerAgent(
       const start = Date.now();
       const skill = skillsByName.get(name);
       if (!skill) {
-        const result = { promptText: `Unknown skill: ${name}. Available: ${[...skillsByName.keys()].join(', ')}` };
+        const result = {
+          promptText: `Unknown skill: ${name}. Available: ${[...skillsByName.keys()].join(', ')}`,
+        };
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { name },
@@ -251,24 +253,24 @@ export async function createImplementerAgent(
   const resolvedWorkspaceTools =
     Object.keys(activeWorkspaceTools).length > 0 ? activeWorkspaceTools : workspaceTools;
 
+  const hasSkills = resolvedSkills.length > 0;
+
   // Always include loadSkill when there are skills to load; this lets the agent
   // fetch full skill guidance on demand without pre-injecting all promptTexts.
-  const resolvedActiveTools =
-    resolvedSkills.length > 0
-      ? { ...resolvedWorkspaceTools, loadSkill }
-      : resolvedWorkspaceTools;
+  const resolvedActiveTools = hasSkills
+    ? { ...resolvedWorkspaceTools, loadSkill }
+    : resolvedWorkspaceTools;
 
   // L1 skill menu: compact name + description list injected into system prompt.
   // Agent calls load_skill(name) to get the full promptText when needed.
-  const promptSuffix =
-    resolvedSkills.length > 0
-      ? [
-          '## Available Skills',
-          'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
-          '',
-          ...resolvedSkills.map((s) => `- **${s.name}**: ${s.description}`),
-        ].join('\n')
-      : '';
+  const promptSuffix = hasSkills
+    ? [
+        '## Available Skills',
+        'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
+        '',
+        ...resolvedSkills.map((s) => `- **${s.name}**: ${s.description || s.name}`),
+      ].join('\n')
+    : '';
 
   const implementerAgent = new Agent({
     id: 'implementer',

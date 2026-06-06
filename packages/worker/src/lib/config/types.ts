@@ -26,7 +26,11 @@ export type AgentRole =
 /// inherit the model from their parent role (e.g. securityReviewer inherits
 /// from reviewer). They exist solely so skills can be assigned at per-reviewer
 /// or per-decomposer granularity.
-export type SkillOnlyRole = 'securityReviewer' | 'domainLogicReviewer' | 'performanceReviewer' | 'decomposer';
+export type SkillOnlyRole =
+  | 'securityReviewer'
+  | 'domainLogicReviewer'
+  | 'performanceReviewer'
+  | 'decomposer';
 
 /// Any role that can have AgentSkillAssignment rows.
 export type AnySkillRole = AgentRole | SkillOnlyRole;
