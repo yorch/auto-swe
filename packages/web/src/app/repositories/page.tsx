@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { RepositoryFormModal } from '@/components/repositories/RepositoryFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useRepositories } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -17,7 +18,7 @@ export default function RepositoriesPage() {
   const [mode, setMode] = useState<ModalMode>(null);
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <LoadingState />;
   }
 
   return (
