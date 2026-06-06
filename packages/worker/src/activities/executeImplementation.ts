@@ -12,6 +12,8 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
@@ -72,8 +74,13 @@ export async function executeImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
+    // Load skills for this role at the current scope (WORKFLOW_TEMPLATE → TEAM → GLOBAL).
+    // Uses the same Temporal activity context as model config resolution.
+    const activityCtx = await currentRequestContext();
+    const skills = await loadAgentSkills('implementer', activityCtx);
+
     // Create Mastra agent with tools bound to workspace (tracer captures every call)
-    const { agent } = await createImplementerAgent(workspace, tracer, toolsOverride);
+    const { agent } = await createImplementerAgent(workspace, tracer, skills);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
