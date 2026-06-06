@@ -51,7 +51,8 @@ const DecomposerOutputSchema = z.object({
 export async function planDecomposition(
   request: RepoWorkRequest,
   tracer?: AgentTracer,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  skillSuffix?: string
 ): Promise<DecompositionResult> {
   return otelTracer.startActiveSpan(
     'llm.plan_decomposition',
@@ -62,11 +63,12 @@ export async function planDecomposition(
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
-        const systemPrompt = await resolveSystemPrompt(
+        const basePrompt = await resolveSystemPrompt(
           'planner',
           DECOMPOSER_AGENT_PROMPT,
           systemPromptOverride
         );
+        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'feature-decomposer',
           instructions: systemPrompt,

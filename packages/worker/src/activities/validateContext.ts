@@ -12,6 +12,8 @@ import {
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 
@@ -34,6 +36,13 @@ export async function validateContext(
   const agentTracer = new AgentTracer();
   let successCriteria: string[] = [];
 
+  const activityCtx = await currentRequestContext();
+  const skills = await loadAgentSkills('validateContext', activityCtx);
+  const skillSuffix = skills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+
   try {
     successCriteria = await otelTracer.startActiveSpan('llm.context_validation', async (span) => {
       const start = Date.now();
@@ -41,11 +50,12 @@ export async function validateContext(
         const modelSpec = await getModelSpec('validateContext');
         const model = await getModel('validateContext');
         span.setAttribute('llm.model', modelSpec);
-        const systemPrompt = await resolveSystemPrompt(
+        const basePrompt = await resolveSystemPrompt(
           'validateContext',
           CONTEXT_VALIDATOR_PROMPT,
           systemPromptOverride
         );
+        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'context-validator',
           instructions: systemPrompt,

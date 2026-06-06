@@ -39,7 +39,18 @@ export async function planDecomposition(
 ): Promise<DecompositionResult> {
   heartbeat('plan decomposition: calling agent');
   const tracer = new AgentTracer();
-  const result = await decomposerPlan(request, tracer, systemPromptOverride);
+  const activityCtx = await currentRequestContext();
+  const skills = await loadAgentSkills('planner', activityCtx);
+  const skillSuffix = skills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+  const result = await decomposerPlan(
+    request,
+    tracer,
+    systemPromptOverride,
+    skillSuffix || undefined
+  );
   await persistActivityTrace(tracer, 'planner');
   return result;
 }

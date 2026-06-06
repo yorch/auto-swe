@@ -8,6 +8,8 @@ import {
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
@@ -77,11 +79,19 @@ export async function commitToMemory(
   const agentTracer = new AgentTracer();
   const start = Date.now();
 
-  const systemPrompt = await resolveSystemPrompt(
+  const activityCtx = await currentRequestContext();
+  const skills = await loadAgentSkills('commitToMemory', activityCtx);
+  const skillSuffix = skills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+
+  const basePrompt = await resolveSystemPrompt(
     'commitToMemory',
     MEMORY_SUMMARIZER_PROMPT,
     systemPromptOverride
   );
+  const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
 
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
