@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
@@ -129,29 +130,15 @@ export default function WorkflowRunsPage() {
         </table>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-          {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
-        </span>
-        <div className="flex gap-2">
-          <button
-            className="rounded-sm border border-ink-500 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-200 hover:border-ember-400 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!hasPrev}
-            onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-            type="button"
-          >
-            ← Prev
-          </button>
-          <button
-            className="rounded-sm border border-ink-500 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-200 hover:border-ember-400 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!hasNext}
-            onClick={() => setOffset((o) => o + PAGE_SIZE)}
-            type="button"
-          >
-            Next →
-          </button>
-        </div>
-      </div>
+      <Pagination
+        hasNext={hasNext}
+        hasPrev={hasPrev}
+        onNext={() => setOffset((o) => o + PAGE_SIZE)}
+        onPrev={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+        rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+        rangeStart={offset + 1}
+        total={total}
+      />
     </div>
   );
 }
