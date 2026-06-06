@@ -17,6 +17,7 @@ export class ApiClient {
 
   setToken(token: string) {
     this.accessToken = token;
+    this.tokenGeneration++;
     if (typeof window !== 'undefined') {
       localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
     }
@@ -115,14 +116,14 @@ export class ApiClient {
 
   private tryRefresh(): Promise<boolean> {
     if (!this.refreshPromise) {
-      this.refreshPromise = this._doRefresh().finally(() => {
+      this.refreshPromise = this.performRefresh().finally(() => {
         this.refreshPromise = null;
       });
     }
     return this.refreshPromise;
   }
 
-  private async _doRefresh(): Promise<boolean> {
+  private async performRefresh(): Promise<boolean> {
     const generation = this.tokenGeneration;
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
@@ -138,8 +139,8 @@ export class ApiClient {
       if (!data?.accessToken) {
         return false;
       }
-      // Guard against clearToken() (logout) racing with this in-flight request —
-      // don't restore a token for a user who logged out while we were fetching.
+      // Guard against any token change (logout or fresh login) that raced this
+      // in-flight request — don't overwrite a token that's newer than ours.
       if (this.tokenGeneration !== generation) {
         return false;
       }
