@@ -816,28 +816,6 @@ model Skill {
   @@map("skills")
 }
 
-/// Tool access configuration for an agent role at a specific scope.
-/// Controls which of the 4 built-in workspace tools (readFile, writeFile,
-/// listDirectory, bash) are enabled for a given agent role.
-/// Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).
-/// At most one row per (role, scope, scope-key) — enforced by partial unique
-/// indexes defined in raw SQL in the migration.
-model AgentToolConfig {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          AgentRole         @map("agent_role")
-  scope              ConfigScope
-  teamId             String?           @map("team_id") @db.Uuid
-  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
-  enabledTools       String[]          @map("enabled_tools")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
-
-  @@map("agent_tool_configs")
-}
-
 /// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
 /// (defined in raw SQL in the migration) enforce one assignment per
 /// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:
