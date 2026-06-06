@@ -4,9 +4,16 @@ import type { ResolvedGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 interface CachedInstallToken {
   token: string;
   expiresAt: number; // epoch ms
+  configKey: string; // detects credential rotation
 }
 
 let _cachedInstallToken: CachedInstallToken | null = null;
+
+function configCacheKey(config: ResolvedGitHubConfig): string {
+  // Use the last 20 chars of the private key so a key rotation busts the cache
+  // without storing the full key in memory twice.
+  return `${config.appId}|${config.appInstallationId}|${config.appPrivateKey?.slice(-20) ?? ''}`;
+}
 
 function createGitHubAppJwt(appId: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
@@ -21,7 +28,9 @@ function createGitHubAppJwt(appId: string, privateKey: string): string {
   return `${signing}.${sig}`;
 }
 
-async function fetchInstallationToken(config: ResolvedGitHubConfig): Promise<string> {
+async function fetchInstallationToken(
+  config: ResolvedGitHubConfig
+): Promise<{ token: string; expiresAt: number }> {
   const { appId, appPrivateKey, appInstallationId, apiUrl } = config;
   if (!appId || !appPrivateKey || !appInstallationId) {
     throw new Error(
@@ -46,7 +55,10 @@ async function fetchInstallationToken(config: ResolvedGitHubConfig): Promise<str
     );
   }
   const data = (await res.json()) as { token: string; expires_at: string };
-  return data.token;
+  // Use GitHub's declared expiry minus a 60-second safety margin so we never
+  // serve a token that has already expired or is about to expire mid-request.
+  const expiresAt = new Date(data.expires_at).getTime() - 60_000;
+  return { expiresAt, token: data.token };
 }
 
 export async function resolveGitHubToken(config: ResolvedGitHubConfig): Promise<string> {
@@ -59,11 +71,16 @@ export async function resolveGitHubToken(config: ResolvedGitHubConfig): Promise<
 
   if (useApp) {
     const now = Date.now();
-    if (_cachedInstallToken && now < _cachedInstallToken.expiresAt) {
+    const key = configCacheKey(config);
+    if (
+      _cachedInstallToken &&
+      now < _cachedInstallToken.expiresAt &&
+      _cachedInstallToken.configKey === key
+    ) {
       return _cachedInstallToken.token;
     }
-    const token = await fetchInstallationToken(config);
-    _cachedInstallToken = { expiresAt: now + 50 * 60 * 1000, token };
+    const { token, expiresAt } = await fetchInstallationToken(config);
+    _cachedInstallToken = { configKey: key, expiresAt, token };
     return token;
   }
 
