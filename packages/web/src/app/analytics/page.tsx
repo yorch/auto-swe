@@ -37,7 +37,7 @@ function KpiTile({
 }) {
   return (
     <Card>
-      <div className="px-4 pt-4 pb-1 text-xs text-[var(--muted-foreground)]">{label}</div>
+      <div className="px-4 pt-4 pb-1 text-xs text-paper-400">{label}</div>
       <p className={`text-3xl font-bold px-4 pb-4 ${valueClass ?? ''}`}>{value}</p>
     </Card>
   );
@@ -60,7 +60,7 @@ function SortHeader({
   return (
     <th className="px-4 py-2 font-medium text-right">
       <button
-        className={`hover:underline ${active ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}`}
+        className={`hover:underline ${active ? 'text-paper-200' : 'text-paper-400'}`}
         onClick={() => onSort(col)}
         type="button"
       >
@@ -130,13 +130,13 @@ export default function GlobalAnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Platform Analytics</h2>
-        <div className="flex gap-1 bg-[var(--muted)] rounded-md p-1">
+        <div className="flex gap-1 bg-ink-800 rounded-md p-1">
           {WINDOWS.map((w) => (
             <button
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 windowDays === w.days
-                  ? 'bg-white shadow text-[var(--foreground)]'
-                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                  ? 'bg-white shadow text-paper-200'
+                  : 'text-paper-400 hover:text-paper-200'
               }`}
               key={w.days}
               onClick={() => {
@@ -158,7 +158,7 @@ export default function GlobalAnalyticsPage() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiTile label="Total runs" value={String(data.totalRuns)} />
             <KpiTile label="Success rate" value={formatPercent(data.successRate)} />
-            <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-green-700" />
+            <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-moss-400" />
             <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
           </div>
 
@@ -167,7 +167,7 @@ export default function GlobalAnalyticsPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Templates — ranked by traffic</CardTitle>
                 <input
-                  className="text-sm border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] w-48"
+                  className="text-sm border border-ink-600 rounded px-2 py-1 bg-ink-900 w-48"
                   onChange={(e) => handleFilter(e.target.value)}
                   placeholder="Filter templates…"
                   type="text"
@@ -176,7 +176,7 @@ export default function GlobalAnalyticsPage() {
               </div>
             </CardHeader>
             {rows.length === 0 ? (
-              <p className="px-4 pb-4 text-sm text-[var(--muted-foreground)]">
+              <p className="px-4 pb-4 text-sm text-paper-400">
                 {filter
                   ? 'No templates match your filter.'
                   : `No runs in the last ${windowDays} days.`}
@@ -186,7 +186,7 @@ export default function GlobalAnalyticsPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted-foreground)]">
+                      <tr className="border-b border-ink-600 text-left text-xs text-paper-400">
                         <th className="px-4 py-2 font-medium">Template</th>
                         <SortHeader
                           col="runs"
@@ -224,12 +224,12 @@ export default function GlobalAnalyticsPage() {
                         const srPct = row.successRate !== null ? row.successRate * 100 : null;
                         return (
                           <tr
-                            className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]"
+                            className="border-b border-ink-600 last:border-0 hover:bg-ink-800"
                             key={row.templateId}
                           >
                             <td className="px-4 py-2">
                               <Link
-                                className="text-[var(--primary)] hover:underline"
+                                className="text-ember-400 hover:underline"
                                 href={`/templates/${row.templateId}`}
                               >
                                 {row.templateName}
@@ -241,10 +241,10 @@ export default function GlobalAnalyticsPage() {
                                 <span
                                   className={
                                     srPct >= 80
-                                      ? 'text-green-700'
+                                      ? 'text-moss-400'
                                       : srPct >= 50
                                         ? 'text-amber-600'
-                                        : 'text-red-600'
+                                        : 'text-brick-400'
                                   }
                                 >
                                   {fmt(srPct)}%
@@ -266,14 +266,14 @@ export default function GlobalAnalyticsPage() {
                   </table>
                 </div>
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)] text-sm text-[var(--muted-foreground)]">
+                  <div className="flex items-center justify-between px-4 py-3 border-t border-ink-600 text-sm text-paper-400">
                     <span>
                       {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of{' '}
                       {rows.length}
                     </span>
                     <div className="flex items-center gap-1">
                       <button
-                        className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="px-2 py-1 rounded hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={page === 0}
                         onClick={() => setPage((p) => p - 1)}
                         type="button"
@@ -283,9 +283,7 @@ export default function GlobalAnalyticsPage() {
                       {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
                         <button
                           className={`px-2 py-1 rounded text-xs ${
-                            pageNum - 1 === page
-                              ? 'bg-[var(--primary)] text-white'
-                              : 'hover:bg-[var(--muted)]'
+                            pageNum - 1 === page ? 'bg-ember-400 text-ink-950' : 'hover:bg-ink-800'
                           }`}
                           key={pageNum}
                           onClick={() => setPage(pageNum - 1)}
@@ -295,7 +293,7 @@ export default function GlobalAnalyticsPage() {
                         </button>
                       ))}
                       <button
-                        className="px-2 py-1 rounded hover:bg-[var(--muted)] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="px-2 py-1 rounded hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={page === totalPages - 1}
                         onClick={() => setPage((p) => p + 1)}
                         type="button"

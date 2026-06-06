@@ -5,6 +5,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -27,15 +28,15 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const TYPE_DOT: Record<string, string> = {
-  activity_event: 'bg-blue-500',
-  llm_response: 'bg-purple-500',
-  tool_call: 'bg-gray-400',
+  activity_event: 'bg-dust-400',
+  llm_response: 'bg-violet-400',
+  tool_call: 'bg-paper-500',
 };
 
 const TYPE_BADGE: Record<string, string> = {
-  activity_event: 'bg-blue-100 text-blue-700',
-  llm_response: 'bg-purple-100 text-purple-700',
-  tool_call: 'bg-gray-100 text-gray-600',
+  activity_event: 'bg-dust-400/20 text-dust-400',
+  llm_response: 'bg-violet-400/20 text-violet-400',
+  tool_call: 'bg-ink-600 text-paper-400',
 };
 
 function traceSummary(trace: AgentTraceRecord): { label: string; detail: string } {
@@ -96,12 +97,12 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   return (
     <div>
       {trace.error && (
-        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-1">
+        <div className="text-xs text-brick-400 bg-brick-400/10 border border-brick-400/40 rounded px-2 py-1 mb-1">
           {trace.error}
         </div>
       )}
       {text && (
-        <pre className="text-[10px] leading-tight bg-[var(--muted)] p-1.5 rounded overflow-x-auto max-h-28 whitespace-pre-wrap break-all">
+        <pre className="text-[10px] leading-tight bg-ink-800 p-1.5 rounded overflow-x-auto max-h-28 whitespace-pre-wrap break-all">
           {text.slice(0, 1200)}
           {text.length > 1200 ? '\n…' : ''}
         </pre>
@@ -114,7 +115,7 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (traces.length === 0) {
-    return <p className="text-xs text-[var(--muted-foreground)] py-1">No trace events recorded.</p>;
+    return <p className="text-xs text-paper-400 py-1">No trace events recorded.</p>;
   }
 
   // Group by attempt so retries are visually separated
@@ -135,7 +136,7 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
       {attempts.map((attempt) => (
         <div key={attempt}>
           {attempts.length > 1 && (
-            <p className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wide mb-1">
+            <p className="text-[10px] font-semibold text-paper-400 uppercase tracking-wide mb-1">
               Attempt {attempt}
             </p>
           )}
@@ -151,7 +152,7 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
               return (
                 <li key={t.id}>
                   <button
-                    className="w-full text-left rounded hover:bg-[var(--muted)] px-2 py-1 transition-colors"
+                    className="w-full text-left rounded hover:bg-ink-800 px-2 py-1 transition-colors"
                     onClick={() => setExpandedId(isExpanded ? null : t.id)}
                     type="button"
                   >
@@ -166,15 +167,13 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
                       </span>
                       <span className="font-mono font-semibold shrink-0">{label}</span>
                       {detail && (
-                        <span className="text-[var(--muted-foreground)] truncate font-mono">
-                          {detail}
-                        </span>
+                        <span className="text-paper-400 truncate font-mono">{detail}</span>
                       )}
-                      <span className="ml-auto text-[var(--muted-foreground)] shrink-0 text-[10px]">
+                      <span className="ml-auto text-paper-400 shrink-0 text-[10px]">
                         {durationLabel}
                       </span>
                       {t.error && (
-                        <span className="text-red-600 shrink-0 text-[10px] font-mono">err</span>
+                        <span className="text-brick-400 shrink-0 text-[10px] font-mono">err</span>
                       )}
                     </div>
                     {isExpanded && (
@@ -254,28 +253,28 @@ export default function RunDetailPage({ params }: PageProps) {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link className="text-[var(--primary)] hover:underline text-sm" href="/templates">
+            <Link className="text-ember-400 hover:underline text-sm" href="/templates">
               &larr; Templates
             </Link>
             <h2 className="text-2xl font-bold">Run · {run.templateName}</h2>
             <StatusBadge status={run.status} />
-            <span className="text-xs text-[var(--muted-foreground)]">
+            <span className="text-xs text-paper-400">
               v{run.templateVersion} · {formatRelativeTime(run.startedAt)}
             </span>
           </div>
           <div className="flex items-center gap-3">
             {run.status === 'RUNNING' && (
-              <button
-                className="text-sm px-3 py-1.5 rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+              <Button
                 disabled={cancelRun.isPending}
                 onClick={() => setShowCancelConfirm(true)}
-                type="button"
+                size="sm"
+                variant="danger"
               >
                 {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
-              </button>
+              </Button>
             )}
             <Link
-              className="text-sm text-[var(--muted-foreground)] hover:underline"
+              className="text-sm text-paper-400 hover:underline"
               href={`/templates/${run.templateId}`}
             >
               View template →
@@ -296,7 +295,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 statuses={dagOverlay}
               />
             </div>
-            <div className="flex flex-wrap gap-3 mt-4 text-xs text-[var(--muted-foreground)]">
+            <div className="flex flex-wrap gap-3 mt-4 text-xs text-paper-400">
               <span className="flex items-center gap-1">
                 <span className="inline-block w-3 h-3 rounded bg-[#3b82f6]" /> Running
               </span>
@@ -319,32 +318,32 @@ export default function RunDetailPage({ params }: PageProps) {
               </CardHeader>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-[var(--muted-foreground)]">Started</dt>
+                  <dt className="text-paper-400">Started</dt>
                   <dd>{formatDate(run.startedAt)}</dd>
                 </div>
                 {run.endedAt && (
                   <div className="flex justify-between">
-                    <dt className="text-[var(--muted-foreground)]">Ended</dt>
+                    <dt className="text-paper-400">Ended</dt>
                     <dd>{formatDate(run.endedAt)}</dd>
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <dt className="text-[var(--muted-foreground)]">Workflow ID</dt>
+                  <dt className="text-paper-400">Workflow ID</dt>
                   <dd className="font-mono text-xs">{run.workflowId}</dd>
                 </div>
                 {totalTraces > 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-[var(--muted-foreground)]">Tool calls</dt>
+                    <dt className="text-paper-400">Tool calls</dt>
                     <dd className="font-mono text-xs">{totalTraces}</dd>
                   </div>
                 )}
                 {run.workRequest && (
                   <>
                     <div className="flex justify-between">
-                      <dt className="text-[var(--muted-foreground)]">Ticket</dt>
+                      <dt className="text-paper-400">Ticket</dt>
                       <dd className="font-mono text-xs">{run.workRequest.externalTicketId}</dd>
                     </div>
-                    <div className="text-xs text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+                    <div className="text-xs text-paper-400 pt-1 border-t border-ink-600">
                       {run.workRequest.description}
                     </div>
                   </>
@@ -371,32 +370,25 @@ export default function RunDetailPage({ params }: PageProps) {
                   <CardTitle>Node · {selectedNodeId}</CardTitle>
                 </CardHeader>
                 {nodeRecords.length === 0 ? (
-                  <p className="text-sm text-[var(--muted-foreground)]">
+                  <p className="text-sm text-paper-400">
                     No execution record yet — this node has not run.
                   </p>
                 ) : (
                   <div className="space-y-3">
                     {nodeRecords.map((s) => (
-                      <div
-                        className="border-b border-[var(--border)] pb-2 last:border-0"
-                        key={s.id}
-                      >
+                      <div className="border-b border-ink-600 pb-2 last:border-0" key={s.id}>
                         <div className="flex items-center justify-between">
                           <StatusBadge status={s.status} />
-                          <span className="text-xs text-[var(--muted-foreground)]">
-                            attempt {s.attempt}
-                          </span>
+                          <span className="text-xs text-paper-400">attempt {s.attempt}</span>
                         </div>
-                        <div className="text-xs text-[var(--muted-foreground)] mt-1">
-                          {s.nodeId}
-                        </div>
+                        <div className="text-xs text-paper-400 mt-1">{s.nodeId}</div>
                         {s.error && (
-                          <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mt-2">
+                          <div className="text-xs text-brick-400 bg-brick-400/10 border border-brick-400/40 rounded px-2 py-1 mt-2">
                             {s.error}
                           </div>
                         )}
                         {(s.startedAt || s.endedAt) && (
-                          <div className="text-xs text-[var(--muted-foreground)] mt-1">
+                          <div className="text-xs text-paper-400 mt-1">
                             {s.startedAt ? formatDate(s.startedAt) : '?'}
                             {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
                           </div>
@@ -404,7 +396,7 @@ export default function RunDetailPage({ params }: PageProps) {
                         {s.outputs !== null && s.outputs !== undefined && (
                           <details className="mt-2">
                             <summary className="text-xs cursor-pointer">Outputs</summary>
-                            <pre className="text-xs bg-[var(--muted)] p-2 rounded overflow-x-auto mt-1">
+                            <pre className="text-xs bg-ink-800 p-2 rounded overflow-x-auto mt-1">
                               {JSON.stringify(s.outputs, null, 2)}
                             </pre>
                           </details>
@@ -415,8 +407,8 @@ export default function RunDetailPage({ params }: PageProps) {
                 )}
 
                 {nodeTraces.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-[var(--border)]">
-                    <p className="text-xs font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wide">
+                  <div className="mt-4 pt-3 border-t border-ink-600">
+                    <p className="text-xs font-semibold text-paper-400 mb-2 uppercase tracking-wide">
                       Agent trace · {nodeTraces.length} event{nodeTraces.length !== 1 ? 's' : ''}
                     </p>
                     <AgentTracePanel traces={nodeTraces} />
@@ -433,8 +425,8 @@ export default function RunDetailPage({ params }: PageProps) {
                 {run.steps.map((s) => (
                   <li key={s.id}>
                     <button
-                      className={`w-full flex items-center justify-between py-1 px-2 rounded hover:bg-[var(--muted)] ${
-                        selectedNodeId === s.nodeId ? 'bg-[var(--muted)]' : ''
+                      className={`w-full flex items-center justify-between py-1 px-2 rounded hover:bg-ink-800 ${
+                        selectedNodeId === s.nodeId ? 'bg-ink-800' : ''
                       }`}
                       onClick={() => setSelectedNodeId(s.nodeId)}
                       type="button"
@@ -445,7 +437,7 @@ export default function RunDetailPage({ params }: PageProps) {
                   </li>
                 ))}
                 {run.steps.length === 0 && (
-                  <li className="text-[var(--muted-foreground)]">No steps recorded yet</li>
+                  <li className="text-paper-400">No steps recorded yet</li>
                 )}
               </ul>
             </Card>
