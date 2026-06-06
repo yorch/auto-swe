@@ -27,7 +27,8 @@ const PlannerOutputSchema = z.object({
 export async function decomposeEpic(
   epicDescription: string,
   availableRepos: RepoInfo[],
-  tracer?: AgentTracer
+  tracer?: AgentTracer,
+  skillSuffix?: string
 ): Promise<PlannedRepo[]> {
   return otelTracer.startActiveSpan(
     'llm.epic_planning',
@@ -38,7 +39,8 @@ export async function decomposeEpic(
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
-        const systemPrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
+        const basePrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
+        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'epic-planner',
           instructions: systemPrompt,

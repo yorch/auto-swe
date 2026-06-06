@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
+import type { ResolvedSkill } from '../lib/config/agentSkills.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
@@ -32,6 +33,9 @@ function safePath(relPath: string): string {
  *
  * If `tracer` is provided every tool execution is recorded so callers can
  * persist the full tool-call sequence to `agent_traces` after generation.
+ *
+ * `tools`: string[] of enabled tool keys (from AgentToolConfig). null = all 4 tools.
+ * `skills`: prompt-fragment skills to inject into the system prompt (in sortOrder).
  */
 export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
 export { IMPLEMENTER_TOOL_IDS };
@@ -39,8 +43,9 @@ export { IMPLEMENTER_TOOL_IDS };
 export async function createImplementerAgent(
   workspace: Workspace,
   tracer?: AgentTracer,
-  toolsOverride?: string[]
-): Promise<{ agent: Agent; mastra: Mastra }> {
+  tools?: string[] | null,
+  skills?: ResolvedSkill[]
+): Promise<{ agent: Agent; mastra: Mastra; promptSuffix: string }> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
@@ -189,25 +194,42 @@ export async function createImplementerAgent(
     outputSchema: z.object({ output: z.string() }),
   });
 
+  // All available tools keyed by toolKey
   const allTools = { bash, listDirectory, readFile, writeFile };
-  const enabledTools =
-    toolsOverride && toolsOverride.length > 0
-      ? (Object.fromEntries(
-          Object.entries(allTools).filter(([id]) => toolsOverride.includes(id))
-        ) as typeof allTools)
+
+  // Filter tools by the enabled tool keys when provided; null → use all 4 tools.
+  const activeTools =
+    tools && tools.length > 0
+      ? Object.fromEntries(
+          tools
+            .filter((key) => key in allTools)
+            .map((key) => [key, allTools[key as keyof typeof allTools]])
+        )
       : allTools;
+
+  // If every provided key was unrecognised, fall back to allTools to avoid
+  // instantiating an agent with no tools.
+  const resolvedActiveTools = Object.keys(activeTools).length > 0 ? activeTools : allTools;
+
+  // Append prompt-fragment skills (already in sortOrder) to the base system prompt.
+  const promptSuffix = (skills ?? [])
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
 
   const implementerAgent = new Agent({
     id: 'implementer',
-    instructions: '', // Set per-call via system message
+    // instructions is overridden per-call via system message; set to empty string
+    // so the constructor does not inject stale static content.
+    instructions: '',
     model: await getModel('implementer'),
     name: 'implementer',
-    tools: enabledTools,
+    tools: resolvedActiveTools,
   });
 
   const mastra = new Mastra({
     agents: { implementer: implementerAgent },
   });
 
-  return { agent: mastra.getAgent('implementer'), mastra };
+  return { agent: mastra.getAgent('implementer'), mastra, promptSuffix };
 }

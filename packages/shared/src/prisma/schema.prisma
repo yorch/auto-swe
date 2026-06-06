@@ -238,12 +238,14 @@ model Team {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships         TeamMembership[]
-  repositories        Repository[]
-  workflowTemplates   WorkflowTemplate[]
-  shellAudits         WorkflowShellAudit[]
-  modelRoleConfigs    ModelRoleConfig[]
-  providerCredentials ProviderCredential[]
+  memberships            TeamMembership[]
+  repositories           Repository[]
+  workflowTemplates      WorkflowTemplate[]
+  shellAudits            WorkflowShellAudit[]
+  modelRoleConfigs       ModelRoleConfig[]
+  providerCredentials    ProviderCredential[]
+  agentSkillAssignments  AgentSkillAssignment[]
+  agentToolConfigs       AgentToolConfig[]
 
   @@map("teams")
 }
@@ -526,9 +528,11 @@ model WorkflowTemplate {
   createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  versions         WorkflowTemplateVersion[]
-  workflowRuns     WorkflowRun[]
-  modelRoleConfigs ModelRoleConfig[]
+  versions              WorkflowTemplateVersion[]
+  workflowRuns          WorkflowRun[]
+  modelRoleConfigs      ModelRoleConfig[]
+  agentSkillAssignments AgentSkillAssignment[]
+  agentToolConfigs      AgentToolConfig[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -792,6 +796,71 @@ model ConfigAuditLog {
   @@index([entityType, entityId])
   @@index([actorId])
   @@map("config_audit_log")
+}
+
+/// A reusable prompt-fragment skill injected into an agent's system prompt.
+/// Skills are assigned to agent roles at GLOBAL / TEAM / WORKFLOW_TEMPLATE
+/// scope via AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
+/// Tool access control is handled separately via AgentToolConfig.
+model Skill {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String?
+  promptText  String    @map("prompt_text")
+  isBuiltIn   Boolean   @default(false) @map("is_built_in")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  assignments AgentSkillAssignment[]
+
+  @@map("skills")
+}
+
+/// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
+/// (defined in raw SQL in the migration) enforce one assignment per
+/// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:
+/// WORKFLOW_TEMPLATE → TEAM → GLOBAL. The first scope that has any
+/// assignments for the role wins.
+model AgentSkillAssignment {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentRole          AgentRole         @map("agent_role")
+  skillId            String            @map("skill_id") @db.Uuid
+  scope              ConfigScope
+  teamId             String?           @map("team_id") @db.Uuid
+  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
+  sortOrder          Int               @default(0) @map("sort_order")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  skill              Skill             @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([agentRole, scope, teamId])
+  @@index([agentRole, scope, workflowTemplateId])
+  @@map("agent_skill_assignments")
+}
+
+/// Controls which built-in tools (readFile, writeFile, listDirectory, bash) are
+/// available to an agent role. Follows the same GLOBAL → TEAM → WORKFLOW_TEMPLATE
+/// scope cascade as ModelRoleConfig. A missing row at a scope means "no override
+/// at that scope" — the cascade falls through to the next level.
+/// An empty array is treated as "no tools" (maximum lockdown); the API enforces min(1).
+model AgentToolConfig {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentRole          AgentRole         @map("agent_role")
+  scope              ConfigScope
+  teamId             String?           @map("team_id") @db.Uuid
+  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
+  enabledTools       String[]          @map("enabled_tools")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([agentRole, scope, teamId])
+  @@index([agentRole, scope, workflowTemplateId])
+  @@map("agent_tool_configs")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template

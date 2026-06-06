@@ -4,6 +4,8 @@ import { heartbeat } from '@temporalio/activity';
 import { decomposeEpic } from '../agents/plannerAgent.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 
 /**
  * Activity that uses the Planner Agent to decompose an epic into per-repo work items.
@@ -30,7 +32,18 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   heartbeat('decomposing epic via planner agent');
 
   const tracer = new AgentTracer();
-  const plannedRepos = await decomposeEpic(epicRequest.description, repoInfos, tracer);
+  const activityCtx = await currentRequestContext();
+  const skills = await loadAgentSkills('planner', activityCtx);
+  const skillSuffix = skills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+  const plannedRepos = await decomposeEpic(
+    epicRequest.description,
+    repoInfos,
+    tracer,
+    skillSuffix || undefined
+  );
   await persistActivityTrace(tracer, 'planner');
 
   return plannedRepos.map((pr) => ({

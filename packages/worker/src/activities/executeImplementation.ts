@@ -12,6 +12,8 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
@@ -32,11 +34,12 @@ const MAX_TDD_ITERATIONS = 5;
  * Subtask branches are merged back into the parent feature branch by the
  * `mergeBranches` activity before the final PR is opened.
  */
+// Note: toolsOverride parameter was removed — tool selection is superseded by
+// DB-driven AgentSkillAssignment rows (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade).
 export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
-  systemPromptOverride?: string,
-  toolsOverride?: string[]
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -72,8 +75,22 @@ export async function executeImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Create Mastra agent with tools bound to workspace (tracer captures every call)
-    const { agent } = await createImplementerAgent(workspace, tracer, toolsOverride);
+    // Load tool config and skills for this role at the current scope
+    // (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade for both).
+    const activityCtx = await currentRequestContext();
+    const [toolConfig, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
+
+    // Create Mastra agent with tools bound to workspace (tracer captures every call).
+    // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      tracer,
+      toolConfig,
+      skills
+    );
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -118,7 +135,10 @@ export async function executeImplementation(
 
       const genResult = await agent.generate(
         [
-          { content: systemPrompt + lessonsContext, role: 'system' },
+          {
+            content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext,
+            role: 'system',
+          },
           {
             content: JSON.stringify({
               description: subtask?.description ?? request.description,

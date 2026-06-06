@@ -70,8 +70,9 @@ packages/
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/index.ts` | Re-exports types and enums from `@auto-swe/shared` |
 | `src/prisma/schema.prisma` | **Authoritative data model** — 20+ models (see §6) |
-| `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template |
+| `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
+| `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/set/cond/signal/terminate/fanOut/shell) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` node predicates (jsonpath + comparison, no JS sandbox) |
@@ -104,12 +105,14 @@ packages/
 | `src/routes/webhooks.ts` | `POST /api/v1/webhooks/git` (merge signal) + `/webhooks/ci` (CI signal) |
 | `src/routes/epics.ts` | `POST /api/v1/epics` — starts `EpicOrchestratorWorkflow` |
 | `src/routes/repositories.ts` | CRUD for `Repository` (team-scoped) |
-| `src/routes/teams.ts` | CRUD for `Team` + membership + shell-image allowlist |
+| `src/routes/teams.ts` | CRUD for `Team` + membership + shell-image allowlist; team-scoped agent skill/tool overrides |
 | `src/routes/users.ts` | User management (ADMIN only) |
-| `src/routes/lessons.ts` | `AgentLesson` list, text search, delete |
+| `src/routes/lessons.ts` | `AgentLesson` list, text search, per-repo stats, delete |
+| `src/routes/skills.ts` | `Skill` CRUD; `AgentSkillAssignment` + `AgentToolConfig` CRUD at GLOBAL, TEAM, and WORKFLOW_TEMPLATE scope |
 | `src/routes/tokens.ts` | Personal access token create / list / revoke |
 | `src/routes/modelConfig.ts` | `ModelRoleConfig` + `ProviderCredential` + `EmbeddingConfig` CRUD (admin + team-owner) |
 | `src/routes/admin.ts` | Admin-only: list/revoke all PATs, list/revoke sessions, shell-audit prune |
+| `src/lib/auditLog.ts` | `writeAuditLog()` — shared helper that writes `ConfigAuditLog` rows for all config mutations |
 
 ### 2.3 `packages/worker`
 
@@ -137,6 +140,8 @@ packages/
 | `src/agents/decomposer.ts` | Mastra `Agent` for fan-out subtask decomposition |
 | `src/agents/preWriteSecurityCheck.ts` | Regex-based pre-write scanner wrapping the `writeFile` tool |
 | `src/lib/models.ts` | `getModel(role, ctx)` — 3-level scope cascade (template → team → global) |
+| `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` — resolves `ResolvedSkill[]` at WORKFLOW_TEMPLATE → TEAM → GLOBAL scope |
+| `src/lib/config/resolver.ts` | `loadAgentToolConfig(role, ctx)` — resolves enabled tool list at same scope cascade |
 | `src/lib/embeddings.ts` | `generateEmbedding` — resolves `EmbeddingConfig` from DB, enforces 1536-dim |
 | `src/lib/costTracking.ts` | `recordLlmUsage` — per-call USD metering via `MODEL_PRICES`, OTel span attributes |
 
@@ -158,7 +163,7 @@ packages/
 | `src/app/lessons/` | Agent memory search |
 | `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
 | `src/app/settings/` | User settings — API tokens (create / list / revoke) |
-| `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit |
+| `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability |
 | `src/hooks/` | TanStack Query hooks (one per resource) — `useWorkflows`, `useRuns`, etc. |
 | `src/stores/` | Zustand stores — `authStore.ts`, `teamStore.ts` |
 | `src/components/` | Shared primitives: `Button`, `Input`, `Card`, `Modal`, `Stat`, `WorkflowDag`, `TemplateEditor` |
@@ -300,20 +305,30 @@ interface Dispatcher {
 
 `RunnableWorkflow` implements this by wrapping each activity proxy call. Fan-out, set, cond, signal, and terminate nodes are handled internally by the interpreter — only `step` and `shell` go through the dispatcher. `dispatchShell` is optional; dispatchers that omit it throw on shell nodes. The interpreter has no Temporal imports and runs in tests with a mock dispatcher.
 
-### Model resolution (3-level cascade)
+### 3-level scope cascade
+
+All per-role configuration (model selection, skills, tool access) follows the same cascade at activity-call time:
 
 ```
-For each LLM call in an activity:
-  getModel(role, { teamId, workflowTemplateId })
+For each LLM call / activity invocation:
+  resolve(role, { teamId, workflowTemplateId })
       ↓
   1. WORKFLOW_TEMPLATE row (if templateId set)
   ↓ (fall through if missing)
   2. TEAM row (if teamId set)
   ↓ (fall through if missing)
-  3. GLOBAL row  ← required; worker refuses to start without it
+  3. GLOBAL row
+
+Model config  → getModel()          in packages/worker/src/lib/models.ts          (GLOBAL required)
+Skills        → loadAgentSkills()   in packages/worker/src/lib/config/agentSkills.ts (falls back to empty)
+Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/resolver.ts  (null = all tools)
 ```
 
-Files: `packages/worker/src/lib/models.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `ProviderCredential`).
+**Skills vs tools:**
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons.
+- **Tool** = executable Mastra `createTool()` function (readFile, writeFile, listDirectory, bash). Controls *what* an agent can do.
+
+Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`).
 
 ---
 
@@ -404,6 +419,7 @@ erDiagram
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows — full agent observability |
 | Memory | `AgentLesson` | pgvector semantic memory (1536-dim HNSW index) |
 | Model config | `ModelRoleConfig`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys) |
+| Agent config | `Skill`, `AgentSkillAssignment`, `AgentToolConfig` | Skills (prompt fragments) and tool access control — scoped at GLOBAL / TEAM / WORKFLOW_TEMPLATE |
 | Infrastructure | `Team`, `Repository` | Tenant isolation + repo registry |
 
 ---

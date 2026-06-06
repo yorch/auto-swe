@@ -117,7 +117,8 @@ export async function runReviewNetwork(
   codeResult: CodeResult,
   successCriteria?: string[],
   tracer?: AgentTracer,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  skillSuffix?: string
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -125,8 +126,16 @@ export async function runReviewNetwork(
     domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
   }
 
-  const securityPrompt = systemPromptOverride ?? SECURITY_AUDITOR_PROMPT;
-  const performancePrompt = systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT;
+  // Append skill fragments (prompt-fragment skills from DB) to each reviewer's prompt.
+  if (skillSuffix) {
+    domainLogicPrompt += `\n\n${skillSuffix}`;
+  }
+
+  const securityPrompt =
+    (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) + (skillSuffix ? `\n\n${skillSuffix}` : '');
+  const performancePrompt =
+    (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
+    (skillSuffix ? `\n\n${skillSuffix}` : '');
 
   // Run all three reviewers in parallel
   const results = await Promise.allSettled([

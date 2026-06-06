@@ -10,11 +10,14 @@ const ACTION_COLORS = {
 } as const;
 
 const ENTITY_LABELS: Record<string, string> = {
+  AgentSkillAssignment: 'Agent skill assignment',
+  AgentToolConfig: 'Agent tool config',
   EmbeddingConfig: 'Embedding config',
   GitHubConfig: 'GitHub',
   GoogleOAuthConfig: 'Google OAuth',
   ModelRoleConfig: 'Model config',
   ProviderCredential: 'Provider credential',
+  Skill: 'Skill',
   SlackConfig: 'Slack',
   StorageConfig: 'Storage',
 };

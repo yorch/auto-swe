@@ -37,6 +37,7 @@ import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
+import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
 import { teamRoutes } from './routes/teams.js';
@@ -220,6 +221,8 @@ async function start() {
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
+  await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
 
   const port = Number(process.env.PORT ?? 8080);

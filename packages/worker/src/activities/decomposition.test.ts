@@ -34,6 +34,9 @@ vi.mock('../lib/activityContext.js', () => ({
 }));
 
 vi.mock('@temporalio/activity', () => ({
+  activityInfo: () => {
+    throw new Error('activity context is not available');
+  },
   heartbeat: vi.fn(),
 }));
 
@@ -63,7 +66,13 @@ vi.mock('../agents/implementer.js', () => ({
   createImplementerAgent: vi.fn(() => ({
     agent: { generate: generateMock },
     mastra: {},
+    promptSuffix: '',
   })),
+}));
+
+vi.mock('../lib/config/agentSkills.js', () => ({
+  loadAgentSkills: vi.fn().mockResolvedValue([]),
+  loadAgentToolConfig: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../lib/costTracking.js', () => ({

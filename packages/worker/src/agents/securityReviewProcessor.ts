@@ -8,6 +8,8 @@ import {
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
@@ -36,6 +38,16 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 // ── Security Review Agent ──
 
 export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
+  const activityCtx = await currentRequestContext();
+  const skills = await loadAgentSkills('securityReview', activityCtx);
+  const skillSuffix = skills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+  const instructions = skillSuffix
+    ? `${SECURITY_REVIEW_PROMPT}\n\n${skillSuffix}`
+    : SECURITY_REVIEW_PROMPT;
+
   return otelTracer.startActiveSpan('llm.security_scan', async (span) => {
     const tracer = new AgentTracer();
     const start = Date.now();
@@ -45,7 +57,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       span.setAttribute('llm.model', modelSpec);
       const agent = new Agent({
         id: 'security-review-gate',
-        instructions: SECURITY_REVIEW_PROMPT,
+        instructions,
         model,
         name: 'security-review-gate',
       });
