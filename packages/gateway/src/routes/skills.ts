@@ -67,6 +67,14 @@ const UpdateSkillSchema = z.object({
 
 const ListSkillsQuery = z.object({});
 
+const scopeKeysValid = (v: { scope: string; teamId?: string; workflowTemplateId?: string }) =>
+  (v.scope === 'GLOBAL' && !v.teamId && !v.workflowTemplateId) ||
+  (v.scope === 'TEAM' && !!v.teamId && !v.workflowTemplateId) ||
+  (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !!v.workflowTemplateId);
+
+const SCOPE_KEYS_ERROR =
+  'scope=TEAM requires teamId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids both';
+
 const SkillAssignmentBody = z
   .object({
     scope: z.enum(SCOPE_VALUES),
@@ -75,16 +83,7 @@ const SkillAssignmentBody = z
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
   })
-  .refine(
-    (v) =>
-      (v.scope === 'GLOBAL' && !v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'TEAM' && !!v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !!v.workflowTemplateId),
-    {
-      message:
-        'scope=TEAM requires teamId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids both',
-    }
-  );
+  .refine(scopeKeysValid, { message: SCOPE_KEYS_ERROR });
 
 const SkillAssignmentQuery = z.object({
   scope: z.enum(SCOPE_VALUES).default('GLOBAL'),
@@ -99,16 +98,7 @@ const ToolConfigBody = z
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
   })
-  .refine(
-    (v) =>
-      (v.scope === 'GLOBAL' && !v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'TEAM' && !!v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !!v.workflowTemplateId),
-    {
-      message:
-        'scope=TEAM requires teamId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids both',
-    }
-  );
+  .refine(scopeKeysValid, { message: SCOPE_KEYS_ERROR });
 
 const ToolConfigQuery = z.object({
   scope: z.enum(SCOPE_VALUES).default('GLOBAL'),

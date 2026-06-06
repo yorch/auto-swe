@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ROLE_LABELS } from '@/lib/agentRoles';
 import { api } from '@/lib/api';
 
 interface AgentRoleSummary {
@@ -17,15 +18,6 @@ function useAgentRoles() {
     queryKey: ['admin-agents'],
   });
 }
-
-const ROLE_LABELS: Record<string, string> = {
-  COMMIT_TO_MEMORY: 'Commit to Memory',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security Review',
-  VALIDATE_CONTEXT: 'Validate Context',
-};
 
 export default function AdminAgentsPage() {
   const { data: roles, isLoading } = useAgentRoles();

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ROLE_LABELS, ROLES_WITH_TOOLS } from '@/lib/agentRoles';
 import { api } from '@/lib/api';
 
 interface Skill {
@@ -32,18 +33,6 @@ interface ToolConfig {
 }
 
 const TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
-
-const ROLE_LABELS: Record<string, string> = {
-  COMMIT_TO_MEMORY: 'Commit to Memory',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security Review',
-  VALIDATE_CONTEXT: 'Validate Context',
-};
-
-// Only IMPLEMENTER uses tools currently
-const ROLES_WITH_TOOLS = new Set(['IMPLEMENTER']);
 
 function useAllSkills() {
   return useQuery({

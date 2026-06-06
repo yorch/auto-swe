@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { AGENT_ROLES, ROLE_LABELS, ROLES_WITH_TOOLS } from '@/lib/agentRoles';
 import { api } from '@/lib/api';
 
 interface Skill {
@@ -45,27 +46,6 @@ interface TeamAgentToolsResponse {
 }
 
 const TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
-
-const AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
-] as const;
-
-const ROLE_LABELS: Record<string, string> = {
-  COMMIT_TO_MEMORY: 'Commit to Memory',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security Review',
-  VALIDATE_CONTEXT: 'Validate Context',
-};
-
-// Only IMPLEMENTER uses tools currently
-const ROLES_WITH_TOOLS = new Set(['IMPLEMENTER']);
 
 function RoleToolEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_ROLES)[number] }) {
   const qc = useQueryClient();
