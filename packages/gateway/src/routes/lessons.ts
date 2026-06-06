@@ -150,6 +150,39 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // GET /api/v1/lessons/stats — Per-repo aggregate stats (ADMIN only)
+  app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
+    const repos = await fastify.prisma.repository.findMany({
+      orderBy: [{ organizationName: 'asc' }, { repoName: 'asc' }],
+      select: {
+        agentLessons: {
+          orderBy: { consolidatedAt: 'desc' },
+          select: { consolidatedAt: true },
+        },
+        id: true,
+        organizationName: true,
+        repoName: true,
+      },
+    });
+
+    const data = repos.map((repo) => {
+      const activeCount = repo.agentLessons.filter((l) => l.consolidatedAt === null).length;
+      const consolidatedCount = repo.agentLessons.filter((l) => l.consolidatedAt !== null).length;
+      const lastConsolidated = repo.agentLessons.find((l) => l.consolidatedAt !== null);
+      return {
+        activeCount,
+        consolidatedCount,
+        id: repo.id,
+        lastConsolidatedAt: lastConsolidated?.consolidatedAt ?? null,
+        organizationName: repo.organizationName,
+        repoName: repo.repoName,
+        totalCount: repo.agentLessons.length,
+      };
+    });
+
+    return { data };
+  });
+
   // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN only)
   app.delete<{ Params: { id: string } }>(
     '/:id',
