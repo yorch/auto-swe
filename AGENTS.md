@@ -22,6 +22,8 @@
 | `docs/configurable-workflows.md` | Living  | Workflow engine spec schema, node catalog, all 9 phases shipped; 39 architecture decisions |
 | `docs/oauth-setup.md`            | Living  | GitHub + Google OAuth app registration; magic-link setup                                   |
 | `docs/slack-app-setup.md`        | Living  | Slack app manifest import and admin configuration                                          |
+| `docs/github-app-setup.md`       | Living  | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
+| `docs/hitl-workflows.md`         | Living  | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
 
 **Historical** — preserved for design rationale; code is authoritative where they diverge:
 
@@ -376,6 +378,6 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | HTTP framework               | Fastify 5.x over Express                                  | ~3x throughput, built-in schema validation, plugin architecture   |
 | JWT auth                     | Access + refresh tokens with family-based reuse detection | Stateless auth with secure rotation; bcrypt for password hashing  |
 | DinD over K8s                | `docker run`/`exec`                                       | No cluster needed; same isolation model, zero infra beyond Docker |
-| Single PAT                   | One GitHub token                                          | JIT-scoped tokens require a GitHub App (future)                   |
+| PAT or GitHub App            | PAT for simplicity; GitHub App for production             | GitHub App: short-lived tokens, per-installation scope, full audit trail; admin UI at /admin/integrations |
 | pgvector for memory          | Vector embeddings on AgentLesson                          | Semantic similarity search for agent context enrichment           |
 | Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |

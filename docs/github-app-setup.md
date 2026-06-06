@@ -96,14 +96,14 @@ Click **Save**. The gateway encrypts and stores all fields using AES-256-GCM (sa
 
 ## How installation tokens work
 
-When the worker needs a GitHub token (for git clone or Octokit calls), it calls `resolveGitHubToken()` in `packages/worker/src/lib/githubAuth.ts`:
+When the worker needs a GitHub token (for git clone or Octokit calls), it calls `requireGitHubToken()` in `packages/worker/src/lib/githubAuth.ts`, which delegates to `resolveGitHubToken()` and converts a missing-config error into a Temporal `ApplicationFailure.nonRetryable` so the workflow fails fast instead of retrying indefinitely:
 
-1. Checks a module-level in-memory cache. If a cached token exists with more than 0 ms left on its 50-minute window, returns it immediately.
-2. Otherwise, builds a GitHub App JWT (RS256, signed with the private key, 10-minute expiry) and calls `POST /app/installations/:id/access_tokens` on the GitHub API.
-3. GitHub returns a token valid for 1 hour. The worker caches it for 50 minutes (10-minute safety margin before GitHub would reject it).
+1. Checks a module-level in-memory cache keyed by `appId | installationId | last-20-chars-of-privateKey`. If a valid cached token exists, returns it immediately.
+2. Otherwise, builds a GitHub App JWT (RS256 via `node:crypto`, 10-minute expiry) and calls `POST /app/installations/:id/access_tokens` on the GitHub API.
+3. GitHub returns a token and its `expires_at` timestamp. The worker caches the token until 60 seconds before that expiry — so the effective TTL tracks GitHub's actual token lifetime (typically ~1 hour), not a hardcoded window.
 4. On worker restart the cache is empty and a new token is fetched on the first activity call.
 
-The gateway does **not** generate installation tokens — the connection test for App mode simply validates that the fields are present and returns a descriptive message. Token generation is validated when the worker starts processing its first activity.
+The gateway does **not** generate installation tokens — the connection test for App mode simply validates that the fields are present and returns a descriptive message. Token generation is validated when the worker processes its first activity.
 
 ---
 
@@ -113,4 +113,4 @@ The gateway does **not** generate installation tokens — the connection test fo
 2. In the admin UI, paste the new PEM into the Private key field and click Save.
 3. Delete the old key from the GitHub App settings once you have confirmed the worker picks up the new one (watch the worker logs for a successful installation token request).
 
-The in-process cache will use the old token until it expires (up to 50 minutes). Force a refresh by restarting the worker.
+The in-process cache key includes a fingerprint of the private key, so the cache is automatically invalidated the next time any activity calls `requireGitHubToken()` after you save the new key — no worker restart required.
