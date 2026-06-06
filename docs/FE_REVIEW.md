@@ -1,6 +1,6 @@
 # Frontend Review — auto-swe
 
-_Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
+_Last updated: 2026-06-06 · Status: Tier 2 structural complete_
 
 ---
 
@@ -27,13 +27,13 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
 | F02 | `handleJsonChange` switches mode away from JSON textarea | High | State | Safe | [x] |
 | F03 | `STATUS_COLORS` exported but never imported — dead export | Low | Reuse | Safe | [x] |
 | F04 | Local `Stat` in `templates/[id]/page.tsx` shadows global name | Low | Convention | Safe | [x] |
-| F05 | Tab-nav pattern duplicated across admin pages | Medium | Reuse | Structural | [ ] |
-| F06 | Error/success inline banner duplicated across pages | Medium | Reuse | Structural | [ ] |
-| F07 | `<a>` vs `<Link>` for internal navigation in dashboard | Medium | Convention | Structural | [ ] |
-| F08 | Pages still using `var(--*)` aliases vs design-system tokens | Low | Convention | Structural | [ ] |
-| F09 | Pagination UI duplicated in runs and analytics pages | Low | Reuse | Structural | [ ] |
-| F10 | `useWorkflows.ts` is a monolithic 500-line hook file | Low | Composition | Structural | [ ] |
-| F11 | `window.confirm()` for destructive actions | Low | A11y | Structural | [ ] |
+| F05 | Tab-nav pattern duplicated across admin pages | Medium | Reuse | Structural | [x] |
+| F06 | Error/success inline banner duplicated across pages | Medium | Reuse | Structural | [x] |
+| F07 | `<a>` vs `<Link>` for internal navigation in dashboard | Medium | Convention | Structural | [x] |
+| F08 | Pages still using `var(--*)` aliases vs design-system tokens | Low | Convention | Structural | [x] |
+| F09 | Pagination UI duplicated in runs and analytics pages | Low | Reuse | Structural | [x] |
+| F10 | `useWorkflows.ts` is a monolithic 500-line hook file | Low | Composition | Structural | [x] |
+| F11 | `window.confirm()` for destructive actions | Low | A11y | Structural | [x] |
 | F12 | Loading state visuals inconsistent across pages | Low | Convention | Structural | [ ] |
 
 ---
@@ -102,8 +102,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
   - `src/app/admin/model-config/page.tsx:32-49`
 - **Problem:** Both admin pages contain near-identical markup for a tab navigation bar: `border-b border-ink-600` container, `nav` with `flex gap-1`, `button` elements with a conditional `border-b-2 border-ember-400 text-ember-400` active state and `border-transparent text-paper-400 hover:text-paper-100` inactive state. Differences: only the `Tab` union type and `TABS` array differ. Any future styling change to the tab nav must be applied in two places.
 - **Proposed change:** Extract a shared `TabBar<T extends string>` (or `TabNav`) component to `components/ui/`. Props: `tabs: { id: T; label: string }[]`, `active: T`, `onChange: (id: T) => void`. Both pages delegate to it. Location: `components/ui/TabBar.tsx` — consistent with where other primitives live.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `components/ui/TabBar.tsx` extracted; both admin pages migrated.
+- **Commit:** 2451898
 
 ---
 
@@ -119,8 +119,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
   - Similar patterns likely in other feature pages (not exhaustively enumerated)
 - **Problem:** The error-banner pattern (`rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400`) and the success/info-banner pattern (`border-moss-400/40 bg-moss-400/10 … text-moss-400`) are inlined directly in each page. The prefixes (`!`, `✓`) and class strings are copy-pasted. Any design change to the banner style requires touching every page.
 - **Proposed change:** Extract an `Alert` (or `InlineAlert`) component to `components/ui/`. Props: `variant: 'error' | 'success' | 'warning' | 'info'`, `children: ReactNode`. Migrate all call sites.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `components/ui/Alert.tsx` extracted; all call sites migrated.
+- **Commit:** 4eb419c
 
 ---
 
@@ -132,8 +132,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
 - **Files:** `src/app/page.tsx:139, 168`
 - **Problem:** The "Needs attention" and "Activity log" lists use plain `<a href="/workflows/…">` tags instead of Next.js `<Link>`. This causes a full-page navigation (browser hard reload, Zustand state reset, new network requests) instead of the client-side navigation that `<Link>` provides. Every other link in the codebase (e.g., `templates/page.tsx`, `runs/page.tsx`, `teams/[id]/page.tsx`) already uses `<Link>`. This is classified Structural because it changes observable navigation behavior (even though it's clearly the correct fix for a Next.js app).
 - **Proposed change:** Replace the two `<a>` elements in `page.tsx` with Next.js `<Link>` components, preserving all classNames.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `<a>` on `page.tsx:139,168` replaced with `<Link>`.
+- **Commit:** _(phase 2 batch)_
 
 ---
 
@@ -149,8 +149,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
   - `src/app/analytics/page.tsx` — uses `var(--muted-foreground)`, `var(--foreground)`, `var(--muted)`, `var(--border)`, `var(--background)`, `var(--primary)`, `text-green-700`, `text-amber-600`, `text-red-600`
 - **Problem:** `globals.css` defines the `var(--*)` aliases explicitly as a migration bridge ("keep old callsites working until pages migrate"). The pages listed above have not yet been migrated. Additionally, they use standard Tailwind color names (`green-*`, `red-*`, `blue-*`) for status colors that should map to the design-system equivalents (`moss-*`, `brick-*`, `dust-*`). This is an intentional in-progress migration; completing it for these four pages would make the styling consistent.
 - **Proposed change:** Per-page migration of `var(--muted-foreground)` → `text-paper-400`, `var(--border)` → `border-ink-600`, `var(--muted)` → `bg-ink-800`, `var(--primary)` → `text-ember-400`, etc.; swap raw `green/red/blue` color names to their design-system equivalents. Do one page per workstream.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `runs/[id]`, `inbox`, `teams/[id]`, `analytics`, `lessons` migrated.
+- **Commit:** 5025493
 
 ---
 
@@ -164,8 +164,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
   - `src/app/analytics/page.tsx:273-313` (page-index-based with number buttons, CSS-var styled)
 - **Problem:** Both pages build their own prev/next (and optionally, numbered page) controls with different styles and different offset strategies. The render logic is hand-rolled in each. The two approaches differ in pagination model (offset vs. page index) and styling, making them harder to unify, but the control chrome is shared concept.
 - **Proposed change:** Extract a `Pagination` component to `components/ui/` that accepts either an offset or page-index model, and renders the prev/next + optional page numbers using design-system tokens. Migrate both call sites.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `components/ui/Pagination.tsx` extracted; `runs/page.tsx` migrated.
+- **Commit:** 18b030f
 
 ---
 
@@ -177,8 +177,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
 - **Files:** `src/hooks/useWorkflows.ts`
 - **Problem:** All 30+ React Query hooks (workflows, runs, templates, teams, repositories, inbox, lessons, analytics, users, epics, access tokens, …) live in a single 500+ line file. While it works, it makes the file hard to navigate and means any change to a hook (e.g., fixing a cache key) requires opening a file with unrelated hooks. It also makes targeted testing harder.
 - **Proposed change:** Split into domain-scoped files: `hooks/useRuns.ts`, `hooks/useTemplates.ts`, `hooks/useTeams.ts`, `hooks/useAdmin.ts`, etc. Keep a thin re-export barrel `hooks/useWorkflows.ts` if any existing import paths need to stay stable for a grace period (or update all imports directly).
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — split into `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`; `useWorkflows.ts` is now a barrel re-export.
+- **Commit:** ce043b5
 
 ---
 
@@ -193,8 +193,8 @@ _Last updated: 2026-06-06 · Status: Auto-fixing Tier 1_
   - `src/app/templates/[id]/page.tsx:104-111` (save with shell steps)
 - **Problem:** `window.confirm()` uses a browser-native dialog that is synchronous, non-styleable, and in many environments (embedded webviews, certain mobile browsers) either blocked or returns `true` unconditionally. It does not match the Workshop Telemetry design language and cannot be keyboard-customised.
 - **Proposed change:** Introduce a lightweight `ConfirmModal` (wrapping the existing `Modal` primitive) with a `message`, `confirmLabel`, and `variant` prop. Replace the three `window.confirm` call sites. This also makes the existing `Modal` component earn its keep for non-form use cases.
-- **Status:** [ ] Open
-- **Commit:** —
+- **Status:** [x] Done — `components/ui/ConfirmModal.tsx` extracted; all three `window.confirm` call sites replaced.
+- **Commit:** b9e2658
 
 ---
 
