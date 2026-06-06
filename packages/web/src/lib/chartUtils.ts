@@ -3,13 +3,15 @@
  * These operate on the arrays already returned by useWorkflows() / useLessons().
  */
 
-import type { LessonListItem, WorkflowSummary } from '@auto-swe/shared/types/api';
+import type { WorkflowSummary } from '@auto-swe/shared/types/api';
+
+type LessonForChart = { failureType: string | null; createdAt: string };
 
 function toDateKey(dateStr: string): string {
   return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function last30Days(): string[] {
+function buildLast30Days(): string[] {
   const days: string[] = [];
   const today = new Date();
   for (let i = 29; i >= 0; i--) {
@@ -19,6 +21,8 @@ function last30Days(): string[] {
   }
   return days;
 }
+
+const LAST_30_DAYS = buildLast30Days();
 
 // ── Workflow transformations ──────────────────────────────────────────
 
@@ -37,7 +41,7 @@ export function groupWorkflowsByDate(
   workflows: WorkflowSummary[],
   days = 30
 ): { date: string; completed: number; failed: number; active: number }[] {
-  const buckets = last30Days().slice(-days);
+  const buckets = LAST_30_DAYS.slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
   for (const d of buckets) {
     map[d] = { active: 0, completed: 0, failed: 0 };
@@ -74,7 +78,7 @@ export function groupWorkflowsByRepo(
 
 // ── Lesson transformations ────────────────────────────────────────────
 
-export function groupLessonsByType(lessons: LessonListItem[]): { type: string; count: number }[] {
+export function groupLessonsByType(lessons: LessonForChart[]): { type: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const l of lessons) {
     const t = l.failureType?.replace(/_/g, ' ') ?? 'Unknown';
@@ -86,10 +90,10 @@ export function groupLessonsByType(lessons: LessonListItem[]): { type: string; c
 }
 
 export function groupLessonsByDate(
-  lessons: LessonListItem[],
+  lessons: LessonForChart[],
   days = 30
 ): { date: string; count: number }[] {
-  const buckets = last30Days().slice(-days);
+  const buckets = LAST_30_DAYS.slice(-days);
   const map: Record<string, number> = {};
   for (const d of buckets) {
     map[d] = 0;

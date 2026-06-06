@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
@@ -16,7 +17,7 @@ export default function WorkflowsPage() {
   const canSubmit = (repos ?? []).length > 0;
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <LoadingState />;
   }
 
   return (

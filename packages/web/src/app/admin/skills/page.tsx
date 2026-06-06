@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { api } from '@/lib/api';
 
@@ -181,7 +182,7 @@ export default function AdminSkillsPage() {
           <CardTitle>All Skills</CardTitle>
         </CardHeader>
         {isLoading ? (
-          <div className="py-8 text-center text-sm text-paper-400">Loading…</div>
+          <LoadingState />
         ) : !skills?.length ? (
           <div className="py-8 text-center text-sm text-paper-400">
             No skills yet. Create one with the button above.

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useTeams } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -15,7 +16,7 @@ export default function TeamsPage() {
   const [creating, setCreating] = useState(false);
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <LoadingState />;
   }
 
   return (

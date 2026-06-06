@@ -1,5 +1,6 @@
 'use client';
 
+import type { LessonListItem } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -13,14 +14,6 @@ export interface LessonRepoStats {
   lastConsolidatedAt: string | null;
 }
 
-export function useAdminLessonStats() {
-  return useQuery({
-    queryFn: () =>
-      api.get<{ data: LessonRepoStats[] }>('/api/v1/lessons/stats').then((r) => r.data),
-    queryKey: ['admin-lesson-stats'],
-  });
-}
-
 export interface Lesson {
   id: string;
   lessonSummary: string;
@@ -30,6 +23,14 @@ export interface Lesson {
   createdAt: string;
   repository: { id: string; organizationName: string; repoName: string };
   workflow: { id: string; temporalWorkflowId: string; currentStatus: string } | null;
+}
+
+export function useAdminLessonStats() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: LessonRepoStats[] }>('/api/v1/lessons/stats').then((r) => r.data),
+    queryKey: ['admin-lesson-stats'],
+  });
 }
 
 export function useLessons(includeConsolidated = false) {
@@ -57,4 +58,17 @@ export function useDeleteLesson() {
 
 export function triggerRepoConsolidation(repoId: string) {
   return api.post<{ data: { workflowId: string } }>('/api/v1/lessons/consolidate', { repoId });
+}
+
+export function useLessonSearch(q: string, repoId: string | null) {
+  return useQuery({
+    enabled: !!q && !!repoId,
+    queryFn: () =>
+      api
+        .get<{ data: LessonListItem[] }>(
+          `/api/v1/lessons/search?q=${encodeURIComponent(q)}&repoId=${repoId}`
+        )
+        .then((r) => r.data),
+    queryKey: ['lesson-search', q, repoId],
+  });
 }

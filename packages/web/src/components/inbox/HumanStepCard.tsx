@@ -3,6 +3,8 @@
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useWorkflows';
 
 const KIND_LABEL: Record<string, string> = {
@@ -13,10 +15,10 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 const KIND_COLOR: Record<string, string> = {
-  APPROVAL: 'bg-amber-100 text-amber-700',
-  DECISION: 'bg-blue-100 text-blue-700',
-  INPUT: 'bg-green-100 text-green-700',
-  REVIEW: 'bg-purple-100 text-purple-700',
+  APPROVAL: 'bg-amber-400/20 text-amber-400',
+  DECISION: 'bg-dust-400/20 text-dust-400',
+  INPUT: 'bg-moss-400/20 text-moss-400',
+  REVIEW: 'bg-violet-400/20 text-violet-400',
 };
 
 export interface HumanStepCardProps {
@@ -36,20 +38,20 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   }
 
   return (
-    <div className="border border-[var(--border)] rounded-lg p-4 space-y-3">
+    <div className="border border-ink-600 rounded-lg p-4 space-y-3">
       <div className="flex items-start gap-3">
         <span
-          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${KIND_COLOR[step.kind] ?? 'bg-gray-100 text-gray-600'}`}
+          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${KIND_COLOR[step.kind] ?? 'bg-ink-600 text-paper-400'}`}
         >
           {KIND_LABEL[step.kind] ?? step.kind}
         </span>
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm">{step.title}</div>
           {step.description && (
-            <div className="text-xs text-[var(--muted-foreground)] mt-0.5">{step.description}</div>
+            <div className="text-xs text-paper-400 mt-0.5">{step.description}</div>
           )}
           {showRunLink && (
-            <div className="text-xs text-[var(--muted-foreground)] mt-1">
+            <div className="text-xs text-paper-400 mt-1">
               {step.run.workRequest?.externalTicketId && (
                 <span className="font-mono">{step.run.workRequest.externalTicketId} · </span>
               )}
@@ -59,50 +61,46 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             </div>
           )}
         </div>
-        <button
-          className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--muted)]"
-          onClick={() => setExpanded((v) => !v)}
-          type="button"
-        >
+        <Button onClick={() => setExpanded((v) => !v)} size="sm" variant="ghost">
           {expanded ? 'Hide' : 'Respond'}
-        </button>
+        </Button>
       </div>
 
       {expanded && (
-        <div className="border-t border-[var(--border)] pt-3 space-y-3">
+        <div className="border-t border-ink-600 pt-3 space-y-3">
           {step.kind === 'APPROVAL' && (
             <div className="flex gap-2">
-              <button
-                className="px-4 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
+              <Button
                 disabled={respond.isPending}
                 onClick={() => handleRespond('approve')}
-                type="button"
+                size="sm"
+                variant="primary"
               >
                 Approve
-              </button>
-              <button
-                className="px-4 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:opacity-50"
+              </Button>
+              <Button
                 disabled={respond.isPending}
                 onClick={() => handleRespond('reject')}
-                type="button"
+                size="sm"
+                variant="danger"
               >
                 Reject
-              </button>
+              </Button>
             </div>
           )}
 
           {step.kind === 'DECISION' && (
             <div className="flex flex-wrap gap-2">
               {(step.options as Array<{ label: string; value: string }> | null)?.map((opt) => (
-                <button
-                  className="px-3 py-1.5 border border-[var(--border)] text-sm rounded hover:bg-[var(--muted)] disabled:opacity-50"
+                <Button
                   disabled={respond.isPending}
                   key={opt.value}
                   onClick={() => handleRespond('select', opt.value)}
-                  type="button"
+                  size="sm"
+                  variant="secondary"
                 >
                   {opt.label}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -122,7 +120,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 <label className="block space-y-0.5" key={field.key}>
                   <span className="text-xs font-medium block">
                     {field.label}
-                    {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                    {field.required && <span className="text-brick-400 ml-0.5">*</span>}
                   </span>
                   {field.type === 'boolean' ? (
                     <input
@@ -133,8 +131,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                       type="checkbox"
                     />
                   ) : field.type === 'select' ? (
-                    <select
-                      className="w-full text-sm border border-[var(--border)] rounded px-2 py-1"
+                    <Select
                       onChange={(e) =>
                         setInputValues((p) => ({ ...p, [field.key]: e.target.value }))
                       }
@@ -146,10 +143,10 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                           {o}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   ) : (
                     <input
-                      className="w-full text-sm border border-[var(--border)] rounded px-2 py-1 font-mono"
+                      className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono"
                       onChange={(e) =>
                         setInputValues((p) => ({
                           ...p,
@@ -163,39 +160,44 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   )}
                 </label>
               ))}
-              <button
-                className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              <Button
                 disabled={respond.isPending}
                 onClick={() => {
-                  const fields = step.fields as Array<{ key: string }> | null;
+                  const fields = step.fields as Array<{ key: string; type: string }> | null;
                   const value = Object.fromEntries(
-                    (fields ?? []).map((f) => [f.key, inputValues[f.key] ?? ''])
+                    (fields ?? []).map((f) => [
+                      f.key,
+                      f.type === 'number'
+                        ? (inputValues[f.key] ?? null)
+                        : (inputValues[f.key] ?? ''),
+                    ])
                   );
                   handleRespond('submit', value);
                 }}
-                type="button"
+                size="sm"
+                variant="primary"
               >
                 Submit
-              </button>
+              </Button>
             </div>
           )}
 
           {step.kind === 'REVIEW' && (
             <div className="space-y-2">
               <textarea
-                className="w-full text-sm border border-[var(--border)] rounded px-2 py-1 font-mono resize-y"
+                className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono resize-y"
                 onChange={(e) => setReviewText(e.target.value)}
                 rows={8}
                 value={reviewText}
               />
-              <button
-                className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              <Button
                 disabled={respond.isPending}
                 onClick={() => handleRespond('submit', reviewText)}
-                type="button"
+                size="sm"
+                variant="primary"
               >
                 Submit
-              </button>
+              </Button>
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@ import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { OAuthTab } from '@/components/integrations/OAuthTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { StorageTab } from '@/components/integrations/StorageTab';
+import { TabBar } from '@/components/ui/TabBar';
 
 type Tab = 'github' | 'slack' | 'storage' | 'oauth' | 'audit-log';
 
@@ -33,24 +34,7 @@ export default function AdminIntegrationsPage() {
           badge means the value is currently read from an environment variable.
         </p>
       </div>
-      <div className="border-b border-ink-600">
-        <nav className="flex gap-1">
-          {TABS.map((tab) => (
-            <button
-              className={`border-b-2 px-4 py-2 text-sm transition-colors ${
-                active === tab.id
-                  ? 'border-ember-400 text-ember-400'
-                  : 'border-transparent text-paper-400 hover:text-paper-100'
-              }`}
-              key={tab.id}
-              onClick={() => setActive(tab.id)}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}
       {active === 'slack' && <SlackTab />}
       {active === 'storage' && <StorageTab />}

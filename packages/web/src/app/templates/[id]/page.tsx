@@ -6,8 +6,11 @@ import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
 import { TemplateModelConfigSection } from '@/components/modelConfig/TemplateModelConfigSection';
 import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgentSkillsSection';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
@@ -57,6 +60,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [editorJson, setEditorJson] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
 
   useEffect(() => {
     if (versionDetail) {
@@ -86,13 +90,20 @@ export default function TemplateDetailPage({ params }: PageProps) {
   }, [visualSpec, stepRegistryByName]);
 
   if (isLoading || !template) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading template…
-      </div>
-    );
+    return <LoadingState message="loading template…" />;
   }
+
+  const commitSave = async (spec: WorkflowSpec) => {
+    try {
+      const result = await createVersion.mutateAsync(spec);
+      const newVersion = (result as { data: { version: number } }).data.version;
+      setSelectedVersion(newVersion);
+      setMode('view');
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'save failed');
+    }
+  };
 
   const handleSave = async () => {
     const specToSave = mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
@@ -102,22 +113,10 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
     const shellCount = Object.values(specToSave.nodes).filter((n) => n.type === 'shell').length;
     if (shellCount > 0) {
-      const ok = window.confirm(
-        `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
-      );
-      if (!ok) {
-        return;
-      }
+      setPendingShellSpec(specToSave);
+      return;
     }
-    try {
-      const result = await createVersion.mutateAsync(specToSave);
-      const newVersion = (result as { data: { version: number } }).data.version;
-      setSelectedVersion(newVersion);
-      setMode('view');
-      setSaveError(null);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'save failed');
-    }
+    await commitSave(specToSave);
   };
 
   const handleCancel = () => {
@@ -150,9 +149,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (parsed.ok) {
       setEditorSpec(parsed.spec);
     }
-    if (mode !== 'edit') {
-      setMode('edit');
-    }
+    // Stay in 'json' mode while editing the textarea — isDirty already tracks
+    // the JSON-mode dirty state via the editorJson !== storedJson comparison.
   };
 
   const isDirty =
@@ -257,11 +255,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {saveError && (
-        <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-          ! {saveError}
-        </div>
-      )}
+      {saveError && <Alert>{saveError}</Alert>}
 
       {/* Edit mode: drops the right side rail and escapes the page's `px-10`
           padding so the editor fills the available main-content area. We can't
@@ -321,11 +315,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   spellCheck={false}
                   value={editorJson}
                 />
-                {jsonParsed?.ok === false && (
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-brick-400">
-                    ! JSON parse error — {jsonParsed.error}
-                  </div>
-                )}
+                {jsonParsed?.ok === false && <Alert>JSON parse error — {jsonParsed.error}</Alert>}
               </div>
             )}
           </div>
@@ -409,9 +399,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
               <Card variant="inset">
                 <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
                 <dl className="space-y-3 text-sm">
-                  <Stat label="Runs" value={analytics.totalRuns} />
+                  <VersionStat label="Runs" value={analytics.totalRuns} />
                   {analytics.avgCostPerRun != null && (
-                    <Stat label="Avg cost / run" value={`$${analytics.avgCostPerRun.toFixed(2)}`} />
+                    <VersionStat
+                      label="Avg cost / run"
+                      value={`$${analytics.avgCostPerRun.toFixed(2)}`}
+                    />
                   )}
                 </dl>
               </Card>
@@ -426,11 +419,23 @@ export default function TemplateDetailPage({ params }: PageProps) {
           <TemplateAgentSkillsSection templateId={id} />
         </div>
       )}
+      <ConfirmModal
+        confirmLabel="Save"
+        message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`}
+        onClose={() => setPendingShellSpec(null)}
+        onConfirm={() => {
+          if (pendingShellSpec) {
+            void commitSave(pendingShellSpec);
+          }
+        }}
+        open={pendingShellSpec !== null}
+        title="Shell steps detected"
+      />
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+function VersionStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex items-baseline justify-between border-t border-ink-600 pt-2 first:border-t-0 first:pt-0">
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">{label}</dt>

@@ -10,6 +10,8 @@ import { TeamAgentSkillsSection } from '@/components/teams/TeamAgentSkillsSectio
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
@@ -33,12 +35,14 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <LoadingState />;
   }
   if (!team) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Team not found</div>;
+    return <div className="text-center py-12 text-paper-400">Team not found</div>;
   }
 
   const memberships = team.memberships ?? [];
@@ -48,7 +52,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Link className="text-[var(--primary)] hover:underline text-sm" href="/teams">
+          <Link className="text-ember-400 hover:underline text-sm" href="/teams">
             &larr; Back
           </Link>
           <h2 className="text-2xl font-bold">{team.name}</h2>
@@ -72,7 +76,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           </CardHeader>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[var(--border)]">
+              <tr className="border-b border-ink-600">
                 <th className="text-left py-2">Email</th>
                 <th className="text-left py-2">Platform Role</th>
                 <th className="text-left py-2">Team Role</th>
@@ -81,14 +85,13 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </thead>
             <tbody>
               {memberships.map((m) => (
-                <tr className="border-b border-[var(--border)]" key={m.id}>
+                <tr className="border-b border-ink-600" key={m.id}>
                   <td className="py-2">{m.user?.email}</td>
-                  <td className="py-2 text-[var(--muted-foreground)]">{m.user?.role}</td>
+                  <td className="py-2 text-paper-400">{m.user?.role}</td>
                   <td className="py-2">
                     {canManage && m.user?.id ? (
                       <Select
                         className="h-7 w-auto px-2 text-xs"
-                        defaultValue={m.role}
                         onChange={(e) =>
                           m.user?.id &&
                           updateMember.mutate({
@@ -96,6 +99,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                             userId: m.user.id,
                           })
                         }
+                        value={m.role}
                       >
                         <option value="ENGINEER">ENGINEER</option>
                         <option value="LEAD">LEAD</option>
@@ -111,16 +115,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         <Button
                           disabled={removeMember.isPending}
                           onClick={() => {
-                            const userId = m.user?.id;
-                            if (!userId) {
-                              return;
-                            }
-                            if (
-                              window.confirm(
-                                `Remove ${m.user?.email ?? 'this user'} from ${team.name}?`
-                              )
-                            ) {
-                              removeMember.mutate(userId);
+                            if (m.user?.id) {
+                              setConfirmRemoveId(m.user.id);
+                              setConfirmRemoveEmail(m.user.email ?? null);
                             }
                           }}
                           size="sm"
@@ -154,15 +151,13 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           <div className="space-y-2">
             {(team.repositories ?? []).map((r) => (
               <div
-                className="flex items-center justify-between text-sm p-2 rounded hover:bg-[var(--muted)]"
+                className="flex items-center justify-between text-sm p-2 rounded hover:bg-ink-800"
                 key={r.id}
               >
                 <span className="font-medium">
                   {r.organizationName}/{r.repoName}
                 </span>
-                <span
-                  className={`text-xs ${r.isActive ? 'text-[var(--success)]' : 'text-[var(--muted-foreground)]'}`}
-                >
+                <span className={`text-xs ${r.isActive ? 'text-moss-400' : 'text-paper-400'}`}>
                   {r.isActive ? 'Active' : 'Inactive'}
                 </span>
               </div>
@@ -199,6 +194,22 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         onClose={() => setAdding(false)}
         open={adding}
         teamId={id}
+      />
+      <ConfirmModal
+        confirmLabel="Remove"
+        dangerous
+        message={`Remove ${confirmRemoveEmail ?? 'this user'} from ${team.name}?`}
+        onClose={() => {
+          setConfirmRemoveId(null);
+          setConfirmRemoveEmail(null);
+        }}
+        onConfirm={() => {
+          if (confirmRemoveId) {
+            removeMember.mutate(confirmRemoveId);
+          }
+        }}
+        open={confirmRemoveId !== null}
+        title="Remove member"
       />
     </div>
   );

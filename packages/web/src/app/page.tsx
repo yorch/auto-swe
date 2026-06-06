@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
@@ -8,6 +9,7 @@ import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding'
 import { SubmitWorkRequestModal } from '@/components/dashboard/SubmitWorkRequestModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -40,14 +42,7 @@ export default function DashboardPage() {
   const repoData = useMemo(() => groupWorkflowsByRepo(all), [all]);
 
   if (isLoading || reposLoading) {
-    return (
-      <div className="flex h-[60vh] items-center justify-center">
-        <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-500">
-          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-          loading telemetry…
-        </div>
-      </div>
-    );
+    return <LoadingState message="loading telemetry…" />;
   }
 
   if (all.length === 0) {
@@ -135,7 +130,7 @@ export default function DashboardPage() {
             <ul className="divide-y divide-ink-600">
               {needsAttention.map((w) => (
                 <li key={w.id}>
-                  <a
+                  <Link
                     className="group flex items-center justify-between py-3 transition-colors hover:text-ember-400"
                     href={`/workflows/${w.id}`}
                   >
@@ -151,7 +146,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <StatusBadge status={w.currentStatus} />
-                  </a>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -166,7 +161,7 @@ export default function DashboardPage() {
           <ul className="divide-y divide-ink-600">
             {all.slice(0, 10).map((w) => (
               <li key={w.id}>
-                <a
+                <Link
                   className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
                   href={`/workflows/${w.id}`}
                 >
@@ -180,7 +175,7 @@ export default function DashboardPage() {
                   <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
                     {formatRelativeTime(w.updatedAt)}
                   </span>
-                </a>
+                </Link>
               </li>
             ))}
           </ul>

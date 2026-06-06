@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { ROLE_LABELS } from '@/lib/agentRoles';
 import { api } from '@/lib/api';
 
@@ -37,7 +38,7 @@ export default function AdminAgentsPage() {
           <CardTitle>All Roles</CardTitle>
         </CardHeader>
         {isLoading ? (
-          <div className="py-8 text-center text-sm text-paper-400">Loading…</div>
+          <LoadingState />
         ) : (
           <table className="w-full text-sm">
             <thead>

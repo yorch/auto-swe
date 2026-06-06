@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
+import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
@@ -32,7 +33,7 @@ export default function WorkflowRunsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold">Workflow runs</h2>
-        <span className="text-sm text-[var(--muted-foreground)]">{total} total</span>
+        <span className="text-sm text-paper-400">{total} total</span>
       </div>
 
       <Card variant="inset">
@@ -75,7 +76,7 @@ export default function WorkflowRunsPage() {
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
+            <tr className="border-b border-ink-600 bg-ink-800">
               <th className="text-left px-4 py-3 font-medium">Ticket</th>
               <th className="text-left px-4 py-3 font-medium">Description</th>
               <th className="text-left px-4 py-3 font-medium">Template</th>
@@ -99,59 +100,38 @@ export default function WorkflowRunsPage() {
               </tr>
             )}
             {runs.map((r) => (
-              <tr
-                className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors"
-                key={r.id}
-              >
+              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={r.id}>
                 <td className="px-4 py-3">
                   <Link
-                    className="text-[var(--primary)] hover:underline font-medium"
+                    className="text-ember-400 hover:underline font-medium"
                     href={`/runs/${r.id}`}
                   >
                     {r.workRequest?.externalTicketId ?? '—'}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)] truncate max-w-md">
+                <td className="px-4 py-3 text-paper-400 truncate max-w-md">
                   {r.workRequest?.description ?? '—'}
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">
-                  v{r.templateVersion}
-                </td>
+                <td className="px-4 py-3 font-mono text-xs text-paper-400">v{r.templateVersion}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {formatRelativeTime(r.startedAt)}
-                </td>
+                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-          {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
-        </span>
-        <div className="flex gap-2">
-          <button
-            className="rounded-sm border border-ink-500 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-200 hover:border-ember-400 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!hasPrev}
-            onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-            type="button"
-          >
-            ← Prev
-          </button>
-          <button
-            className="rounded-sm border border-ink-500 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-200 hover:border-ember-400 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!hasNext}
-            onClick={() => setOffset((o) => o + PAGE_SIZE)}
-            type="button"
-          >
-            Next →
-          </button>
-        </div>
-      </div>
+      <Pagination
+        hasNext={hasNext}
+        hasPrev={hasPrev}
+        onNext={() => setOffset((o) => o + PAGE_SIZE)}
+        onPrev={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+        rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+        rangeStart={total === 0 ? 0 : offset + 1}
+        total={total}
+      />
     </div>
   );
 }

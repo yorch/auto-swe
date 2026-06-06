@@ -4,8 +4,10 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
@@ -65,11 +67,7 @@ export default function TemplatesPage() {
       {/* Starter gallery */}
       <section className="fade-up stagger-1">
         <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
-        {forkError && (
-          <div className="mb-4 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-            ! {forkError}
-          </div>
-        )}
+        {forkError && <Alert className="mb-4">{forkError}</Alert>}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {STARTER_TEMPLATES.map((s) => {
             const isForking = forkingId === s.id;
@@ -112,10 +110,7 @@ export default function TemplatesPage() {
           title="Existing templates"
         />
         {isLoading ? (
-          <div className="flex items-center justify-center py-12 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-            <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-            loading…
-          </div>
+          <LoadingState />
         ) : (
           <Card className="overflow-hidden p-0" variant="inset">
             <table className="w-full text-sm">

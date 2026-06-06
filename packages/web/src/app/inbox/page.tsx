@@ -1,20 +1,21 @@
 'use client';
 
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useInbox } from '@/hooks/useWorkflows';
 
 export default function InboxPage() {
   const { data: steps, isLoading } = useInbox();
 
   if (isLoading) {
-    return <div className="p-8 text-sm text-[var(--muted-foreground)]">Loading…</div>;
+    return <LoadingState />;
   }
 
   if (!steps?.length) {
     return (
       <div className="p-8">
         <h1 className="text-lg font-semibold mb-2">Inbox</h1>
-        <p className="text-sm text-[var(--muted-foreground)]">No pending actions.</p>
+        <p className="text-sm text-paper-400">No pending actions.</p>
       </div>
     );
   }

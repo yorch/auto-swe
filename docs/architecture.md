@@ -155,7 +155,7 @@ packages/
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status overlay |
 | `src/app/templates/` | Workflow template list + 5 starter specs |
 | `src/app/templates/[id]/` | React Flow canvas editor (`TemplateEditor`) — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
-| `src/app/workflows/` | Active workflow list (renamed "Active Runs") |
+| `src/app/workflows/` | Active workflow list |
 | `src/app/epics/` | Multi-repo epic creation + status |
 | `src/app/repositories/` | Repository CRUD |
 | `src/app/teams/` | Team management — members, roles, shell-image allowlist |
@@ -164,10 +164,34 @@ packages/
 | `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
 | `src/app/settings/` | User settings — API tokens (create / list / revoke) |
 | `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability |
-| `src/hooks/` | TanStack Query hooks (one per resource) — `useWorkflows`, `useRuns`, etc. |
-| `src/stores/` | Zustand stores — `authStore.ts`, `teamStore.ts` |
-| `src/components/` | Shared primitives: `Button`, `Input`, `Card`, `Modal`, `Stat`, `WorkflowDag`, `TemplateEditor` |
-| `src/lib/` | API client helpers, auth helpers, chart theme (`chartChrome.tsx`) |
+| `src/hooks/` | TanStack Query hooks split by resource domain — `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`, `useLessons`; `useWorkflows` is a barrel re-export |
+| `src/stores/` | Zustand stores — `authStore.ts` (JWT + user identity), `teamStore.ts` (active team context) |
+| `src/components/ui/` | Design-system primitives: `Button`, `Input`, `Select`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `LoadingState`, `Stat`, `StatusBadge` |
+| `src/components/<feature>/` | Feature components grouped by domain (`charts/`, `dashboard/`, `modelConfig/`, `repositories/`, `teams/`, `templates/`) |
+| `src/lib/api.ts` | `ApiClient` — all fetches; automatic 401 → token refresh |
+| `src/lib/chartUtils.ts` | Pure data transformations for Recharts (`groupWorkflowsByStatus`, `groupLessonsByType`, etc.) |
+| `src/lib/utils.ts` | `formatDate`, `formatRelativeTime`, `formatCost`, `formatPercent`, `cn()` |
+
+#### Design system
+
+The dashboard uses a custom "Workshop Telemetry" theme defined via Tailwind v4 `@theme` in `globals.css`.
+
+| Token family | Semantic use |
+|---|---|
+| `ink-*` (900→600) | Backgrounds and borders — dark surfaces |
+| `paper-*` (100→500) | Foreground text — light on dark |
+| `ember-*` | Primary accent — interactive elements, links |
+| `moss-*` | Success states |
+| `brick-*` | Error / danger states |
+| `amber-*` | Warning states |
+| `dust-*` | Informational / neutral accent |
+| `violet-*` | Secondary accent |
+
+Legacy `var(--muted-foreground)`, `var(--border)`, `var(--muted)`, `var(--primary)` aliases are bridged in `globals.css` for backward compatibility — new code uses tokens directly.
+
+#### Data fetching conventions
+
+All server state lives in TanStack Query (staleTime 30 s, retry 1). Running workflows use an adaptive refetch interval (3 s); terminal-state queries use 30 s. All hooks import `api` from `src/lib/api.ts` — no direct `fetch` calls in components.
 
 ---
 
