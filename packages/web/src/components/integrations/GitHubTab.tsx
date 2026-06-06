@@ -37,7 +37,7 @@ export function GitHubTab() {
   const [appClientSecret, setAppClientSecret] = useState('');
   const [appPrivateKey, setAppPrivateKey] = useState('');
   const [appInstallationId, setAppInstallationId] = useState('');
-  const [authMode, setAuthMode] = useState('');
+  const [authMode, setAuthMode] = useState<string | null>(null);
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -90,7 +90,7 @@ export function GitHubTab() {
     if (appInstallationId) {
       body.appInstallationId = appInstallationId;
     }
-    if (authMode) {
+    if (authMode !== null) {
       body.authMode = authMode || null;
     }
 
@@ -302,7 +302,7 @@ export function GitHubTab() {
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
               id="gh-auth-mode"
               onChange={(e) => setAuthMode(e.target.value)}
-              value={authMode}
+              value={authMode ?? ''}
             >
               <option value="">auto (app if configured, else PAT)</option>
               <option value="pat">pat (always use PAT)</option>

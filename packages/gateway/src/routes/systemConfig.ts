@@ -83,10 +83,10 @@ function src(dbPresent: boolean, envKey: string): ConfigSource {
 }
 
 /// Builds the list of field names that were provided in a PUT body.
-/// Pairs are [fieldName, value]; a field is included when its value is truthy
-/// (secrets) or !== undefined (clearable non-secret fields like oauthClientId).
+/// Pairs are [fieldName, value]; undefined means not sent (skip); null means
+/// explicitly cleared (record in audit log); '' means empty secret input (skip).
 function changedKeys(pairs: [string, unknown][]): string[] {
-  return pairs.filter(([, v]) => v !== undefined && v !== '' && v !== null).map(([k]) => k);
+  return pairs.filter(([, v]) => v !== undefined && v !== '').map(([k]) => k);
 }
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ const GitHubPutBody = z.object({
   appId: z.string().max(100).nullable().optional(),
   appInstallationId: z.string().max(100).nullable().optional(),
   appPrivateKey: z.string().min(1).max(10_000).optional(),
-  authMode: z.enum(['pat', 'app']).nullable().optional(),
+  authMode: z.enum(['auto', 'pat', 'app']).nullable().optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   oauthClientId: z.string().max(200).nullable().optional(),
   oauthClientSecret: z.string().min(1).max(500).optional(),

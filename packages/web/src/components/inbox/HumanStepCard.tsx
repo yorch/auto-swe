@@ -28,7 +28,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const respond = useRespondToHumanStep();
   const [expanded, setExpanded] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
-  const [reviewText, setReviewText] = useState('');
+  const [reviewText, setReviewText] = useState(() => String(step.context ?? ''));
 
   function handleRespond(action: string, value?: unknown) {
     respond.mutate({ action, id: step.id, value });
@@ -186,7 +186,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 className="w-full text-sm border border-[var(--border)] rounded px-2 py-1 font-mono resize-y"
                 onChange={(e) => setReviewText(e.target.value)}
                 rows={8}
-                value={reviewText || String(step.context ?? '')}
+                value={reviewText}
               />
               <button
                 className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
