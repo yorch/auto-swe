@@ -1,5 +1,6 @@
 import { createSign } from 'node:crypto';
 import type { ResolvedGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { ApplicationFailure } from '@temporalio/activity';
 
 interface CachedInstallToken {
   token: string;
@@ -8,6 +9,15 @@ interface CachedInstallToken {
 }
 
 let _cachedInstallToken: CachedInstallToken | null = null;
+
+export class GitHubTokenMissingError extends Error {
+  constructor() {
+    super(
+      'No GitHub token configured: set a PAT or configure GitHub App (appId + privateKey + installationId)'
+    );
+    this.name = 'GitHubTokenMissingError';
+  }
+}
 
 function configCacheKey(config: ResolvedGitHubConfig): string {
   // Use the last 20 chars of the private key so a key rotation busts the cache
@@ -88,7 +98,24 @@ export async function resolveGitHubToken(config: ResolvedGitHubConfig): Promise<
     return config.token;
   }
 
-  throw new Error(
-    'No GitHub token configured: set a PAT or configure GitHub App (appId + privateKey + installationId)'
-  );
+  throw new GitHubTokenMissingError();
+}
+
+/**
+ * Like resolveGitHubToken but converts GitHubTokenMissingError into
+ * ApplicationFailure.nonRetryable so Temporal does not burn retry budget
+ * on a missing-config condition. Use this in all activity call sites.
+ */
+export async function requireGitHubToken(config: ResolvedGitHubConfig): Promise<string> {
+  try {
+    return await resolveGitHubToken(config);
+  } catch (err) {
+    if (err instanceof GitHubTokenMissingError) {
+      throw ApplicationFailure.nonRetryable(
+        `GitHub token not configured. Set it at /admin/integrations.`,
+        'CONFIG_MISSING'
+      );
+    }
+    throw err;
+  }
 }

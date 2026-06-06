@@ -10,7 +10,7 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { resolveGitHubToken } from '../lib/githubAuth.js';
+import { GitHubTokenMissingError, resolveGitHubToken } from '../lib/githubAuth.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -29,13 +29,12 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
   try {
     githubToken = await resolveGitHubToken(ghConfig);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // If auth is entirely unconfigured, proceed unauthenticated (public repos).
-    // Any other error (e.g. malformed App credentials) surfaces immediately so
-    // the operator knows why the log fetch failed rather than getting a 401.
-    if (!msg.includes('No GitHub token configured')) {
-      return `Cannot fetch CI logs — GitHub auth error: ${msg}`;
+    if (!(err instanceof GitHubTokenMissingError)) {
+      // Real auth error (e.g. malformed App credentials) — surface it so the
+      // operator knows why the log fetch failed rather than seeing a 401.
+      return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
     }
+    // No token configured at all: proceed unauthenticated for public repos.
   }
   const response = await fetch(logsUrl, {
     headers: {

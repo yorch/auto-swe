@@ -36,7 +36,7 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { resolveGitHubToken } from '../lib/githubAuth.js';
+import { requireGitHubToken } from '../lib/githubAuth.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -158,7 +158,7 @@ async function provisionGateWorkspace(
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
-  const githubToken = await resolveGitHubToken(ghConfig);
+  const githubToken = await requireGitHubToken(ghConfig);
 
   const workspace = createWorkspace(
     repoUrl,
@@ -288,7 +288,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
   const ghConfig = await resolveGitHubConfig();
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = await resolveGitHubToken(ghConfig);
+  const githubToken = await requireGitHubToken(ghConfig);
 
   // Load full gate logs from the artifact store, falling back to the inline
   // summary if the artifact is missing or unreadable.

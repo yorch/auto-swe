@@ -91,7 +91,7 @@ export function GitHubTab() {
       body.appInstallationId = appInstallationId;
     }
     if (authMode !== null) {
-      body.authMode = authMode || null;
+      body.authMode = authMode;
     }
 
     try {
@@ -302,9 +302,9 @@ export function GitHubTab() {
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
               id="gh-auth-mode"
               onChange={(e) => setAuthMode(e.target.value)}
-              value={authMode ?? ''}
+              value={authMode ?? 'auto'}
             >
-              <option value="">auto (app if configured, else PAT)</option>
+              <option value="auto">auto (app if configured, else PAT)</option>
               <option value="pat">pat (always use PAT)</option>
               <option value="app">app (always use App)</option>
             </select>

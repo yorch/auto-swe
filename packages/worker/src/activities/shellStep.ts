@@ -31,7 +31,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { EXEC_OPTS } from '../lib/execUtils.js';
-import { resolveGitHubToken } from '../lib/githubAuth.js';
+import { requireGitHubToken } from '../lib/githubAuth.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
@@ -134,15 +134,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     resolveGitHubConfig(),
   ]);
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  let token: string;
-  try {
-    token = await resolveGitHubToken(ghConfig);
-  } catch (err) {
-    throw ApplicationFailure.nonRetryable(
-      `GitHub token not configured. Set it at /admin/integrations. (${err instanceof Error ? err.message : String(err)})`,
-      'CONFIG_MISSING'
-    );
-  }
+  const token = await requireGitHubToken(ghConfig);
   const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
     'https://',
     `https://x-access-token:${token}@`

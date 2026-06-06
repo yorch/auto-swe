@@ -4,7 +4,7 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { resolveGitHubToken } from '../lib/githubAuth.js';
+import { requireGitHubToken } from '../lib/githubAuth.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -22,15 +22,7 @@ export async function createOrUpdatePullRequest(
     resolveGitHubConfig(),
     resolveWorkflowDefaults(),
   ]);
-  let token: string;
-  try {
-    token = await resolveGitHubToken(ghConfig);
-  } catch (err) {
-    throw ApplicationFailure.nonRetryable(
-      `GitHub token not configured. Set it at /admin/integrations. (${err instanceof Error ? err.message : String(err)})`,
-      'CONFIG_MISSING'
-    );
-  }
+  const token = await requireGitHubToken(ghConfig);
   const githubApiUrl =
     repo.githubApiUrl ??
     (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
