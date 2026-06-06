@@ -7,44 +7,31 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Select';
 import { api } from '@/lib/api';
 
 interface Skill {
   id: string;
   name: string;
   description: string | null;
-  type: 'TOOL' | 'PROMPT_FRAGMENT';
-  toolKey: string | null;
-  promptText: string | null;
+  promptText: string;
   isBuiltIn: boolean;
   usedByCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
-const TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
-
-function useSkills(type?: 'TOOL' | 'PROMPT_FRAGMENT') {
+function useSkills() {
   return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: Skill[] }>(`/api/v1/admin/skills${type ? `?type=${type}` : ''}`)
-        .then((r) => r.data),
-    queryKey: ['skills', type ?? 'all'],
+    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/admin/skills').then((r) => r.data),
+    queryKey: ['skills', 'all'],
   });
 }
 
 function useCreateSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      name: string;
-      description?: string;
-      type: 'TOOL' | 'PROMPT_FRAGMENT';
-      toolKey?: string;
-      promptText?: string;
-    }) => api.post<{ data: Skill }>('/api/v1/admin/skills', body).then((r) => r.data),
+    mutationFn: (body: { name: string; description?: string; promptText: string }) =>
+      api.post<{ data: Skill }>('/api/v1/admin/skills', body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }
@@ -60,8 +47,6 @@ function useDeleteSkill() {
 type SkillForm = {
   name: string;
   description: string;
-  type: 'TOOL' | 'PROMPT_FRAGMENT';
-  toolKey: string;
   promptText: string;
 };
 
@@ -70,8 +55,6 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
     description: '',
     name: '',
     promptText: '',
-    toolKey: 'readFile',
-    type: 'PROMPT_FRAGMENT',
   });
   const create = useCreateSkill();
   const [error, setError] = useState<string | null>(null);
@@ -83,18 +66,10 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
       await create.mutateAsync({
         description: form.description || undefined,
         name: form.name,
-        promptText: form.type === 'PROMPT_FRAGMENT' ? form.promptText : undefined,
-        toolKey: form.type === 'TOOL' ? form.toolKey : undefined,
-        type: form.type,
+        promptText: form.promptText,
       });
       onClose();
-      setForm({
-        description: '',
-        name: '',
-        promptText: '',
-        toolKey: 'readFile',
-        type: 'PROMPT_FRAGMENT',
-      });
+      setForm({ description: '', name: '', promptText: '' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create skill');
     }
@@ -116,42 +91,15 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
             value={form.description}
           />
         </FieldWrapper>
-        <FieldWrapper label="Type">
-          <Select
-            onChange={(e) =>
-              setForm((f) => ({ ...f, type: e.target.value as 'TOOL' | 'PROMPT_FRAGMENT' }))
-            }
-            value={form.type}
-          >
-            <option value="PROMPT_FRAGMENT">Prompt Fragment</option>
-            <option value="TOOL">Tool</option>
-          </Select>
+        <FieldWrapper label="Prompt Text">
+          <textarea
+            className="w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
+            onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+            required
+            rows={6}
+            value={form.promptText}
+          />
         </FieldWrapper>
-        {form.type === 'TOOL' && (
-          <FieldWrapper label="Tool Key">
-            <Select
-              onChange={(e) => setForm((f) => ({ ...f, toolKey: e.target.value }))}
-              value={form.toolKey}
-            >
-              {TOOL_KEYS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </Select>
-          </FieldWrapper>
-        )}
-        {form.type === 'PROMPT_FRAGMENT' && (
-          <FieldWrapper label="Prompt Text">
-            <textarea
-              className="w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
-              onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
-              required
-              rows={6}
-              value={form.promptText}
-            />
-          </FieldWrapper>
-        )}
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -207,11 +155,6 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
   );
 }
 
-const TYPE_BADGE: Record<string, string> = {
-  PROMPT_FRAGMENT: 'bg-violet-400/10 text-violet-400 border-violet-400/30',
-  TOOL: 'bg-ember-400/10 text-ember-400 border-ember-400/30',
-};
-
 export default function AdminSkillsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
@@ -223,8 +166,9 @@ export default function AdminSkillsPage() {
         <div>
           <h2 className="text-2xl font-bold">Skill Library</h2>
           <p className="mt-1 text-sm text-paper-400">
-            Reusable capabilities (tool references or prompt fragments) that can be assigned to
-            agent roles at any scope.
+            Reusable prompt-fragment instructions injected into an agent&apos;s system prompt.
+            Assigned to agent roles at any scope. Tool access control is managed separately via
+            Agent Tool Access.
           </p>
         </div>
         <Button onClick={() => setNewOpen(true)} variant="primary">
@@ -247,7 +191,6 @@ export default function AdminSkillsPage() {
             <thead>
               <tr className="border-b border-ink-600">
                 <th className="py-2 text-left text-xs text-paper-500">Name</th>
-                <th className="py-2 text-left text-xs text-paper-500">Type</th>
                 <th className="py-2 text-left text-xs text-paper-500">Built-in</th>
                 <th className="py-2 text-left text-xs text-paper-500">Description</th>
                 <th className="py-2 text-left text-xs text-paper-500">Used by</th>
@@ -259,13 +202,6 @@ export default function AdminSkillsPage() {
                 <tr className="border-b border-ink-600 last:border-0" key={skill.id}>
                   <td className="py-2 pr-4 font-medium text-paper-100">{skill.name}</td>
                   <td className="py-2 pr-4">
-                    <span
-                      className={`inline-flex items-center rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${TYPE_BADGE[skill.type] ?? ''}`}
-                    >
-                      {skill.type === 'TOOL' ? 'Tool' : 'Prompt'}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
                     {skill.isBuiltIn && (
                       <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
                         built-in
@@ -273,9 +209,7 @@ export default function AdminSkillsPage() {
                     )}
                   </td>
                   <td className="max-w-xs py-2 pr-4">
-                    <span className="line-clamp-1 text-paper-400">
-                      {skill.description ?? (skill.toolKey ? `Tool: ${skill.toolKey}` : '—')}
-                    </span>
+                    <span className="line-clamp-1 text-paper-400">{skill.description ?? '—'}</span>
                   </td>
                   <td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</td>
                   <td className="py-2 text-right">

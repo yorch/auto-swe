@@ -10,8 +10,7 @@ interface Skill {
   id: string;
   name: string;
   description: string | null;
-  type: 'TOOL' | 'PROMPT_FRAGMENT';
-  toolKey: string | null;
+  promptText: string;
   isBuiltIn: boolean;
 }
 
@@ -29,6 +28,23 @@ interface TeamAgentSkillsResponse {
     hasTeamOverride: boolean;
   };
 }
+
+interface ToolConfig {
+  id: string;
+  agentRole: string;
+  scope: string;
+  enabledTools: string[];
+}
+
+interface TeamAgentToolsResponse {
+  data: {
+    teamConfig: ToolConfig | null;
+    globalConfig: ToolConfig | null;
+    hasTeamOverride: boolean;
+  };
+}
+
+const TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
 
 const AGENT_ROLES = [
   'IMPLEMENTER',
@@ -48,10 +64,142 @@ const ROLE_LABELS: Record<string, string> = {
   VALIDATE_CONTEXT: 'Validate Context',
 };
 
-const TYPE_BADGE: Record<string, string> = {
-  PROMPT_FRAGMENT: 'bg-violet-400/10 text-violet-400 border-violet-400/30',
-  TOOL: 'bg-ember-400/10 text-ember-400 border-ember-400/30',
-};
+// Only IMPLEMENTER uses tools currently
+const ROLES_WITH_TOOLS = new Set(['IMPLEMENTER']);
+
+function RoleToolEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_ROLES)[number] }) {
+  const qc = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryFn: () =>
+      api
+        .get<TeamAgentToolsResponse>(`/api/v1/teams/${teamId}/agents/${role}/tools`)
+        .then((r) => r.data),
+    queryKey: ['team-agent-tools', teamId, role],
+  });
+
+  const saveOverride = useMutation({
+    mutationFn: (enabledTools: string[]) =>
+      api.put(`/api/v1/teams/${teamId}/agents/${role}/tools`, { enabledTools }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-agent-tools', teamId, role] }),
+  });
+
+  const resetToGlobal = useMutation({
+    mutationFn: () => api.delete(`/api/v1/teams/${teamId}/agents/${role}/tools`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-agent-tools', teamId, role] }),
+  });
+
+  const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  if (isLoading || !data) {
+    return <div className="py-2 text-center text-xs text-paper-400">Loading…</div>;
+  }
+
+  const { teamConfig, globalConfig, hasTeamOverride } = data;
+  const baseTools = hasTeamOverride
+    ? new Set<string>(teamConfig?.enabledTools ?? TOOL_KEYS)
+    : new Set<string>(globalConfig?.enabledTools ?? TOOL_KEYS);
+  const effectiveTools = selectedTools ?? baseTools;
+
+  function toggleTool(key: string) {
+    const base = selectedTools ?? new Set(baseTools);
+    const next = new Set(base);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setSelectedTools(next);
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await saveOverride.mutateAsync([...effectiveTools]);
+      setSaved(true);
+      setSelectedTools(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed');
+    }
+  }
+
+  async function handleReset() {
+    if (!window.confirm('Reset to global tool config for this role?')) {
+      return;
+    }
+    await resetToGlobal.mutateAsync();
+    setSelectedTools(null);
+    setSaved(false);
+  }
+
+  const isDirty = selectedTools !== null;
+
+  return (
+    <div className="mt-2 rounded-sm border border-ink-600 p-3 space-y-2">
+      <p className="text-xs text-paper-500">Tool Access</p>
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        {TOOL_KEYS.map((key) => {
+          const checked = effectiveTools.has(key);
+          const isGlobal = globalConfig?.enabledTools.includes(key) ?? true;
+          const isInherited = !hasTeamOverride && isGlobal;
+          return (
+            <label
+              className={`flex cursor-pointer items-center gap-1.5 rounded-sm border p-1.5 text-xs transition-colors ${
+                isInherited ? 'border-ink-600 opacity-60' : 'border-ink-600 hover:border-ink-500'
+              }`}
+              htmlFor={`${role}-tool-${key}`}
+              key={key}
+            >
+              <input
+                checked={checked}
+                className="accent-ember-400"
+                id={`${role}-tool-${key}`}
+                onChange={() => toggleTool(key)}
+                type="checkbox"
+              />
+              <span className="font-mono text-paper-100">{key}</span>
+            </label>
+          );
+        })}
+      </div>
+      {saveError && <p className="text-xs text-brick-400">{saveError}</p>}
+      <div className="flex items-center gap-2">
+        {!hasTeamOverride && (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+            inheriting global
+          </span>
+        )}
+        {hasTeamOverride && (
+          <Button
+            disabled={resetToGlobal.isPending}
+            onClick={handleReset}
+            size="sm"
+            variant="ghost"
+          >
+            Reset to Global
+          </Button>
+        )}
+        {saved && (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-green-400">
+            Saved
+          </span>
+        )}
+        <Button
+          disabled={!isDirty || saveOverride.isPending}
+          onClick={handleSave}
+          size="sm"
+          variant="primary"
+        >
+          {saveOverride.isPending ? 'Saving…' : hasTeamOverride ? 'Save' : 'Override'}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_ROLES)[number] }) {
   const qc = useQueryClient();
@@ -131,47 +279,12 @@ function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT
   const isDirty = selectedIds !== null;
 
   return (
-    <div className="border border-ink-600 rounded-sm p-4 space-y-3">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-medium text-paper-100">{ROLE_LABELS[role]}</span>
-        <div className="flex items-center gap-2">
-          {!hasTeamOverride && (
-            <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-              inheriting global
-            </span>
-          )}
-          {hasTeamOverride && (
-            <Button
-              disabled={resetToGlobal.isPending}
-              onClick={handleReset}
-              size="sm"
-              variant="ghost"
-            >
-              Reset to Global
-            </Button>
-          )}
-          {saved && (
-            <span className="font-mono text-[10px] uppercase tracking-wider text-green-400">
-              Saved
-            </span>
-          )}
-          <Button
-            disabled={!isDirty || saveOverride.isPending}
-            onClick={handleSave}
-            size="sm"
-            variant="primary"
-          >
-            {saveOverride.isPending ? 'Saving…' : hasTeamOverride ? 'Save' : 'Override'}
-          </Button>
-        </div>
-      </div>
-
-      {saveError && <p className="text-xs text-brick-400">{saveError}</p>}
-
+    <div className="mt-2 rounded-sm border border-ink-600 p-3 space-y-2">
+      <p className="text-xs text-paper-500">Skills (Prompt Fragments)</p>
       {!allSkills?.length ? (
         <p className="text-xs text-paper-400">No skills in library.</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           {allSkills.map((skill) => {
             const checked = effectiveIds.has(skill.id);
             const isGlobal = globalAssignments.some((a) => a.skillId === skill.id);
@@ -181,24 +294,19 @@ function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT
                 className={`flex cursor-pointer items-start gap-2 rounded-sm border p-2 text-xs transition-colors ${
                   isInherited ? 'border-ink-600 opacity-60' : 'border-ink-600 hover:border-ink-500'
                 }`}
-                htmlFor={`${role}-${skill.id}`}
+                htmlFor={`${role}-skill-${skill.id}`}
                 key={skill.id}
               >
                 <input
                   checked={checked}
                   className="mt-0.5 accent-ember-400"
-                  id={`${role}-${skill.id}`}
+                  id={`${role}-skill-${skill.id}`}
                   onChange={() => toggleSkill(skill.id)}
                   type="checkbox"
                 />
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="font-medium text-paper-100">{skill.name}</span>
-                    <span
-                      className={`inline-flex items-center rounded-sm border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${TYPE_BADGE[skill.type] ?? ''}`}
-                    >
-                      {skill.type === 'TOOL' ? 'Tool' : 'Prompt'}
-                    </span>
                     {isGlobal && (
                       <span className="font-mono text-[9px] uppercase tracking-wider text-paper-500">
                         global
@@ -211,36 +319,79 @@ function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT
           })}
         </div>
       )}
+      {saveError && <p className="text-xs text-brick-400">{saveError}</p>}
+      <div className="flex items-center gap-2">
+        {!hasTeamOverride && (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+            inheriting global
+          </span>
+        )}
+        {hasTeamOverride && (
+          <Button
+            disabled={resetToGlobal.isPending}
+            onClick={handleReset}
+            size="sm"
+            variant="ghost"
+          >
+            Reset to Global
+          </Button>
+        )}
+        {saved && (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-green-400">
+            Saved
+          </span>
+        )}
+        <Button
+          disabled={!isDirty || saveOverride.isPending}
+          onClick={handleSave}
+          size="sm"
+          variant="primary"
+        >
+          {saveOverride.isPending ? 'Saving…' : hasTeamOverride ? 'Save' : 'Override'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RoleEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_ROLES)[number] }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasTools = ROLES_WITH_TOOLS.has(role);
+
+  return (
+    <div>
+      <button
+        className="flex w-full items-center justify-between px-2 py-2 text-sm text-paper-300 transition-colors hover:text-paper-100"
+        onClick={() => setExpanded((v) => !v)}
+        type="button"
+      >
+        <span>{ROLE_LABELS[role]}</span>
+        <span className="font-mono text-[11px]">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && (
+        <div className="space-y-2 pb-2">
+          {hasTools && <RoleToolEditor role={role} teamId={teamId} />}
+          <RoleSkillEditor role={role} teamId={teamId} />
+        </div>
+      )}
     </div>
   );
 }
 
 export function TeamAgentSkillsSection({ teamId }: { teamId: string }) {
-  const [expandedRole, setExpandedRole] = useState<string | null>(null);
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle eyebrow="Team Config">Agent Skills</CardTitle>
+        <CardTitle eyebrow="Team Config">Agent Configuration</CardTitle>
       </CardHeader>
       <p className="mb-4 text-xs text-paper-400">
-        Override which skills each agent role uses for this team. "Inheriting global" means no
-        team-level override is set — the global assignments apply. Click "Override" to activate a
-        team-scoped assignment.
+        Override tool access and prompt-fragment skills for each agent role on this team.
+        &quot;Inheriting global&quot; means no team-level override is set. Click
+        &quot;Override&quot; to activate a team-scoped configuration.
       </p>
-      <div className="space-y-2">
+      <div className="space-y-1">
         {AGENT_ROLES.map((role) => (
-          <div key={role}>
-            <button
-              className="w-full flex items-center justify-between px-2 py-2 text-sm text-paper-300 hover:text-paper-100 transition-colors"
-              onClick={() => setExpandedRole(expandedRole === role ? null : role)}
-              type="button"
-            >
-              <span>{ROLE_LABELS[role]}</span>
-              <span className="font-mono text-[11px]">{expandedRole === role ? '▲' : '▼'}</span>
-            </button>
-            {expandedRole === role && <RoleSkillEditor role={role} teamId={teamId} />}
-          </div>
+          <RoleEditor key={role} role={role} teamId={teamId} />
         ))}
       </div>
     </Card>
