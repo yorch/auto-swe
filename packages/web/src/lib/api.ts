@@ -12,6 +12,7 @@ interface ApiErrorBody {
 
 export class ApiClient {
   private accessToken: string | null = null;
+  private refreshPromise: Promise<boolean> | null = null;
 
   setToken(token: string) {
     this.accessToken = token;
@@ -96,7 +97,16 @@ export class ApiClient {
     return response.json();
   }
 
-  private async tryRefresh(): Promise<boolean> {
+  private tryRefresh(): Promise<boolean> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this._doRefresh().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private async _doRefresh(): Promise<boolean> {
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
         credentials: 'include',
