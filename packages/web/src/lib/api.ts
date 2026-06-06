@@ -82,34 +82,35 @@ export class ApiClient {
             headers,
           });
           // A 401 on the retry means the new token was also rejected — log out.
-          if (retryResponse.status === 401) {
-            this.clearToken();
-            if (typeof window !== 'undefined') {
-              window.location.href = '/login';
-            }
-            throw new Error('Session expired');
-          }
+          if (retryResponse.status === 401) this.expireSession();
           if (!retryResponse.ok) {
-            const err = await retryResponse.json().catch(() => ({}));
-            throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${retryResponse.status}`);
+            throw new Error(await this.extractErrorMessage(retryResponse));
           }
           return retryResponse.json();
         }
-        this.clearToken();
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login';
-        }
-        throw new Error('Session expired');
+        this.expireSession();
       }
       // No token on the original request — fall through to the generic error path.
     }
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error((err as ApiErrorBody).error?.message ?? `HTTP ${response.status}`);
+      throw new Error(await this.extractErrorMessage(response));
     }
 
     return response.json();
+  }
+
+  private expireSession(): never {
+    this.clearToken();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired');
+  }
+
+  private async extractErrorMessage(res: Response): Promise<string> {
+    const body = await res.json().catch(() => ({}));
+    return (body as ApiErrorBody).error?.message ?? `HTTP ${res.status}`;
   }
 
   private tryRefresh(): Promise<boolean> {
