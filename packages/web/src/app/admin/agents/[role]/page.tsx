@@ -180,7 +180,6 @@ function ToolAccessSection({ role }: { role: string }) {
   );
 }
 
-
 export default function AgentRoleDetailPage({ params }: { params: Promise<{ role: string }> }) {
   const { role } = use(params);
   const { data: allSkills } = useAllSkills();
