@@ -16,6 +16,7 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { resolveGitHubToken } from '../lib/githubAuth.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
@@ -53,10 +54,7 @@ export async function executeImplementation(
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const featureBranch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
-  if (!ghConfig.token) {
-    throw new ApplicationFailure('GitHub token not configured. Set it at /admin/integrations.');
-  }
-  const githubToken = ghConfig.token;
+  const githubToken = await resolveGitHubToken(ghConfig);
 
   const workspace = createWorkspace(
     repoUrl,

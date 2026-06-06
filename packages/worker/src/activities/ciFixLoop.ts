@@ -10,6 +10,7 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { resolveGitHubToken } from '../lib/githubAuth.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -23,7 +24,8 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
     return 'No logs URL provided by CI webhook';
   }
 
-  const { token: githubToken } = await resolveGitHubConfig();
+  const ghConfig = await resolveGitHubConfig();
+  const githubToken = await resolveGitHubToken(ghConfig).catch(() => null);
   const response = await fetch(logsUrl, {
     headers: {
       Accept: 'application/vnd.github.v3+json',
@@ -62,10 +64,7 @@ export async function executeCIFixImplementation(
   const ghConfig = await resolveGitHubConfig();
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  if (!ghConfig.token) {
-    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
-  }
-  const githubToken = ghConfig.token;
+  const githubToken = await resolveGitHubToken(ghConfig);
 
   // Provision workspace and checkout the existing branch
   const workspace = createWorkspace(
@@ -217,10 +216,7 @@ export async function executeReviewFixImplementation(
   const ghConfig = await resolveGitHubConfig();
   const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  if (!ghConfig.token) {
-    throw new Error('GitHub token not configured. Set it at /admin/integrations.');
-  }
-  const githubToken = ghConfig.token;
+  const githubToken = await resolveGitHubToken(ghConfig);
 
   const workspace = createWorkspace(
     repoUrl,

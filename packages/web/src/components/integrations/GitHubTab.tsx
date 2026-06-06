@@ -32,6 +32,12 @@ export function GitHubTab() {
   const [oauthClientSecret, setOauthClientSecret] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiUrl, setApiUrl] = useState('');
+  const [appId, setAppId] = useState('');
+  const [appClientId, setAppClientId] = useState('');
+  const [appClientSecret, setAppClientSecret] = useState('');
+  const [appPrivateKey, setAppPrivateKey] = useState('');
+  const [appInstallationId, setAppInstallationId] = useState('');
+  const [authMode, setAuthMode] = useState('');
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -69,6 +75,24 @@ export function GitHubTab() {
     if (apiUrl) {
       body.apiUrl = apiUrl;
     }
+    if (appId) {
+      body.appId = appId;
+    }
+    if (appClientId) {
+      body.appClientId = appClientId;
+    }
+    if (appClientSecret) {
+      body.appClientSecret = appClientSecret;
+    }
+    if (appPrivateKey) {
+      body.appPrivateKey = appPrivateKey;
+    }
+    if (appInstallationId) {
+      body.appInstallationId = appInstallationId;
+    }
+    if (authMode) {
+      body.authMode = authMode || null;
+    }
 
     try {
       const res = await update.mutateAsync(body);
@@ -77,6 +101,8 @@ export function GitHubTab() {
       setToken('');
       setWebhookSecret('');
       setOauthClientSecret('');
+      setAppPrivateKey('');
+      setAppClientSecret('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     }
@@ -154,6 +180,136 @@ export function GitHubTab() {
             {testResult.ok ? '✓' : '✗'} {testResult.detail}
           </p>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle eyebrow="GitHub App">App authentication (optional)</CardTitle>
+        </CardHeader>
+        <p className="mb-4 text-xs text-paper-500">
+          GitHub App installation tokens are short-lived and scoped. Configure all four fields to
+          enable App auth. See <code className="font-mono">docs/github-app-setup.md</code> for setup
+          instructions.
+        </p>
+        <div className="space-y-4">
+          <div>
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-app-id"
+            >
+              App ID
+              <SourceBadge source={sources.appId} />
+              {data?.appId && (
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                  current: {data.appId}
+                </span>
+              )}
+            </label>
+            <input
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              id="gh-app-id"
+              onChange={(e) => setAppId(e.target.value)}
+              placeholder="12345678"
+              value={appId}
+            />
+          </div>
+          <div>
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-app-client-id"
+            >
+              Client ID
+              <SourceBadge source={sources.appClientId} />
+              {data?.appClientId && (
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                  current: {data.appClientId}
+                </span>
+              )}
+            </label>
+            <input
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              id="gh-app-client-id"
+              onChange={(e) => setAppClientId(e.target.value)}
+              placeholder="Iv1.abc..."
+              value={appClientId}
+            />
+          </div>
+          <SecretInput
+            current={data?.appClientSecret ?? null}
+            id="gh-app-client-secret"
+            label="Client secret"
+            onChange={setAppClientSecret}
+            source={sources.appClientSecret}
+            value={appClientSecret}
+          />
+          <div>
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-app-private-key"
+            >
+              Private key (PEM)
+              <SourceBadge source={sources.appPrivateKey} />
+              {data?.appPrivateKey && (
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                  current: ****{data.appPrivateKey.lastFour}
+                </span>
+              )}
+            </label>
+            <textarea
+              className="w-full resize-none rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              id="gh-app-private-key"
+              onChange={(e) => setAppPrivateKey(e.target.value)}
+              placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
+              rows={4}
+              value={appPrivateKey}
+            />
+          </div>
+          <div>
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-app-installation-id"
+            >
+              Installation ID
+              <SourceBadge source={sources.appInstallationId} />
+              {data?.appInstallationId && (
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                  current: {data.appInstallationId}
+                </span>
+              )}
+            </label>
+            <input
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              id="gh-app-installation-id"
+              onChange={(e) => setAppInstallationId(e.target.value)}
+              placeholder="12345678"
+              value={appInstallationId}
+            />
+          </div>
+          <div>
+            <label
+              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+              htmlFor="gh-auth-mode"
+            >
+              Auth mode
+              <SourceBadge source={sources.authMode} />
+              {data?.authMode && (
+                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                  current: {data.authMode}
+                </span>
+              )}
+            </label>
+            <select
+              className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
+              id="gh-auth-mode"
+              onChange={(e) => setAuthMode(e.target.value)}
+              value={authMode}
+            >
+              <option value="">auto (app if configured, else PAT)</option>
+              <option value="pat">pat (always use PAT)</option>
+              <option value="app">app (always use App)</option>
+            </select>
+          </div>
+        </div>
       </Card>
 
       <Card>

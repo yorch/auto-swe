@@ -4,6 +4,7 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { resolveGitHubToken } from '../lib/githubAuth.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -21,17 +22,12 @@ export async function createOrUpdatePullRequest(
     resolveGitHubConfig(),
     resolveWorkflowDefaults(),
   ]);
-  if (!ghConfig.token) {
-    throw ApplicationFailure.nonRetryable(
-      'GitHub token not configured. Set it at /admin/integrations.',
-      'CONFIG_MISSING'
-    );
-  }
+  const token = await resolveGitHubToken(ghConfig);
   const githubApiUrl =
     repo.githubApiUrl ??
     (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
   const octokit = new Octokit({
-    auth: ghConfig.token,
+    auth: token,
     ...(githubApiUrl && { baseUrl: githubApiUrl }),
   });
 
