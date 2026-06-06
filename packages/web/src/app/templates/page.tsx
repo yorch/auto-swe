@@ -4,6 +4,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -66,11 +67,7 @@ export default function TemplatesPage() {
       {/* Starter gallery */}
       <section className="fade-up stagger-1">
         <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
-        {forkError && (
-          <div className="mb-4 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-            ! {forkError}
-          </div>
-        )}
+        {forkError && <Alert className="mb-4">{forkError}</Alert>}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {STARTER_TEMPLATES.map((s) => {
             const isForking = forkingId === s.id;

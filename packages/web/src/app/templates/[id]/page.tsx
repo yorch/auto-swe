@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
 import { TemplateModelConfigSection } from '@/components/modelConfig/TemplateModelConfigSection';
 import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgentSkillsSection';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -252,11 +253,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {saveError && (
-        <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-          ! {saveError}
-        </div>
-      )}
+      {saveError && <Alert>{saveError}</Alert>}
 
       {/* Edit mode: drops the right side rail and escapes the page's `px-10`
           padding so the editor fills the available main-content area. We can't
