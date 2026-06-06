@@ -26,6 +26,8 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -171,8 +173,6 @@ export interface ResolveMergeConflictInput {
   mergeMessagePrefix?: string;
   /** Max attempts per branch (resolve + retry). Default 1. */
   maxAttemptsPerBranch?: number;
-  /** Restrict the implementer to a subset of tools. Omit to enable all tools. */
-  toolsOverride?: string[];
 }
 
 /**
@@ -224,7 +224,6 @@ export async function resolveMergeConflict(
         log,
         maxAttempts: maxAttemptsPerBranch,
         messagePrefix,
-        toolsOverride: input.toolsOverride,
         tracer,
       });
       if (resolved.passed) {
@@ -356,7 +355,6 @@ async function mergeOneWithResolver(
     log: string[];
     maxAttempts: number;
     messagePrefix: string;
-    toolsOverride?: string[];
     tracer: AgentTracer;
   }
 ): Promise<{ passed: boolean; output: string }> {
@@ -387,10 +385,15 @@ async function mergeOneWithResolver(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const { agent } = await createImplementerAgent(workspace, opts.tracer, opts.toolsOverride);
+    const activityCtx = await currentRequestContext();
+    const skills = await loadAgentSkills('implementer', activityCtx);
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, opts.tracer, skills);
     const result = await agent.generate(
       [
-        { content: MERGE_CONFLICT_RESOLVER_PROMPT, role: 'system' },
+        {
+          content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
+          role: 'system',
+        },
         {
           content: JSON.stringify({
             attempt,

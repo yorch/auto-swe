@@ -209,6 +209,10 @@ export async function createImplementerAgent(
         )
       : allTools;
 
+  // If every skill resolved to an unknown toolKey, fall back to allTools
+  // to avoid instantiating an agent with no tools.
+  const resolvedActiveTools = Object.keys(activeTools).length > 0 ? activeTools : allTools;
+
   // Append PROMPT_FRAGMENT skills (in sortOrder) to the base system prompt.
   const fragmentSkills = skills?.filter((s) => s.type === 'PROMPT_FRAGMENT') ?? [];
   const promptSuffix = fragmentSkills
@@ -217,20 +221,21 @@ export async function createImplementerAgent(
     .filter(Boolean)
     .join('\n\n');
 
-
   const implementerAgent = new Agent({
     id: 'implementer',
-    // Base instructions are set per-call via system message; promptSuffix
-    // appends any PROMPT_FRAGMENT skills when present.
-    instructions: promptSuffix || '',
+    // instructions is overridden per-call via system message; set to empty string
+    // so the constructor does not inject stale static content.
+    instructions: '',
     model: await getModel('implementer'),
     name: 'implementer',
-    tools: activeTools,
+    tools: resolvedActiveTools,
   });
 
   const mastra = new Mastra({
     agents: { implementer: implementerAgent },
   });
 
-  return { agent: mastra.getAgent('implementer'), mastra };
+  // Return promptSuffix so callers can append it to the per-call system message,
+  // ensuring PROMPT_FRAGMENT skills are injected correctly.
+  return { agent: mastra.getAgent('implementer'), mastra, promptSuffix };
 }

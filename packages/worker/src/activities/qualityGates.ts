@@ -32,6 +32,8 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -271,12 +273,10 @@ export interface GateFixInput {
   previousCodeResult: CodeResult;
   /** Optional system prompt override from workflow step config. */
   systemPromptOverride?: string;
-  /** Restrict the implementer to a subset of tools. Omit to enable all tools. */
-  toolsOverride?: string[];
 }
 
 export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
-  const { gateName, gateOutput, previousCodeResult, systemPromptOverride, toolsOverride } = input;
+  const { gateName, gateOutput, previousCodeResult, systemPromptOverride } = input;
 
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -330,7 +330,9 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, gateTracer, toolsOverride);
+    const activityCtx = await currentRequestContext();
+    const skills = await loadAgentSkills('implementer', activityCtx);
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, gateTracer, skills);
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -341,7 +343,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const agentStart = Date.now();
     const gateFix = await agent.generate(
       [
-        { content: systemPrompt, role: 'system' },
+        { content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''), role: 'system' },
         {
           content: JSON.stringify({
             failedGate: gateName,

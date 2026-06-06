@@ -34,11 +34,12 @@ const MAX_TDD_ITERATIONS = 5;
  * Subtask branches are merged back into the parent feature branch by the
  * `mergeBranches` activity before the final PR is opened.
  */
+// Note: toolsOverride parameter was removed — tool selection is superseded by
+// DB-driven AgentSkillAssignment rows (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade).
 export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
-  systemPromptOverride?: string,
-  toolsOverride?: string[]
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -79,8 +80,9 @@ export async function executeImplementation(
     const activityCtx = await currentRequestContext();
     const skills = await loadAgentSkills('implementer', activityCtx);
 
-    // Create Mastra agent with tools bound to workspace (tracer captures every call)
-    const { agent } = await createImplementerAgent(workspace, tracer, skills);
+    // Create Mastra agent with tools bound to workspace (tracer captures every call).
+    // promptSuffix contains any PROMPT_FRAGMENT skills to be appended to the system prompt.
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, skills);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -125,7 +127,10 @@ export async function executeImplementation(
 
       const genResult = await agent.generate(
         [
-          { content: systemPrompt + lessonsContext, role: 'system' },
+          {
+            content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext,
+            role: 'system',
+          },
           {
             content: JSON.stringify({
               description: subtask?.description ?? request.description,

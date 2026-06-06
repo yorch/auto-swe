@@ -6,6 +6,8 @@ import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -45,8 +47,7 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
 export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string,
-  toolsOverride?: string[]
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -84,7 +85,9 @@ export async function executeCIFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, tracer, toolsOverride);
+    const activityCtx = await currentRequestContext();
+    const skills = await loadAgentSkills('implementer', activityCtx);
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, skills);
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -96,7 +99,7 @@ export async function executeCIFixImplementation(
     const agentStart = Date.now();
     const ciFix = await agent.generate(
       [
-        { content: systemPrompt, role: 'system' },
+        { content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''), role: 'system' },
         {
           content: JSON.stringify({
             ciLogs: failureContext,
@@ -191,8 +194,7 @@ export async function executeCIFixImplementation(
 export async function executeReviewFixImplementation(
   rejectionSummary: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string,
-  toolsOverride?: string[]
+  systemPromptOverride?: string
 ): Promise<CodeResult> {
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -228,7 +230,9 @@ export async function executeReviewFixImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    const { agent } = await createImplementerAgent(workspace, reviewTracer, toolsOverride);
+    const activityCtx = await currentRequestContext();
+    const skills = await loadAgentSkills('implementer', activityCtx);
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, reviewTracer, skills);
 
     const reviewSystemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -239,7 +243,10 @@ export async function executeReviewFixImplementation(
     const agentStart = Date.now();
     const reviewFix = await agent.generate(
       [
-        { content: reviewSystemPrompt, role: 'system' },
+        {
+          content: reviewSystemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''),
+          role: 'system',
+        },
         {
           content: JSON.stringify({
             mode: 'REVIEW_FIX',
