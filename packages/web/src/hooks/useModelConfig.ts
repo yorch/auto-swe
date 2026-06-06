@@ -83,13 +83,20 @@ export interface EmbeddingConfigRow {
 
 // ── Admin (cross-scope) ──
 
-export function useAdminModelConfigs(filter?: { scope?: ConfigScope; teamId?: string }) {
+export function useAdminModelConfigs(filter?: {
+  scope?: ConfigScope;
+  teamId?: string;
+  workflowTemplateId?: string;
+}) {
   const qs = new URLSearchParams();
   if (filter?.scope) {
     qs.set('scope', filter.scope);
   }
   if (filter?.teamId) {
     qs.set('teamId', filter.teamId);
+  }
+  if (filter?.workflowTemplateId) {
+    qs.set('workflowTemplateId', filter.workflowTemplateId);
   }
   const query = qs.toString();
   return useQuery({
@@ -99,7 +106,12 @@ export function useAdminModelConfigs(filter?: { scope?: ConfigScope; teamId?: st
           `/api/v1/admin/model-config${query ? `?${query}` : ''}`
         )
         .then((r) => r.data),
-    queryKey: ['admin-model-config', filter?.scope ?? null, filter?.teamId ?? null],
+    queryKey: [
+      'admin-model-config',
+      filter?.scope ?? null,
+      filter?.teamId ?? null,
+      filter?.workflowTemplateId ?? null,
+    ],
   });
 }
 
