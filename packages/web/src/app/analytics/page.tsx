@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useGlobalAnalytics } from '@/hooks/useWorkflows';
+import { formatPercent } from '@/lib/utils';
 
 const WINDOWS = [
   { days: 7, label: '7d' },
@@ -18,13 +19,6 @@ function fmt(n: number | null, digits = 1): string {
     return '—';
   }
   return n.toFixed(digits);
-}
-
-function fmtPct(n: number | null): string {
-  if (n === null) {
-    return '—';
-  }
-  return `${(n * 100).toFixed(1)}%`;
 }
 
 function fmtCost(n: number): string {
@@ -162,7 +156,7 @@ export default function GlobalAnalyticsPage() {
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiTile label="Total runs" value={String(data.totalRuns)} />
-            <KpiTile label="Success rate" value={fmtPct(data.successRate)} />
+            <KpiTile label="Success rate" value={formatPercent(data.successRate)} />
             <KpiTile label="Succeeded" value={String(data.succeeded)} valueClass="text-green-700" />
             <KpiTile label="Total cost" value={fmtCost(data.totalCost)} />
           </div>

@@ -137,9 +137,3 @@ export const STATUS_META: Record<string, StatusMeta> = {
   UNKNOWN: NEUTRAL,
   VALIDATING_CONTEXT: EMBER_LIVE,
 };
-
-/** Legacy alias for code that still imports STATUS_COLORS (string classes).
- *  Returns the combined classes string per status. */
-export const STATUS_COLORS: Record<string, string> = Object.fromEntries(
-  Object.entries(STATUS_META).map(([k, v]) => [k, v.classes])
-);

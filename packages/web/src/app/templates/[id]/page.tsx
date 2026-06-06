@@ -150,9 +150,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (parsed.ok) {
       setEditorSpec(parsed.spec);
     }
-    if (mode !== 'edit') {
-      setMode('edit');
-    }
+    // Stay in 'json' mode while editing the textarea — isDirty already tracks
+    // the JSON-mode dirty state via the editorJson !== storedJson comparison.
   };
 
   const isDirty =
@@ -409,9 +408,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
               <Card variant="inset">
                 <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
                 <dl className="space-y-3 text-sm">
-                  <Stat label="Runs" value={analytics.totalRuns} />
+                  <VersionStat label="Runs" value={analytics.totalRuns} />
                   {analytics.avgCostPerRun != null && (
-                    <Stat label="Avg cost / run" value={`$${analytics.avgCostPerRun.toFixed(2)}`} />
+                    <VersionStat
+                      label="Avg cost / run"
+                      value={`$${analytics.avgCostPerRun.toFixed(2)}`}
+                    />
                   )}
                 </dl>
               </Card>
@@ -430,7 +432,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+function VersionStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex items-baseline justify-between border-t border-ink-600 pt-2 first:border-t-0 first:pt-0">
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">{label}</dt>
