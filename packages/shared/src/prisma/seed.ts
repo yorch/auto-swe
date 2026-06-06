@@ -141,6 +141,7 @@ async function main() {
       ? await prisma.skill.update({
           data: {
             description: skillDef.description,
+            isVerified: true,
             promptText: skillDef.promptText,
           },
           where: { id: existingSkill.id },
@@ -149,6 +150,7 @@ async function main() {
           data: {
             description: skillDef.description,
             isBuiltIn: true,
+            isVerified: true,
             name: skillDef.name,
             promptText: skillDef.promptText,
           },

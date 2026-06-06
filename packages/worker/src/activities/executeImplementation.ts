@@ -81,6 +81,11 @@ export async function executeImplementation(
       loadAgentSkills('implementer', activityCtx),
     ]);
 
+    tracer.addActivityEvent({
+      name: 'skills.loaded',
+      outputJson: { count: skills.length, skills: skills.map((s) => s.name) },
+    });
+
     // Create Mastra agent with tools bound to workspace (tracer captures every call).
     // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
     const { agent, promptSuffix } = await createImplementerAgent(

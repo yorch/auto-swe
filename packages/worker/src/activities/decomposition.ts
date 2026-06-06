@@ -40,7 +40,7 @@ export async function planDecomposition(
   heartbeat('plan decomposition: calling agent');
   const tracer = new AgentTracer();
   const activityCtx = await currentRequestContext();
-  const skills = await loadAgentSkills('planner', activityCtx);
+  const skills = await loadAgentSkills('decomposer', activityCtx);
   const skillSuffix = skills
     .map((s) => s.promptText)
     .filter(Boolean)

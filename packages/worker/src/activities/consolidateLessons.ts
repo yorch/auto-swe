@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { LESSON_CONSOLIDATOR_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
@@ -147,9 +148,20 @@ export async function consolidateLessons(
     };
   }
 
+  // Load skills for the commitToMemory role (no ctx — consolidateLessons is
+  // a scheduled job unbound from any specific workflow run, so GLOBAL scope only).
+  const consolidatorSkills = await loadAgentSkills('commitToMemory');
+  const consolidatorSkillSuffix = consolidatorSkills
+    .map((s) => s.promptText)
+    .filter(Boolean)
+    .join('\n\n');
+  const consolidatorPrompt = consolidatorSkillSuffix
+    ? `${LESSON_CONSOLIDATOR_PROMPT}\n\n${consolidatorSkillSuffix}`
+    : LESSON_CONSOLIDATOR_PROMPT;
+
   const agent = new Agent({
     id: 'lesson-consolidator',
-    instructions: LESSON_CONSOLIDATOR_PROMPT,
+    instructions: consolidatorPrompt,
     model: await getModel('commitToMemory'),
     name: 'lesson-consolidator',
   });

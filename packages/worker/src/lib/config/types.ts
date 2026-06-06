@@ -11,6 +11,9 @@ type PrismaAgentRole =
 /// Internal-to-the-worker role identifier. Matches the camelCase enum the
 /// rest of the worker code uses (e.g. `'implementer'`), as opposed to the
 /// SCREAMING_SNAKE_CASE variant in the Prisma enum.
+///
+/// These 6 roles require a GLOBAL ModelRoleConfig row at worker startup
+/// (checked by `assertConfigReady`).
 export type AgentRole =
   | 'implementer'
   | 'reviewer'
@@ -18,6 +21,15 @@ export type AgentRole =
   | 'securityReview'
   | 'validateContext'
   | 'commitToMemory';
+
+/// Skill-only sub-roles. These do NOT require ModelRoleConfig rows — they
+/// inherit the model from their parent role (e.g. securityReviewer inherits
+/// from reviewer). They exist solely so skills can be assigned at per-reviewer
+/// or per-decomposer granularity.
+export type SkillOnlyRole = 'securityReviewer' | 'domainLogicReviewer' | 'performanceReviewer' | 'decomposer';
+
+/// Any role that can have AgentSkillAssignment rows.
+export type AnySkillRole = AgentRole | SkillOnlyRole;
 
 /// Maps the worker's camelCase role names to Prisma's enum values.
 export const ROLE_TO_PRISMA: Record<AgentRole, PrismaAgentRole> = {

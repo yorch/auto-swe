@@ -194,28 +194,81 @@ export async function createImplementerAgent(
     outputSchema: z.object({ output: z.string() }),
   });
 
-  // All available tools keyed by toolKey
-  const allTools = { bash, listDirectory, readFile, writeFile };
+  // Build a name→skill index for the load_skill tool to look up full promptText.
+  const resolvedSkills = skills ?? [];
+  const skillsByName = new Map(resolvedSkills.map((s) => [s.name, s]));
 
-  // Filter tools by the enabled tool keys when provided; null → use all 4 tools.
-  const activeTools =
+  // Tool: Load the full prompt text for a skill on demand (progressive disclosure).
+  // The agent sees a compact L1 menu (name + description) in the system prompt and
+  // calls this tool to fetch the full reasoning guidance only when it decides to
+  // engage that skill — avoiding token bloat from skills that aren't needed.
+  const loadSkill = createTool({
+    description:
+      'Load the full guidance text for an available skill by name. ' +
+      'Call this when you want to apply a specific skill from the skills menu.',
+    execute: async ({ name }) => {
+      const start = Date.now();
+      const skill = skillsByName.get(name);
+      if (!skill) {
+        const result = { promptText: `Unknown skill: ${name}. Available: ${[...skillsByName.keys()].join(', ')}` };
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          inputJson: { name },
+          outputJson: result,
+          toolName: 'loadSkill',
+        });
+        return result;
+      }
+      const result = { promptText: skill.promptText };
+      tracer?.addToolCall({
+        durationMs: Date.now() - start,
+        inputJson: { name },
+        outputJson: result,
+        toolName: 'loadSkill',
+      });
+      return result;
+    },
+    id: 'loadSkill',
+    inputSchema: z.object({ name: z.string().describe('Skill name from the skills menu') }),
+    outputSchema: z.object({ promptText: z.string() }),
+  });
+
+  // All available workspace tools keyed by toolKey.
+  const workspaceTools = { bash, listDirectory, readFile, writeFile };
+
+  // Filter workspace tools by the enabled tool keys when provided; null → use all 4 tools.
+  const activeWorkspaceTools =
     tools && tools.length > 0
       ? Object.fromEntries(
           tools
-            .filter((key) => key in allTools)
-            .map((key) => [key, allTools[key as keyof typeof allTools]])
+            .filter((key) => key in workspaceTools)
+            .map((key) => [key, workspaceTools[key as keyof typeof workspaceTools]])
         )
-      : allTools;
+      : workspaceTools;
 
   // If every provided key was unrecognised, fall back to allTools to avoid
   // instantiating an agent with no tools.
-  const resolvedActiveTools = Object.keys(activeTools).length > 0 ? activeTools : allTools;
+  const resolvedWorkspaceTools =
+    Object.keys(activeWorkspaceTools).length > 0 ? activeWorkspaceTools : workspaceTools;
 
-  // Append prompt-fragment skills (already in sortOrder) to the base system prompt.
-  const promptSuffix = (skills ?? [])
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  // Always include loadSkill when there are skills to load; this lets the agent
+  // fetch full skill guidance on demand without pre-injecting all promptTexts.
+  const resolvedActiveTools =
+    resolvedSkills.length > 0
+      ? { ...resolvedWorkspaceTools, loadSkill }
+      : resolvedWorkspaceTools;
+
+  // L1 skill menu: compact name + description list injected into system prompt.
+  // Agent calls load_skill(name) to get the full promptText when needed.
+  const promptSuffix =
+    resolvedSkills.length > 0
+      ? [
+          '## Available Skills',
+          'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
+          '',
+          ...resolvedSkills.map((s) => `- **${s.name}**: ${s.description}`),
+        ].join('\n')
+      : '';
 
   const implementerAgent = new Agent({
     id: 'implementer',

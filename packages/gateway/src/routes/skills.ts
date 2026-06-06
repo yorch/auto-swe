@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -49,6 +50,10 @@ const AGENT_ROLES = [
   'SECURITY_REVIEW',
   'VALIDATE_CONTEXT',
   'COMMIT_TO_MEMORY',
+  'SECURITY_REVIEWER',
+  'DOMAIN_LOGIC_REVIEWER',
+  'PERFORMANCE_REVIEWER',
+  'DECOMPOSER',
 ] as const;
 const SCOPE_VALUES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 
@@ -141,10 +146,12 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
+      const scanResult = scanSkillContent(promptText);
       const skill = await fastify.prisma.skill.create({
         data: {
           description,
           isBuiltIn: false,
+          isVerified: false,
           name,
           promptText,
         },
@@ -156,7 +163,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         entityId: skill.id,
         entityType: 'Skill',
       });
-      return reply.status(201).send({ data: skill });
+      return reply.status(201).send({
+        data: skill,
+        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+      });
     }
   );
 
@@ -197,10 +207,14 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
       const { name, description, promptText } = request.body;
 
-      // Built-in skills: only allow name and description to be updated
+      // Built-in skills: only allow name and description to be updated.
+      // Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
       const updateData = existing.isBuiltIn
         ? { description, name }
         : { description, name, promptText };
+
+      const scanResult =
+        !existing.isBuiltIn && promptText ? scanSkillContent(promptText) : { warnings: [] };
 
       const updated = await fastify.prisma.skill.update({
         data: updateData,
@@ -222,7 +236,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         entityId: existing.id,
         entityType: 'Skill',
       });
-      return { data: updated };
+      return {
+        data: updated,
+        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+      };
     }
   );
 
@@ -272,6 +289,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       'SECURITY_REVIEW',
       'VALIDATE_CONTEXT',
       'COMMIT_TO_MEMORY',
+      'SECURITY_REVIEWER',
+      'DOMAIN_LOGIC_REVIEWER',
+      'PERFORMANCE_REVIEWER',
+      'DECOMPOSER',
     ] as const;
 
     const [assignments, toolConfigs] = await Promise.all([

@@ -16,6 +16,7 @@
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
+    "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./workflow": "./dist/workflow/index.js",
     "./workflow/spec": "./dist/workflow/spec.js",
     "./workflow/expr": "./dist/workflow/expr.js",

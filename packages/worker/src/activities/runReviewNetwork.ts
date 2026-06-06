@@ -19,23 +19,30 @@ export async function runReviewNetwork(
   heartbeat('starting review network');
   const tracer = new AgentTracer();
 
-  // Resolve DB-level prompt and skills for the reviewer role.
+  // Resolve DB-level prompt and per-sub-role skills for the reviewer role.
   const ctx = await currentRequestContext();
-  const [modelConfig, skills] = await Promise.all([
+  const [modelConfig, securitySkills, domainSkills, performanceSkills] = await Promise.all([
     resolveModelConfig('reviewer', ctx),
-    loadAgentSkills('reviewer', ctx),
+    loadAgentSkills('securityReviewer', ctx),
+    loadAgentSkills('domainLogicReviewer', ctx),
+    loadAgentSkills('performanceReviewer', ctx),
   ]);
   const dbPrompt = modelConfig.systemPrompt ?? undefined;
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+
+  const toSuffix = (skills: Awaited<ReturnType<typeof loadAgentSkills>>) =>
+    skills
+      .map((s) => s.promptText)
+      .filter(Boolean)
+      .join('\n\n') || undefined;
+
   const result = await runReview(
     codeResult,
     successCriteria,
     tracer,
     systemPromptOverride ?? dbPrompt,
-    skillSuffix || undefined
+    toSuffix(securitySkills),
+    toSuffix(domainSkills),
+    toSuffix(performanceSkills)
   );
 
   heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
