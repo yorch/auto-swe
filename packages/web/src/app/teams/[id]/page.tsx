@@ -10,6 +10,7 @@ import { TeamAgentSkillsSection } from '@/components/teams/TeamAgentSkillsSectio
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
@@ -34,6 +35,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   if (isLoading) {
     return <LoadingState />;
@@ -112,16 +114,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         <Button
                           disabled={removeMember.isPending}
                           onClick={() => {
-                            const userId = m.user?.id;
-                            if (!userId) {
-                              return;
-                            }
-                            if (
-                              window.confirm(
-                                `Remove ${m.user?.email ?? 'this user'} from ${team.name}?`
-                              )
-                            ) {
-                              removeMember.mutate(userId);
+                            if (m.user?.id) {
+                              setConfirmRemoveId(m.user.id);
                             }
                           }}
                           size="sm"
@@ -200,6 +194,19 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         onClose={() => setAdding(false)}
         open={adding}
         teamId={id}
+      />
+      <ConfirmModal
+        confirmLabel="Remove"
+        dangerous
+        message={`Remove ${memberships.find((m) => m.user?.id === confirmRemoveId)?.user?.email ?? 'this user'} from ${team.name}?`}
+        onClose={() => setConfirmRemoveId(null)}
+        onConfirm={() => {
+          if (confirmRemoveId) {
+            removeMember.mutate(confirmRemoveId);
+          }
+        }}
+        open={confirmRemoveId !== null}
+        title="Remove member"
       />
     </div>
   );

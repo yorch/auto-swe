@@ -9,6 +9,7 @@ import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgent
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -59,6 +60,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [editorJson, setEditorJson] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
 
   useEffect(() => {
     if (versionDetail) {
@@ -91,6 +93,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
     return <LoadingState message="loading template…" />;
   }
 
+  const commitSave = async (spec: WorkflowSpec) => {
+    try {
+      const result = await createVersion.mutateAsync(spec);
+      const newVersion = (result as { data: { version: number } }).data.version;
+      setSelectedVersion(newVersion);
+      setMode('view');
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'save failed');
+    }
+  };
+
   const handleSave = async () => {
     const specToSave = mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
     if (!specToSave) {
@@ -99,22 +113,10 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
     const shellCount = Object.values(specToSave.nodes).filter((n) => n.type === 'shell').length;
     if (shellCount > 0) {
-      const ok = window.confirm(
-        `This version contains ${shellCount} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`
-      );
-      if (!ok) {
-        return;
-      }
+      setPendingShellSpec(specToSave);
+      return;
     }
-    try {
-      const result = await createVersion.mutateAsync(specToSave);
-      const newVersion = (result as { data: { version: number } }).data.version;
-      setSelectedVersion(newVersion);
-      setMode('view');
-      setSaveError(null);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'save failed');
-    }
+    await commitSave(specToSave);
   };
 
   const handleCancel = () => {
@@ -421,6 +423,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
           <TemplateAgentSkillsSection templateId={id} />
         </div>
       )}
+      <ConfirmModal
+        confirmLabel="Save"
+        message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`}
+        onClose={() => setPendingShellSpec(null)}
+        onConfirm={() => {
+          if (pendingShellSpec) {
+            void commitSave(pendingShellSpec);
+          }
+        }}
+        open={pendingShellSpec !== null}
+        title="Shell steps detected"
+      />
     </div>
   );
 }
