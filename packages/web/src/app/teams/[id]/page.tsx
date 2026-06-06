@@ -91,7 +91,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                     {canManage && m.user?.id ? (
                       <Select
                         className="h-7 w-auto px-2 text-xs"
-                        defaultValue={m.role}
                         onChange={(e) =>
                           m.user?.id &&
                           updateMember.mutate({
@@ -99,6 +98,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                             userId: m.user.id,
                           })
                         }
+                        value={m.role}
                       >
                         <option value="ENGINEER">ENGINEER</option>
                         <option value="LEAD">LEAD</option>

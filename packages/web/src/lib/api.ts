@@ -83,7 +83,9 @@ export class ApiClient {
             headers,
           });
           // A 401 on the retry means the new token was also rejected — log out.
-          if (retryResponse.status === 401) this.expireSession();
+          if (retryResponse.status === 401) {
+            this.expireSession();
+          }
           if (!retryResponse.ok) {
             throw new Error(await this.extractErrorMessage(retryResponse));
           }

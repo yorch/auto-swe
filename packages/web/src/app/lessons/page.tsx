@@ -27,7 +27,7 @@ export default function LessonsPage() {
   const timeData = useMemo(() => groupLessonsByDate(all), [all]);
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <div className="text-center py-12 text-paper-400">Loading...</div>;
   }
 
   return (
@@ -88,15 +88,15 @@ export default function LessonsPage() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="font-medium text-sm">{l.lessonSummary}</p>
-                <p className="text-xs text-[var(--muted-foreground)] mt-1">{l.rationale}</p>
+                <p className="text-xs text-paper-400 mt-1">{l.rationale}</p>
               </div>
               {l.failureType && (
-                <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full ml-4">
+                <span className="text-xs bg-brick-100 text-brick-800 px-2 py-0.5 rounded-full ml-4">
                   {l.failureType.replace(/_/g, ' ')}
                 </span>
               )}
             </div>
-            <div className="flex gap-4 mt-3 text-xs text-[var(--muted-foreground)]">
+            <div className="flex gap-4 mt-3 text-xs text-paper-400">
               <span>
                 {l.repository?.organizationName}/{l.repository?.repoName}
               </span>
@@ -105,7 +105,7 @@ export default function LessonsPage() {
           </Card>
         ))}
         {visible.length === 0 && (
-          <p className="text-center text-[var(--muted-foreground)] py-12">
+          <p className="text-center text-paper-400 py-12">
             {searchEnabled ? 'No matches.' : 'No lessons recorded yet'}
           </p>
         )}

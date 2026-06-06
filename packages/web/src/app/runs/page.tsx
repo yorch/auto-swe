@@ -136,7 +136,7 @@ export default function WorkflowRunsPage() {
         onNext={() => setOffset((o) => o + PAGE_SIZE)}
         onPrev={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
         rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-        rangeStart={offset + 1}
+        rangeStart={total === 0 ? 0 : offset + 1}
         total={total}
       />
     </div>

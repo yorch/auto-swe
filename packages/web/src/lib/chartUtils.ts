@@ -3,7 +3,9 @@
  * These operate on the arrays already returned by useWorkflows() / useLessons().
  */
 
-import type { LessonListItem, WorkflowSummary } from '@auto-swe/shared/types/api';
+import type { WorkflowSummary } from '@auto-swe/shared/types/api';
+
+type LessonForChart = { failureType: string | null; createdAt: string };
 
 function toDateKey(dateStr: string): string {
   return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
@@ -74,7 +76,7 @@ export function groupWorkflowsByRepo(
 
 // ── Lesson transformations ────────────────────────────────────────────
 
-export function groupLessonsByType(lessons: LessonListItem[]): { type: string; count: number }[] {
+export function groupLessonsByType(lessons: LessonForChart[]): { type: string; count: number }[] {
   const counts: Record<string, number> = {};
   for (const l of lessons) {
     const t = l.failureType?.replace(/_/g, ' ') ?? 'Unknown';
@@ -86,7 +88,7 @@ export function groupLessonsByType(lessons: LessonListItem[]): { type: string; c
 }
 
 export function groupLessonsByDate(
-  lessons: LessonListItem[],
+  lessons: LessonForChart[],
   days = 30
 ): { date: string; count: number }[] {
   const buckets = last30Days().slice(-days);

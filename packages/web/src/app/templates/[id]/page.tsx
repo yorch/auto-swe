@@ -315,11 +315,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   spellCheck={false}
                   value={editorJson}
                 />
-                {jsonParsed?.ok === false && (
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-brick-400">
-                    ! JSON parse error — {jsonParsed.error}
-                  </div>
-                )}
+                {jsonParsed?.ok === false && <Alert>JSON parse error — {jsonParsed.error}</Alert>}
               </div>
             )}
           </div>
