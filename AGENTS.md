@@ -65,7 +65,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 
 | Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
 | ------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared`  | Prisma schema, DB client, shared types               | Singleton `PrismaClient` exported from `db.ts`; types re-exported via `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations                                               |
+| `packages/shared`  | Prisma schema, DB client, shared types               | Singleton `PrismaClient` exported from `db.ts`; types re-exported via `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill, mirroring `workflow/templates/`) |
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
@@ -182,6 +182,24 @@ GitHub, Slack, artifact storage, workflow defaults, and OAuth credentials are st
 All five tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
 
 **Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
+
+### Agent Skills and Tool Access
+
+Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
+
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true`.
+- **Tool** = executable Mastra `createTool()` function. `AgentToolConfig` stores a `String[]` of enabled tool names per role/scope. `null` (no config) = all tools enabled.
+
+**Scope cascade** for skills and tool configs follows the same 3-level pattern as model config:
+1. `WORKFLOW_TEMPLATE` scope (if the run's template has an override)
+2. `TEAM` scope (if the team has an override)
+3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
+
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`).
+
+Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
+
+---
 
 ### Multi-Model Support
 
