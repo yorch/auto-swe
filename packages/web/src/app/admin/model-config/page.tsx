@@ -6,6 +6,7 @@ import { CredentialsTab } from '@/components/modelConfig/CredentialsTab';
 import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
 import { MidRunWarning } from '@/components/modelConfig/MidRunWarning';
 import { RolesTab } from '@/components/modelConfig/RolesTab';
+import { TabBar } from '@/components/ui/TabBar';
 
 type Tab = 'roles' | 'credentials' | 'embeddings' | 'audit';
 
@@ -29,24 +30,7 @@ export default function AdminModelConfigPage() {
         </p>
       </div>
       <MidRunWarning />
-      <div className="border-b border-ink-600">
-        <nav className="flex gap-1">
-          {TABS.map((tab) => (
-            <button
-              className={`border-b-2 px-4 py-2 text-sm transition-colors ${
-                active === tab.id
-                  ? 'border-ember-400 text-ember-400'
-                  : 'border-transparent text-paper-400 hover:text-paper-100'
-              }`}
-              key={tab.id}
-              onClick={() => setActive(tab.id)}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'roles' && <RolesTab />}
       {active === 'credentials' && <CredentialsTab />}
       {active === 'embeddings' && <EmbeddingsTab />}
