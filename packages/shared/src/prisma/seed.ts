@@ -126,78 +126,20 @@ async function main() {
     );
   }
 
-  // ── Built-in tool skills ──────────────────────────────────────────────────
-  // Deterministic UUIDs so upsert is idempotent across re-seeds.
-  const SKILL_IDS = {
-    bash: '00000000-0000-0000-0001-000000000004',
-    listDirectory: '00000000-0000-0000-0001-000000000003',
-    readFile: '00000000-0000-0000-0001-000000000001',
-    writeFile: '00000000-0000-0000-0001-000000000002',
-  } as const;
-
-  const builtInTools = [
-    {
-      description: 'Read file contents from the workspace',
-      id: SKILL_IDS.readFile,
-      name: 'Read File',
-      sortOrder: 0,
-      toolKey: 'readFile',
-    },
-    {
-      description: 'Write or update files in the workspace',
-      id: SKILL_IDS.writeFile,
-      name: 'Write File',
-      sortOrder: 1,
-      toolKey: 'writeFile',
-    },
-    {
-      description: 'List directory contents in the workspace',
-      id: SKILL_IDS.listDirectory,
-      name: 'List Directory',
-      sortOrder: 2,
-      toolKey: 'listDirectory',
-    },
-    {
-      description: 'Execute shell commands in the workspace',
-      id: SKILL_IDS.bash,
-      name: 'Bash',
-      sortOrder: 3,
-      toolKey: 'bash',
-    },
-  ];
-
-  for (const tool of builtInTools) {
-    await prisma.skill.upsert({
-      create: {
-        description: tool.description,
-        id: tool.id,
-        isBuiltIn: true,
-        name: tool.name,
-        toolKey: tool.toolKey,
-        type: 'TOOL',
+  // Seed default GLOBAL tool config for IMPLEMENTER
+  const existingToolConfig = await prisma.agentToolConfig.findFirst({
+    where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL' },
+  });
+  if (!existingToolConfig) {
+    await prisma.agentToolConfig.create({
+      data: {
+        agentRole: 'IMPLEMENTER',
+        enabledTools: ['readFile', 'writeFile', 'listDirectory', 'bash'],
+        scope: 'GLOBAL',
       },
-      update: { description: tool.description, name: tool.name },
-      where: { id: tool.id },
     });
-
-    // Assign to IMPLEMENTER at GLOBAL scope. We can't use a Prisma composite
-    // unique key here because the partial unique index is defined in raw SQL,
-    // so we check for existence first.
-    const existing = await prisma.agentSkillAssignment.findFirst({
-      where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL', skillId: tool.id },
-    });
-    if (!existing) {
-      await prisma.agentSkillAssignment.create({
-        data: {
-          agentRole: 'IMPLEMENTER',
-          scope: 'GLOBAL',
-          skillId: tool.id,
-          sortOrder: tool.sortOrder,
-        },
-      });
-    }
   }
-  console.log('Seed: built-in tool skills seeded (readFile, writeFile, listDirectory, bash)');
+  console.log('Seed: default IMPLEMENTER tool config seeded (all 4 tools at GLOBAL scope)');
   console.log('');
   console.log('  To submit a work request, use this repo ID:');
   console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);

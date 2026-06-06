@@ -5,8 +5,8 @@ export {
   ConfigAuditAction,
   ConfigScope,
   Role,
-  SkillType,
 } from './generated/prisma/enums.js';
+export type { AgentToolConfig } from './generated/prisma/models.js';
 export {
   assertCredentialScope,
   type CredentialScope,

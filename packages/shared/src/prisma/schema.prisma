@@ -44,11 +44,6 @@ enum ConfigScope {
   WORKFLOW_TEMPLATE
 }
 
-enum SkillType {
-  TOOL
-  PROMPT_FRAGMENT
-}
-
 enum AgentRole {
   IMPLEMENTER
   REVIEWER
@@ -250,6 +245,7 @@ model Team {
   modelRoleConfigs       ModelRoleConfig[]
   providerCredentials    ProviderCredential[]
   agentSkillAssignments  AgentSkillAssignment[]
+  agentToolConfigs       AgentToolConfig[]
 
   @@map("teams")
 }
@@ -536,6 +532,7 @@ model WorkflowTemplate {
   workflowRuns          WorkflowRun[]
   modelRoleConfigs      ModelRoleConfig[]
   agentSkillAssignments AgentSkillAssignment[]
+  agentToolConfigs      AgentToolConfig[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -801,21 +798,16 @@ model ConfigAuditLog {
   @@map("config_audit_log")
 }
 
-/// A reusable agent capability: either a named tool reference or a prompt
-/// fragment injected after the base system prompt. Skills are assigned to
-/// agent roles at GLOBAL / TEAM / WORKFLOW_TEMPLATE scope via
-/// AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
-/// Built-in skills (isBuiltIn=true) map to the four hardcoded workspace
-/// tools; they cannot be deleted through the API.
+/// A reusable prompt-fragment skill injected into an agent's system prompt.
+/// Skills are assigned to agent roles at GLOBAL / TEAM / WORKFLOW_TEMPLATE
+/// scope via AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
+/// Tool access control is handled separately via AgentToolConfig.
 model Skill {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   description String?
-  type        SkillType
-  /// TOOL: one of "readFile" | "writeFile" | "listDirectory" | "bash"
-  toolKey     String?   @map("tool_key")
-  /// PROMPT_FRAGMENT: text injected after the base system prompt
-  promptText  String?   @map("prompt_text")
+  /// Text injected after the base system prompt
+  promptText  String    @map("prompt_text")
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -823,6 +815,28 @@ model Skill {
   assignments AgentSkillAssignment[]
 
   @@map("skills")
+}
+
+/// Tool access configuration for an agent role at a specific scope.
+/// Controls which of the 4 built-in workspace tools (readFile, writeFile,
+/// listDirectory, bash) are enabled for a given agent role.
+/// Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).
+/// At most one row per (role, scope, scope-key) — enforced by partial unique
+/// indexes defined in raw SQL in the migration.
+model AgentToolConfig {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentRole          AgentRole         @map("agent_role")
+  scope              ConfigScope
+  teamId             String?           @map("team_id") @db.Uuid
+  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
+  enabledTools       String[]          @map("enabled_tools")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@map("agent_tool_configs")
 }
 
 /// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
