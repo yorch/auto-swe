@@ -25,7 +25,18 @@ export async function fetchCILogs(logsUrl?: string): Promise<string> {
   }
 
   const ghConfig = await resolveGitHubConfig();
-  const githubToken = await resolveGitHubToken(ghConfig).catch(() => null);
+  let githubToken: string | null = null;
+  try {
+    githubToken = await resolveGitHubToken(ghConfig);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // If auth is entirely unconfigured, proceed unauthenticated (public repos).
+    // Any other error (e.g. malformed App credentials) surfaces immediately so
+    // the operator knows why the log fetch failed rather than getting a 401.
+    if (!msg.includes('No GitHub token configured')) {
+      return `Cannot fetch CI logs — GitHub auth error: ${msg}`;
+    }
+  }
   const response = await fetch(logsUrl, {
     headers: {
       Accept: 'application/vnd.github.v3+json',

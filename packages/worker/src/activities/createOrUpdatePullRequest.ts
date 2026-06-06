@@ -22,7 +22,15 @@ export async function createOrUpdatePullRequest(
     resolveGitHubConfig(),
     resolveWorkflowDefaults(),
   ]);
-  const token = await resolveGitHubToken(ghConfig);
+  let token: string;
+  try {
+    token = await resolveGitHubToken(ghConfig);
+  } catch (err) {
+    throw ApplicationFailure.nonRetryable(
+      `GitHub token not configured. Set it at /admin/integrations. (${err instanceof Error ? err.message : String(err)})`,
+      'CONFIG_MISSING'
+    );
+  }
   const githubApiUrl =
     repo.githubApiUrl ??
     (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
