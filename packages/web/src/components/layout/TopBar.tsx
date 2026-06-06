@@ -1,8 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
-import { useTeams } from '@/hooks/useWorkflows';
+import { useInbox, useTeams } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 
@@ -19,6 +20,8 @@ export function TopBar() {
   };
 
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
+  const { data: inboxSteps } = useInbox();
+  const inboxCount = (inboxSteps ?? []).length;
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-ink-600 bg-ink-950/40 px-8 backdrop-blur-sm">
@@ -60,6 +63,21 @@ export function TopBar() {
           </span>
           <span className="font-mono text-xs text-paper-400">]</span>
         </label>
+
+        {inboxCount > 0 && (
+          <>
+            <span className="h-4 w-px bg-ink-500" />
+            <Link
+              className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-300 transition-colors"
+              href="/inbox"
+            >
+              <span>inbox</span>
+              <span className="bg-amber-400 text-ink-950 text-[9px] px-1.5 rounded-full leading-5 font-bold">
+                {inboxCount}
+              </span>
+            </Link>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-5">

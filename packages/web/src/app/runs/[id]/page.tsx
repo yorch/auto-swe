@@ -4,10 +4,11 @@ import type { AgentTraceRecord, WorkflowRunDetail } from '@auto-swe/shared/types
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
+import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
-import { useCancelWorkflowRun, useWorkflowRun } from '@/hooks/useWorkflows';
+import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -197,6 +198,11 @@ export default function RunDetailPage({ params }: PageProps) {
   const { data: run, isLoading } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const { data: inboxSteps } = useInbox();
+  const pendingSteps = useMemo(
+    () => (inboxSteps ?? []).filter((s) => s.runId === id),
+    [inboxSteps, id]
+  );
 
   const dagOverlay = useMemo(() => {
     if (!run?.steps) {
@@ -398,6 +404,19 @@ export default function RunDetailPage({ params }: PageProps) {
                   <AgentTracePanel traces={nodeTraces} />
                 </div>
               )}
+            </Card>
+          )}
+
+          {pendingSteps.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Pending actions · {pendingSteps.length}</CardTitle>
+              </CardHeader>
+              <div className="space-y-3">
+                {pendingSteps.map((step) => (
+                  <HumanStepCard key={step.id} showRunLink={false} step={step} />
+                ))}
+              </div>
             </Card>
           )}
 
