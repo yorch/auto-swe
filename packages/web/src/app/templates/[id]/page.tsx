@@ -8,6 +8,7 @@ import { TemplateModelConfigSection } from '@/components/modelConfig/TemplateMod
 import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgentSkillsSection';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
@@ -86,12 +87,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   }, [visualSpec, stepRegistryByName]);
 
   if (isLoading || !template) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading template…
-      </div>
-    );
+    return <LoadingState message="loading template…" />;
   }
 
   const handleSave = async () => {

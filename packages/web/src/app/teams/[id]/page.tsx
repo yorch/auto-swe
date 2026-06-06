@@ -10,6 +10,7 @@ import { TeamAgentSkillsSection } from '@/components/teams/TeamAgentSkillsSectio
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
@@ -35,10 +36,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [adding, setAdding] = useState(false);
 
   if (isLoading) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading...</div>;
+    return <LoadingState />;
   }
   if (!team) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Team not found</div>;
+    return <LoadingState message="team not found" />;
   }
 
   const memberships = team.memberships ?? [];

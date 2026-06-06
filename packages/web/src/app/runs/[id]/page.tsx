@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
@@ -233,7 +234,7 @@ export default function RunDetailPage({ params }: PageProps) {
   }, [selectedNodeId, run?.traces, run?.specSnapshot]);
 
   if (isLoading || !run) {
-    return <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>;
+    return <LoadingState />;
   }
 
   const spec = run.specSnapshot as WorkflowSpec;

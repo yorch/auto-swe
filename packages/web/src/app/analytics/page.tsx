@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useGlobalAnalytics } from '@/hooks/useWorkflows';
 import { formatPercent } from '@/lib/utils';
 
@@ -151,7 +152,7 @@ export default function GlobalAnalyticsPage() {
       </div>
 
       {isLoading || !data ? (
-        <div className="text-center py-12 text-[var(--muted-foreground)]">Loading…</div>
+        <LoadingState />
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
