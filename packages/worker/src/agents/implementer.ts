@@ -34,10 +34,8 @@ function safePath(relPath: string): string {
  * If `tracer` is provided every tool execution is recorded so callers can
  * persist the full tool-call sequence to `agent_traces` after generation.
  *
- * If `skills` is provided:
- * - TOOL entries filter the active tool set to the listed toolKeys only.
- * - PROMPT_FRAGMENT entries are appended to the base system prompt in sortOrder.
- * - Empty array → all 4 tools + base prompt (backward compat when no DB rows exist).
+ * `tools`: string[] of enabled tool keys (from AgentToolConfig). null = all 4 tools.
+ * `skills`: prompt-fragment skills to inject into the system prompt (in sortOrder).
  */
 export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
 export { IMPLEMENTER_TOOL_IDS };
@@ -45,8 +43,9 @@ export { IMPLEMENTER_TOOL_IDS };
 export async function createImplementerAgent(
   workspace: Workspace,
   tracer?: AgentTracer,
+  tools?: string[] | null,
   skills?: ResolvedSkill[]
-): Promise<{ agent: Agent; mastra: Mastra }> {
+): Promise<{ agent: Agent; mastra: Mastra; promptSuffix: string }> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
@@ -198,26 +197,24 @@ export async function createImplementerAgent(
   // All available tools keyed by toolKey
   const allTools = { bash, listDirectory, readFile, writeFile };
 
-  // Filter tools by TOOL-type skills when provided; empty → use all 4 tools.
-  const toolSkills = skills?.filter((s) => s.type === 'TOOL') ?? [];
+  // Filter tools based on the tools string array from AgentToolConfig.
+  // null = all 4 tools; string[] = subset of enabled tool keys.
   const activeTools =
-    toolSkills.length > 0
+    tools && tools.length > 0
       ? Object.fromEntries(
-          toolSkills
-            .filter((s) => s.toolKey && s.toolKey in allTools)
-            .map((s) => [s.toolKey as string, allTools[s.toolKey as keyof typeof allTools]])
+          tools
+            .filter((key) => key in allTools)
+            .map((key) => [key, allTools[key as keyof typeof allTools]])
         )
       : allTools;
 
-  // If every skill resolved to an unknown toolKey, fall back to allTools
-  // to avoid instantiating an agent with no tools.
+  // Guard: if every key was unknown, fall back to allTools to avoid an agent with no tools.
   const resolvedActiveTools = Object.keys(activeTools).length > 0 ? activeTools : allTools;
 
-  // Append PROMPT_FRAGMENT skills (in sortOrder) to the base system prompt.
-  const fragmentSkills = skills?.filter((s) => s.type === 'PROMPT_FRAGMENT') ?? [];
-  const promptSuffix = fragmentSkills
+  // Build prompt suffix from prompt-fragment skills (in sortOrder).
+  const promptSuffix = (skills ?? [])
     .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((s) => s.promptText ?? '')
+    .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
 

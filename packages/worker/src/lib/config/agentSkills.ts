@@ -1,20 +1,20 @@
-import type { SkillType } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AgentRole, ResolveCtx } from './types.js';
 
-// Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
-// The worker would load and execute it within the Docker workspace, enforcing the same
-// input/output schema contract as built-in tools (Mastra createTool format).
-// Security model: custom tools run with the same Docker isolation as the workspace itself.
+// Future: CUSTOM_TOOL entries in agent_tool_configs could reference sandboxed
+// JS/Python stored in the DB, executed inside the Docker workspace with the same
+// isolation model as built-in tools (Mastra createTool format). For now, only
+// the 4 built-in keys are recognized.
 
 export interface ResolvedSkill {
   id: string;
   name: string;
-  type: SkillType;
-  toolKey: string | null;
-  promptText: string | null;
+  promptText: string;
   sortOrder: number;
 }
+
+const ALL_TOOLS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
+export type BuiltInToolKey = (typeof ALL_TOOLS)[number];
 
 const ROLE_TO_PRISMA: Record<AgentRole, string> = {
   commitToMemory: 'COMMIT_TO_MEMORY',
@@ -26,10 +26,11 @@ const ROLE_TO_PRISMA: Record<AgentRole, string> = {
 };
 
 /**
- * Loads the effective skill assignments for an agent role using the same
- * scope cascade as ModelRoleConfig: WORKFLOW_TEMPLATE → TEAM → GLOBAL.
+ * Loads the effective skill assignments (prompt fragments) for an agent role
+ * using the same scope cascade as ModelRoleConfig:
+ * WORKFLOW_TEMPLATE → TEAM → GLOBAL.
  * The first scope that has any assignments for the role wins — returning
- * an empty array means "use hardcoded defaults" in the agent factory.
+ * an empty array means "no prompt fragments injected" for this role.
  *
  * Called per-activity-invocation (not cached at startup) so that admin
  * edits take effect on the next LLM call within an already-running workflow.
@@ -81,7 +82,44 @@ async function fetchSkillAssignments(
     name: a.skill.name,
     promptText: a.skill.promptText,
     sortOrder: a.sortOrder,
-    toolKey: a.skill.toolKey,
-    type: a.skill.type,
   }));
+}
+
+/**
+ * Resolves the effective tool configuration for an agent role.
+ * Returns the enabled tool keys, or null if no config exists (caller uses all tools).
+ * Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).
+ */
+export async function loadAgentToolConfig(
+  role: AgentRole,
+  ctx?: ResolveCtx
+): Promise<string[] | null> {
+  const prismaRole = ROLE_TO_PRISMA[role];
+
+  if (ctx?.workflowTemplateId) {
+    const row = await prisma.agentToolConfig.findFirst({
+      where: {
+        agentRole: prismaRole as 'IMPLEMENTER',
+        scope: 'WORKFLOW_TEMPLATE',
+        workflowTemplateId: ctx.workflowTemplateId,
+      },
+    });
+    if (row) {
+      return row.enabledTools;
+    }
+  }
+
+  if (ctx?.teamId) {
+    const row = await prisma.agentToolConfig.findFirst({
+      where: { agentRole: prismaRole as 'IMPLEMENTER', scope: 'TEAM', teamId: ctx.teamId },
+    });
+    if (row) {
+      return row.enabledTools;
+    }
+  }
+
+  const row = await prisma.agentToolConfig.findFirst({
+    where: { agentRole: prismaRole as 'IMPLEMENTER', scope: 'GLOBAL' },
+  });
+  return row ? row.enabledTools : null; // null → caller uses all 4 tools
 }

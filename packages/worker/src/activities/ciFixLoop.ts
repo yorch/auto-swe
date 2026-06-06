@@ -6,7 +6,7 @@ import { createImplementerAgent } from '../agents/implementer.js';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
@@ -86,8 +86,11 @@ export async function executeCIFixImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const skills = await loadAgentSkills('implementer', activityCtx);
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, skills);
+    const [tools, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, tools, skills);
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -231,8 +234,16 @@ export async function executeReviewFixImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const skills = await loadAgentSkills('implementer', activityCtx);
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, reviewTracer, skills);
+    const [tools, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      reviewTracer,
+      tools,
+      skills
+    );
 
     const reviewSystemPrompt = await resolveSystemPrompt(
       'implementer',

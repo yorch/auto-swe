@@ -32,7 +32,7 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
@@ -331,8 +331,16 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const skills = await loadAgentSkills('implementer', activityCtx);
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, gateTracer, skills);
+    const [tools, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      gateTracer,
+      tools,
+      skills
+    );
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',

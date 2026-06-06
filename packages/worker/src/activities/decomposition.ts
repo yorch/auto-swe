@@ -26,7 +26,7 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
@@ -386,8 +386,16 @@ async function mergeOneWithResolver(
     );
 
     const activityCtx = await currentRequestContext();
-    const skills = await loadAgentSkills('implementer', activityCtx);
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, opts.tracer, skills);
+    const [tools, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      opts.tracer,
+      tools,
+      skills
+    );
     const result = await agent.generate(
       [
         {

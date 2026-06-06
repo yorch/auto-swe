@@ -12,7 +12,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
@@ -75,14 +75,17 @@ export async function executeImplementation(
     const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Load skills for this role at the current scope (WORKFLOW_TEMPLATE → TEAM → GLOBAL).
-    // Uses the same Temporal activity context as model config resolution.
+    // Load tool config and skills for this role at the current scope
+    // (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade for both).
     const activityCtx = await currentRequestContext();
-    const skills = await loadAgentSkills('implementer', activityCtx);
+    const [tools, skills] = await Promise.all([
+      loadAgentToolConfig('implementer', activityCtx),
+      loadAgentSkills('implementer', activityCtx),
+    ]);
 
     // Create Mastra agent with tools bound to workspace (tracer captures every call).
-    // promptSuffix contains any PROMPT_FRAGMENT skills to be appended to the system prompt.
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, skills);
+    // promptSuffix contains prompt-fragment skills to be appended to the system prompt.
+    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, tools, skills);
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
