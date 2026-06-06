@@ -65,20 +65,20 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
   }
 
   // tool_call
+  const label = TOOL_LABELS[name] ?? (name || 'call');
   if (!input) {
-    return { detail: '', label: TOOL_LABELS[name] ?? name };
+    return { detail: '', label };
   }
-  switch (name) {
-    case 'readFile':
-    case 'writeFile':
-      return { detail: String(input.path ?? ''), label: TOOL_LABELS[name] ?? name };
-    case 'listDirectory':
-      return { detail: String(input.path ?? '.'), label: 'ls' };
-    case 'bash':
-      return { detail: String(input.command ?? '').slice(0, 80), label: 'bash' };
-    default:
-      return { detail: '', label: TOOL_LABELS[name] ?? (name || 'call') };
+  if (name === 'readFile' || name === 'writeFile') {
+    return { detail: String(input.path ?? ''), label };
   }
+  if (name === 'listDirectory') {
+    return { detail: String(input.path ?? '.'), label };
+  }
+  if (name === 'bash') {
+    return { detail: String(input.command ?? '').slice(0, 80), label };
+  }
+  return { detail: '', label };
 }
 
 const OUTPUT_TEXT_FIELDS = ['text', 'output', 'content', 'listing', 'result'] as const;
@@ -144,8 +144,7 @@ function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
             {byAttempt[attempt].map((t) => {
               const { label, detail } = traceSummary(t);
               const isExpanded = expandedId === t.id;
-              const durationLabel =
-                t.durationMs != null && t.durationMs > 0 ? formatDuration(t.durationMs) : '';
+              const durationLabel = t.durationMs != null ? formatDuration(t.durationMs) : '';
               const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
               const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
 

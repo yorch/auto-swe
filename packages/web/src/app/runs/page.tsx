@@ -33,7 +33,7 @@ export default function WorkflowRunsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold">Workflow runs</h2>
-        <span className="text-sm text-[var(--muted-foreground)]">{total} total</span>
+        <span className="text-sm text-paper-400">{total} total</span>
       </div>
 
       <Card variant="inset">
@@ -76,7 +76,7 @@ export default function WorkflowRunsPage() {
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
+            <tr className="border-b border-ink-600 bg-ink-800">
               <th className="text-left px-4 py-3 font-medium">Ticket</th>
               <th className="text-left px-4 py-3 font-medium">Description</th>
               <th className="text-left px-4 py-3 font-medium">Template</th>
@@ -100,30 +100,23 @@ export default function WorkflowRunsPage() {
               </tr>
             )}
             {runs.map((r) => (
-              <tr
-                className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors"
-                key={r.id}
-              >
+              <tr className="border-b border-ink-600 hover:bg-ink-800 transition-colors" key={r.id}>
                 <td className="px-4 py-3">
                   <Link
-                    className="text-[var(--primary)] hover:underline font-medium"
+                    className="text-ember-400 hover:underline font-medium"
                     href={`/runs/${r.id}`}
                   >
                     {r.workRequest?.externalTicketId ?? '—'}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)] truncate max-w-md">
+                <td className="px-4 py-3 text-paper-400 truncate max-w-md">
                   {r.workRequest?.description ?? '—'}
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">
-                  v{r.templateVersion}
-                </td>
+                <td className="px-4 py-3 font-mono text-xs text-paper-400">v{r.templateVersion}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {formatRelativeTime(r.startedAt)}
-                </td>
+                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(r.startedAt)}</td>
               </tr>
             ))}
           </tbody>

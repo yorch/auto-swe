@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Pagination } from '@/components/ui/Pagination';
 import { useGlobalAnalytics } from '@/hooks/useWorkflows';
 import { formatPercent } from '@/lib/utils';
 
@@ -266,42 +267,15 @@ export default function GlobalAnalyticsPage() {
                   </table>
                 </div>
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between px-4 py-3 border-t border-ink-600 text-sm text-paper-400">
-                    <span>
-                      {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of{' '}
-                      {rows.length}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        className="px-2 py-1 rounded hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={page === 0}
-                        onClick={() => setPage((p) => p - 1)}
-                        type="button"
-                      >
-                        ←
-                      </button>
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-                        <button
-                          className={`px-2 py-1 rounded text-xs ${
-                            pageNum - 1 === page ? 'bg-ember-400 text-ink-950' : 'hover:bg-ink-800'
-                          }`}
-                          key={pageNum}
-                          onClick={() => setPage(pageNum - 1)}
-                          type="button"
-                        >
-                          {pageNum}
-                        </button>
-                      ))}
-                      <button
-                        className="px-2 py-1 rounded hover:bg-ink-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={page === totalPages - 1}
-                        onClick={() => setPage((p) => p + 1)}
-                        type="button"
-                      >
-                        →
-                      </button>
-                    </div>
-                  </div>
+                  <Pagination
+                    hasNext={page < totalPages - 1}
+                    hasPrev={page > 0}
+                    onNext={() => setPage((p) => p + 1)}
+                    onPrev={() => setPage((p) => p - 1)}
+                    rangeEnd={Math.min((page + 1) * PAGE_SIZE, rows.length)}
+                    rangeStart={rows.length === 0 ? 0 : page * PAGE_SIZE + 1}
+                    total={rows.length}
+                  />
                 )}
               </>
             )}

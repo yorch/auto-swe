@@ -36,12 +36,13 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
 
   if (isLoading) {
     return <LoadingState />;
   }
   if (!team) {
-    return <LoadingState message="team not found" />;
+    return <div className="text-center py-12 text-paper-400">Team not found</div>;
   }
 
   const memberships = team.memberships ?? [];
@@ -116,6 +117,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                           onClick={() => {
                             if (m.user?.id) {
                               setConfirmRemoveId(m.user.id);
+                              setConfirmRemoveEmail(m.user.email ?? null);
                             }
                           }}
                           size="sm"
@@ -196,8 +198,11 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       <ConfirmModal
         confirmLabel="Remove"
         dangerous
-        message={`Remove ${memberships.find((m) => m.user?.id === confirmRemoveId)?.user?.email ?? 'this user'} from ${team.name}?`}
-        onClose={() => setConfirmRemoveId(null)}
+        message={`Remove ${confirmRemoveEmail ?? 'this user'} from ${team.name}?`}
+        onClose={() => {
+          setConfirmRemoveId(null);
+          setConfirmRemoveEmail(null);
+        }}
         onConfirm={() => {
           if (confirmRemoveId) {
             removeMember.mutate(confirmRemoveId);

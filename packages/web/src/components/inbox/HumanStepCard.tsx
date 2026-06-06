@@ -4,6 +4,7 @@ import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useWorkflows';
 
 const KIND_LABEL: Record<string, string> = {
@@ -60,13 +61,9 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             </div>
           )}
         </div>
-        <button
-          className="text-xs px-2 py-1 border border-ink-600 rounded hover:bg-ink-800"
-          onClick={() => setExpanded((v) => !v)}
-          type="button"
-        >
+        <Button onClick={() => setExpanded((v) => !v)} size="sm" variant="ghost">
           {expanded ? 'Hide' : 'Respond'}
-        </button>
+        </Button>
       </div>
 
       {expanded && (
@@ -134,8 +131,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                       type="checkbox"
                     />
                   ) : field.type === 'select' ? (
-                    <select
-                      className="w-full text-sm border border-ink-600 rounded px-2 py-1"
+                    <Select
                       onChange={(e) =>
                         setInputValues((p) => ({ ...p, [field.key]: e.target.value }))
                       }
@@ -147,7 +143,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                           {o}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   ) : (
                     <input
                       className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono"
@@ -167,9 +163,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               <Button
                 disabled={respond.isPending}
                 onClick={() => {
-                  const fields = step.fields as Array<{ key: string }> | null;
+                  const fields = step.fields as Array<{ key: string; type: string }> | null;
                   const value = Object.fromEntries(
-                    (fields ?? []).map((f) => [f.key, inputValues[f.key] ?? ''])
+                    (fields ?? []).map((f) => [
+                      f.key,
+                      f.type === 'number'
+                        ? (inputValues[f.key] ?? null)
+                        : (inputValues[f.key] ?? ''),
+                    ])
                   );
                   handleRespond('submit', value);
                 }}

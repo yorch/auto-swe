@@ -11,7 +11,7 @@ function toDateKey(dateStr: string): string {
   return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function last30Days(): string[] {
+function buildLast30Days(): string[] {
   const days: string[] = [];
   const today = new Date();
   for (let i = 29; i >= 0; i--) {
@@ -21,6 +21,8 @@ function last30Days(): string[] {
   }
   return days;
 }
+
+const LAST_30_DAYS = buildLast30Days();
 
 // ── Workflow transformations ──────────────────────────────────────────
 
@@ -39,7 +41,7 @@ export function groupWorkflowsByDate(
   workflows: WorkflowSummary[],
   days = 30
 ): { date: string; completed: number; failed: number; active: number }[] {
-  const buckets = last30Days().slice(-days);
+  const buckets = LAST_30_DAYS.slice(-days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
   for (const d of buckets) {
     map[d] = { active: 0, completed: 0, failed: 0 };
@@ -91,7 +93,7 @@ export function groupLessonsByDate(
   lessons: LessonForChart[],
   days = 30
 ): { date: string; count: number }[] {
-  const buckets = last30Days().slice(-days);
+  const buckets = LAST_30_DAYS.slice(-days);
   const map: Record<string, number> = {};
   for (const d of buckets) {
     map[d] = 0;
