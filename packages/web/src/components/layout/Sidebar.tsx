@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useInbox } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -21,6 +22,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/', label: 'Dashboard', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/workflows', label: 'Active Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+      { href: '/inbox', label: 'Inbox', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/runs', label: 'Run History', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/templates', label: 'Templates', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/analytics', label: 'Analytics', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
@@ -67,6 +69,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
   const userLevel = ROLE_HIERARCHY[user?.role ?? 'ENGINEER'] ?? 1;
+  const { data: inboxSteps } = useInbox();
+  const inboxCount = (inboxSteps ?? []).length;
 
   let counter = 0;
 
@@ -129,7 +133,13 @@ export function Sidebar() {
                           {n}
                         </span>
                         <span className="flex-1 tracking-tight">{item.label}</span>
-                        {active && <span className="font-mono text-[10px] text-ember-400">●</span>}
+                        {item.href === '/inbox' && inboxCount > 0 ? (
+                          <span className="font-mono text-[9px] bg-ember-400 text-ink-950 px-1.5 rounded-full leading-5">
+                            {inboxCount}
+                          </span>
+                        ) : (
+                          active && <span className="font-mono text-[10px] text-ember-400">●</span>
+                        )}
                       </Link>
                     </li>
                   );

@@ -28,6 +28,25 @@ A missing GLOBAL row is a startup error, not a runtime condition — `assertConf
 
 `ProviderCredential` rows are scoped only `GLOBAL` or `TEAM`. Templates that want to pin a specific credential do so via `ModelRoleConfig.credentialId` pointing at a GLOBAL or TEAM row. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
 
+## Per-scope system prompts
+
+`ModelRoleConfig` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt for that scope. The cascade works identically to model selection:
+
+```
+WORKFLOW_TEMPLATE → TEAM → GLOBAL → (use agent's built-in prompt)
+```
+
+The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
+
+Common uses:
+
+- **Team-specific persona** — give the implementer agent extra context about a team's coding standards without modifying the built-in prompt.
+- **Template-specific reasoning** — add domain knowledge (e.g. "this is a migration workflow; prefer additive schema changes") to a single template's agent.
+
+The resolver function is `resolveSystemPrompt(role, ctx?)` in `packages/worker/src/lib/models.ts`. Activities call it alongside `getModel()` and pass the result as the `system` field in `agent.generate()`.
+
+---
+
 ### Resolution context
 
 Worker activities pick up `{ teamId, workflowTemplateId }` automatically via `currentRequestContext()`, which joins the Temporal `currentWorkflowId()` against `ActiveWorkflow → repository.teamId` and `WorkflowRun.templateId`. Nothing has to be passed through workflow inputs.

@@ -671,6 +671,32 @@ model GitHubConfig {
   oauthClientSecretKeyVersion Int?    @map("oauth_client_secret_key_version")
   oauthClientSecretLastFour   String? @map("oauth_client_secret_last_four")
 
+  /// GitHub App numeric ID (e.g. "12345678")
+  appId String? @map("app_id")
+
+  /// GitHub App client ID (e.g. "Iv1.abc...")
+  appClientId String? @map("app_client_id")
+
+  /// Encrypted GitHub App client secret
+  appClientSecretCiphertext Bytes?  @map("app_client_secret_ciphertext")
+  appClientSecretNonce      Bytes?  @map("app_client_secret_nonce")
+  appClientSecretAuthTag    Bytes?  @map("app_client_secret_auth_tag")
+  appClientSecretKeyVersion Int?    @map("app_client_secret_key_version")
+  appClientSecretLastFour   String? @map("app_client_secret_last_four")
+
+  /// Encrypted PEM private key used to sign GitHub App JWTs
+  appPrivateKeyCiphertext Bytes?  @map("app_private_key_ciphertext")
+  appPrivateKeyNonce      Bytes?  @map("app_private_key_nonce")
+  appPrivateKeyAuthTag    Bytes?  @map("app_private_key_auth_tag")
+  appPrivateKeyKeyVersion Int?    @map("app_private_key_key_version")
+  appPrivateKeyLastFour   String? @map("app_private_key_last_four")
+
+  /// Installation ID for the GitHub App on the target org/account
+  appInstallationId String? @map("app_installation_id")
+
+  /// Auth mode: null = auto (use app if fully configured, else PAT), 'pat', or 'app'
+  authMode String? @map("auth_mode")
+
   /// Base URL for git clone operations; null → https://github.com
   baseUrl String? @map("base_url")
   /// Octokit REST API base URL; null → https://api.github.com (for GHE)

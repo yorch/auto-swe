@@ -83,16 +83,22 @@ function src(dbPresent: boolean, envKey: string): ConfigSource {
 }
 
 /// Builds the list of field names that were provided in a PUT body.
-/// Pairs are [fieldName, value]; a field is included when its value is truthy
-/// (secrets) or !== undefined (clearable non-secret fields like oauthClientId).
+/// Pairs are [fieldName, value]; undefined means not sent (skip); null means
+/// explicitly cleared (record in audit log); '' means empty secret input (skip).
 function changedKeys(pairs: [string, unknown][]): string[] {
-  return pairs.filter(([, v]) => v !== undefined && v !== '' && v !== null).map(([k]) => k);
+  return pairs.filter(([, v]) => v !== undefined && v !== '').map(([k]) => k);
 }
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const GitHubPutBody = z.object({
   apiUrl: z.string().url().max(500).nullable().optional(),
+  appClientId: z.string().max(200).nullable().optional(),
+  appClientSecret: z.string().min(1).max(500).optional(),
+  appId: z.string().max(100).nullable().optional(),
+  appInstallationId: z.string().max(100).nullable().optional(),
+  appPrivateKey: z.string().min(1).max(10_000).optional(),
+  authMode: z.enum(['auto', 'pat', 'app']).nullable().optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   oauthClientId: z.string().max(200).nullable().optional(),
   oauthClientSecret: z.string().min(1).max(500).optional(),
@@ -168,6 +174,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     return reply.send({
       data: {
         apiUrl: row?.apiUrl ?? null,
+        appClientId: row?.appClientId ?? null,
+        appClientSecret: maskedSecret(row?.appClientSecretLastFour),
+        appId: row?.appId ?? null,
+        appInstallationId: row?.appInstallationId ?? null,
+        appPrivateKey: maskedSecret(row?.appPrivateKeyLastFour),
+        authMode: row?.authMode ?? null,
         baseUrl: row?.baseUrl ?? null,
         oauthClientId: row?.oauthClientId ?? null,
         oauthClientSecret: maskedSecret(row?.oauthClientSecretLastFour),
@@ -176,6 +188,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       },
       sources: {
         apiUrl: src(!!row?.apiUrl, 'GITHUB_API_URL'),
+        appClientId: src(!!row?.appClientId, 'GITHUB_APP_CLIENT_ID'),
+        appClientSecret: src(!!row?.appClientSecretCiphertext, 'GITHUB_APP_CLIENT_SECRET'),
+        appId: src(!!row?.appId, 'GITHUB_APP_ID'),
+        appInstallationId: src(!!row?.appInstallationId, 'GITHUB_APP_INSTALLATION_ID'),
+        appPrivateKey: src(!!row?.appPrivateKeyCiphertext, 'GITHUB_APP_PRIVATE_KEY'),
+        authMode: src(!!row?.authMode, 'GITHUB_AUTH_MODE'),
         baseUrl: src(!!row?.baseUrl, 'GITHUB_URL'),
         oauthClientId: src(!!row?.oauthClientId, 'GITHUB_CLIENT_ID'),
         oauthClientSecret: src(!!row?.oauthClientSecretCiphertext, 'GITHUB_CLIENT_SECRET'),
@@ -189,7 +207,20 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/github',
     { schema: { body: GitHubPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const { token, webhookSecret, oauthClientSecret, oauthClientId, apiUrl, baseUrl } = req.body;
+      const {
+        token,
+        webhookSecret,
+        oauthClientSecret,
+        oauthClientId,
+        apiUrl,
+        baseUrl,
+        appId,
+        appClientId,
+        appClientSecret,
+        appPrivateKey,
+        appInstallationId,
+        authMode,
+      } = req.body;
 
       const existing = await prisma.gitHubConfig.findUnique({ where: { id: 'default' } });
 
@@ -203,10 +234,24 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       if (oauthClientId !== undefined) {
         data.oauthClientId = oauthClientId;
       }
+      if (appId !== undefined) {
+        data.appId = appId;
+      }
+      if (appClientId !== undefined) {
+        data.appClientId = appClientId;
+      }
+      if (appInstallationId !== undefined) {
+        data.appInstallationId = appInstallationId;
+      }
+      if (authMode !== undefined) {
+        data.authMode = authMode;
+      }
 
       sealInto(data, 'token', token);
       sealInto(data, 'webhookSecret', webhookSecret);
       sealInto(data, 'oauthClientSecret', oauthClientSecret);
+      sealInto(data, 'appClientSecret', appClientSecret);
+      sealInto(data, 'appPrivateKey', appPrivateKey);
 
       const row = await prisma.gitHubConfig.upsert({
         create: { id: 'default', ...data },
@@ -221,6 +266,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         ['oauthClientSecret', oauthClientSecret],
         ['apiUrl', apiUrl],
         ['baseUrl', baseUrl],
+        ['appId', appId],
+        ['appClientId', appClientId],
+        ['appClientSecret', appClientSecret],
+        ['appPrivateKey', appPrivateKey],
+        ['appInstallationId', appInstallationId],
+        ['authMode', authMode],
       ]);
       if (changedFields.length > 0) {
         const actor = requireUser(req);
@@ -231,6 +282,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
               actorId: actor.sub,
               afterJson: {
                 apiUrl: row.apiUrl,
+                appClientId: row.appClientId,
+                appId: row.appId,
+                appInstallationId: row.appInstallationId,
+                authMode: row.authMode,
                 baseUrl: row.baseUrl,
                 changedFields,
                 oauthClientId: row.oauthClientId,
@@ -247,6 +302,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       return reply.send({
         data: {
           apiUrl: row.apiUrl,
+          appClientId: row.appClientId,
+          appClientSecret: maskedSecret(row.appClientSecretLastFour),
+          appId: row.appId,
+          appInstallationId: row.appInstallationId,
+          appPrivateKey: maskedSecret(row.appPrivateKeyLastFour),
+          authMode: row.authMode,
           baseUrl: row.baseUrl,
           oauthClientId: row.oauthClientId,
           oauthClientSecret: maskedSecret(row.oauthClientSecretLastFour),
@@ -261,14 +322,26 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // ── GitHub: connection test ──────────────────────────────────────────────────
 
   f.post('/config/github/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
-    const { token, apiUrl } = await resolveGitHubConfig();
-    if (!token) {
+    const config = await resolveGitHubConfig();
+
+    const appConfigured = config.appId && config.appPrivateKey && config.appInstallationId;
+    const mode = config.authMode ?? 'auto';
+    const useApp = mode === 'app' || (mode === 'auto' && appConfigured);
+
+    if (useApp) {
+      return reply.send({
+        detail: `GitHub App configured (id: ${config.appId}, installation: ${config.appInstallationId}). Start the worker to validate token generation.`,
+        ok: true,
+      });
+    }
+
+    if (!config.token) {
       return reply.send({ detail: 'No GitHub token configured.', ok: false });
     }
     try {
-      const res = await fetch(`${apiUrl}/user`, {
+      const res = await fetch(`${config.apiUrl}/user`, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${config.token}`,
           'User-Agent': 'auto-swe/1.0',
           'X-GitHub-Api-Version': '2022-11-28',
         },

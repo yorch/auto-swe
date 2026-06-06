@@ -29,6 +29,12 @@ export interface GitHubConfig {
   oauthClientSecret: MaskedField | null;
   baseUrl: string | null;
   apiUrl: string | null;
+  appId: string | null;
+  appClientId: string | null;
+  appClientSecret: MaskedField | null;
+  appPrivateKey: MaskedField | null;
+  appInstallationId: string | null;
+  authMode: string | null;
   requiresRestart?: boolean;
 }
 
@@ -39,6 +45,12 @@ export interface GitHubConfigInput {
   oauthClientSecret?: string;
   baseUrl?: string;
   apiUrl?: string;
+  appId?: string;
+  appClientId?: string;
+  appClientSecret?: string;
+  appPrivateKey?: string;
+  appInstallationId?: string;
+  authMode?: string | null;
 }
 
 export function useGitHubConfig() {

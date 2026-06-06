@@ -53,6 +53,18 @@ export interface ResolvedGitHubConfig {
   baseUrl: string;
   /// Octokit REST API base URL (default: https://api.github.com)
   apiUrl: string;
+  /// GitHub App numeric ID.
+  appId: string | null;
+  /// GitHub App client ID.
+  appClientId: string | null;
+  /// GitHub App client secret.
+  appClientSecret: string | null;
+  /// GitHub App PEM private key for JWT signing.
+  appPrivateKey: string | null;
+  /// Installation ID for the GitHub App on the target org/account.
+  appInstallationId: string | null;
+  /// Auth mode: 'pat' | 'app' | null (null = auto: use app if fully configured, else PAT).
+  authMode: string | null;
 }
 
 export async function resolveGitHubConfig(): Promise<ResolvedGitHubConfig> {
@@ -88,8 +100,34 @@ export async function resolveGitHubConfig(): Promise<ResolvedGitHubConfig> {
     process.env.GITHUB_CLIENT_SECRET ??
     null;
 
+  const appClientSecret =
+    decryptOptional({
+      authTag: row?.appClientSecretAuthTag ?? null,
+      ciphertext: row?.appClientSecretCiphertext ?? null,
+      keyVersion: row?.appClientSecretKeyVersion ?? null,
+      nonce: row?.appClientSecretNonce ?? null,
+    }) ??
+    process.env.GITHUB_APP_CLIENT_SECRET ??
+    null;
+
+  const appPrivateKey =
+    decryptOptional({
+      authTag: row?.appPrivateKeyAuthTag ?? null,
+      ciphertext: row?.appPrivateKeyCiphertext ?? null,
+      keyVersion: row?.appPrivateKeyKeyVersion ?? null,
+      nonce: row?.appPrivateKeyNonce ?? null,
+    }) ??
+    process.env.GITHUB_APP_PRIVATE_KEY ??
+    null;
+
   return {
     apiUrl: row?.apiUrl ?? process.env.GITHUB_API_URL ?? 'https://api.github.com',
+    appClientId: row?.appClientId ?? process.env.GITHUB_APP_CLIENT_ID ?? null,
+    appClientSecret,
+    appId: row?.appId ?? process.env.GITHUB_APP_ID ?? null,
+    appInstallationId: row?.appInstallationId ?? process.env.GITHUB_APP_INSTALLATION_ID ?? null,
+    appPrivateKey,
+    authMode: row?.authMode ?? process.env.GITHUB_AUTH_MODE ?? null,
     baseUrl: row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com',
     oauthClientId: row?.oauthClientId ?? process.env.GITHUB_CLIENT_ID ?? null,
     oauthClientSecret,
