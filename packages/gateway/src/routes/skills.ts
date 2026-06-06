@@ -7,9 +7,9 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 /**
  * Admin-only CRUD routes for the Skills library and AgentSkillAssignment management.
  *
- * Skills (prompt fragments only):
+ * Skills (prompt fragments only — tools are configured via AgentToolConfig):
  *   GET    /api/v1/admin/skills              List all skills
- *   POST   /api/v1/admin/skills              Create a skill (prompt fragment)
+ *   POST   /api/v1/admin/skills              Create a non-built-in skill
  *   GET    /api/v1/admin/skills/:id          Get skill by ID
  *   PUT    /api/v1/admin/skills/:id          Update skill
  *   DELETE /api/v1/admin/skills/:id          Delete skill (rejects built-in)
@@ -26,8 +26,10 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   DELETE /api/v1/admin/agents/:role/tools              Delete tool config for role+scope
  *
  * Team-scoped agent skill assignments:
+ *   GET    /api/v1/teams/:teamId/skills                  Read-only skill library (team members)
  *   GET    /api/v1/teams/:teamId/agents/:role/skills     Team-scoped skill assignments
  *   PUT    /api/v1/teams/:teamId/agents/:role/skills     Set team-scoped assignments
+ *   DELETE /api/v1/teams/:teamId/agents/:role/skills     Reset to global assignments
  *
  * Team-scoped agent tool config:
  *   GET    /api/v1/teams/:teamId/agents/:role/tools      Get team-scoped tool config

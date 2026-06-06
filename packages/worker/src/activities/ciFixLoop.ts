@@ -86,11 +86,16 @@ export async function executeCIFixImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const [tools, skills] = await Promise.all([
+    const [toolConfig, skills] = await Promise.all([
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, tools, skills);
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      tracer,
+      toolConfig,
+      skills
+    );
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -234,14 +239,14 @@ export async function executeReviewFixImplementation(
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const [tools, skills] = await Promise.all([
+    const [toolConfig, skills] = await Promise.all([
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
     const { agent, promptSuffix } = await createImplementerAgent(
       workspace,
       reviewTracer,
-      tools,
+      toolConfig,
       skills
     );
 

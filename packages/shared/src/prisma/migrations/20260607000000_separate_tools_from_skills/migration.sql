@@ -2,17 +2,29 @@
 -- Skills are now purely prompt-fragment instructions.
 -- Tool configuration moves to the new agent_tool_configs table.
 
--- Step 1: Delete the 4 built-in TOOL-type skills and their assignments
--- (assignments cascade via ON DELETE CASCADE on the FK)
-DELETE FROM "skills" WHERE "id" IN (
+-- Step 1: Delete the 4 built-in TOOL-type skill assignments and skills
+-- (explicit delete of assignments first; FK has ON DELETE CASCADE but being explicit is safer)
+DELETE FROM "agent_skill_assignments"
+WHERE "skill_id" IN (
   '00000000-0000-0000-0001-000000000001',
   '00000000-0000-0000-0001-000000000002',
   '00000000-0000-0000-0001-000000000003',
   '00000000-0000-0000-0001-000000000004'
 );
 
+DELETE FROM "skills"
+WHERE "id" IN (
+  '00000000-0000-0000-0001-000000000001',
+  '00000000-0000-0000-0001-000000000002',
+  '00000000-0000-0000-0001-000000000003',
+  '00000000-0000-0000-0001-000000000004'
+);
+
+-- Remove any remaining TOOL-type skills (non-built-in custom tool refs)
+DELETE FROM "skills" WHERE "type" = 'TOOL';
+
 -- Step 2: Drop type/toolKey from skills; make prompt_text NOT NULL
--- First set any NULL prompt_text rows to empty string (shouldn't exist, but defensive)
+-- First set any NULL prompt_text rows to empty string (defensive guard)
 UPDATE "skills" SET "prompt_text" = '' WHERE "prompt_text" IS NULL;
 
 ALTER TABLE "skills"
@@ -44,8 +56,16 @@ CREATE TABLE "agent_tool_configs" (
             ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "workflow_template_id" IS NULL)
             OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
             OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL AND "workflow_template_id" IS NOT NULL)
-        )
+        ),
+    CONSTRAINT "agent_tool_configs_tools_nonempty_check"
+        CHECK (cardinality("enabled_tools") >= 1)
 );
+
+CREATE INDEX "agent_tool_configs_role_scope_team_idx"
+    ON "agent_tool_configs" ("agent_role", "scope", "team_id");
+
+CREATE INDEX "agent_tool_configs_role_scope_template_idx"
+    ON "agent_tool_configs" ("agent_role", "scope", "workflow_template_id");
 
 -- Partial unique indexes: one tool config per role per scope-key
 CREATE UNIQUE INDEX "agent_tool_configs_role_global_uidx"
@@ -62,5 +82,5 @@ CREATE UNIQUE INDEX "agent_tool_configs_role_template_uidx"
 
 -- Step 5: Seed default GLOBAL tool config for IMPLEMENTER (all 4 tools enabled)
 INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools")
-VALUES ('IMPLEMENTER', 'GLOBAL', ARRAY['readFile','writeFile','listDirectory','bash'])
+VALUES ('IMPLEMENTER', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
 ON CONFLICT DO NOTHING;

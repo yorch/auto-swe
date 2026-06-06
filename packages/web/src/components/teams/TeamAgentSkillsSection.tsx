@@ -201,6 +201,7 @@ function RoleToolEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_
   );
 }
 
+
 function RoleSkillEditor({ teamId, role }: { teamId: string; role: (typeof AGENT_ROLES)[number] }) {
   const qc = useQueryClient();
 

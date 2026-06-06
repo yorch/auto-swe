@@ -386,14 +386,14 @@ async function mergeOneWithResolver(
     );
 
     const activityCtx = await currentRequestContext();
-    const [tools, skills] = await Promise.all([
+    const [toolConfig, skills] = await Promise.all([
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
     const { agent, promptSuffix } = await createImplementerAgent(
       workspace,
       opts.tracer,
-      tools,
+      toolConfig,
       skills
     );
     const result = await agent.generate(

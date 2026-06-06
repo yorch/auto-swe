@@ -806,7 +806,6 @@ model Skill {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   description String?
-  /// Text injected after the base system prompt
   promptText  String    @map("prompt_text")
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -861,6 +860,29 @@ model AgentSkillAssignment {
   @@index([agentRole, scope, teamId])
   @@index([agentRole, scope, workflowTemplateId])
   @@map("agent_skill_assignments")
+}
+
+/// Controls which built-in tools (readFile, writeFile, listDirectory, bash) are
+/// available to an agent role. Follows the same GLOBAL → TEAM → WORKFLOW_TEMPLATE
+/// scope cascade as ModelRoleConfig. A missing row at a scope means "no override
+/// at that scope" — the cascade falls through to the next level.
+/// An empty array is treated as "no tools" (maximum lockdown); the API enforces min(1).
+model AgentToolConfig {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentRole          AgentRole         @map("agent_role")
+  scope              ConfigScope
+  teamId             String?           @map("team_id") @db.Uuid
+  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
+  enabledTools       String[]          @map("enabled_tools")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([agentRole, scope, teamId])
+  @@index([agentRole, scope, workflowTemplateId])
+  @@map("agent_tool_configs")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template

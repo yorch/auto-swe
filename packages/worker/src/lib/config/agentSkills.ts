@@ -1,10 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { AgentRole, ResolveCtx } from './types.js';
 
-// Future: CUSTOM_TOOL entries in agent_tool_configs could reference sandboxed
-// JS/Python stored in the DB, executed inside the Docker workspace with the same
-// isolation model as built-in tools (Mastra createTool format). For now, only
-// the 4 built-in keys are recognized.
+// Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
+// The worker would load and execute it within the Docker workspace, enforcing the same
+// input/output schema contract as built-in tools (Mastra createTool format).
+// Security model: custom tools run with the same Docker isolation as the workspace itself.
 
 export interface ResolvedSkill {
   id: string;
@@ -12,9 +12,6 @@ export interface ResolvedSkill {
   promptText: string;
   sortOrder: number;
 }
-
-const ALL_TOOLS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
-export type BuiltInToolKey = (typeof ALL_TOOLS)[number];
 
 const ROLE_TO_PRISMA: Record<AgentRole, string> = {
   commitToMemory: 'COMMIT_TO_MEMORY',
@@ -96,6 +93,7 @@ export async function loadAgentToolConfig(
 ): Promise<string[] | null> {
   const prismaRole = ROLE_TO_PRISMA[role];
 
+  // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {
     const row = await prisma.agentToolConfig.findFirst({
       where: {
@@ -109,17 +107,28 @@ export async function loadAgentToolConfig(
     }
   }
 
+  // 2. Team scope
   if (ctx?.teamId) {
     const row = await prisma.agentToolConfig.findFirst({
-      where: { agentRole: prismaRole as 'IMPLEMENTER', scope: 'TEAM', teamId: ctx.teamId },
+      where: {
+        agentRole: prismaRole as 'IMPLEMENTER',
+        scope: 'TEAM',
+        teamId: ctx.teamId,
+      },
     });
     if (row) {
       return row.enabledTools;
     }
   }
 
+  // 3. Global scope
   const row = await prisma.agentToolConfig.findFirst({
-    where: { agentRole: prismaRole as 'IMPLEMENTER', scope: 'GLOBAL' },
+    where: {
+      agentRole: prismaRole as 'IMPLEMENTER',
+      scope: 'GLOBAL',
+      teamId: null,
+      workflowTemplateId: null,
+    },
   });
-  return row ? row.enabledTools : null; // null → caller uses all 4 tools
+  return row?.enabledTools ?? null;
 }

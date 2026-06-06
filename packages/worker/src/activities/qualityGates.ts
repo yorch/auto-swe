@@ -331,14 +331,14 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const [tools, skills] = await Promise.all([
+    const [toolConfig, skills] = await Promise.all([
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
     const { agent, promptSuffix } = await createImplementerAgent(
       workspace,
       gateTracer,
-      tools,
+      toolConfig,
       skills
     );
 

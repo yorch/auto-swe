@@ -197,8 +197,7 @@ export async function createImplementerAgent(
   // All available tools keyed by toolKey
   const allTools = { bash, listDirectory, readFile, writeFile };
 
-  // Filter tools based on the tools string array from AgentToolConfig.
-  // null = all 4 tools; string[] = subset of enabled tool keys.
+  // Filter tools by the enabled tool keys when provided; null → use all 4 tools.
   const activeTools =
     tools && tools.length > 0
       ? Object.fromEntries(
@@ -208,12 +207,12 @@ export async function createImplementerAgent(
         )
       : allTools;
 
-  // Guard: if every key was unknown, fall back to allTools to avoid an agent with no tools.
+  // If every provided key was unrecognised, fall back to allTools to avoid
+  // instantiating an agent with no tools.
   const resolvedActiveTools = Object.keys(activeTools).length > 0 ? activeTools : allTools;
 
-  // Build prompt suffix from prompt-fragment skills (in sortOrder).
+  // Append prompt-fragment skills (already in sortOrder) to the base system prompt.
   const promptSuffix = (skills ?? [])
-    .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
@@ -232,7 +231,5 @@ export async function createImplementerAgent(
     agents: { implementer: implementerAgent },
   });
 
-  // Return promptSuffix so callers can append it to the per-call system message,
-  // ensuring PROMPT_FRAGMENT skills are injected correctly.
   return { agent: mastra.getAgent('implementer'), mastra, promptSuffix };
 }

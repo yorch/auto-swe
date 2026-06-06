@@ -126,9 +126,12 @@ async function main() {
     );
   }
 
-  // Seed default GLOBAL tool config for IMPLEMENTER
+  // ── Default IMPLEMENTER tool config ──────────────────────────────────────
+  // Ensure the GLOBAL AgentToolConfig for IMPLEMENTER exists with all 4 tools.
+  // The partial unique index prevents duplicates; we check existence first since
+  // Prisma cannot express WHERE clauses on unique indexes.
   const existingToolConfig = await prisma.agentToolConfig.findFirst({
-    where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL' },
+    where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
   });
   if (!existingToolConfig) {
     await prisma.agentToolConfig.create({
@@ -139,7 +142,9 @@ async function main() {
       },
     });
   }
-  console.log('Seed: default IMPLEMENTER tool config seeded (all 4 tools at GLOBAL scope)');
+  console.log(
+    'Seed: IMPLEMENTER GLOBAL tool config seeded (readFile, writeFile, listDirectory, bash)'
+  );
   console.log('');
   console.log('  To submit a work request, use this repo ID:');
   console.log(`    curl -X POST http://localhost:8080/api/v1/work-requests \\`);

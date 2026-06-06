@@ -466,7 +466,6 @@ async function dispatchStepImpl(
         gateOutput,
         previousCodeResult: prev,
         systemPromptOverride,
-        toolsOverride,
       });
     }
     default:

@@ -78,14 +78,19 @@ export async function executeImplementation(
     // Load tool config and skills for this role at the current scope
     // (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade for both).
     const activityCtx = await currentRequestContext();
-    const [tools, skills] = await Promise.all([
+    const [toolConfig, skills] = await Promise.all([
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
 
     // Create Mastra agent with tools bound to workspace (tracer captures every call).
-    // promptSuffix contains prompt-fragment skills to be appended to the system prompt.
-    const { agent, promptSuffix } = await createImplementerAgent(workspace, tracer, tools, skills);
+    // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
+    const { agent, promptSuffix } = await createImplementerAgent(
+      workspace,
+      tracer,
+      toolConfig,
+      skills
+    );
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
