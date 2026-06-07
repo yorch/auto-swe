@@ -4,6 +4,71 @@ import type { AdminTokenSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
+export interface ScannerPattern {
+  createdAt: string;
+  flags: string;
+  id: string;
+  isActive: boolean;
+  isBuiltIn: boolean;
+  label: string;
+  pattern: string;
+  type: 'INJECTION' | 'EXFILTRATION';
+  updatedAt: string;
+}
+
+export function useScannerPatterns() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: ScannerPattern[] }>('/api/v1/admin/scanner-patterns').then((r) => r.data),
+    queryKey: ['scanner-patterns'],
+  });
+}
+
+export function useCreateScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      flags: string;
+      label: string;
+      pattern: string;
+      type: 'INJECTION' | 'EXFILTRATION';
+    }) =>
+      api
+        .post<{ data: ScannerPattern }>('/api/v1/admin/scanner-patterns', body)
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+  });
+}
+
+export function useUpdateScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      flags?: string;
+      id: string;
+      isActive?: boolean;
+      label?: string;
+      pattern?: string;
+      type?: 'INJECTION' | 'EXFILTRATION';
+    }) =>
+      api
+        .put<{ data: ScannerPattern }>(`/api/v1/admin/scanner-patterns/${id}`, body)
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+  });
+}
+
+export function useDeleteScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/scanner-patterns/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+  });
+}
+
 interface AdminSessionSummary {
   id: string;
   token: string;
