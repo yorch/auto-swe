@@ -89,6 +89,20 @@ async function fetchSkillAssignments(
 }
 
 /**
+ * Joins skill prompt texts with a double newline separator, returning undefined
+ * when the resulting string would be empty. Used to build optional system-prompt
+ * suffixes for sub-role agents in the review network.
+ */
+export function skillsToPromptSuffix(skills: ResolvedSkill[]): string | undefined {
+  return (
+    skills
+      .map((s) => s.promptText)
+      .filter(Boolean)
+      .join('\n\n') || undefined
+  );
+}
+
+/**
  * Resolves the effective tool configuration for an agent role.
  * Returns the enabled tool keys, or null if no config exists (caller uses all tools).
  * Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).

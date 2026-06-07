@@ -361,14 +361,14 @@ Sub-role usage:
 - `decomposer` — loaded by `planDecomposition`; the decomposer agent gets its own skill suffix (model comes from the parent `planner` role config).
 
 **Skills vs tools:**
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for prompt-injection and exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings).
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 11 built-in patterns seeded by migration, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
 - **Tool** = executable Mastra `createTool()` function (readFile, writeFile, listDirectory, bash). Controls *what* an agent can do.
 
 **Progressive skill disclosure (implementer agent):** Skills are not pre-injected wholesale. The implementer agent receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch the full `promptText` only when it decides to engage a skill. This avoids token bloat from unused skills. Other agents (reviewer sub-agents, planner, decomposer) continue to receive their skill fragments directly in the system prompt since they have no tools.
 
 **Lesson memory and skills:** When `commitToMemory` creates an `AgentLesson`, it records which skills were active during that run in the `skillsActive` column (`String[]`). This allows future observability and skill-effectiveness analysis without changing the lesson query path.
 
-Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`, `AgentLesson`).
+Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/gateway/src/routes/scannerPatterns.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`, `AgentLesson`, `ScannerPattern`).
 
 ---
 

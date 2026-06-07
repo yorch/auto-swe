@@ -3,7 +3,7 @@ import { heartbeat } from '@temporalio/activity';
 import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills, type ResolvedSkill } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveModelConfig } from '../lib/config/resolver.js';
 
@@ -29,20 +29,14 @@ export async function runReviewNetwork(
   ]);
   const dbPrompt = modelConfig.systemPrompt ?? undefined;
 
-  const toSuffix = (skills: ResolvedSkill[]) =>
-    skills
-      .map((s) => s.promptText)
-      .filter(Boolean)
-      .join('\n\n') || undefined;
-
   const result = await runReview(
     codeResult,
     successCriteria,
     tracer,
     systemPromptOverride ?? dbPrompt,
-    toSuffix(securitySkills),
-    toSuffix(domainSkills),
-    toSuffix(performanceSkills)
+    skillsToPromptSuffix(securitySkills),
+    skillsToPromptSuffix(domainSkills),
+    skillsToPromptSuffix(performanceSkills)
   );
 
   heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
