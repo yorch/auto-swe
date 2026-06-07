@@ -850,6 +850,25 @@ model Skill {
   @@map("skills")
 }
 
+enum ScannerPatternType {
+  INJECTION
+  EXFILTRATION
+}
+
+model ScannerPattern {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label     String             @unique
+  pattern   String
+  flags     String             @default("")
+  type      ScannerPatternType
+  isActive  Boolean            @default(true) @map("is_active")
+  isBuiltIn Boolean            @default(false) @map("is_built_in")
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("scanner_patterns")
+}
+
 /// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
 /// (defined in raw SQL in the migration) enforce one assignment per
 /// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:

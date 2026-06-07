@@ -9,6 +9,7 @@ export type AuditEntityType =
   | 'GoogleOAuthConfig'
   | 'ModelRoleConfig'
   | 'ProviderCredential'
+  | 'ScannerPattern'
   | 'Skill'
   | 'SlackConfig'
   | 'StorageConfig';

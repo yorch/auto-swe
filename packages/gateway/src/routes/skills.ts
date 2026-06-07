@@ -146,7 +146,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
-      const scanResult = scanSkillContent(promptText);
+      const scanResult = await scanSkillContent(promptText);
       const skill = await fastify.prisma.skill.create({
         data: {
           description,
@@ -221,7 +221,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           };
 
       const scanResult =
-        !existing.isBuiltIn && promptText ? scanSkillContent(promptText) : { warnings: [] };
+        !existing.isBuiltIn && promptText ? await scanSkillContent(promptText) : { warnings: [] };
 
       const updated = await fastify.prisma.skill.update({
         data: updateData,
