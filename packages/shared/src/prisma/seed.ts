@@ -191,7 +191,14 @@ async function main() {
   // Pattern definitions live in packages/shared/src/scannerPatterns/index.ts.
   for (const p of BUILTIN_SCANNER_PATTERNS) {
     await prisma.scannerPattern.upsert({
-      create: { flags: p.flags, isActive: true, isBuiltIn: true, label: p.label, pattern: p.pattern, type: p.type },
+      create: {
+        flags: p.flags,
+        isActive: true,
+        isBuiltIn: true,
+        label: p.label,
+        pattern: p.pattern,
+        type: p.type,
+      },
       update: { flags: p.flags, isActive: true, pattern: p.pattern, type: p.type },
       where: { label: p.label },
     });

@@ -1,8 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type {
   CodeResult,
+  CodeSecurityFinding,
   RepoWorkRequest,
   Subtask,
   TestRunResult,
@@ -13,6 +14,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -21,8 +23,6 @@ import { requireGitHubToken } from '../lib/githubAuth.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
-import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
-import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;

@@ -10,8 +10,8 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import type { ResolvedSkill } from '../lib/config/agentSkills.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
-import { scanShellCommand } from '../lib/shellCommandScanner.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
+import { scanShellCommand } from '../lib/shellCommandScanner.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 /**
@@ -108,9 +108,17 @@ export async function createImplementerAgent(
           return { result: sensitiveBlock };
         }
         const result = await writeExecute({ content, path });
+        // Tag security violations explicitly so the gateway can query them without raw SQL.
+        const resultText = result.result;
+        const securityError = resultText.startsWith('SECURITY CHECK FAILED')
+          ? 'blocked by content security check'
+          : resultText.startsWith('SECURITY WARNINGS')
+            ? 'content security warning'
+            : undefined;
         // Only store path in inputJson — content can be large and is in readFile traces
         tracer?.addToolCall({
           durationMs: Date.now() - start,
+          error: securityError,
           inputJson: { path },
           outputJson: result,
           toolName: 'writeFile',

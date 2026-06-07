@@ -100,9 +100,7 @@ export function formatCodeSecurityFindings(findings: CodeSecurityFinding[]): str
   if (findings.length === 0) {
     return undefined;
   }
-  const lines = findings.map(
-    (f) => `- [${f.label}] ${f.file}:${f.line} — matched: \`${f.match}\``
-  );
+  const lines = findings.map((f) => `- [${f.label}] ${f.file}:${f.line} — matched: \`${f.match}\``);
   return (
     'STATIC CODE SECURITY SCAN FINDINGS (pre-review pass):\n' +
     lines.join('\n') +

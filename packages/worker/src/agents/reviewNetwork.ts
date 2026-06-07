@@ -3,12 +3,12 @@ import type {
   CodeResult,
   ReviewVerdict,
 } from '@auto-swe/shared/types/workflow';
-import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
+import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {

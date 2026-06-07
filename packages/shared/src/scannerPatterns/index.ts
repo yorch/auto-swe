@@ -115,8 +115,7 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'webhook-services',
-    pattern:
-      '\\b(webhook\\.site|requestbin|hookbin|beeceptor|pipedream\\.net|ngrok\\.io)\\b',
+    pattern: '\\b(webhook\\.site|requestbin|hookbin|beeceptor|pipedream\\.net|ngrok\\.io)\\b',
     type: 'EXFILTRATION',
   },
   {
@@ -195,8 +194,7 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'shell-rm-system-paths',
-    pattern:
-      'rm\\s+-[rRfF]{1,4}\\s+\\/(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\s|$)',
+    pattern: 'rm\\s+-[rRfF]{1,4}\\s+\\/(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\s|$)',
     type: 'SHELL_COMMAND',
   },
   // World-writable chmod — security misconfiguration
