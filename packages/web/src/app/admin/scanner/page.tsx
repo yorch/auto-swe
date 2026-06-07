@@ -16,11 +16,13 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 
+type PatternType = 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+
 type PatternForm = {
   flags: string;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION';
+  type: PatternType;
 };
 
 function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -30,6 +32,12 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
     pattern: '',
     type: 'INJECTION',
   });
+  const patternTypeOptions: Array<{ label: string; value: PatternType }> = [
+    { label: 'Injection (skill content)', value: 'INJECTION' },
+    { label: 'Exfiltration (skill content)', value: 'EXFILTRATION' },
+    { label: 'Shell Command (bash tool)', value: 'SHELL_COMMAND' },
+    { label: 'Code Security (diff review)', value: 'CODE_SECURITY' },
+  ];
   const [error, setError] = useState<string | null>(null);
   const create = useCreateScannerPattern();
 
@@ -58,13 +66,14 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
         </FieldWrapper>
         <FieldWrapper label="Type">
           <Select
-            onChange={(e) =>
-              setForm((f) => ({ ...f, type: e.target.value as 'INJECTION' | 'EXFILTRATION' }))
-            }
+            onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
             value={form.type}
           >
-            <option value="INJECTION">Injection</option>
-            <option value="EXFILTRATION">Exfiltration</option>
+            {patternTypeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </Select>
         </FieldWrapper>
         <FieldWrapper label="Pattern (regex source)">
@@ -201,11 +210,20 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
   );
 }
 
-function PatternSection({ patterns, title }: { patterns: ScannerPattern[]; title: string }) {
+function PatternSection({
+  description,
+  patterns,
+  title,
+}: {
+  description?: string;
+  patterns: ScannerPattern[];
+  title: string;
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
+        {description && <p className="mt-1 text-xs text-paper-400">{description}</p>}
       </CardHeader>
       {patterns.length === 0 ? (
         <div className="py-4 text-center text-sm text-paper-400">No patterns in this category.</div>
@@ -237,6 +255,8 @@ export default function AdminScannerPage() {
 
   const injection = patterns?.filter((p) => p.type === 'INJECTION') ?? [];
   const exfiltration = patterns?.filter((p) => p.type === 'EXFILTRATION') ?? [];
+  const shellCommand = patterns?.filter((p) => p.type === 'SHELL_COMMAND') ?? [];
+  const codeSecurity = patterns?.filter((p) => p.type === 'CODE_SECURITY') ?? [];
 
   return (
     <div className="space-y-6">
@@ -244,9 +264,9 @@ export default function AdminScannerPage() {
         <div>
           <h2 className="text-2xl font-bold">Scanner Patterns</h2>
           <p className="mt-1 text-sm text-paper-400">
-            Regex patterns used to detect prompt-injection and data-exfiltration attempts in custom
-            skill content. Built-in patterns can be toggled but not deleted. Custom patterns can be
-            added, toggled, and deleted.
+            Regex patterns used across four scanning stages: skill content injection/exfiltration
+            detection, shell command blocking in the agent workspace, and advisory code security
+            findings fed to the security reviewer. Built-in patterns can be toggled but not deleted.
           </p>
         </div>
         <Button onClick={() => setNewOpen(true)} variant="primary">
@@ -258,8 +278,26 @@ export default function AdminScannerPage() {
         <LoadingState />
       ) : (
         <>
-          <PatternSection patterns={injection} title="Injection Patterns" />
-          <PatternSection patterns={exfiltration} title="Exfiltration Patterns" />
+          <PatternSection
+            description="Checked when custom skill content is saved. Detects attempts to override agent instructions."
+            patterns={injection}
+            title="Injection Patterns"
+          />
+          <PatternSection
+            description="Checked when custom skill content is saved. Detects attempts to exfiltrate data via skill prompts."
+            patterns={exfiltration}
+            title="Exfiltration Patterns"
+          />
+          <PatternSection
+            description="Checked before each bash tool invocation. Dangerous matches are soft-blocked — the agent receives an error and can self-correct."
+            patterns={shellCommand}
+            title="Shell Command Patterns"
+          />
+          <PatternSection
+            description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
+            patterns={codeSecurity}
+            title="Code Security Patterns"
+          />
         </>
       )}
 

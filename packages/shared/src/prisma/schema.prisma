@@ -853,6 +853,8 @@ model Skill {
 enum ScannerPatternType {
   INJECTION
   EXFILTRATION
+  SHELL_COMMAND
+  CODE_SECURITY
 }
 
 model ScannerPattern {

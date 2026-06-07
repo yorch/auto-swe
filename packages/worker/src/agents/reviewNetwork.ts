@@ -3,6 +3,7 @@ import type {
   CodeResult,
   ReviewVerdict,
 } from '@auto-swe/shared/types/workflow';
+import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
@@ -133,9 +134,11 @@ export async function runReviewNetwork(
     domainLogicPrompt += `\n\n${domainSkillSuffix}`;
   }
 
+  const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);
   const securityPrompt =
     (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) +
-    (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '');
+    (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '') +
+    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '');
   const performancePrompt =
     (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
     (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '');

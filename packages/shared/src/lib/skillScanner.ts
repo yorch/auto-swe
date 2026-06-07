@@ -16,7 +16,7 @@ async function loadPatterns(): Promise<CachedPatterns> {
   }
   const rows = await prisma.scannerPattern.findMany({
     orderBy: { label: 'asc' },
-    where: { isActive: true },
+    where: { isActive: true, type: { in: ['INJECTION', 'EXFILTRATION'] } },
   });
   const { exfiltration, injection } = rows.reduce<{
     exfiltration: Array<{ label: string; re: RegExp }>;

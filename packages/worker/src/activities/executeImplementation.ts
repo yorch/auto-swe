@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type {
   CodeResult,
   RepoWorkRequest,
@@ -20,6 +21,8 @@ import { requireGitHubToken } from '../lib/githubAuth.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
+import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;
@@ -173,6 +176,17 @@ export async function executeImplementation(
 
       // Record implementer's reasoning text (the LLM response between tool calls)
       if (genResult.text) {
+        // LLM output scanner — advisory, non-blocking. Flags cases where the
+        // agent's own text output contains injection/exfiltration patterns, which
+        // may indicate a successfully injected skill is propagating through output.
+        const outputScan = await scanSkillContent(genResult.text);
+        if (!outputScan.safe) {
+          tracer.addActivityEvent({
+            inputJson: { iteration },
+            name: 'llm.suspicious_output',
+            outputJson: { warnings: outputScan.warnings },
+          });
+        }
         tracer.addLlmResponse({
           durationMs: 0,
           inputJson: { iteration },
@@ -235,6 +249,16 @@ export async function executeImplementation(
       outputJson: { branch, commitMessage: commitSummary, headSha },
     });
 
+    // Static code security scan — advisory findings passed to the review network.
+    // Not blocking here; the security reviewer agent decides severity.
+    const codeSecurityFindings: CodeSecurityFinding[] = await scanDiffForCodeIssues(diff);
+    if (codeSecurityFindings.length > 0) {
+      tracer.addActivityEvent({
+        name: 'code_security.scan',
+        outputJson: { count: codeSecurityFindings.length, findings: codeSecurityFindings },
+      });
+    }
+
     // Persist traces before the security gate so they survive a gate rejection.
     await persistActivityTrace(tracer, 'implementer');
 
@@ -257,6 +281,7 @@ export async function executeImplementation(
 
     return {
       branch,
+      codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,

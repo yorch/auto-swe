@@ -15,13 +15,21 @@ export interface RepoWorkRequest {
   parentWorkflowId?: string;
 }
 
+export interface CodeSecurityFinding {
+  file: string;
+  label: string;
+  line: number;
+  match: string;
+}
+
 export interface CodeResult {
   branch: string;
-  headSha: string;
+  codeSecurityFindings?: CodeSecurityFinding[];
   diff: string;
   filesChanged: FileChange[];
-  testResults: TestRunResult;
+  headSha: string;
   implementationNotes: string;
+  testResults: TestRunResult;
 }
 
 export interface FileChange {

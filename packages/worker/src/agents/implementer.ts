@@ -10,6 +10,8 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import type { ResolvedSkill } from '../lib/config/agentSkills.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
+import { scanShellCommand } from '../lib/shellCommandScanner.js';
+import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
 
 /**
@@ -94,6 +96,17 @@ export async function createImplementerAgent(
     execute: async ({ path, content }) => {
       const start = Date.now();
       try {
+        const sensitiveBlock = checkSensitiveFilePath(path);
+        if (sensitiveBlock) {
+          tracer?.addToolCall({
+            durationMs: Date.now() - start,
+            error: 'blocked by sensitive file scanner',
+            inputJson: { path },
+            outputJson: { result: sensitiveBlock },
+            toolName: 'writeFile',
+          });
+          return { result: sensitiveBlock };
+        }
         const result = await writeExecute({ content, path });
         // Only store path in inputJson — content can be large and is in readFile traces
         tracer?.addToolCall({
@@ -158,15 +171,26 @@ export async function createImplementerAgent(
 
   // Tool: Run a shell command in the workspace (e.g., run tests, install deps).
   // Commands run inside an isolated Docker container — not on the host.
-  // Every agent-issued command is logged for audit purposes.
+  // Every agent-issued command is logged for audit purposes; dangerous patterns
+  // are soft-blocked so the agent can self-correct.
   const bash = createTool({
     description: 'Execute a shell command in the workspace (e.g., run tests, install deps)',
     execute: async ({ command }) => {
-      // Audit log — provides visibility into LLM-generated shell commands.
-      // The container is isolated from the host, but logging helps detect
-      // unexpected behaviour (e.g., exfiltration attempts via curl/wget).
       console.log(`[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(command)}`);
       const start = Date.now();
+
+      const blocked = await scanShellCommand(command);
+      if (blocked) {
+        tracer?.addToolCall({
+          durationMs: Date.now() - start,
+          error: 'blocked by shell command scanner',
+          inputJson: { command },
+          outputJson: { output: blocked },
+          toolName: 'bash',
+        });
+        return { output: blocked };
+      }
+
       try {
         const result = { output: workspace.exec(command) };
         tracer?.addToolCall({

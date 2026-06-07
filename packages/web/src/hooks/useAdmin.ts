@@ -12,7 +12,7 @@ export interface ScannerPattern {
   isBuiltIn: boolean;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION';
+  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
   updatedAt: string;
 }
 
@@ -31,7 +31,7 @@ export function useCreateScannerPattern() {
       flags: string;
       label: string;
       pattern: string;
-      type: 'INJECTION' | 'EXFILTRATION';
+      type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
     }) =>
       api
         .post<{ data: ScannerPattern }>('/api/v1/admin/scanner-patterns', body)
