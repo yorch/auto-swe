@@ -10,15 +10,23 @@ const PATTERN_TYPES = ['INJECTION', 'EXFILTRATION'] as const;
 
 const PatternIdParams = z.object({ id: z.string().uuid() });
 
+const SAFE_FLAGS_RE = /^[imsuv]*$/;
+const safeFlags = z
+  .string()
+  .max(10)
+  .refine((f) => SAFE_FLAGS_RE.test(f), {
+    message: "flags may only contain i, m, s, u, v — 'g' and 'y' are not allowed",
+  });
+
 const CreatePatternSchema = z.object({
-  flags: z.string().max(10).default(''),
+  flags: safeFlags.default(''),
   label: z.string().min(1).max(200),
   pattern: z.string().min(1).max(2000),
   type: z.enum(PATTERN_TYPES),
 });
 
 const UpdatePatternSchema = z.object({
-  flags: z.string().max(10).optional(),
+  flags: safeFlags.optional(),
   isActive: z.boolean().optional(),
   label: z.string().min(1).max(200).optional(),
   pattern: z.string().min(1).max(2000).optional(),
@@ -155,9 +163,12 @@ export const scannerPatternRoutes: FastifyPluginAsync = fp(async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Scanner pattern not found' } });
       }
       if (existing.isBuiltIn) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Scanner pattern not found' } });
+        return reply.status(403).send({
+          error: {
+            code: 'BUILTIN_PATTERN',
+            message: 'Built-in scanner patterns cannot be deleted',
+          },
+        });
       }
       await fastify.prisma.scannerPattern.delete({ where: { id: request.params.id } });
       invalidateScannerPatternCache();

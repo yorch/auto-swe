@@ -18,12 +18,22 @@ async function loadPatterns(): Promise<CachedPatterns> {
     orderBy: { label: 'asc' },
     where: { isActive: true },
   });
-  const injection = rows
-    .filter((r) => r.type === 'INJECTION')
-    .map((r) => ({ label: r.label, re: new RegExp(r.pattern, r.flags) }));
-  const exfiltration = rows
-    .filter((r) => r.type === 'EXFILTRATION')
-    .map((r) => ({ label: r.label, re: new RegExp(r.pattern, r.flags) }));
+  const { exfiltration, injection } = rows.reduce<{
+    exfiltration: Array<{ label: string; re: RegExp }>;
+    injection: Array<{ label: string; re: RegExp }>;
+  }>(
+    (acc, r) => {
+      try {
+        const entry = { label: r.label, re: new RegExp(r.pattern, r.flags) };
+        const bucket = r.type === 'INJECTION' ? acc.injection : acc.exfiltration;
+        bucket.push(entry);
+      } catch {
+        console.error(`[skillScanner] skipping invalid pattern '${r.label}': invalid regex`);
+      }
+      return acc;
+    },
+    { exfiltration: [], injection: [] }
+  );
   cache = { exfiltration, fetchedAt: now, injection };
   return cache;
 }
@@ -42,6 +52,7 @@ export async function scanSkillContent(promptText: string): Promise<SkillScanRes
   const warnings: string[] = [];
   const check = (patterns: Array<{ label: string; re: RegExp }>, prefix: string) => {
     for (const { label, re } of patterns) {
+      re.lastIndex = 0;
       if (re.test(promptText)) {
         warnings.push(`${prefix}:${label}`);
       }

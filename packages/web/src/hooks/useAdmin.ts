@@ -57,7 +57,14 @@ export function useUpdateScannerPattern() {
       api
         .put<{ data: ScannerPattern }>(`/api/v1/admin/scanner-patterns/${id}`, body)
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+    onSuccess: (result) => {
+      qc.setQueryData<ScannerPattern[]>(['scanner-patterns'], (old) => {
+        if (!old) {
+          return old;
+        }
+        return old.map((p) => (p.id === result.id ? result : p));
+      });
+    },
   });
 }
 

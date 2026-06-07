@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import type { AnySkillRole, ResolveCtx } from './types.js';
+import { type AnySkillRole, type ResolveCtx, ROLE_TO_PRISMA } from './types.js';
 
 // Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
 // The worker would load and execute it within the Docker workspace, enforcing the same
@@ -16,16 +16,11 @@ export interface ResolvedSkill {
 }
 
 const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
-  commitToMemory: 'COMMIT_TO_MEMORY',
+  ...ROLE_TO_PRISMA,
   decomposer: 'DECOMPOSER',
   domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
-  implementer: 'IMPLEMENTER',
   performanceReviewer: 'PERFORMANCE_REVIEWER',
-  planner: 'PLANNER',
-  reviewer: 'REVIEWER',
-  securityReview: 'SECURITY_REVIEW',
   securityReviewer: 'SECURITY_REVIEWER',
-  validateContext: 'VALIDATE_CONTEXT',
 };
 
 /**

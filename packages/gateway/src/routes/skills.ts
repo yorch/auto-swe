@@ -221,7 +221,9 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
           };
 
       const scanResult =
-        !existing.isBuiltIn && promptText ? await scanSkillContent(promptText) : { warnings: [] };
+        !existing.isBuiltIn && promptText
+          ? await scanSkillContent(promptText)
+          : { safe: true, warnings: [] };
 
       const updated = await fastify.prisma.skill.update({
         data: updateData,
