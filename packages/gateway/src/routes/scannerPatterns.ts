@@ -6,7 +6,13 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-const PATTERN_TYPES = ['INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY'] as const;
+const PATTERN_TYPES = [
+  'INJECTION',
+  'EXFILTRATION',
+  'SHELL_COMMAND',
+  'CODE_SECURITY',
+  'SENSITIVE_FILE',
+] as const;
 
 const PatternIdParams = z.object({ id: z.string().uuid() });
 

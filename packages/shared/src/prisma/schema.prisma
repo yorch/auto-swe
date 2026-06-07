@@ -855,6 +855,7 @@ enum ScannerPatternType {
   EXFILTRATION
   SHELL_COMMAND
   CODE_SECURITY
+  SENSITIVE_FILE
 }
 
 model ScannerPattern {

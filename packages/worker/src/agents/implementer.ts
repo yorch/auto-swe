@@ -100,7 +100,7 @@ export async function createImplementerAgent(
     execute: async ({ path, content }) => {
       const start = Date.now();
       try {
-        const sensitiveBlock = checkSensitiveFilePath(path);
+        const sensitiveBlock = await checkSensitiveFilePath(path);
         if (sensitiveBlock) {
           tracer?.addToolCall({
             durationMs: Date.now() - start,

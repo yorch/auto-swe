@@ -13,7 +13,12 @@ interface CachedEntry {
 // The ScannerPatternType enum values supported by pattern-loading scanners.
 // Defined as a literal union to avoid importing the generated Prisma enum type
 // across the package boundary (the shared package's export map doesn't expose it).
-type PatternType = 'CODE_SECURITY' | 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND';
+type PatternType =
+  | 'CODE_SECURITY'
+  | 'INJECTION'
+  | 'EXFILTRATION'
+  | 'SENSITIVE_FILE'
+  | 'SHELL_COMMAND';
 
 export function makePatternLoader(type: PatternType, logPrefix: string) {
   let cache: { entries: CachedEntry[]; fetchedAt: number } | null = null;

@@ -2,7 +2,7 @@ export interface BuiltinScannerPatternDef {
   flags: string;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
 }
 
 /**
@@ -338,5 +338,48 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
     label: 'code-jwt-hardcoded-secret',
     pattern: 'jwt\\.sign\\s*\\([^)]*,\\s*[\'"][^\'"]{8,}[\'"]',
     type: 'CODE_SECURITY',
+  },
+
+  // ── Sensitive file patterns ────────────────────────────────────────────────
+  // Checked against file paths before each writeFile tool call; hard-block
+  // prevents the agent from writing secrets or credentials to the workspace.
+  // Patterns are matched against both the basename and the full normalized path.
+
+  // .env and environment variable files
+  { flags: '', label: 'sensitive-env-file', pattern: '^\\.env(\\..+)?$', type: 'SENSITIVE_FILE' },
+  // PEM certificates and trust stores
+  {
+    flags: 'i',
+    label: 'sensitive-pem-cert',
+    pattern: '\\.(pem|crt|cer|p7b|p7c)$',
+    type: 'SENSITIVE_FILE',
+  },
+  // Private key and keystore files
+  {
+    flags: 'i',
+    label: 'sensitive-private-key',
+    pattern: '\\.(key|pk8|p12|pfx|jks|pkcs12|keystore)$',
+    type: 'SENSITIVE_FILE',
+  },
+  // SSH private key files
+  {
+    flags: '',
+    label: 'sensitive-ssh-private-key',
+    pattern: '(^|\\/)id_(rsa|ed25519|ecdsa|dsa)$',
+    type: 'SENSITIVE_FILE',
+  },
+  // Google service account JSON
+  {
+    flags: 'i',
+    label: 'sensitive-service-account-json',
+    pattern: '(service[_-]?account)\\.json$',
+    type: 'SENSITIVE_FILE',
+  },
+  // Generic credential files
+  {
+    flags: 'i',
+    label: 'sensitive-credentials-file',
+    pattern: 'credentials\\.(json|ya?ml)$',
+    type: 'SENSITIVE_FILE',
   },
 ];

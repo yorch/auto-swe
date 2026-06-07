@@ -217,14 +217,14 @@ Six scanners run during agent execution. Each is independently advisory or block
 |---|---|---|---|
 | **Skill content scanner** | Skill save + LLM output per TDD iteration | Advisory | DB-backed `INJECTION`/`EXFILTRATION` patterns (60 s TTL) via `skillScanner.ts` |
 | **Shell command scanner** | Pre-exec of every `bash` tool call | Soft-block | DB-backed `SHELL_COMMAND` patterns via `shellCommandScanner.ts`; returns error string to agent |
-| **Sensitive file scanner** | Pre-write of every `writeFile` call | Hard-block | Hardcoded rules in `sensitiveFileScanner.ts` — `.env`, PEM/key files, SSH keys, credentials JSON |
+| **Sensitive file scanner** | Pre-write of every `writeFile` call | Hard-block | DB-backed `SENSITIVE_FILE` patterns via `sensitiveFileScanner.ts`; 6 built-in rules (`.env`, PEM/key files, SSH keys, credentials JSON); admin-extensible |
 | **Pre-write content scanner** | Pre-write of every `writeFile` call | Soft-block | Regex rules in `preWriteSecurityCheck.ts`; tags trace error with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
 | **Code security scanner** | Post-commit diff scan | Advisory | DB-backed `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings flow through `CodeResult.codeSecurityFindings` to security reviewer |
 | **LLM output scanner** | Post-generate per TDD iteration | Advisory | `scanSkillContent` (INJECTION/EXFILTRATION patterns); wrapped in try/catch — DB failure must not abort the activity |
 
-**Pattern cache:** `shellCommandScanner` and `codeSecurityScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
+**Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
 
-**Built-in patterns:** 44 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 10 SHELL_COMMAND, 10 CODE_SECURITY. Seeded with upsert semantics (idempotent). Built-in patterns have `isBuiltIn: true`.
+**Built-in patterns:** 50 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 10 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced via `syncBuiltins()` at gateway startup (idempotent). Built-in patterns have `isBuiltIn: true`.
 
 **Security events:** Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The `GET /api/v1/admin/security-events` endpoint uses DB-level predicates per `SecurityEventType` so pagination is correct. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel).
 
