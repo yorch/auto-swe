@@ -184,6 +184,37 @@ async function main() {
     );
   }
 
+  // ── Built-in scanner patterns ─────────────────────────────────────────────
+  // Injection and exfiltration patterns that guard against prompt injection in
+  // custom skill content. label is unique, so we upsert by label.
+  const BUILTIN_SCANNER_PATTERNS: Array<{
+    flags: string;
+    label: string;
+    pattern: string;
+    type: 'INJECTION' | 'EXFILTRATION';
+  }> = [
+    { flags: 'i', label: 'ignore-previous-instructions', pattern: 'ignore\\s+(all\\s+)?previous\\s+instructions', type: 'INJECTION' },
+    { flags: 'i', label: 'forget-instructions', pattern: 'forget\\s+(everything|all\\s+instructions)', type: 'INJECTION' },
+    { flags: 'i', label: 'you-are-now', pattern: 'you\\s+are\\s+now\\s+(a|an)\\s+\\w', type: 'INJECTION' },
+    { flags: 'i', label: 'act-as-override', pattern: 'act\\s+as\\s+(a|an)\\s+\\w', type: 'INJECTION' },
+    { flags: 'i', label: 'disregard-guidelines', pattern: 'disregard\\s+(your\\s+)?(guidelines|instructions|rules)', type: 'INJECTION' },
+    { flags: 'i', label: 'new-instructions', pattern: '---\\s*new\\s+instructions\\s*---', type: 'INJECTION' },
+    { flags: 'i', label: 'system-prompt-override', pattern: '\\[SYSTEM\\]|\\bSYSTEM\\s*PROMPT\\b', type: 'INJECTION' },
+    { flags: 'i', label: 'http-url-in-instruction', pattern: 'https?:\\/\\/[^\\s]+', type: 'EXFILTRATION' },
+    { flags: 'm', label: 'base64-block', pattern: '(?:^|[\\s"`\'])[A-Za-z0-9+/]{60,}={0,2}(?:$|[\\s"`\'])', type: 'EXFILTRATION' },
+    { flags: 'i', label: 'curl-wget', pattern: '\\b(curl|wget)\\s+', type: 'EXFILTRATION' },
+    { flags: 'i', label: 'send-to-external', pattern: '\\b(exfiltrat|send\\s+to\\s+(http|ftp)|transmit\\s+(to|via))\\b', type: 'EXFILTRATION' },
+  ];
+
+  for (const p of BUILTIN_SCANNER_PATTERNS) {
+    await prisma.scannerPattern.upsert({
+      create: { flags: p.flags, isActive: true, isBuiltIn: true, label: p.label, pattern: p.pattern, type: p.type },
+      update: { flags: p.flags, isActive: true, pattern: p.pattern, type: p.type },
+      where: { label: p.label },
+    });
+  }
+  console.log(`Seed: ${BUILTIN_SCANNER_PATTERNS.length} built-in scanner patterns seeded`);
+
   // ── Default IMPLEMENTER tool config ──────────────────────────────────────
   // Ensure the GLOBAL AgentToolConfig for IMPLEMENTER exists with all 4 tools.
   // The partial unique index prevents duplicates; we check existence first since
