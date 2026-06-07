@@ -17,6 +17,7 @@
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
+    "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",
     "./workflow": "./dist/workflow/index.js",
     "./workflow/spec": "./dist/workflow/spec.js",
     "./workflow/expr": "./dist/workflow/expr.js",

@@ -27,6 +27,7 @@ function extractSessionCookie(cookieHeader: string | undefined): string | null {
   return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
 }
 
+import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
@@ -81,6 +82,10 @@ async function start() {
   await app.register(prismaPlugin);
   await app.register(temporalPlugin);
   await app.register(authPlugin);
+
+  // Sync built-in reference data (templates, skills, scanner patterns, tool
+  // config) so every deploy automatically picks up new or updated built-ins.
+  await syncBuiltins(app.prisma);
 
   // Sync the lesson consolidation Temporal Schedule with whatever config is in
   // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't
