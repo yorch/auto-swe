@@ -38,6 +38,7 @@ import { lessonRoutes } from './routes/lessons.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
+import { securityEventRoutes } from './routes/securityEvents.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
@@ -223,6 +224,7 @@ async function start() {
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });

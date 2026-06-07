@@ -126,3 +126,50 @@ export function useAdminRevokeSession() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-sessions'] }),
   });
 }
+
+export type SecurityEventType =
+  | 'SHELL_BLOCK'
+  | 'FILE_BLOCK'
+  | 'CONTENT_SECURITY_BLOCK'
+  | 'CONTENT_SECURITY_WARN'
+  | 'CODE_SECURITY'
+  | 'LLM_SUSPICIOUS';
+
+export interface SecurityEvent {
+  createdAt: string;
+  error: string | null;
+  eventType: SecurityEventType;
+  externalTicketId: string | null;
+  id: string;
+  inputJson: unknown;
+  nodeId: string;
+  outputJson: unknown;
+  runId: string;
+  startedAt: string;
+  toolName: string | null;
+  workflowId: string;
+  workRequestId: string | null;
+}
+
+export function useSecurityEvents(params?: {
+  limit?: number;
+  runId?: string;
+  type?: SecurityEventType;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.limit) {
+    qs.set('limit', String(params.limit));
+  }
+  if (params?.runId) {
+    qs.set('runId', params.runId);
+  }
+  if (params?.type) {
+    qs.set('type', params.type);
+  }
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: SecurityEvent[] }>(`/api/v1/admin/security-events?${qs}`).then((r) => r.data),
+    queryKey: ['security-events', params],
+    refetchInterval: 30_000,
+  });
+}

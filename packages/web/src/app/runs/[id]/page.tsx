@@ -5,12 +5,17 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import {
+  classifyTraceAsSecurityEvent,
+  SecurityEventList,
+} from '@/components/security/SecurityEventList';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
@@ -233,6 +238,34 @@ export default function RunDetailPage({ params }: PageProps) {
     return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === node.step);
   }, [selectedNodeId, run?.traces, run?.specSnapshot]);
 
+  // Derive security events from the already-loaded traces — no extra API call needed.
+  const securityEvents = useMemo<SecurityEvent[]>(() => {
+    const traces = (run as WorkflowRunDetail).traces ?? [];
+    return traces.flatMap((t) => {
+      const eventType = classifyTraceAsSecurityEvent(t);
+      if (!eventType) {
+        return [];
+      }
+      return [
+        {
+          createdAt: t.createdAt,
+          error: t.error,
+          eventType,
+          externalTicketId: run?.workRequest?.externalTicketId ?? null,
+          id: t.id,
+          inputJson: t.inputJson,
+          nodeId: t.nodeId,
+          outputJson: t.outputJson,
+          runId: run?.id ?? '',
+          startedAt: run?.startedAt ?? '',
+          toolName: t.toolName,
+          workflowId: run?.workflowId ?? '',
+          workRequestId: run?.workRequest?.id ?? null,
+        },
+      ];
+    });
+  }, [run]);
+
   if (isLoading || !run) {
     return <LoadingState />;
   }
@@ -413,6 +446,15 @@ export default function RunDetailPage({ params }: PageProps) {
                     <AgentTracePanel traces={nodeTraces} />
                   </div>
                 )}
+              </Card>
+            )}
+
+            {securityEvents.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Security events · {securityEvents.length}</CardTitle>
+                </CardHeader>
+                <SecurityEventList events={securityEvents} />
               </Card>
             )}
 
