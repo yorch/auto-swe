@@ -209,6 +209,29 @@ Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes �
 
 ---
 
+### Runtime Security Scanners
+
+Six scanners run during agent execution. Each is independently advisory or blocking:
+
+| Scanner | Stage | Type | Source |
+|---|---|---|---|
+| **Skill content scanner** | Skill save + LLM output per TDD iteration | Advisory | DB-backed `INJECTION`/`EXFILTRATION` patterns (60 s TTL) via `skillScanner.ts` |
+| **Shell command scanner** | Pre-exec of every `bash` tool call | Soft-block | DB-backed `SHELL_COMMAND` patterns via `shellCommandScanner.ts`; returns error string to agent |
+| **Sensitive file scanner** | Pre-write of every `writeFile` call | Hard-block | Hardcoded rules in `sensitiveFileScanner.ts` — `.env`, PEM/key files, SSH keys, credentials JSON |
+| **Pre-write content scanner** | Pre-write of every `writeFile` call | Soft-block | Regex rules in `preWriteSecurityCheck.ts`; tags trace error with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
+| **Code security scanner** | Post-commit diff scan | Advisory | DB-backed `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings flow through `CodeResult.codeSecurityFindings` to security reviewer |
+| **LLM output scanner** | Post-generate per TDD iteration | Advisory | `scanSkillContent` (INJECTION/EXFILTRATION patterns); wrapped in try/catch — DB failure must not abort the activity |
+
+**Pattern cache:** `shellCommandScanner` and `codeSecurityScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
+
+**Built-in patterns:** 44 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 10 SHELL_COMMAND, 10 CODE_SECURITY. Seeded with upsert semantics (idempotent). Built-in patterns have `isBuiltIn: true`.
+
+**Security events:** Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The `GET /api/v1/admin/security-events` endpoint uses DB-level predicates per `SecurityEventType` so pagination is correct. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel).
+
+**Safe flag subset:** Regex flags accepted at the API: `i`, `m`, `s`, `u`, `v`. Flags `g` and `y` are rejected to prevent stateful `lastIndex` bugs in cached RegExp objects.
+
+---
+
 ### Multi-Model Support
 
 Model selection and provider credentials are fully DB-driven via the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).

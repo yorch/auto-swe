@@ -6,39 +6,38 @@ import { formatRelativeTime } from '@/lib/utils';
 
 // ── Badge ────────────────────────────────────────────────────────────────────
 
-const EVENT_LABEL: Record<SecurityEventType, string> = {
-  CODE_SECURITY: 'Code Security',
-  CONTENT_SECURITY_BLOCK: 'Content Block',
-  CONTENT_SECURITY_WARN: 'Content Warn',
-  FILE_BLOCK: 'File Block',
-  LLM_SUSPICIOUS: 'LLM Suspicious',
-  SHELL_BLOCK: 'Shell Block',
-};
-
-const EVENT_COLOR: Record<SecurityEventType, string> = {
-  CODE_SECURITY: 'bg-dust-400/20 text-dust-400',
-  CONTENT_SECURITY_BLOCK: 'bg-brick-400/20 text-brick-400',
-  CONTENT_SECURITY_WARN: 'bg-amber-400/20 text-amber-400',
-  FILE_BLOCK: 'bg-brick-400/20 text-brick-400',
-  LLM_SUSPICIOUS: 'bg-violet-400/20 text-violet-400',
-  SHELL_BLOCK: 'bg-brick-400/20 text-brick-400',
-};
-
-const EVENT_DOT: Record<SecurityEventType, string> = {
-  CODE_SECURITY: 'bg-dust-400',
-  CONTENT_SECURITY_BLOCK: 'bg-brick-500',
-  CONTENT_SECURITY_WARN: 'bg-amber-400',
-  FILE_BLOCK: 'bg-brick-500',
-  LLM_SUSPICIOUS: 'bg-violet-400',
-  SHELL_BLOCK: 'bg-brick-500',
+const EVENT_STYLE: Record<SecurityEventType, { color: string; dot: string; label: string }> = {
+  CODE_SECURITY: {
+    color: 'bg-dust-400/20 text-dust-400',
+    dot: 'bg-dust-400',
+    label: 'Code Security',
+  },
+  CONTENT_SECURITY_BLOCK: {
+    color: 'bg-brick-400/20 text-brick-400',
+    dot: 'bg-brick-500',
+    label: 'Content Block',
+  },
+  CONTENT_SECURITY_WARN: {
+    color: 'bg-amber-400/20 text-amber-400',
+    dot: 'bg-amber-400',
+    label: 'Content Warn',
+  },
+  FILE_BLOCK: { color: 'bg-brick-400/20 text-brick-400', dot: 'bg-brick-500', label: 'File Block' },
+  LLM_SUSPICIOUS: {
+    color: 'bg-violet-400/20 text-violet-400',
+    dot: 'bg-violet-400',
+    label: 'LLM Suspicious',
+  },
+  SHELL_BLOCK: {
+    color: 'bg-brick-400/20 text-brick-400',
+    dot: 'bg-brick-500',
+    label: 'Shell Block',
+  },
 };
 
 export function SecurityEventBadge({ type }: { type: SecurityEventType }) {
-  return (
-    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${EVENT_COLOR[type]}`}>
-      {EVENT_LABEL[type]}
-    </span>
-  );
+  const { color, label } = EVENT_STYLE[type];
+  return <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${color}`}>{label}</span>;
 }
 
 // ── Detail extraction ─────────────────────────────────────────────────────────
@@ -183,6 +182,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
 function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRunLink: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const { primary, secondary } = extractDetail(event);
+  const { dot } = EVENT_STYLE[event.eventType];
 
   return (
     <li>
@@ -192,9 +192,7 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
         type="button"
       >
         <div className="flex items-center gap-2 text-xs">
-          <span
-            className={`inline-block w-2 h-2 rounded-sm shrink-0 ${EVENT_DOT[event.eventType]}`}
-          />
+          <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
           <SecurityEventBadge type={event.eventType} />
           <span className="font-mono text-paper-200 truncate">{primary}</span>
           {secondary && (

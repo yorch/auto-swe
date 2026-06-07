@@ -73,6 +73,8 @@ packages/
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
+| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 44 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (10), `CODE_SECURITY` (10) types; seeded as `isBuiltIn: true` by `seed.ts` |
+| `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/set/cond/signal/terminate/fanOut/shell) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` node predicates (jsonpath + comparison, no JS sandbox) |
@@ -112,6 +114,8 @@ packages/
 | `src/routes/tokens.ts` | Personal access token create / list / revoke |
 | `src/routes/modelConfig.ts` | `ModelRoleConfig` + `ProviderCredential` + `EmbeddingConfig` CRUD (admin + team-owner) |
 | `src/routes/admin.ts` | Admin-only: list/revoke all PATs, list/revoke sessions, shell-audit prune |
+| `src/routes/scannerPatterns.ts` | CRUD for `ScannerPattern` — `INJECTION`, `EXFILTRATION`, `SHELL_COMMAND`, `CODE_SECURITY` types; validates regex + safe flag subset (i,m,s,u,v); calls `invalidateScannerPatternCache()` on writes |
+| `src/routes/securityEvents.ts` | `GET /api/v1/admin/security-events` — queries `agent_traces` for security-relevant rows; derives `SecurityEventType` at read time using DB-level predicates; supports `limit`/`offset`/`runId`/`type` filters |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — shared helper that writes `ConfigAuditLog` rows for all config mutations |
 
 ### 2.3 `packages/worker`
@@ -138,7 +142,11 @@ packages/
 | `src/agents/reviewNetwork.ts` | Three Mastra `Agent`s (Security Auditor, Domain Logic, Performance) |
 | `src/agents/plannerAgent.ts` | Mastra `Agent` for per-repo plan decomposition |
 | `src/agents/decomposer.ts` | Mastra `Agent` for fan-out subtask decomposition |
-| `src/agents/preWriteSecurityCheck.ts` | Regex-based pre-write scanner wrapping the `writeFile` tool |
+| `src/agents/preWriteSecurityCheck.ts` | Regex-based pre-write content scanner wrapping the `writeFile` tool; exports `SECURITY_CHECK_FAILED_PREFIX` and `SECURITY_WARNINGS_PREFIX` constants |
+| `src/lib/scannerPatternLoader.ts` | `makePatternLoader(type, logPrefix)` — factory returning `load()` / `invalidate()` backed by a per-instance 60 s TTL cache; used by `shellCommandScanner` and `codeSecurityScanner` to avoid boilerplate |
+| `src/lib/shellCommandScanner.ts` | `scanShellCommand(cmd)` — checks bash tool calls against active `SHELL_COMMAND` patterns; soft-block returns error string to agent for self-correction |
+| `src/lib/sensitiveFileScanner.ts` | `checkSensitiveFilePath(path)` — hard-blocks writes to `.env`, PEM/key files, SSH private keys, credential JSON files (hardcoded rules; intentionally not DB-driven) |
+| `src/lib/codeSecurityScanner.ts` | `scanDiffForCodeIssues(diff)` — advisory scan of git diff added-lines against `CODE_SECURITY` patterns; `formatCodeSecurityFindings(findings)` — formats for security reviewer prompt |
 | `src/lib/models.ts` | `getModel(role, ctx)` — 3-level scope cascade (template → team → global) |
 | `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` — resolves `ResolvedSkill[]` at WORKFLOW_TEMPLATE → TEAM → GLOBAL scope |
 | `src/lib/config/resolver.ts` | `loadAgentToolConfig(role, ctx)` — resolves enabled tool list at same scope cascade |
@@ -163,7 +171,10 @@ packages/
 | `src/app/lessons/` | Agent memory search |
 | `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
 | `src/app/settings/` | User settings — API tokens (create / list / revoke) |
-| `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability |
+| `src/app/admin/security/` | Security events dashboard — type filter, per-type summary bar, expandable event rows, 30 s auto-refresh |
+| `src/app/admin/scanner/` | Scanner pattern admin — CRUD for all 4 `ScannerPatternType` values; regex validation; built-in vs custom badges |
+| `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability, scanner patterns, security events |
+| `src/components/security/SecurityEventList.tsx` | `SecurityEventBadge`, `SecurityEventList` — expandable list with per-type formatted details (code findings, LLM warnings, content security lines, bash command); `classifyTraceAsSecurityEvent` — client-side classification for run-detail security panel |
 | `src/hooks/` | TanStack Query hooks split by resource domain — `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`, `useLessons`; `useWorkflows` is a barrel re-export |
 | `src/stores/` | Zustand stores — `authStore.ts` (JWT + user identity), `teamStore.ts` (active team context) |
 | `src/components/ui/` | Design-system primitives: `Button`, `Input`, `Select`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `LoadingState`, `Stat`, `StatusBadge` |

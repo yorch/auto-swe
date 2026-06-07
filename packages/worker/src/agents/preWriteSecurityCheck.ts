@@ -231,10 +231,14 @@ export function wrapWriteToolWithSecurityCheck(originalExecute: WriteExecuteFn):
   };
 }
 
+// Exported so callers can detect security events without repeating the string literals.
+export const SECURITY_CHECK_FAILED_PREFIX = 'SECURITY CHECK FAILED';
+export const SECURITY_WARNINGS_PREFIX = 'SECURITY WARNINGS';
+
 function formatViolationMessage(violations: PreWriteViolation[], blocked: boolean): string {
   const header = blocked
-    ? 'SECURITY CHECK FAILED — write blocked'
-    : 'SECURITY WARNINGS detected (write allowed)';
+    ? `${SECURITY_CHECK_FAILED_PREFIX} — write blocked`
+    : `${SECURITY_WARNINGS_PREFIX} detected (write allowed)`;
 
   const details = violations
     .map(

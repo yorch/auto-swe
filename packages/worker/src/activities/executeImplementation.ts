@@ -176,16 +176,19 @@ export async function executeImplementation(
 
       // Record implementer's reasoning text (the LLM response between tool calls)
       if (genResult.text) {
-        // LLM output scanner — advisory, non-blocking. Flags cases where the
-        // agent's own text output contains injection/exfiltration patterns, which
-        // may indicate a successfully injected skill is propagating through output.
-        const outputScan = await scanSkillContent(genResult.text);
-        if (!outputScan.safe) {
-          tracer.addActivityEvent({
-            inputJson: { iteration },
-            name: 'llm.suspicious_output',
-            outputJson: { warnings: outputScan.warnings },
-          });
+        // LLM output scanner — advisory, non-blocking. A DB/network failure here
+        // must not abort the implementation activity.
+        try {
+          const outputScan = await scanSkillContent(genResult.text);
+          if (!outputScan.safe) {
+            tracer.addActivityEvent({
+              inputJson: { iteration },
+              name: 'llm.suspicious_output',
+              outputJson: { warnings: outputScan.warnings },
+            });
+          }
+        } catch {
+          // Scan failure is non-fatal — implementation continues without the advisory check
         }
         tracer.addLlmResponse({
           durationMs: 0,

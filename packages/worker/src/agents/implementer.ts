@@ -12,7 +12,11 @@ import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { scanShellCommand } from '../lib/shellCommandScanner.js';
-import { wrapWriteToolWithSecurityCheck } from './preWriteSecurityCheck.js';
+import {
+  SECURITY_CHECK_FAILED_PREFIX,
+  SECURITY_WARNINGS_PREFIX,
+  wrapWriteToolWithSecurityCheck,
+} from './preWriteSecurityCheck.js';
 
 /**
  * Validates that a relative file path stays within the workspace root.
@@ -110,9 +114,9 @@ export async function createImplementerAgent(
         const result = await writeExecute({ content, path });
         // Tag security violations explicitly so the gateway can query them without raw SQL.
         const resultText = result.result;
-        const securityError = resultText.startsWith('SECURITY CHECK FAILED')
+        const securityError = resultText.startsWith(SECURITY_CHECK_FAILED_PREFIX)
           ? 'blocked by content security check'
-          : resultText.startsWith('SECURITY WARNINGS')
+          : resultText.startsWith(SECURITY_WARNINGS_PREFIX)
             ? 'content security warning'
             : undefined;
         // Only store path in inputJson — content can be large and is in readFile traces

@@ -1,40 +1,14 @@
-import { prisma } from '@auto-swe/shared/db';
+import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
+import { makePatternLoader } from './scannerPatternLoader.js';
 
-export interface CodeSecurityFinding {
-  file: string;
-  label: string;
-  line: number;
-  match: string;
-}
+export type { CodeSecurityFinding };
 
-interface CachedEntry {
-  label: string;
-  re: RegExp;
-}
+const { load: loadCodeSecurityPatterns, invalidate } = makePatternLoader(
+  'CODE_SECURITY',
+  'codeSecurityScanner'
+);
 
-let cache: { entries: CachedEntry[]; fetchedAt: number } | null = null;
-const CACHE_TTL_MS = 60_000;
-
-async function loadCodeSecurityPatterns(): Promise<CachedEntry[]> {
-  const now = Date.now();
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache.entries;
-  }
-  const rows = await prisma.scannerPattern.findMany({
-    orderBy: { label: 'asc' },
-    where: { isActive: true, type: 'CODE_SECURITY' },
-  });
-  const entries: CachedEntry[] = [];
-  for (const r of rows) {
-    try {
-      entries.push({ label: r.label, re: new RegExp(r.pattern, r.flags) });
-    } catch {
-      console.error(`[codeSecurityScanner] skipping invalid pattern '${r.label}': invalid regex`);
-    }
-  }
-  cache = { entries, fetchedAt: now };
-  return entries;
-}
+export { invalidate as invalidateCodeSecurityPatternCache };
 
 /**
  * Parses a git unified diff and returns only the added lines with their

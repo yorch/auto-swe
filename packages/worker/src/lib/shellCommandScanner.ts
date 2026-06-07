@@ -1,33 +1,11 @@
-import { prisma } from '@auto-swe/shared/db';
+import { makePatternLoader } from './scannerPatternLoader.js';
 
-interface CachedEntry {
-  label: string;
-  re: RegExp;
-}
+const { load: loadShellPatterns, invalidate } = makePatternLoader(
+  'SHELL_COMMAND',
+  'shellCommandScanner'
+);
 
-let cache: { entries: CachedEntry[]; fetchedAt: number } | null = null;
-const CACHE_TTL_MS = 60_000;
-
-async function loadShellPatterns(): Promise<CachedEntry[]> {
-  const now = Date.now();
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache.entries;
-  }
-  const rows = await prisma.scannerPattern.findMany({
-    orderBy: { label: 'asc' },
-    where: { isActive: true, type: 'SHELL_COMMAND' },
-  });
-  const entries: CachedEntry[] = [];
-  for (const r of rows) {
-    try {
-      entries.push({ label: r.label, re: new RegExp(r.pattern, r.flags) });
-    } catch {
-      console.error(`[shellCommandScanner] skipping invalid pattern '${r.label}': invalid regex`);
-    }
-  }
-  cache = { entries, fetchedAt: now };
-  return entries;
-}
+export { invalidate as invalidateShellCommandPatternCache };
 
 /**
  * Checks a shell command against active SHELL_COMMAND scanner patterns.
