@@ -2,8 +2,7 @@ import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
-import { BUILTIN_SKILLS } from '../skills/index.js';
-import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
+import { syncBuiltins } from '../lib/syncBuiltins.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -91,115 +90,11 @@ async function main() {
   });
   console.log(`Seed: sample repository created (${repo.id})`);
 
-  // Seed all built-in workflow templates from the unified BUILTIN_TEMPLATES store.
-  // Postgres NULL != NULL so we look up by (teamId IS NULL, name) rather than upsert.
-  for (const tmpl of BUILTIN_TEMPLATES) {
-    const existing = await prisma.workflowTemplate.findFirst({
-      where: { name: tmpl.name, teamId: null },
-    });
-    const t = existing
-      ? await prisma.workflowTemplate.update({
-          data: { activeVersion: 1, isDefault: tmpl.isDefault ?? false, status: 'ACTIVE' },
-          where: { id: existing.id },
-        })
-      : await prisma.workflowTemplate.create({
-          data: {
-            activeVersion: 1,
-            description: tmpl.description,
-            isDefault: tmpl.isDefault ?? false,
-            name: tmpl.name,
-            status: 'ACTIVE',
-            teamId: null,
-          },
-        });
-    await prisma.workflowTemplateVersion.upsert({
-      create: {
-        createdBy: admin.id,
-        spec: tmpl.spec as unknown as object,
-        templateId: t.id,
-        version: 1,
-      },
-      update: { spec: tmpl.spec as unknown as object },
-      where: { templateId_version: { templateId: t.id, version: 1 } },
-    });
-    console.log(
-      `Seed: template '${tmpl.name}' seeded (${t.id}@v1)${tmpl.isDefault ? ' [default]' : ''}`
-    );
-  }
-
-  // ── Built-in skills ───────────────────────────────────────────────────────
-  // Each skill has a name, description, promptText (injected into system prompts),
-  // and one or more role assignments with sortOrders. Postgres NULL != NULL so
-  // we use findFirst + conditional create (no upsert) for GLOBAL-scope assignments.
-
-  for (const skillDef of BUILTIN_SKILLS) {
-    // Create or update the skill record
-    const existingSkill = await prisma.skill.findFirst({
-      where: { isBuiltIn: true, name: skillDef.name },
-    });
-    const skill = existingSkill
-      ? await prisma.skill.update({
-          data: {
-            description: skillDef.description,
-            promptText: skillDef.promptText,
-          },
-          where: { id: existingSkill.id },
-        })
-      : await prisma.skill.create({
-          data: {
-            description: skillDef.description,
-            isBuiltIn: true,
-            name: skillDef.name,
-            promptText: skillDef.promptText,
-          },
-        });
-
-    // Create GLOBAL assignments for each role (no upsert — partial unique index)
-    for (const assignment of skillDef.assignments) {
-      const existingAssignment = await prisma.agentSkillAssignment.findFirst({
-        where: {
-          agentRole: assignment.role as never,
-          scope: 'GLOBAL',
-          skillId: skill.id,
-          teamId: null,
-          workflowTemplateId: null,
-        },
-      });
-      if (!existingAssignment) {
-        await prisma.agentSkillAssignment.create({
-          data: {
-            agentRole: assignment.role as never,
-            scope: 'GLOBAL',
-            skillId: skill.id,
-            sortOrder: assignment.sortOrder,
-          },
-        });
-      }
-    }
-
-    console.log(
-      `Seed: built-in skill '${skillDef.name}' seeded (${skillDef.assignments.map((a) => a.role).join(', ')})`
-    );
-  }
-
-  // ── Default IMPLEMENTER tool config ──────────────────────────────────────
-  // Ensure the GLOBAL AgentToolConfig for IMPLEMENTER exists with all 4 tools.
-  // The partial unique index prevents duplicates; we check existence first since
-  // Prisma cannot express WHERE clauses on unique indexes.
-  const existingToolConfig = await prisma.agentToolConfig.findFirst({
-    where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
-  });
-  if (!existingToolConfig) {
-    await prisma.agentToolConfig.create({
-      data: {
-        agentRole: 'IMPLEMENTER',
-        enabledTools: ['readFile', 'writeFile', 'listDirectory', 'bash'],
-        scope: 'GLOBAL',
-      },
-    });
-  }
+  // Sync built-in reference data (templates, skills, scanner patterns, tool config).
+  // This mirrors what the gateway does at startup so local dev seeding stays consistent.
+  await syncBuiltins(prisma);
   console.log(
-    'Seed: IMPLEMENTER GLOBAL tool config seeded (readFile, writeFile, listDirectory, bash)'
+    'Seed: built-in reference data synced (templates, skills, scanner patterns, tool config)'
   );
   console.log('');
   console.log('  To submit a work request, use this repo ID:');

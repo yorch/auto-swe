@@ -51,6 +51,12 @@ enum AgentRole {
   SECURITY_REVIEW
   VALIDATE_CONTEXT
   COMMIT_TO_MEMORY
+  // Skill-only sub-roles — no ModelRoleConfig required; model resolution
+  // falls back to the parent role (reviewer / planner).
+  SECURITY_REVIEWER
+  DOMAIN_LOGIC_REVIEWER
+  PERFORMANCE_REVIEWER
+  DECOMPOSER
 }
 
 enum ConfigAuditAction {
@@ -111,6 +117,7 @@ model AgentLesson {
   embedding       Unsupported("vector(1536)")?
   failureType     String?         @map("failure_type")
   metadata        Json?
+  skillsActive    String[]        @default([]) @map("skills_active")
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
   // Soft-delete: set when this lesson has been merged into a consolidated one.
   // Active lessons always have consolidatedAt = null.
@@ -834,12 +841,36 @@ model Skill {
   description String?
   promptText  String    @map("prompt_text")
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
+  isVerified  Boolean   @default(false) @map("is_verified")
+  isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   assignments AgentSkillAssignment[]
 
   @@map("skills")
+}
+
+enum ScannerPatternType {
+  INJECTION
+  EXFILTRATION
+  SHELL_COMMAND
+  CODE_SECURITY
+  SENSITIVE_FILE
+}
+
+model ScannerPattern {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label     String             @unique
+  pattern   String
+  flags     String             @default("")
+  type      ScannerPatternType
+  isActive  Boolean            @default(true) @map("is_active")
+  isBuiltIn Boolean            @default(false) @map("is_built_in")
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("scanner_patterns")
 }
 
 /// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes

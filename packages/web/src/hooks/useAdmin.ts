@@ -4,6 +4,78 @@ import type { AdminTokenSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
+export interface ScannerPattern {
+  createdAt: string;
+  flags: string;
+  id: string;
+  isActive: boolean;
+  isBuiltIn: boolean;
+  label: string;
+  pattern: string;
+  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+  updatedAt: string;
+}
+
+export function useScannerPatterns() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: ScannerPattern[] }>('/api/v1/admin/scanner-patterns').then((r) => r.data),
+    queryKey: ['scanner-patterns'],
+  });
+}
+
+export function useCreateScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      flags: string;
+      label: string;
+      pattern: string;
+      type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+    }) =>
+      api
+        .post<{ data: ScannerPattern }>('/api/v1/admin/scanner-patterns', body)
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+  });
+}
+
+export function useUpdateScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      flags?: string;
+      id: string;
+      isActive?: boolean;
+      label?: string;
+      pattern?: string;
+      type?: 'INJECTION' | 'EXFILTRATION';
+    }) =>
+      api
+        .put<{ data: ScannerPattern }>(`/api/v1/admin/scanner-patterns/${id}`, body)
+        .then((r) => r.data),
+    onSuccess: (result) => {
+      qc.setQueryData<ScannerPattern[]>(['scanner-patterns'], (old) => {
+        if (!old) {
+          return old;
+        }
+        return old.map((p) => (p.id === result.id ? result : p));
+      });
+    },
+  });
+}
+
+export function useDeleteScannerPattern() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/scanner-patterns/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scanner-patterns'] }),
+  });
+}
+
 interface AdminSessionSummary {
   id: string;
   token: string;
@@ -52,5 +124,52 @@ export function useAdminRevokeSession() {
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/admin/sessions/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-sessions'] }),
+  });
+}
+
+export type SecurityEventType =
+  | 'SHELL_BLOCK'
+  | 'FILE_BLOCK'
+  | 'CONTENT_SECURITY_BLOCK'
+  | 'CONTENT_SECURITY_WARN'
+  | 'CODE_SECURITY'
+  | 'LLM_SUSPICIOUS';
+
+export interface SecurityEvent {
+  createdAt: string;
+  error: string | null;
+  eventType: SecurityEventType;
+  externalTicketId: string | null;
+  id: string;
+  inputJson: unknown;
+  nodeId: string;
+  outputJson: unknown;
+  runId: string;
+  startedAt: string;
+  toolName: string | null;
+  workflowId: string;
+  workRequestId: string | null;
+}
+
+export function useSecurityEvents(params?: {
+  limit?: number;
+  runId?: string;
+  type?: SecurityEventType;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.limit) {
+    qs.set('limit', String(params.limit));
+  }
+  if (params?.runId) {
+    qs.set('runId', params.runId);
+  }
+  if (params?.type) {
+    qs.set('type', params.type);
+  }
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: SecurityEvent[] }>(`/api/v1/admin/security-events?${qs}`).then((r) => r.data),
+    queryKey: ['security-events', params],
+    refetchInterval: 30_000,
   });
 }

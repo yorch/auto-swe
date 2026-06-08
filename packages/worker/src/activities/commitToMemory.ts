@@ -38,11 +38,12 @@ async function writeAgentLessonRow(input: {
   lessonSummary: string;
   failureType: FailureType;
   metadata: Record<string, unknown> | null;
+  skillsActive?: string[];
 }): Promise<string> {
   const embedding = await generateEmbedding(input.lessonSummary);
   const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
-     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, now())
+    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, skills_active, created_at)
+     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, $8::text[], now())
      RETURNING id`,
     input.workflowId,
     input.repoId,
@@ -50,7 +51,8 @@ async function writeAgentLessonRow(input: {
     input.lessonSummary,
     JSON.stringify(embedding),
     input.failureType,
-    JSON.stringify(input.metadata ?? {})
+    JSON.stringify(input.metadata ?? {}),
+    input.skillsActive ?? []
   );
   return rows[0]?.id ?? '';
 }
@@ -151,6 +153,7 @@ export async function commitToMemory(
     metadata: lesson.metadata,
     rationale: lesson.rationale,
     repoId,
+    skillsActive: skills.map((s) => s.name),
     workflowId: workflow.id,
   });
 

@@ -3,7 +3,7 @@ import { heartbeat } from '@temporalio/activity';
 import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { loadAgentSkills, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveModelConfig } from '../lib/config/resolver.js';
 
@@ -19,23 +19,24 @@ export async function runReviewNetwork(
   heartbeat('starting review network');
   const tracer = new AgentTracer();
 
-  // Resolve DB-level prompt and skills for the reviewer role.
+  // Resolve DB-level prompt and per-sub-role skills for the reviewer role.
   const ctx = await currentRequestContext();
-  const [modelConfig, skills] = await Promise.all([
+  const [modelConfig, securitySkills, domainSkills, performanceSkills] = await Promise.all([
     resolveModelConfig('reviewer', ctx),
-    loadAgentSkills('reviewer', ctx),
+    loadAgentSkills('securityReviewer', ctx),
+    loadAgentSkills('domainLogicReviewer', ctx),
+    loadAgentSkills('performanceReviewer', ctx),
   ]);
   const dbPrompt = modelConfig.systemPrompt ?? undefined;
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+
   const result = await runReview(
     codeResult,
     successCriteria,
     tracer,
     systemPromptOverride ?? dbPrompt,
-    skillSuffix || undefined
+    skillsToPromptSuffix(securitySkills),
+    skillsToPromptSuffix(domainSkills),
+    skillsToPromptSuffix(performanceSkills)
   );
 
   heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);

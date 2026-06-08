@@ -189,17 +189,46 @@ All five tables follow the singleton pattern (single row, `id = 'default'`, enfo
 
 Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
 
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true`.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 50 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
 - **Tool** = executable Mastra `createTool()` function. `AgentToolConfig` stores a `String[]` of enabled tool names per role/scope. `null` (no config) = all tools enabled.
+
+**Role types** accepted by `loadAgentSkills` and `loadAgentToolConfig` (`AnySkillRole`):
+- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row.
+- **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas that can have skill/tool assignments but do **not** need their own `ModelRoleConfig` row.
+
+**Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
 
 **Scope cascade** for skills and tool configs follows the same 3-level pattern as model config:
 1. `WORKFLOW_TEMPLATE` scope (if the run's template has an override)
 2. `TEAM` scope (if the team has an override)
 3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`).
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole`, `SkillOnlyRole`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`), `packages/shared/src/lib/skillScanner.ts`.
 
 Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
+
+---
+
+### Runtime Security Scanners
+
+Six scanners run during agent execution. Each is independently advisory or blocking:
+
+| Scanner | Stage | Type | Source |
+|---|---|---|---|
+| **Skill content scanner** | Skill save + LLM output per TDD iteration | Advisory | DB-backed `INJECTION`/`EXFILTRATION` patterns (60 s TTL) via `skillScanner.ts` |
+| **Shell command scanner** | Pre-exec of every `bash` tool call | Soft-block | DB-backed `SHELL_COMMAND` patterns via `shellCommandScanner.ts`; returns error string to agent |
+| **Sensitive file scanner** | Pre-write of every `writeFile` call | Hard-block | DB-backed `SENSITIVE_FILE` patterns via `sensitiveFileScanner.ts`; 6 built-in rules (`.env`, PEM/key files, SSH keys, credentials JSON); admin-extensible |
+| **Pre-write content scanner** | Pre-write of every `writeFile` call | Soft-block | Regex rules in `preWriteSecurityCheck.ts`; tags trace error with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
+| **Code security scanner** | Post-commit diff scan | Advisory | DB-backed `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings flow through `CodeResult.codeSecurityFindings` to security reviewer |
+| **LLM output scanner** | Post-generate per TDD iteration | Advisory | `scanSkillContent` (INJECTION/EXFILTRATION patterns); wrapped in try/catch — DB failure must not abort the activity |
+
+**Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
+
+**Built-in patterns:** 50 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 10 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced via `syncBuiltins()` at gateway startup (idempotent). Built-in patterns have `isBuiltIn: true`.
+
+**Security events:** Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The `GET /api/v1/admin/security-events` endpoint uses DB-level predicates per `SecurityEventType` so pagination is correct. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel).
+
+**Safe flag subset:** Regex flags accepted at the API: `i`, `m`, `s`, `u`, `v`. Flags `g` and `y` are rejected to prevent stateful `lastIndex` bugs in cached RegExp objects.
 
 ---
 

@@ -8,6 +8,7 @@ import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
+import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {
@@ -118,7 +119,9 @@ export async function runReviewNetwork(
   successCriteria?: string[],
   tracer?: AgentTracer,
   systemPromptOverride?: string,
-  skillSuffix?: string
+  securitySkillSuffix?: string,
+  domainSkillSuffix?: string,
+  performanceSkillSuffix?: string
 ): Promise<AggregatedReviewResult> {
   // Append success criteria to the domain logic prompt so it validates against original intent
   let domainLogicPrompt = systemPromptOverride ?? DOMAIN_LOGIC_REVIEWER_PROMPT;
@@ -126,16 +129,19 @@ export async function runReviewNetwork(
     domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
   }
 
-  // Append skill fragments (prompt-fragment skills from DB) to each reviewer's prompt.
-  if (skillSuffix) {
-    domainLogicPrompt += `\n\n${skillSuffix}`;
+  // Append per-reviewer skill fragments to each reviewer's prompt.
+  if (domainSkillSuffix) {
+    domainLogicPrompt += `\n\n${domainSkillSuffix}`;
   }
 
+  const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);
   const securityPrompt =
-    (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) + (skillSuffix ? `\n\n${skillSuffix}` : '');
+    (systemPromptOverride ?? SECURITY_AUDITOR_PROMPT) +
+    (securitySkillSuffix ? `\n\n${securitySkillSuffix}` : '') +
+    (staticScanSuffix ? `\n\n${staticScanSuffix}` : '');
   const performancePrompt =
     (systemPromptOverride ?? PERFORMANCE_REVIEWER_PROMPT) +
-    (skillSuffix ? `\n\n${skillSuffix}` : '');
+    (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '');
 
   // Run all three reviewers in parallel
   const results = await Promise.allSettled([

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -49,6 +50,10 @@ const AGENT_ROLES = [
   'SECURITY_REVIEW',
   'VALIDATE_CONTEXT',
   'COMMIT_TO_MEMORY',
+  'SECURITY_REVIEWER',
+  'DOMAIN_LOGIC_REVIEWER',
+  'PERFORMANCE_REVIEWER',
+  'DECOMPOSER',
 ] as const;
 const SCOPE_VALUES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 
@@ -63,6 +68,7 @@ const CreateSkillSchema = z.object({
 
 const UpdateSkillSchema = z.object({
   description: z.string().max(1000).optional(),
+  isActive: z.boolean().optional(),
   name: z.string().min(1).max(200).optional(),
   promptText: z.string().min(1).max(50_000).optional(),
 });
@@ -141,10 +147,12 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
+      const scanResult = await scanSkillContent(promptText);
       const skill = await fastify.prisma.skill.create({
         data: {
           description,
           isBuiltIn: false,
+          isVerified: false,
           name,
           promptText,
         },
@@ -156,7 +164,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         entityId: skill.id,
         entityType: 'Skill',
       });
-      return reply.status(201).send({ data: skill });
+      return reply.status(201).send({
+        data: skill,
+        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+      });
     }
   );
 
@@ -195,12 +206,27 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
 
-      const { name, description, promptText } = request.body;
+      const { name, description, promptText, isActive } = request.body;
 
-      // Built-in skills: only allow name and description to be updated
+      // Built-in skills: only name, description, and isActive may be updated.
+      // promptText is locked for built-ins to preserve the verified content guarantee.
+      // Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
+      // Reset isVerified only when promptText changes — name/description edits don't
+      // invalidate the content trust signal.
       const updateData = existing.isBuiltIn
-        ? { description, name }
-        : { description, name, promptText };
+        ? { description, isActive, name }
+        : {
+            description,
+            isActive,
+            name,
+            promptText,
+            ...(promptText !== undefined ? { isVerified: false } : {}),
+          };
+
+      const scanResult =
+        !existing.isBuiltIn && promptText
+          ? await scanSkillContent(promptText)
+          : { safe: true, warnings: [] };
 
       const updated = await fastify.prisma.skill.update({
         data: updateData,
@@ -211,18 +237,23 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         actor,
         after: {
           description: updated.description,
+          isActive: updated.isActive,
           name: updated.name,
           promptText: updated.promptText,
         },
         before: {
           description: existing.description,
+          isActive: existing.isActive,
           name: existing.name,
           promptText: existing.promptText,
         },
         entityId: existing.id,
         entityType: 'Skill',
       });
-      return { data: updated };
+      return {
+        data: updated,
+        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+      };
     }
   );
 
@@ -242,10 +273,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
       if (existing.isBuiltIn) {
-        return reply.status(400).send({
+        return reply.status(403).send({
           error: {
             code: 'BUILTIN_SKILL',
-            message: 'Built-in skills cannot be deleted',
+            message: 'Built-in skills cannot be deleted. Use the isActive flag to disable them.',
           },
         });
       }
@@ -265,14 +296,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
 
   // GET /api/v1/admin/agents — list all roles with their GLOBAL skill counts + tool configs
   app.get('/agents', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const roles = [
-      'IMPLEMENTER',
-      'REVIEWER',
-      'PLANNER',
-      'SECURITY_REVIEW',
-      'VALIDATE_CONTEXT',
-      'COMMIT_TO_MEMORY',
-    ] as const;
+    const roles = AGENT_ROLES;
 
     const [assignments, toolConfigs] = await Promise.all([
       fastify.prisma.agentSkillAssignment.groupBy({

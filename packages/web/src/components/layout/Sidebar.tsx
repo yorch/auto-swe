@@ -48,6 +48,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/skills', label: 'Skills', roles: ['ADMIN'] },
       { href: '/admin/lessons', label: 'Lessons', roles: ['ADMIN'] },
       { href: '/admin/integrations', label: 'Integrations', roles: ['ADMIN'] },
+      { href: '/admin/security', label: 'Security Events', roles: ['ADMIN'] },
+      { href: '/admin/scanner', label: 'Scanner Patterns', roles: ['ADMIN'] },
       { href: '/admin/workflow', label: 'Workflow Defaults', roles: ['ADMIN'] },
       { href: '/docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/settings', label: 'Settings', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },

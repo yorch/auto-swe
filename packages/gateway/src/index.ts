@@ -27,6 +27,7 @@ function extractSessionCookie(cookieHeader: string | undefined): string | null {
   return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
 }
 
+import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
@@ -37,6 +38,8 @@ import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
+import { scannerPatternRoutes } from './routes/scannerPatterns.js';
+import { securityEventRoutes } from './routes/securityEvents.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
@@ -79,6 +82,10 @@ async function start() {
   await app.register(prismaPlugin);
   await app.register(temporalPlugin);
   await app.register(authPlugin);
+
+  // Sync built-in reference data (templates, skills, scanner patterns, tool
+  // config) so every deploy automatically picks up new or updated built-ins.
+  await syncBuiltins(app.prisma);
 
   // Sync the lesson consolidation Temporal Schedule with whatever config is in
   // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't
@@ -221,6 +228,8 @@ async function start() {
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
+  await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });

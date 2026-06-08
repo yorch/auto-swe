@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import type { AgentRole, ResolveCtx } from './types.js';
+import { type AnySkillRole, type ResolveCtx, ROLE_TO_PRISMA } from './types.js';
 
 // Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
 // The worker would load and execute it within the Docker workspace, enforcing the same
@@ -9,17 +9,18 @@ import type { AgentRole, ResolveCtx } from './types.js';
 export interface ResolvedSkill {
   id: string;
   name: string;
+  description: string;
   promptText: string;
   sortOrder: number;
+  isVerified: boolean;
 }
 
-const ROLE_TO_PRISMA: Record<AgentRole, string> = {
-  commitToMemory: 'COMMIT_TO_MEMORY',
-  implementer: 'IMPLEMENTER',
-  planner: 'PLANNER',
-  reviewer: 'REVIEWER',
-  securityReview: 'SECURITY_REVIEW',
-  validateContext: 'VALIDATE_CONTEXT',
+const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
+  ...ROLE_TO_PRISMA,
+  decomposer: 'DECOMPOSER',
+  domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
+  performanceReviewer: 'PERFORMANCE_REVIEWER',
+  securityReviewer: 'SECURITY_REVIEWER',
 };
 
 /**
@@ -32,8 +33,11 @@ const ROLE_TO_PRISMA: Record<AgentRole, string> = {
  * Called per-activity-invocation (not cached at startup) so that admin
  * edits take effect on the next LLM call within an already-running workflow.
  */
-export async function loadAgentSkills(role: AgentRole, ctx?: ResolveCtx): Promise<ResolvedSkill[]> {
-  const prismaRole = ROLE_TO_PRISMA[role];
+export async function loadAgentSkills(
+  role: AnySkillRole,
+  ctx?: ResolveCtx
+): Promise<ResolvedSkill[]> {
+  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
 
   // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {
@@ -71,15 +75,32 @@ async function fetchSkillAssignments(
     where: {
       agentRole: prismaRole as 'IMPLEMENTER',
       scope: scope as 'GLOBAL',
+      skill: { isActive: true },
       ...scopeFilter,
     },
   });
   return assignments.map((a) => ({
+    description: a.skill.description ?? '',
     id: a.skill.id,
+    isVerified: a.skill.isVerified,
     name: a.skill.name,
     promptText: a.skill.promptText,
     sortOrder: a.sortOrder,
   }));
+}
+
+/**
+ * Joins skill prompt texts with a double newline separator, returning undefined
+ * when the resulting string would be empty. Used to build optional system-prompt
+ * suffixes for sub-role agents in the review network.
+ */
+export function skillsToPromptSuffix(skills: ResolvedSkill[]): string | undefined {
+  return (
+    skills
+      .map((s) => s.promptText)
+      .filter(Boolean)
+      .join('\n\n') || undefined
+  );
 }
 
 /**
@@ -88,10 +109,10 @@ async function fetchSkillAssignments(
  * Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).
  */
 export async function loadAgentToolConfig(
-  role: AgentRole,
+  role: AnySkillRole,
   ctx?: ResolveCtx
 ): Promise<string[] | null> {
-  const prismaRole = ROLE_TO_PRISMA[role];
+  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
 
   // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {

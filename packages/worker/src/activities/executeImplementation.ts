@@ -1,7 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type {
   CodeResult,
+  CodeSecurityFinding,
   RepoWorkRequest,
   Subtask,
   TestRunResult,
@@ -12,6 +14,7 @@ import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -80,6 +83,11 @@ export async function executeImplementation(
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
+
+    tracer.addActivityEvent({
+      name: 'skills.loaded',
+      outputJson: { count: skills.length, skills: skills.map((s) => s.name) },
+    });
 
     // Create Mastra agent with tools bound to workspace (tracer captures every call).
     // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
@@ -168,6 +176,20 @@ export async function executeImplementation(
 
       // Record implementer's reasoning text (the LLM response between tool calls)
       if (genResult.text) {
+        // LLM output scanner — advisory, non-blocking. A DB/network failure here
+        // must not abort the implementation activity.
+        try {
+          const outputScan = await scanSkillContent(genResult.text);
+          if (!outputScan.safe) {
+            tracer.addActivityEvent({
+              inputJson: { iteration },
+              name: 'llm.suspicious_output',
+              outputJson: { warnings: outputScan.warnings },
+            });
+          }
+        } catch {
+          // Scan failure is non-fatal — implementation continues without the advisory check
+        }
         tracer.addLlmResponse({
           durationMs: 0,
           inputJson: { iteration },
@@ -230,6 +252,16 @@ export async function executeImplementation(
       outputJson: { branch, commitMessage: commitSummary, headSha },
     });
 
+    // Static code security scan — advisory findings passed to the review network.
+    // Not blocking here; the security reviewer agent decides severity.
+    const codeSecurityFindings: CodeSecurityFinding[] = await scanDiffForCodeIssues(diff);
+    if (codeSecurityFindings.length > 0) {
+      tracer.addActivityEvent({
+        name: 'code_security.scan',
+        outputJson: { count: codeSecurityFindings.length, findings: codeSecurityFindings },
+      });
+    }
+
     // Persist traces before the security gate so they survive a gate rejection.
     await persistActivityTrace(tracer, 'implementer');
 
@@ -252,6 +284,7 @@ export async function executeImplementation(
 
     return {
       branch,
+      codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
