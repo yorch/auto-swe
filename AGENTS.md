@@ -306,15 +306,19 @@ Pattern used in all LLM activities (`executeImplementation`, `commitToMemory`, `
 
 ```typescript
 const tracer = new AgentTracer();
-// inside the activity:
-tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
-tracer.addLlmResponse({ role, outputJson, durationMs });
-tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
-// at exit — best-effort, failures are swallowed:
-await persistActivityTrace(tracer, 'implementer');
+try {
+  // LLM calls, tool calls, and event recording:
+  tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
+  tracer.addLlmResponse({ role, outputJson, durationMs });
+  tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
+  return result;
+} finally {
+  // Always runs — even if the LLM call throws:
+  await persistActivityTrace(tracer, 'implementer');
+}
 ```
 
-`persistActivityTrace` from `packages/worker/src/lib/activityContext.ts` auto-resolves the `runId` and `attempt` from Temporal context. **Never omit this call in new activities that make LLM or tool calls** — the run viewer depends on it.
+`persistActivityTrace` from `packages/worker/src/lib/activityContext.ts` auto-resolves the `runId` and `attempt` from Temporal context. **Always call it in a `finally` block so traces are persisted even when the LLM call throws.** Calling it only on the success path silently drops all trace records when the activity fails — the run viewer will show no events for the failed attempt.
 
 ### Temporal Workflow Constraints
 
