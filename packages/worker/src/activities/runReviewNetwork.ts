@@ -29,19 +29,21 @@ export async function runReviewNetwork(
   ]);
   const dbPrompt = modelConfig.systemPrompt ?? undefined;
 
-  const result = await runReview(
-    codeResult,
-    successCriteria,
-    tracer,
-    systemPromptOverride ?? dbPrompt,
-    skillsToPromptSuffix(securitySkills),
-    skillsToPromptSuffix(domainSkills),
-    skillsToPromptSuffix(performanceSkills)
-  );
+  try {
+    const result = await runReview(
+      codeResult,
+      successCriteria,
+      tracer,
+      systemPromptOverride ?? dbPrompt,
+      skillsToPromptSuffix(securitySkills),
+      skillsToPromptSuffix(domainSkills),
+      skillsToPromptSuffix(performanceSkills)
+    );
 
-  heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
+    heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
 
-  await persistActivityTrace(tracer, 'reviewer');
-
-  return result;
+    return result;
+  } finally {
+    await persistActivityTrace(tracer, 'reviewer');
+  }
 }

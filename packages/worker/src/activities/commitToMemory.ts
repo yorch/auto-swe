@@ -147,29 +147,31 @@ export async function commitToMemory(
     role: 'commitToMemory',
   });
 
-  const lessonId = await writeAgentLessonRow({
-    failureType: lesson.failureType,
-    lessonSummary: lesson.lessonSummary,
-    metadata: lesson.metadata,
-    rationale: lesson.rationale,
-    repoId,
-    skillsActive: skills.map((s) => s.name),
-    workflowId: workflow.id,
-  });
+  try {
+    const lessonId = await writeAgentLessonRow({
+      failureType: lesson.failureType,
+      lessonSummary: lesson.lessonSummary,
+      metadata: lesson.metadata,
+      rationale: lesson.rationale,
+      repoId,
+      skillsActive: skills.map((s) => s.name),
+      workflowId: workflow.id,
+    });
 
-  agentTracer.addActivityEvent({
-    name: 'memory.lesson_written',
-    outputJson: { failureType: lesson.failureType, lessonId },
-  });
+    agentTracer.addActivityEvent({
+      name: 'memory.lesson_written',
+      outputJson: { failureType: lesson.failureType, lessonId },
+    });
 
-  await agentTracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'commitToMemory',
-    currentAttempt()
-  );
-
-  return lessonId;
+    return lessonId;
+  } finally {
+    await agentTracer.persist(
+      await currentWorkflowRunId(),
+      currentActivityType(),
+      'commitToMemory',
+      currentAttempt()
+    );
+  }
 }
 
 /**

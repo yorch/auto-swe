@@ -38,16 +38,20 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
     .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
-  const plannedRepos = await decomposeEpic(
-    epicRequest.description,
-    repoInfos,
-    tracer,
-    skillSuffix || undefined
-  );
-  await persistActivityTrace(tracer, 'planner');
 
-  return plannedRepos.map((pr) => ({
-    dependsOn: pr.dependsOn,
-    repoId: pr.repoId,
-  }));
+  try {
+    const plannedRepos = await decomposeEpic(
+      epicRequest.description,
+      repoInfos,
+      tracer,
+      skillSuffix || undefined
+    );
+
+    return plannedRepos.map((pr) => ({
+      dependsOn: pr.dependsOn,
+      repoId: pr.repoId,
+    }));
+  } finally {
+    await persistActivityTrace(tracer, 'planner');
+  }
 }

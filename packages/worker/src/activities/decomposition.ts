@@ -45,14 +45,18 @@ export async function planDecomposition(
     .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
-  const result = await decomposerPlan(
-    request,
-    tracer,
-    systemPromptOverride,
-    skillSuffix || undefined
-  );
-  await persistActivityTrace(tracer, 'planner');
-  return result;
+
+  try {
+    const result = await decomposerPlan(
+      request,
+      tracer,
+      systemPromptOverride,
+      skillSuffix || undefined
+    );
+    return result;
+  } finally {
+    await persistActivityTrace(tracer, 'planner');
+  }
 }
 
 export interface MergeBranchesInput {
