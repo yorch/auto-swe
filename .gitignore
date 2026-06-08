@@ -27,6 +27,7 @@ packages/web/next-env.d.ts
 tmp/
 
 .superpowers/
+docs/superpowers/
 
 # Generated codebase reference artifacts
 output/
