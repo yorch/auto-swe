@@ -1,9 +1,13 @@
 'use client';
 
-import type { AgentTraceRecord, WorkflowRunDetail } from '@auto-swe/shared/types/api';
+import type {
+  AgentTraceRecord,
+  WorkflowRunDetail,
+  WorkflowStepRecord,
+} from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import {
   classifyTraceAsSecurityEvent,
@@ -23,7 +27,9 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-// ── Agent trace helpers ──────────────────────────────────────────────────────
+type TabId = 'traces' | 'steps' | 'security';
+
+// ── Trace helpers ─────────────────────────────────────────────────────────────
 
 const TOOL_LABELS: Record<string, string> = {
   bash: 'bash',
@@ -107,108 +113,236 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         </div>
       )}
       {text && (
-        <pre className="text-[10px] leading-tight bg-ink-800 p-1.5 rounded overflow-x-auto max-h-28 whitespace-pre-wrap break-all">
-          {text.slice(0, 1200)}
-          {text.length > 1200 ? '\n…' : ''}
+        <pre className="text-[10px] leading-tight bg-ink-800 p-1.5 rounded overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+          {text.slice(0, 2000)}
+          {text.length > 2000 ? '\n…' : ''}
         </pre>
       )}
     </div>
   );
 }
 
-function AgentTracePanel({ traces }: { traces: AgentTraceRecord[] }) {
+function TraceEventList({ traces }: { traces: AgentTraceRecord[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  return (
+    <ol className="space-y-0.5">
+      {traces.map((t) => {
+        const { label, detail } = traceSummary(t);
+        const isExpanded = expandedId === t.id;
+        const durationLabel = t.durationMs != null ? formatDuration(t.durationMs) : '';
+        const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
+        const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
+
+        return (
+          <li key={t.id}>
+            <button
+              className="w-full text-left rounded hover:bg-ink-700 px-2 py-1.5 transition-colors"
+              onClick={() => setExpandedId(isExpanded ? null : t.id)}
+              type="button"
+            >
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dotClass}`} />
+                <span className={`text-[10px] px-1 rounded font-mono shrink-0 ${badgeClass}`}>
+                  {t.type === 'tool_call' ? 'tool' : t.type === 'llm_response' ? 'llm' : 'event'}
+                </span>
+                <span className="font-mono font-semibold shrink-0">{label}</span>
+                {detail && <span className="text-paper-400 truncate font-mono">{detail}</span>}
+                <span className="ml-auto text-paper-400 shrink-0 text-[10px]">{durationLabel}</span>
+                {t.error && (
+                  <span className="text-brick-400 shrink-0 text-[10px] font-mono">err</span>
+                )}
+              </div>
+              {isExpanded && (
+                <div className="mt-1.5">
+                  <TraceOutput trace={t} />
+                </div>
+              )}
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ── Traces tab ────────────────────────────────────────────────────────────────
+
+interface TraceGroup {
+  activityName: string;
+  dagNodeId: string | null;
+  attempt: number;
+  traces: AgentTraceRecord[];
+}
+
+function TracesTab({
+  traces,
+  filterNodeId,
+  activityToNodeId,
+  onClearFilter,
+}: {
+  traces: AgentTraceRecord[];
+  filterNodeId: string | null;
+  activityToNodeId: Record<string, string>;
+  onClearFilter: () => void;
+}) {
+  const filtered = filterNodeId
+    ? traces.filter((t) => activityToNodeId[t.nodeId] === filterNodeId)
+    : traces;
+
+  const groups = useMemo<TraceGroup[]>(() => {
+    const seen = new Map<string, TraceGroup>();
+    const order: string[] = [];
+    for (const t of filtered) {
+      const key = `${t.nodeId}::${t.attempt}`;
+      if (!seen.has(key)) {
+        const group: TraceGroup = {
+          activityName: t.nodeId,
+          attempt: t.attempt,
+          dagNodeId: activityToNodeId[t.nodeId] ?? null,
+          traces: [],
+        };
+        seen.set(key, group);
+        order.push(key);
+      }
+      seen.get(key)?.traces.push(t);
+    }
+    return order.map((k) => seen.get(k) as TraceGroup);
+  }, [filtered, activityToNodeId]);
+
   if (traces.length === 0) {
-    return <p className="text-xs text-paper-400 py-1">No trace events recorded.</p>;
+    return (
+      <div className="py-12 text-center text-sm text-paper-400">
+        No trace events recorded for this run.
+      </div>
+    );
   }
 
-  // Group by attempt so retries are visually separated
-  const byAttempt = traces.reduce<Record<number, AgentTraceRecord[]>>((acc, t) => {
-    const a = t.attempt ?? 1;
-    if (!acc[a]) {
-      acc[a] = [];
-    }
-    acc[a].push(t);
-    return acc;
-  }, {});
-  const attempts = Object.keys(byAttempt)
-    .map(Number)
-    .sort((a, b) => a - b);
+  return (
+    <div>
+      {filterNodeId && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-600 bg-ink-800/60 sticky top-0 z-10">
+          <span className="text-xs text-paper-400">
+            Filtered to{' '}
+            <span className="font-mono text-paper-200 bg-ink-600 px-1.5 py-0.5 rounded">
+              {filterNodeId}
+            </span>
+          </span>
+          <button
+            className="text-xs text-ember-400 hover:underline"
+            onClick={onClearFilter}
+            type="button"
+          >
+            Show all
+          </button>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="py-12 text-center text-sm text-paper-400">
+          No trace events for this node.{' '}
+          <button className="text-ember-400 hover:underline" onClick={onClearFilter} type="button">
+            Show all traces
+          </button>
+        </div>
+      ) : (
+        <div className="divide-y divide-ink-600/50">
+          {groups.map((group) => (
+            <div key={`${group.activityName}-${group.attempt}`}>
+              <div className="flex items-center gap-2 px-4 py-2 bg-ink-800/40 sticky top-[33px] z-[5]">
+                <span className="text-xs font-semibold text-paper-100 font-mono">
+                  {group.dagNodeId ?? group.activityName}
+                </span>
+                {group.dagNodeId && group.dagNodeId !== group.activityName && (
+                  <span className="text-[10px] text-paper-400 font-mono">
+                    ({group.activityName})
+                  </span>
+                )}
+                <span className="text-[10px] text-paper-400">attempt {group.attempt}</span>
+                <span className="text-[10px] text-paper-400 ml-auto">
+                  {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="px-2 py-1">
+                <TraceEventList traces={group.traces} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Steps tab ─────────────────────────────────────────────────────────────────
+
+function StepsTab({
+  steps,
+  onNodeClick,
+}: {
+  steps: WorkflowStepRecord[];
+  onNodeClick: (nodeId: string) => void;
+}) {
+  if (steps.length === 0) {
+    return <div className="py-12 text-center text-sm text-paper-400">No steps recorded yet.</div>;
+  }
 
   return (
-    <div className="space-y-2">
-      {attempts.map((attempt) => (
-        <div key={attempt}>
-          {attempts.length > 1 && (
-            <p className="text-[10px] font-semibold text-paper-400 uppercase tracking-wide mb-1">
-              Attempt {attempt}
-            </p>
-          )}
-          <ol className="space-y-1 max-h-80 overflow-y-auto">
-            {byAttempt[attempt].map((t) => {
-              const { label, detail } = traceSummary(t);
-              const isExpanded = expandedId === t.id;
-              const durationLabel = t.durationMs != null ? formatDuration(t.durationMs) : '';
-              const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
-              const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
-
-              return (
-                <li key={t.id}>
-                  <button
-                    className="w-full text-left rounded hover:bg-ink-800 px-2 py-1 transition-colors"
-                    onClick={() => setExpandedId(isExpanded ? null : t.id)}
-                    type="button"
-                  >
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dotClass}`} />
-                      <span className={`text-[10px] px-1 rounded font-mono shrink-0 ${badgeClass}`}>
-                        {t.type === 'tool_call'
-                          ? 'tool'
-                          : t.type === 'llm_response'
-                            ? 'llm'
-                            : 'event'}
-                      </span>
-                      <span className="font-mono font-semibold shrink-0">{label}</span>
-                      {detail && (
-                        <span className="text-paper-400 truncate font-mono">{detail}</span>
-                      )}
-                      <span className="ml-auto text-paper-400 shrink-0 text-[10px]">
-                        {durationLabel}
-                      </span>
-                      {t.error && (
-                        <span className="text-brick-400 shrink-0 text-[10px] font-mono">err</span>
-                      )}
-                    </div>
-                    {isExpanded && (
-                      <div className="mt-1.5">
-                        <TraceOutput trace={t} />
-                      </div>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
+    <div className="divide-y divide-ink-600/50">
+      {steps.map((s) => (
+        <button
+          className="w-full flex items-start gap-3 px-4 py-3 hover:bg-ink-800/40 transition-colors text-left group"
+          key={s.id}
+          onClick={() => onNodeClick(s.nodeId)}
+          type="button"
+        >
+          <div className="pt-0.5 shrink-0">
+            <StatusBadge status={s.status} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-mono text-paper-200 truncate">{s.nodeId}</span>
+              <span className="text-xs text-paper-400 shrink-0">attempt {s.attempt}</span>
+            </div>
+            {s.error && <div className="text-xs text-brick-400 mt-0.5 truncate">{s.error}</div>}
+            {(s.startedAt || s.endedAt) && (
+              <div className="text-xs text-paper-400 mt-0.5">
+                {s.startedAt ? formatDate(s.startedAt) : '?'}
+                {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
+              </div>
+            )}
+          </div>
+          <span className="text-[10px] text-paper-400 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pt-1">
+            view traces →
+          </span>
+        </button>
       ))}
     </div>
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: run, isLoading } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>('traces');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const { data: inboxSteps } = useInbox();
+
   const pendingSteps = useMemo(
     () => (inboxSteps ?? []).filter((s) => s.runId === id),
     [inboxSteps, id]
   );
+
+  // Clicking a DAG node always switches to the traces tab
+  useEffect(() => {
+    if (selectedNodeId) {
+      setActiveTab('traces');
+    }
+  }, [selectedNodeId]);
 
   const dagOverlay = useMemo(() => {
     if (!run?.steps) {
@@ -225,64 +359,76 @@ export default function RunDetailPage({ params }: PageProps) {
     return { byNodeId };
   }, [run?.steps]);
 
-  // Traces for the currently selected node — derived directly from spec + selected node id
-  const nodeTraces = useMemo<AgentTraceRecord[]>(() => {
-    if (!selectedNodeId || !run?.traces || !run?.specSnapshot) {
-      return [];
-    }
-    const spec = run.specSnapshot as WorkflowSpec;
-    const node = spec.nodes[selectedNodeId];
-    if (node?.type !== 'step') {
-      return [];
-    }
-    return (run as WorkflowRunDetail).traces.filter((t) => t.nodeId === node.step);
-  }, [selectedNodeId, run?.traces, run?.specSnapshot]);
+  const spec = run ? (run.specSnapshot as WorkflowSpec) : null;
 
-  // Derive security events from the already-loaded traces — no extra API call needed.
-  const securityEvents = useMemo<SecurityEvent[]>(() => {
-    const traces = run?.traces ?? [];
-    return traces.flatMap((t) => {
-      const eventType = classifyTraceAsSecurityEvent(t);
-      if (!eventType) {
-        return [];
+  // activity name (e.g. "executeImplementation") → dag node id (e.g. "implement")
+  const activityToNodeId = useMemo<Record<string, string>>(() => {
+    if (!spec?.nodes) {
+      return {};
+    }
+    const map: Record<string, string> = {};
+    for (const [nodeId, node] of Object.entries(spec.nodes)) {
+      const n = node as { type: string; step?: string };
+      if (n.type === 'step' && n.step) {
+        map[n.step] = nodeId;
       }
-      return [
-        {
-          createdAt: t.createdAt,
-          error: t.error,
-          eventType,
-          externalTicketId: run?.workRequest?.externalTicketId ?? null,
-          id: t.id,
-          inputJson: t.inputJson,
-          nodeId: t.nodeId,
-          outputJson: t.outputJson,
-          runId: run?.id ?? '',
-          startedAt: run?.startedAt ?? '',
-          toolName: t.toolName,
-          workflowId: run?.workflowId ?? '',
-          workRequestId: run?.workRequest?.id ?? null,
-        },
-      ];
-    });
-  }, [run]);
+    }
+    return map;
+  }, [spec]);
 
-  if (isLoading || !run) {
+  const securityEvents = useMemo<SecurityEvent[]>(
+    () =>
+      (run?.traces ?? []).flatMap((t: AgentTraceRecord) => {
+        const eventType = classifyTraceAsSecurityEvent(t);
+        if (!eventType) {
+          return [];
+        }
+        return [
+          {
+            createdAt: t.createdAt,
+            error: t.error,
+            eventType,
+            externalTicketId: run?.workRequest?.externalTicketId ?? null,
+            id: t.id,
+            inputJson: t.inputJson,
+            nodeId: t.nodeId,
+            outputJson: t.outputJson,
+            runId: run?.id ?? '',
+            startedAt: run?.startedAt ?? '',
+            toolName: t.toolName,
+            workflowId: run?.workflowId ?? '',
+            workRequestId: run?.workRequest?.id ?? null,
+          },
+        ];
+      }),
+    [run]
+  );
+
+  if (isLoading || !run || !spec) {
     return <LoadingState />;
   }
 
-  const spec = run.specSnapshot as WorkflowSpec;
-  const nodeRecords =
-    selectedNodeId && run.steps
-      ? run.steps.filter(
-          (s) => s.nodeId === selectedNodeId || s.nodeId.endsWith(`/${selectedNodeId}`)
-        )
-      : [];
+  const traces = (run as WorkflowRunDetail).traces ?? [];
+  const totalTraces = traces.length;
 
-  const totalTraces = (run as WorkflowRunDetail).traces?.length ?? 0;
+  const TABS: { id: TabId; label: string; count: number | undefined }[] = [
+    { count: totalTraces > 0 ? totalTraces : undefined, id: 'traces', label: 'Traces' },
+    { count: run.steps.length > 0 ? run.steps.length : undefined, id: 'steps', label: 'Steps' },
+    {
+      count: securityEvents.length > 0 ? securityEvents.length : undefined,
+      id: 'security',
+      label: 'Security',
+    },
+  ];
+
+  const handleNodeClick = (nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+  };
 
   return (
     <>
       <div className="space-y-6">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link className="text-ember-400 hover:underline text-sm" href="/templates">
@@ -314,19 +460,18 @@ export default function RunDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        {/* Top section: DAG + run metadata */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
           <Card>
             <CardHeader>
               <CardTitle>Execution graph</CardTitle>
             </CardHeader>
-            <div className="overflow-x-auto">
-              <WorkflowDag
-                onSelect={setSelectedNodeId}
-                selectedNodeId={selectedNodeId}
-                spec={spec}
-                statuses={dagOverlay}
-              />
-            </div>
+            <WorkflowDag
+              onSelect={handleNodeClick}
+              selectedNodeId={selectedNodeId}
+              spec={spec}
+              statuses={dagOverlay}
+            />
             <div className="flex flex-wrap gap-3 mt-4 text-xs text-paper-400">
               <span className="flex items-center gap-1">
                 <span className="inline-block w-3 h-3 rounded bg-[#3b82f6]" /> Running
@@ -343,7 +488,7 @@ export default function RunDetailPage({ params }: PageProps) {
             </div>
           </Card>
 
-          <div className="space-y-6">
+          <div className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle>Run details</CardTitle>
@@ -361,11 +506,11 @@ export default function RunDetailPage({ params }: PageProps) {
                 )}
                 <div className="flex justify-between">
                   <dt className="text-paper-400">Workflow ID</dt>
-                  <dd className="font-mono text-xs">{run.workflowId}</dd>
+                  <dd className="font-mono text-xs truncate max-w-[160px]">{run.workflowId}</dd>
                 </div>
                 {totalTraces > 0 && (
                   <div className="flex justify-between">
-                    <dt className="text-paper-400">Tool calls</dt>
+                    <dt className="text-paper-400">Trace events</dt>
                     <dd className="font-mono text-xs">{totalTraces}</dd>
                   </div>
                 )}
@@ -395,96 +540,63 @@ export default function RunDetailPage({ params }: PageProps) {
                 </div>
               </Card>
             )}
-
-            {selectedNodeId && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Node · {selectedNodeId}</CardTitle>
-                </CardHeader>
-                {nodeRecords.length === 0 ? (
-                  <p className="text-sm text-paper-400">
-                    No execution record yet — this node has not run.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {nodeRecords.map((s) => (
-                      <div className="border-b border-ink-600 pb-2 last:border-0" key={s.id}>
-                        <div className="flex items-center justify-between">
-                          <StatusBadge status={s.status} />
-                          <span className="text-xs text-paper-400">attempt {s.attempt}</span>
-                        </div>
-                        <div className="text-xs text-paper-400 mt-1">{s.nodeId}</div>
-                        {s.error && (
-                          <div className="text-xs text-brick-400 bg-brick-400/10 border border-brick-400/40 rounded px-2 py-1 mt-2">
-                            {s.error}
-                          </div>
-                        )}
-                        {(s.startedAt || s.endedAt) && (
-                          <div className="text-xs text-paper-400 mt-1">
-                            {s.startedAt ? formatDate(s.startedAt) : '?'}
-                            {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
-                          </div>
-                        )}
-                        {s.outputs !== null && s.outputs !== undefined && (
-                          <details className="mt-2">
-                            <summary className="text-xs cursor-pointer">Outputs</summary>
-                            <pre className="text-xs bg-ink-800 p-2 rounded overflow-x-auto mt-1">
-                              {JSON.stringify(s.outputs, null, 2)}
-                            </pre>
-                          </details>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {nodeTraces.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-ink-600">
-                    <p className="text-xs font-semibold text-paper-400 mb-2 uppercase tracking-wide">
-                      Agent trace · {nodeTraces.length} event{nodeTraces.length !== 1 ? 's' : ''}
-                    </p>
-                    <AgentTracePanel traces={nodeTraces} />
-                  </div>
-                )}
-              </Card>
-            )}
-
-            {securityEvents.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Security events · {securityEvents.length}</CardTitle>
-                </CardHeader>
-                <SecurityEventList events={securityEvents} />
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Step log</CardTitle>
-              </CardHeader>
-              <ul className="space-y-1 text-xs max-h-96 overflow-y-auto">
-                {run.steps.map((s) => (
-                  <li key={s.id}>
-                    <button
-                      className={`w-full flex items-center justify-between py-1 px-2 rounded hover:bg-ink-800 ${
-                        selectedNodeId === s.nodeId ? 'bg-ink-800' : ''
-                      }`}
-                      onClick={() => setSelectedNodeId(s.nodeId)}
-                      type="button"
-                    >
-                      <span className="font-mono truncate">{s.nodeId}</span>
-                      <StatusBadge status={s.status} />
-                    </button>
-                  </li>
-                ))}
-                {run.steps.length === 0 && (
-                  <li className="text-paper-400">No steps recorded yet</li>
-                )}
-              </ul>
-            </Card>
           </div>
         </div>
+
+        {/* Bottom tabbed panel */}
+        <Card className="overflow-hidden p-0">
+          {/* Tab bar */}
+          <div className="flex border-b border-ink-600 px-2">
+            {TABS.map((tab) => (
+              <button
+                className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-ember-400 text-paper-100'
+                    : 'border-transparent text-paper-400 hover:text-paper-200'
+                }`}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                type="button"
+              >
+                {tab.label}
+                {tab.count != null && (
+                  <span
+                    className={`text-[10px] font-mono px-1.5 py-px rounded-full ${
+                      activeTab === tab.id
+                        ? 'bg-ember-400/20 text-ember-300'
+                        : 'bg-ink-600 text-paper-400'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="min-h-48 max-h-[60vh] overflow-y-auto">
+            {activeTab === 'traces' && (
+              <TracesTab
+                activityToNodeId={activityToNodeId}
+                filterNodeId={selectedNodeId}
+                onClearFilter={() => setSelectedNodeId(null)}
+                traces={traces}
+              />
+            )}
+            {activeTab === 'steps' && <StepsTab onNodeClick={handleNodeClick} steps={run.steps} />}
+            {activeTab === 'security' &&
+              (securityEvents.length > 0 ? (
+                <div className="p-4">
+                  <SecurityEventList events={securityEvents} />
+                </div>
+              ) : (
+                <div className="py-12 text-center text-sm text-paper-400">No security events.</div>
+              ))}
+          </div>
+        </Card>
       </div>
+
       <ConfirmModal
         confirmLabel="Cancel run"
         dangerous
