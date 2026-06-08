@@ -44,6 +44,7 @@ import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
 import { teamRoutes } from './routes/teams.js';
+import { meRoutes } from './routes/me.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { userRoutes } from './routes/users.js';
 import { webhookRoutes } from './routes/webhooks.js';
@@ -221,6 +222,7 @@ async function start() {
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });
+  await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
