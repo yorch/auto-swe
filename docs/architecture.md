@@ -111,6 +111,7 @@ packages/
 | `src/routes/users.ts` | User management (ADMIN only) |
 | `src/routes/lessons.ts` | `AgentLesson` list, text search, per-repo stats, delete |
 | `src/routes/skills.ts` | `Skill` CRUD; `AgentSkillAssignment` + `AgentToolConfig` CRUD at GLOBAL, TEAM, and WORKFLOW_TEMPLATE scope |
+| `src/routes/me.ts` | `GET /api/v1/me/preferences` + `PATCH /api/v1/me/preferences` — read and merge-update the authenticated user's preferences JSON (e.g. `runDetailLayout`) |
 | `src/routes/tokens.ts` | Personal access token create / list / revoke |
 | `src/routes/modelConfig.ts` | `ModelRoleConfig` + `ProviderCredential` + `EmbeddingConfig` CRUD (admin + team-owner) |
 | `src/routes/admin.ts` | Admin-only: list/revoke all PATs, list/revoke sessions, shell-audit prune |
@@ -160,7 +161,7 @@ packages/
 | `src/app/layout.tsx` | Root layout — `AppShell` chrome (Sidebar + TopBar), theme tokens |
 | `src/app/page.tsx` | Dashboard home — KPI stats, "needs attention" queue, recent activity |
 | `src/app/runs/` | Global run history with status + template filters |
-| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status overlay |
+| `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status overlay; bottom panel supports **split-panel** (steps + traces side-by-side, `SplitRunPanel`) and **inline-expansion** (traces accordion below each step, `TracesTab`) layouts toggled by `LayoutToggle` with preference persisted via `useUserPreferences` |
 | `src/app/templates/` | Workflow template list + 5 starter specs |
 | `src/app/templates/[id]/` | React Flow canvas editor (`TemplateEditor`) — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/workflows/` | Active workflow list |
@@ -175,7 +176,7 @@ packages/
 | `src/app/admin/scanner/` | Scanner pattern admin — CRUD for all 4 `ScannerPatternType` values; regex validation; built-in vs custom badges |
 | `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability, scanner patterns, security events |
 | `src/components/security/SecurityEventList.tsx` | `SecurityEventBadge`, `SecurityEventList` — expandable list with per-type formatted details (code findings, LLM warnings, content security lines, bash command); `classifyTraceAsSecurityEvent` — client-side classification for run-detail security panel |
-| `src/hooks/` | TanStack Query hooks split by resource domain — `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`, `useLessons`; `useWorkflows` is a barrel re-export |
+| `src/hooks/` | TanStack Query hooks split by resource domain — `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`, `useLessons`, `useUserPreferences` (run detail layout preference with optimistic update); `useWorkflows` is a barrel re-export |
 | `src/stores/` | Zustand stores — `authStore.ts` (JWT + user identity), `teamStore.ts` (active team context) |
 | `src/components/ui/` | Design-system primitives: `Button`, `Input`, `Select`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `LoadingState`, `Stat`, `StatusBadge` |
 | `src/components/<feature>/` | Feature components grouped by domain (`charts/`, `dashboard/`, `modelConfig/`, `repositories/`, `teams/`, `templates/`) |
@@ -465,7 +466,7 @@ erDiagram
 
 | Group | Models | Purpose |
 |-------|--------|---------|
-| Identity | `User`, `Account`, `Session`, `Verification` | User identity (legacy JWT + better-auth) |
+| Identity | `User`, `Account`, `Session`, `Verification` | User identity (legacy JWT + better-auth); `User.preferences` JSONB stores per-user settings (e.g. `runDetailLayout`) |
 | Auth tokens | `RefreshToken`, `PersonalAccessToken` | Token lifecycle |
 | RBAC | `TeamMembership` | Platform + team role enforcement |
 | Work | `WorkRequest`, `ContextSnapshot` | Input + context capture |

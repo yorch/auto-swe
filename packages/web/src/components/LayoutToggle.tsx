@@ -20,7 +20,7 @@ export function LayoutToggle({ value, onChange }: LayoutToggleProps) {
         type="button"
       >
         {/* Two-column split icon */}
-        <svg fill="none" height="14" viewBox="0 0 14 14" width="14">
+        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 14 14" width="14">
           <rect height="10" rx="1" stroke="currentColor" strokeWidth="1.2" width="5" x="1" y="2" />
           <rect height="10" rx="1" stroke="currentColor" strokeWidth="1.2" width="5" x="8" y="2" />
         </svg>
@@ -35,7 +35,7 @@ export function LayoutToggle({ value, onChange }: LayoutToggleProps) {
         type="button"
       >
         {/* List with indent lines icon */}
-        <svg fill="none" height="14" viewBox="0 0 14 14" width="14">
+        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 14 14" width="14">
           <line stroke="currentColor" strokeWidth="1.2" x1="2" x2="12" y1="4" y2="4" />
           <line stroke="currentColor" strokeWidth="1.2" x1="2" x2="12" y1="7" y2="7" />
           <line stroke="currentColor" strokeWidth="1.2" x1="4" x2="12" y1="10" y2="10" />

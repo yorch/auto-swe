@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+
+import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { TracesTab } from './TracesTab';
 
 const makeTrace = (nodeId: string, id = nodeId): AgentTraceRecord => ({

@@ -38,7 +38,9 @@ const AUTH_HEADER = { authorization: 'Bearer fake-jwt' };
 describe('meRoutes', () => {
   let ctx: Awaited<ReturnType<typeof buildApp>>;
 
-  beforeAll(async () => { ctx = await buildApp(); });
+  beforeAll(async () => {
+    ctx = await buildApp();
+  });
   afterAll(() => ctx.app.close());
   beforeEach(() => {
     ctx.mockPrisma.user.findUniqueOrThrow.mockClear();
@@ -76,10 +78,10 @@ describe('meRoutes', () => {
     it('merges the new value and returns updated preferences', async () => {
       // Existing preferences has an extra key that should survive the patch
       ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({
-        preferences: { runDetailLayout: 'split', otherKey: 'keep-me' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'split' },
       });
       ctx.mockPrisma.user.update.mockResolvedValueOnce({
-        preferences: { runDetailLayout: 'inline', otherKey: 'keep-me' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' },
       });
 
       const res = await ctx.app.inject({
@@ -91,12 +93,12 @@ describe('meRoutes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({
-        preferences: { runDetailLayout: 'inline', otherKey: 'keep-me' },
+        preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' },
       });
       expect(ctx.mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           // otherKey must be preserved from the existing preferences
-          data: { preferences: { runDetailLayout: 'inline', otherKey: 'keep-me' } },
+          data: { preferences: { otherKey: 'keep-me', runDetailLayout: 'inline' } },
         })
       );
     });
@@ -111,7 +113,7 @@ describe('meRoutes', () => {
         headers: AUTH_HEADER,
         method: 'PATCH',
         // `unknownKey` is not in the Zod schema and should be stripped
-        payload: { unknownKey: 'evil', runDetailLayout: 'split' },
+        payload: { runDetailLayout: 'split', unknownKey: 'evil' },
         url: '/api/v1/me/preferences',
       });
 

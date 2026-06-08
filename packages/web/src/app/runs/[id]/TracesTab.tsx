@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
+import { useCallback, useMemo, useState } from 'react';
 import { formatDuration } from '@/lib/utils';
 
 // ── Trace helpers ─────────────────────────────────────────────────────────────
@@ -230,7 +230,11 @@ export function TracesTab({
         <div className="py-12 text-center text-sm text-paper-400">
           No trace events for this node.{' '}
           {!compact && (
-            <button className="text-ember-400 hover:underline" onClick={onClearFilter} type="button">
+            <button
+              className="text-ember-400 hover:underline"
+              onClick={onClearFilter}
+              type="button"
+            >
               Show all traces
             </button>
           )}

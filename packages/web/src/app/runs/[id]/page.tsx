@@ -8,8 +8,6 @@ import type {
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
-import { TracesTab } from './TracesTab';
-import { SplitRunPanel } from './SplitRunPanel';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import { LayoutToggle } from '@/components/LayoutToggle';
 import {
@@ -23,9 +21,11 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { SplitRunPanel } from './SplitRunPanel';
+import { TracesTab } from './TracesTab';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -46,8 +46,7 @@ function StepsTab({
 }) {
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
 
-  const toggle = (nodeId: string) =>
-    setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId));
+  const toggle = (nodeId: string) => setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId));
 
   if (steps.length === 0) {
     return <div className="py-12 text-center text-sm text-paper-400">No steps recorded yet.</div>;
@@ -70,9 +69,7 @@ function StepsTab({
                 <span className="text-sm font-mono text-paper-200 truncate">{s.nodeId}</span>
                 <span className="text-xs text-paper-400 shrink-0">attempt {s.attempt}</span>
               </div>
-              {s.error && (
-                <div className="text-xs text-brick-400 mt-0.5 truncate">{s.error}</div>
-              )}
+              {s.error && <div className="text-xs text-brick-400 mt-0.5 truncate">{s.error}</div>}
               {(s.startedAt || s.endedAt) && (
                 <div className="text-xs text-paper-400 mt-0.5">
                   {s.startedAt ? formatDate(s.startedAt) : '?'}
@@ -410,11 +407,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 />
               )}
               {activeTab === 'steps' && (
-                <StepsTab
-                  activityToNodeId={activityToNodeId}
-                  steps={run.steps}
-                  traces={traces}
-                />
+                <StepsTab activityToNodeId={activityToNodeId} steps={run.steps} traces={traces} />
               )}
               {activeTab === 'security' &&
                 (securityEvents.length > 0 ? (
