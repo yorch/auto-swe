@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { $queryRawUnsafe: vi.fn(), $transaction: vi.fn() },
+  prisma: {
+    $queryRawUnsafe: vi.fn(),
+    $transaction: vi.fn(),
+    agentSkillAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+  },
 }));
 vi.mock('../lib/embeddings.js', () => ({ generateEmbedding: vi.fn() }));
 vi.mock('../lib/models.js', () => ({ getModel: vi.fn() }));
