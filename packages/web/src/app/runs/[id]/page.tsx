@@ -7,7 +7,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import {
   classifyTraceAsSecurityEvent,
