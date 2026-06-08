@@ -2,11 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -102,74 +98,71 @@ export async function commitToMemory(
     name: 'memory-summarizer',
   });
 
-  const result = await memoryAgent.generate(
-    [
-      {
-        content: JSON.stringify({
-          description: workflow.workRequest?.description,
-          externalTicketId: workflow.workRequest?.externalTicketId,
-          pullRequests: workflow.pullRequests.map((pr) => ({
-            ciStatus: pr.ciStatus,
-            prNumber: pr.prNumber,
-            status: pr.status,
-          })),
-          status: workflow.currentStatus,
-          temporalWorkflowId: workflow.temporalWorkflowId,
-          workflowId: workflow.id,
-        }),
-        role: 'user',
-      },
-    ],
-    { structuredOutput: { schema: LessonOutputSchema } }
-  );
-
-  if (result.usage) {
-    await recordLlmUsage(
-      temporalWorkflowId,
-      'commitToMemory',
-      result.usage,
-      'llm.commit_to_memory'
+  try {
+    const result = await memoryAgent.generate(
+      [
+        {
+          content: JSON.stringify({
+            description: workflow.workRequest?.description,
+            externalTicketId: workflow.workRequest?.externalTicketId,
+            pullRequests: workflow.pullRequests.map((pr) => ({
+              ciStatus: pr.ciStatus,
+              prNumber: pr.prNumber,
+              status: pr.status,
+            })),
+            status: workflow.currentStatus,
+            temporalWorkflowId: workflow.temporalWorkflowId,
+            workflowId: workflow.id,
+          }),
+          role: 'user',
+        },
+      ],
+      { structuredOutput: { schema: LessonOutputSchema } }
     );
-  }
 
-  if (!result.object) {
-    throw new Error('Memory summarizer agent did not return structured output');
-  }
-  const lesson = result.object as z.infer<typeof LessonOutputSchema>;
+    if (result.usage) {
+      await recordLlmUsage(
+        temporalWorkflowId,
+        'commitToMemory',
+        result.usage,
+        'llm.commit_to_memory'
+      );
+    }
 
-  agentTracer.addLlmResponse({
-    durationMs: Date.now() - start,
-    outputJson: {
+    if (!result.object) {
+      throw new Error('Memory summarizer agent did not return structured output');
+    }
+    const lesson = result.object as z.infer<typeof LessonOutputSchema>;
+
+    agentTracer.addLlmResponse({
+      durationMs: Date.now() - start,
+      outputJson: {
+        failureType: lesson.failureType,
+        lessonSummary: lesson.lessonSummary,
+        rationale: lesson.rationale,
+      },
+      role: 'commitToMemory',
+    });
+
+    const lessonId = await writeAgentLessonRow({
       failureType: lesson.failureType,
       lessonSummary: lesson.lessonSummary,
+      metadata: lesson.metadata,
       rationale: lesson.rationale,
-    },
-    role: 'commitToMemory',
-  });
+      repoId,
+      skillsActive: skills.map((s) => s.name),
+      workflowId: workflow.id,
+    });
 
-  const lessonId = await writeAgentLessonRow({
-    failureType: lesson.failureType,
-    lessonSummary: lesson.lessonSummary,
-    metadata: lesson.metadata,
-    rationale: lesson.rationale,
-    repoId,
-    skillsActive: skills.map((s) => s.name),
-    workflowId: workflow.id,
-  });
+    agentTracer.addActivityEvent({
+      name: 'memory.lesson_written',
+      outputJson: { failureType: lesson.failureType, lessonId },
+    });
 
-  agentTracer.addActivityEvent({
-    name: 'memory.lesson_written',
-    outputJson: { failureType: lesson.failureType, lessonId },
-  });
-
-  await agentTracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'commitToMemory',
-    currentAttempt()
-  );
-
-  return lessonId;
+    return lessonId;
+  } finally {
+    await persistActivityTrace(agentTracer, 'commitToMemory');
+  }
 }
 
 /**

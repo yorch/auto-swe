@@ -262,9 +262,6 @@ export async function executeImplementation(
       });
     }
 
-    // Persist traces before the security gate so they survive a gate rejection.
-    await persistActivityTrace(tracer, 'implementer');
-
     // Security scan — gate before returning code result
     heartbeat('running security scan');
     const securityResult = await scanDiffForSecurityIssues(diff);
@@ -292,6 +289,7 @@ export async function executeImplementation(
       testResults: testResult,
     };
   } finally {
+    await persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
   }
 }
