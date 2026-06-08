@@ -2,11 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -165,12 +161,7 @@ export async function commitToMemory(
 
     return lessonId;
   } finally {
-    await agentTracer.persist(
-      await currentWorkflowRunId(),
-      currentActivityType(),
-      'commitToMemory',
-      currentAttempt()
-    );
+    await persistActivityTrace(agentTracer, 'commitToMemory');
   }
 }
 

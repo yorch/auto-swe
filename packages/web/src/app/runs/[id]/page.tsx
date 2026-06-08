@@ -193,7 +193,10 @@ function TracesTab({
   onClearFilter: () => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const handleToggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
+  const handleToggle = useCallback(
+    (id: string) => setExpandedId((prev) => (prev === id ? null : id)),
+    []
+  );
 
   const filtered = useMemo(
     () =>
@@ -203,22 +206,19 @@ function TracesTab({
 
   const groups = useMemo<TraceGroup[]>(() => {
     const seen = new Map<string, TraceGroup>();
-    const order: string[] = [];
     for (const t of filtered) {
       const key = `${t.nodeId}::${t.attempt}`;
       if (!seen.has(key)) {
-        const group: TraceGroup = {
+        seen.set(key, {
           activityName: t.nodeId,
           attempt: t.attempt,
           dagNodeId: activityToNodeId[t.nodeId] ?? null,
           traces: [],
-        };
-        seen.set(key, group);
-        order.push(key);
+        });
       }
       seen.get(key)?.traces.push(t);
     }
-    return order.map((k) => seen.get(k) as TraceGroup);
+    return [...seen.values()];
   }, [filtered, activityToNodeId]);
 
   if (traces.length === 0) {
