@@ -240,7 +240,7 @@ export default function RunDetailPage({ params }: PageProps) {
 
   // Derive security events from the already-loaded traces — no extra API call needed.
   const securityEvents = useMemo<SecurityEvent[]>(() => {
-    const traces = (run as WorkflowRunDetail).traces ?? [];
+    const traces = run?.traces ?? [];
     return traces.flatMap((t) => {
       const eventType = classifyTraceAsSecurityEvent(t);
       if (!eventType) {
