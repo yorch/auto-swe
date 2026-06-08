@@ -288,6 +288,7 @@ model User {
   isActive       Boolean        @default(true) @map("is_active")
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  preferences    Json           @default("{}") @map("preferences")
 
   refreshTokens         RefreshToken[]
   memberships           TeamMembership[]
