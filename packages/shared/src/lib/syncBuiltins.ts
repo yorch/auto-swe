@@ -56,6 +56,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
     });
     const skill = existingSkill
       ? await prisma.skill.update({
+          // isActive is intentionally omitted — preserve any admin disable decision.
           data: {
             description: skillDef.description,
             isVerified: true,
@@ -66,6 +67,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
       : await prisma.skill.create({
           data: {
             description: skillDef.description,
+            isActive: true,
             isBuiltIn: true,
             isVerified: true,
             name: skillDef.name,

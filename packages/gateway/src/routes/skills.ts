@@ -68,6 +68,7 @@ const CreateSkillSchema = z.object({
 
 const UpdateSkillSchema = z.object({
   description: z.string().max(1000).optional(),
+  isActive: z.boolean().optional(),
   name: z.string().min(1).max(200).optional(),
   promptText: z.string().min(1).max(50_000).optional(),
 });
@@ -205,16 +206,18 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
 
-      const { name, description, promptText } = request.body;
+      const { name, description, promptText, isActive } = request.body;
 
-      // Built-in skills: only allow name and description to be updated.
+      // Built-in skills: only name, description, and isActive may be updated.
+      // promptText is locked for built-ins to preserve the verified content guarantee.
       // Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
       // Reset isVerified only when promptText changes — name/description edits don't
       // invalidate the content trust signal.
       const updateData = existing.isBuiltIn
-        ? { description, name }
+        ? { description, isActive, name }
         : {
             description,
+            isActive,
             name,
             promptText,
             ...(promptText !== undefined ? { isVerified: false } : {}),
@@ -234,11 +237,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         actor,
         after: {
           description: updated.description,
+          isActive: updated.isActive,
           name: updated.name,
           promptText: updated.promptText,
         },
         before: {
           description: existing.description,
+          isActive: existing.isActive,
           name: existing.name,
           promptText: existing.promptText,
         },
@@ -268,10 +273,10 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
       if (existing.isBuiltIn) {
-        return reply.status(400).send({
+        return reply.status(403).send({
           error: {
             code: 'BUILTIN_SKILL',
-            message: 'Built-in skills cannot be deleted',
+            message: 'Built-in skills cannot be deleted. Use the isActive flag to disable them.',
           },
         });
       }

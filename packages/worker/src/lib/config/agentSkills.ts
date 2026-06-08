@@ -75,6 +75,7 @@ async function fetchSkillAssignments(
     where: {
       agentRole: prismaRole as 'IMPLEMENTER',
       scope: scope as 'GLOBAL',
+      skill: { isActive: true },
       ...scopeFilter,
     },
   });

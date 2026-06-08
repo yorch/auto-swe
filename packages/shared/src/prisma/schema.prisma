@@ -842,6 +842,7 @@ model Skill {
   promptText  String    @map("prompt_text")
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
   isVerified  Boolean   @default(false) @map("is_verified")
+  isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
