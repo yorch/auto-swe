@@ -16,19 +16,20 @@
 
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `docs/architecture.md`           | Current | System context, package map, request lifecycle, workflow engine, auth, data model, infra   |
-| `docs/deployment.md`             | Living  | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
-| `docs/model-configuration.md`    | Living  | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
-| `docs/configurable-workflows.md` | Living  | Workflow engine spec schema, node catalog, all 9 phases shipped; 39 architecture decisions |
-| `docs/oauth-setup.md`            | Living  | GitHub + Google OAuth app registration; magic-link setup                                   |
-| `docs/slack-app-setup.md`        | Living  | Slack app manifest import and admin configuration                                          |
-| `docs/github-app-setup.md`       | Living  | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
-| `docs/hitl-workflows.md`         | Living  | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
+| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine, auth, data model, infra   |
+| `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
+| `docs/deployment.md`             | Living     | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
+| `docs/model-configuration.md`    | Living     | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
+| `docs/oauth-setup.md`            | Living     | GitHub + Google OAuth app registration; magic-link setup                                   |
+| `docs/slack-app-setup.md`        | Living     | Slack app manifest import and admin configuration                                          |
+| `docs/github-app-setup.md`       | Living     | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
+| `docs/hitl-workflows.md`         | Living     | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
 
 **Historical** — preserved for design rationale; code is authoritative where they diverge:
 
 | Document                          | Drift note                                                                                            |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `docs/configurable-workflows.md`  | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale              |
 | `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
 | `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
 | `docs/data-and-infra.md`          | Schema section outdated (actual: 20+ models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
@@ -190,10 +191,10 @@ All five tables follow the singleton pattern (single row, `id = 'default'`, enfo
 Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
 
 - **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 50 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
-- **Tool** = executable Mastra `createTool()` function. `AgentToolConfig` stores a `String[]` of enabled tool names per role/scope. `null` (no config) = all tools enabled.
+- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `AgentToolConfig`. `null` tool config = all four workspace tools enabled.
 
 **Role types** accepted by `loadAgentSkills` and `loadAgentToolConfig` (`AnySkillRole`):
-- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row.
+- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row. Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
 - **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas that can have skill/tool assignments but do **not** need their own `ModelRoleConfig` row.
 
 **Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
@@ -203,7 +204,7 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 2. `TEAM` scope (if the team has an override)
 3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole`, `SkillOnlyRole`), `packages/worker/src/lib/config/resolver.ts` (`loadAgentToolConfig`), `packages/shared/src/lib/skillScanner.ts`.
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole`, `SkillOnlyRole`), `packages/worker/src/lib/config/resolver.ts` (`resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
 
 Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
 
