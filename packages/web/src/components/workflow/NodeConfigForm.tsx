@@ -144,9 +144,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
                 value={typeof current === 'string' ? current : ''}
               />
             )}
-            {f.description && (
-              <div className="text-paper-400 opacity-80">{f.description}</div>
-            )}
+            {f.description && <div className="text-paper-400 opacity-80">{f.description}</div>}
           </div>
         );
       })}

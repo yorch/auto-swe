@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
+
 const PAGE_SIZE = 50;
 
 export default function WorkflowRunsPage() {

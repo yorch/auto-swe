@@ -34,9 +34,7 @@ export default function TeamsPage() {
           <Link href={`/teams/${t.id}`} key={t.id}>
             <Card className="hover:shadow-md transition-shadow cursor-pointer">
               <h3 className="font-semibold text-lg">{t.name}</h3>
-              <p className="text-sm text-paper-400 mt-1">
-                {t.description || 'No description'}
-              </p>
+              <p className="text-sm text-paper-400 mt-1">{t.description || 'No description'}</p>
               <div className="flex gap-4 mt-4 text-xs text-paper-400">
                 <span>{t._count?.memberships ?? 0} members</span>
                 <span>{t._count?.repositories ?? 0} repos</span>
