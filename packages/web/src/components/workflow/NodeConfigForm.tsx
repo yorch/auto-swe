@@ -33,7 +33,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
         const all = (f.enumValues ?? []) as readonly string[];
         return (
           <div className="text-xs space-y-1" key={f.key}>
-            <label className="block text-[var(--muted-foreground)]" htmlFor={id}>
+            <label className="block text-paper-400" htmlFor={id}>
               <span className="font-mono">{f.key}</span>
               {f.required && <span className="text-red-600"> *</span>}
               <span className="ml-1 opacity-70">— {f.label}</span>
@@ -48,7 +48,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : f.type === 'number' ? (
               <input
-                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"
+                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
                 id={id}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -59,7 +59,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : f.type === 'enum' ? (
               <Select
-                className="h-auto bg-transparent border-[var(--border)] rounded px-2 py-1 font-mono"
+                className="h-auto bg-transparent border-ink-600 rounded px-2 py-1 font-mono"
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 value={typeof current === 'string' ? current : ''}
@@ -105,7 +105,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               </div>
             ) : f.type === 'json' ? (
               <textarea
-                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"
+                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
                 id={id}
                 onChange={(e) =>
                   onChange(
@@ -124,7 +124,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : f.type === 'string' && f.multiline ? (
               <textarea
-                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded resize-y"
+                className="w-full px-2 py-1 font-mono border border-ink-600 rounded resize-y"
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 placeholder="Leave empty to use team/global default"
@@ -133,7 +133,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : (
               <input
-                className="w-full px-2 py-1 font-mono border border-[var(--border)] rounded"
+                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 type="text"
@@ -141,7 +141,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             )}
             {f.description && (
-              <div className="text-[var(--muted-foreground)] opacity-80">{f.description}</div>
+              <div className="text-paper-400 opacity-80">{f.description}</div>
             )}
           </div>
         );
