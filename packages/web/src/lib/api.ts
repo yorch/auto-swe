@@ -20,6 +20,9 @@ export class ApiClient {
     this.tokenGeneration++;
     if (typeof window !== 'undefined') {
       localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
+      // biome-ignore lint/suspicious/noDocumentCookie: keeps the middleware-visible cookie in sync with the rotated JWT
+      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${secure}`;
     }
   }
 
@@ -36,6 +39,8 @@ export class ApiClient {
     this.refreshPromise = null;
     if (typeof window !== 'undefined') {
       localStorage.removeItem(COOKIE_ACCESS_TOKEN);
+      // biome-ignore lint/suspicious/noDocumentCookie: clears the middleware-visible cookie on sign-out
+      document.cookie = `${COOKIE_ACCESS_TOKEN}=; path=/; max-age=0`;
     }
   }
 
@@ -69,10 +74,9 @@ export class ApiClient {
     }
 
     if (response.status === 401) {
-      // Only attempt refresh when this request carried a token — a 401 on an
-      // unauthenticated call (e.g. the login endpoint for wrong credentials)
-      // means bad credentials, not an expired session, and should surface as a
-      // normal API error rather than a redirect loop.
+      // Only attempt JWT refresh when this request carried a token — a 401 on a
+      // login attempt (wrong credentials) should surface as a normal API error
+      // rather than triggering a redirect loop.
       if (token) {
         const refreshed = await this.tryRefresh();
         if (refreshed) {
@@ -91,9 +95,9 @@ export class ApiClient {
           }
           return retryResponse.json();
         }
-        this.expireSession();
       }
-      // No token on the original request — fall through to the generic error path.
+      // JWT refresh failed or request used BetterAuth session only — session is gone.
+      this.expireSession();
     }
 
     if (!response.ok) {
