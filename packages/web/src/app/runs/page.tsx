@@ -49,7 +49,7 @@ export default function WorkflowRunsPage() {
             <option value="">All statuses</option>
             {WORKFLOW_RUN_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {s.replace(/_/g, ' ').toLowerCase()}
               </option>
             ))}
           </Select>

@@ -9,6 +9,8 @@ interface Props {
   onChange: (key: string, value: unknown) => void;
 }
 
+const FIELD_CLS = 'w-full px-2 py-1 font-mono border border-ink-600 rounded';
+
 function parseJsonLoose(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -35,7 +37,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
           <div className="text-xs space-y-1" key={f.key}>
             <label className="block text-paper-400" htmlFor={id}>
               <span className="font-mono">{f.key}</span>
-              {f.required && <span className="text-red-600"> *</span>}
+              {f.required && <span className="text-brick-400"> *</span>}
               <span className="ml-1 opacity-70">— {f.label}</span>
             </label>
             {f.type === 'boolean' ? (
@@ -48,7 +50,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : f.type === 'number' ? (
               <input
-                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
+                className={FIELD_CLS}
                 id={id}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -73,39 +75,41 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               </Select>
             ) : f.type === 'stringArray' ? (
               <div className="space-y-1">
-                {all.map((v) => {
+                {(() => {
                   // undefined means "all enabled" — initialize selected to the full list
                   // so unchecking any item correctly produces a restricted subset.
                   const selected = Array.isArray(current) ? (current as string[]) : [...all];
-                  const checked = selected.includes(v);
-                  return (
-                    <label className="flex items-center gap-2 cursor-pointer" key={v}>
-                      <input
-                        checked={checked}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? [...selected.filter((x) => x !== v), v]
-                            : selected.filter((x) => x !== v);
-                          // Store undefined when all (or none) selected — both
-                          // mean "all enabled" (undefined = no restriction).
-                          // This prevents [] from being persisted, which would
-                          // render all boxes checked on reload but mean "no tools"
-                          // to the worker on any code path that doesn't guard it.
-                          onChange(
-                            f.key,
-                            next.length === 0 || next.length === all.length ? undefined : next
-                          );
-                        }}
-                        type="checkbox"
-                      />
-                      <span className="font-mono">{v}</span>
-                    </label>
-                  );
-                })}
+                  return all.map((v) => {
+                    const checked = selected.includes(v);
+                    return (
+                      <label className="flex items-center gap-2 cursor-pointer" key={v}>
+                        <input
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...selected.filter((x) => x !== v), v]
+                              : selected.filter((x) => x !== v);
+                            // Store undefined when all (or none) selected — both
+                            // mean "all enabled" (undefined = no restriction).
+                            // This prevents [] from being persisted, which would
+                            // render all boxes checked on reload but mean "no tools"
+                            // to the worker on any code path that doesn't guard it.
+                            onChange(
+                              f.key,
+                              next.length === 0 || next.length === all.length ? undefined : next
+                            );
+                          }}
+                          type="checkbox"
+                        />
+                        <span className="font-mono">{v}</span>
+                      </label>
+                    );
+                  });
+                })()}
               </div>
             ) : f.type === 'json' ? (
               <textarea
-                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
+                className={FIELD_CLS}
                 id={id}
                 onChange={(e) =>
                   onChange(
@@ -124,7 +128,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : f.type === 'string' && f.multiline ? (
               <textarea
-                className="w-full px-2 py-1 font-mono border border-ink-600 rounded resize-y"
+                className={`${FIELD_CLS} resize-y`}
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 placeholder="Leave empty to use team/global default"
@@ -133,7 +137,7 @@ export function NodeConfigForm({ fields, values, onChange }: Props) {
               />
             ) : (
               <input
-                className="w-full px-2 py-1 font-mono border border-ink-600 rounded"
+                className={FIELD_CLS}
                 id={id}
                 onChange={(e) => onChange(f.key, e.target.value || undefined)}
                 type="text"
