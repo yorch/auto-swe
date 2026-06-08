@@ -229,9 +229,11 @@ export function TracesTab({
       {filtered.length === 0 ? (
         <div className="py-12 text-center text-sm text-paper-400">
           No trace events for this node.{' '}
-          <button className="text-ember-400 hover:underline" onClick={onClearFilter} type="button">
-            Show all traces
-          </button>
+          {!compact && (
+            <button className="text-ember-400 hover:underline" onClick={onClearFilter} type="button">
+              Show all traces
+            </button>
+          )}
         </div>
       ) : (
         <div className="divide-y divide-ink-600/50">

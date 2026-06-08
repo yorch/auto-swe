@@ -7,9 +7,11 @@ import type {
 } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useMemo, useState } from 'react';
 import { TracesTab } from './TracesTab';
+import { SplitRunPanel } from './SplitRunPanel';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
+import { LayoutToggle } from '@/components/LayoutToggle';
 import {
   classifyTraceAsSecurityEvent,
   SecurityEventList,
@@ -22,7 +24,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
-import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -33,12 +36,19 @@ type TabId = 'traces' | 'steps' | 'security';
 // ── Steps tab ─────────────────────────────────────────────────────────────────
 
 function StepsTab({
+  activityToNodeId,
   steps,
-  onNodeClick,
+  traces,
 }: {
+  activityToNodeId: Record<string, string>;
   steps: WorkflowStepRecord[];
-  onNodeClick: (nodeId: string) => void;
+  traces: AgentTraceRecord[];
 }) {
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
+
+  const toggle = (nodeId: string) =>
+    setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId));
+
   if (steps.length === 0) {
     return <div className="py-12 text-center text-sm text-paper-400">No steps recorded yet.</div>;
   }
@@ -46,32 +56,46 @@ function StepsTab({
   return (
     <div className="divide-y divide-ink-600/50">
       {steps.map((s) => (
-        <button
-          className="w-full flex items-start gap-3 px-4 py-3 hover:bg-ink-800/40 transition-colors text-left group"
-          key={s.id}
-          onClick={() => onNodeClick(s.nodeId)}
-          type="button"
-        >
-          <div className="pt-0.5 shrink-0">
-            <StatusBadge status={s.status} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-mono text-paper-200 truncate">{s.nodeId}</span>
-              <span className="text-xs text-paper-400 shrink-0">attempt {s.attempt}</span>
+        <div key={s.id}>
+          <button
+            className="w-full flex items-start gap-3 px-4 py-3 hover:bg-ink-800/40 transition-colors text-left"
+            onClick={() => toggle(s.nodeId)}
+            type="button"
+          >
+            <div className="pt-0.5 shrink-0">
+              <StatusBadge status={s.status} />
             </div>
-            {s.error && <div className="text-xs text-brick-400 mt-0.5 truncate">{s.error}</div>}
-            {(s.startedAt || s.endedAt) && (
-              <div className="text-xs text-paper-400 mt-0.5">
-                {s.startedAt ? formatDate(s.startedAt) : '?'}
-                {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-mono text-paper-200 truncate">{s.nodeId}</span>
+                <span className="text-xs text-paper-400 shrink-0">attempt {s.attempt}</span>
               </div>
-            )}
-          </div>
-          <span className="text-[10px] text-paper-400 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pt-1">
-            view traces →
-          </span>
-        </button>
+              {s.error && (
+                <div className="text-xs text-brick-400 mt-0.5 truncate">{s.error}</div>
+              )}
+              {(s.startedAt || s.endedAt) && (
+                <div className="text-xs text-paper-400 mt-0.5">
+                  {s.startedAt ? formatDate(s.startedAt) : '?'}
+                  {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
+                </div>
+              )}
+            </div>
+            <span className="text-[10px] text-paper-400 shrink-0 pt-1">
+              {expandedNodeId === s.nodeId ? '▲' : '▶'}
+            </span>
+          </button>
+          {expandedNodeId === s.nodeId && (
+            <div className="border-t border-ink-600/50 bg-ink-900/30">
+              <TracesTab
+                activityToNodeId={activityToNodeId}
+                compact
+                filterNodeId={s.nodeId}
+                onClearFilter={() => {}}
+                traces={traces}
+              />
+            </div>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -87,18 +111,12 @@ export default function RunDetailPage({ params }: PageProps) {
   const [activeTab, setActiveTab] = useState<TabId>('traces');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const { data: inboxSteps } = useInbox();
+  const { layout, setLayout } = useUserPreferences();
 
   const pendingSteps = useMemo(
     () => (inboxSteps ?? []).filter((s) => s.runId === id),
     [inboxSteps, id]
   );
-
-  // Clicking a DAG node always switches to the traces tab
-  useEffect(() => {
-    if (selectedNodeId) {
-      setActiveTab('traces');
-    }
-  }, [selectedNodeId]);
 
   const dagOverlay = useMemo(() => {
     if (!run?.steps) {
@@ -179,6 +197,11 @@ export default function RunDetailPage({ params }: PageProps) {
 
   const handleNodeClick = (nodeId: string | null) => {
     setSelectedNodeId(nodeId);
+    if (layout === 'split') {
+      setActiveTab('traces');
+    } else if (nodeId) {
+      setActiveTab('steps');
+    }
   };
 
   return (
@@ -301,55 +324,110 @@ export default function RunDetailPage({ params }: PageProps) {
 
         {/* Bottom tabbed panel */}
         <Card className="overflow-hidden p-0">
-          {/* Tab bar */}
-          <div className="flex border-b border-ink-600 px-2">
-            {TABS.map((tab) => (
-              <button
-                className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                  activeTab === tab.id
-                    ? 'border-ember-400 text-paper-100'
-                    : 'border-transparent text-paper-400 hover:text-paper-200'
-                }`}
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                type="button"
-              >
-                {tab.label}
-                {tab.count != null && (
-                  <span
-                    className={`text-[10px] font-mono px-1.5 py-px rounded-full ${
-                      activeTab === tab.id
-                        ? 'bg-ember-400/20 text-ember-300'
-                        : 'bg-ink-600 text-paper-400'
+          {/* Tab bar — adapts to layout */}
+          <div className="flex items-center border-b border-ink-600 px-2">
+            {layout === 'split' ? (
+              <>
+                <button
+                  className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-ember-400 text-paper-100 -mb-px"
+                  onClick={() => setActiveTab('traces')}
+                  type="button"
+                >
+                  Run
+                </button>
+                {securityEvents.length > 0 && (
+                  <button
+                    className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                      activeTab === 'security'
+                        ? 'border-ember-400 text-paper-100'
+                        : 'border-transparent text-paper-400 hover:text-paper-200'
                     }`}
+                    onClick={() => setActiveTab('security')}
+                    type="button"
                   >
-                    {tab.count}
-                  </span>
+                    Security
+                    <span className="text-[10px] font-mono px-1.5 py-px rounded-full bg-ink-600 text-paper-400">
+                      {securityEvents.length}
+                    </span>
+                  </button>
                 )}
-              </button>
-            ))}
+              </>
+            ) : (
+              TABS.map((tab) => (
+                <button
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-ember-400 text-paper-100'
+                      : 'border-transparent text-paper-400 hover:text-paper-200'
+                  }`}
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  type="button"
+                >
+                  {tab.label}
+                  {tab.count != null && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-px rounded-full ${
+                        activeTab === tab.id
+                          ? 'bg-ember-400/20 text-ember-300'
+                          : 'bg-ink-600 text-paper-400'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+            <div className="ml-auto pr-2 flex items-center">
+              <LayoutToggle onChange={setLayout} value={layout} />
+            </div>
           </div>
 
           {/* Tab content */}
-          <div className="min-h-48 max-h-[60vh] overflow-y-auto">
-            {activeTab === 'traces' && (
-              <TracesTab
+          {layout === 'split' ? (
+            activeTab === 'security' ? (
+              <div className="min-h-48 max-h-[60vh] overflow-y-auto p-4">
+                <SecurityEventList events={securityEvents} />
+              </div>
+            ) : (
+              <SplitRunPanel
                 activityToNodeId={activityToNodeId}
-                filterNodeId={selectedNodeId}
-                onClearFilter={() => setSelectedNodeId(null)}
+                onSelectNode={setSelectedNodeId}
+                selectedNodeId={selectedNodeId}
+                steps={run.steps}
                 traces={traces}
               />
-            )}
-            {activeTab === 'steps' && <StepsTab onNodeClick={handleNodeClick} steps={run.steps} />}
-            {activeTab === 'security' &&
-              (securityEvents.length > 0 ? (
-                <div className="p-4">
-                  <SecurityEventList events={securityEvents} />
-                </div>
-              ) : (
-                <div className="py-12 text-center text-sm text-paper-400">No security events.</div>
-              ))}
-          </div>
+            )
+          ) : (
+            <div className="min-h-48 max-h-[60vh] overflow-y-auto">
+              {activeTab === 'traces' && (
+                <TracesTab
+                  activityToNodeId={activityToNodeId}
+                  filterNodeId={selectedNodeId}
+                  onClearFilter={() => setSelectedNodeId(null)}
+                  traces={traces}
+                />
+              )}
+              {activeTab === 'steps' && (
+                <StepsTab
+                  activityToNodeId={activityToNodeId}
+                  steps={run.steps}
+                  traces={traces}
+                />
+              )}
+              {activeTab === 'security' &&
+                (securityEvents.length > 0 ? (
+                  <div className="p-4">
+                    <SecurityEventList events={securityEvents} />
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-sm text-paper-400">
+                    No security events.
+                  </div>
+                ))}
+            </div>
+          )}
         </Card>
       </div>
 
