@@ -157,6 +157,14 @@ export async function commitToMemory(
     });
 
     return lessonId;
+  } catch (e) {
+    agentTracer.addLlmResponse({
+      durationMs: Date.now() - start,
+      error: (e as Error).message,
+      inputJson: { systemPrompt, userMessage: llmUserMessage },
+      role: 'commitToMemory',
+    });
+    throw e;
   } finally {
     await persistActivityTrace(agentTracer, 'commitToMemory');
   }

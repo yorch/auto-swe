@@ -135,12 +135,13 @@ export async function executeImplementation(
       systemPromptOverride
     );
 
+    const llmSystemPrompt =
+      systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext;
+
     // TDD loop
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
 
-      const llmSystemPrompt =
-        systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext;
       const llmUserMessage = JSON.stringify({
         description: subtask?.description ?? request.description,
         externalTicketId: request.externalTicketId,

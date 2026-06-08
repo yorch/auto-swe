@@ -275,9 +275,10 @@ tracer.addToolCall({
   error?: 'blocked by sensitive file scanner',  // optional
 });
 
-// 3. Record LLM responses (for non-tool-calling agents: reviewers, planner, etc.)
+// 3. Record LLM responses — always include inputJson with the prompt sent to the model
 tracer.addLlmResponse({
   role: 'SECURITY',           // reviewer type or agent role
+  inputJson: { systemPrompt, userMessage },   // capture what was sent
   outputJson: verdictObject,
   durationMs: Date.now() - start,
   error?: err.message,
@@ -297,6 +298,8 @@ await persistActivityTrace(tracer, 'implementer');
 ```
 
 **`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves `runId` and `attempt` from Temporal context and calls `tracer.persist(runId, nodeId, role, attempt)`. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
+
+**`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
 ### 8.2 Trace Record Shape
 

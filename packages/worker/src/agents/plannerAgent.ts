@@ -90,7 +90,7 @@ export async function decomposeEpic(
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
-          inputJson: { systemPrompt, userMessage: '[see above]' },
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           role: 'planner',
         });
         span.recordException(e as Error);

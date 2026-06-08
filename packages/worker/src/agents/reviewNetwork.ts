@@ -98,7 +98,7 @@ async function runReviewerAgent(
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
-          inputJson: { systemPrompt: prompt, userMessage: '[see above]' },
+          inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
           role: reviewerType,
         });
         span.recordException(e as Error);
