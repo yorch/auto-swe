@@ -37,17 +37,17 @@ type TabId = 'traces' | 'steps' | 'security';
 
 function StepsTab({
   activityToNodeId,
+  expandedNodeId,
+  onToggleExpand,
   steps,
   traces,
 }: {
   activityToNodeId: Record<string, string>;
+  expandedNodeId: string | null;
+  onToggleExpand: (nodeId: string) => void;
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
 }) {
-  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
-
-  const toggle = (nodeId: string) => setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId));
-
   if (steps.length === 0) {
     return <div className="py-12 text-center text-sm text-paper-400">No steps recorded yet.</div>;
   }
@@ -58,7 +58,7 @@ function StepsTab({
         <div key={s.id}>
           <button
             className="w-full flex items-start gap-3 px-4 py-3 hover:bg-ink-800/40 transition-colors text-left"
-            onClick={() => toggle(s.nodeId)}
+            onClick={() => onToggleExpand(s.nodeId)}
             type="button"
           >
             <div className="pt-0.5 shrink-0">
@@ -105,10 +105,21 @@ export default function RunDetailPage({ params }: PageProps) {
   const { data: run, isLoading } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('traces');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const { data: inboxSteps } = useInbox();
   const { layout, setLayout } = useUserPreferences();
+
+  const handleToggleExpand = (nodeId: string) =>
+    setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId));
+
+  const handleLayoutChange = (newLayout: 'split' | 'inline') => {
+    setLayout(newLayout);
+    if (newLayout === 'split' && activeTab === 'steps') {
+      setActiveTab('traces');
+    }
+  };
 
   const pendingSteps = useMemo(
     () => (inboxSteps ?? []).filter((s) => s.runId === id),
@@ -172,7 +183,7 @@ export default function RunDetailPage({ params }: PageProps) {
           },
         ];
       }),
-    [run]
+    [run?.traces, run?.id, run?.workflowId, run?.workRequest, run?.startedAt]
   );
 
   if (isLoading || !run || !spec) {
@@ -198,6 +209,7 @@ export default function RunDetailPage({ params }: PageProps) {
       setActiveTab('traces');
     } else if (nodeId) {
       setActiveTab('steps');
+      setExpandedNodeId(nodeId);
     }
   };
 
@@ -377,7 +389,7 @@ export default function RunDetailPage({ params }: PageProps) {
               ))
             )}
             <div className="ml-auto pr-2 flex items-center">
-              <LayoutToggle onChange={setLayout} value={layout} />
+              <LayoutToggle onChange={handleLayoutChange} value={layout} />
             </div>
           </div>
 
@@ -407,7 +419,13 @@ export default function RunDetailPage({ params }: PageProps) {
                 />
               )}
               {activeTab === 'steps' && (
-                <StepsTab activityToNodeId={activityToNodeId} steps={run.steps} traces={traces} />
+                <StepsTab
+                  activityToNodeId={activityToNodeId}
+                  expandedNodeId={expandedNodeId}
+                  onToggleExpand={handleToggleExpand}
+                  steps={run.steps}
+                  traces={traces}
+                />
               )}
               {activeTab === 'security' &&
                 (securityEvents.length > 0 ? (
