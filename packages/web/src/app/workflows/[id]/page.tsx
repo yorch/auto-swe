@@ -23,7 +23,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link className="text-ember-400 hover:underline text-sm" href="/workflows">
-          &larr; Back
+          &larr; Workflows
         </Link>
         <h2 className="text-2xl font-bold">{workflow.repository?.repoName ?? 'Workflow'}</h2>
         <StatusBadge status={workflow.currentStatus} />

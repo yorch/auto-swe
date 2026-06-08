@@ -1,5 +1,6 @@
 'use client';
 
+import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
@@ -9,7 +10,6 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
 
-const STATUS_OPTIONS = ['RUNNING', 'SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'];
 const PAGE_SIZE = 50;
 
 export default function WorkflowRunsPage() {
@@ -48,9 +48,9 @@ export default function WorkflowRunsPage() {
             value={status}
           >
             <option value="">All statuses</option>
-            {STATUS_OPTIONS.map((s) => (
+            {WORKFLOW_RUN_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {s.replace(/_/g, ' ').toLowerCase()}
               </option>
             ))}
           </Select>

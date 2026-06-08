@@ -11,23 +11,18 @@ export default function InboxPage() {
     return <LoadingState />;
   }
 
-  if (!steps?.length) {
-    return (
-      <div className="p-8">
-        <h1 className="text-lg font-semibold mb-2">Inbox</h1>
-        <p className="text-sm text-paper-400">No pending actions.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-8 max-w-3xl">
-      <h1 className="text-lg font-semibold mb-4">Inbox</h1>
-      <div className="space-y-3">
-        {steps.map((step) => (
-          <HumanStepCard key={step.id} step={step} />
-        ))}
-      </div>
+    <div className="space-y-6 max-w-3xl">
+      <h2 className="text-2xl font-bold">Inbox</h2>
+      {steps?.length ? (
+        <div className="space-y-3">
+          {steps.map((step) => (
+            <HumanStepCard key={step.id} step={step} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-paper-400">No pending actions.</p>
+      )}
     </div>
   );
 }

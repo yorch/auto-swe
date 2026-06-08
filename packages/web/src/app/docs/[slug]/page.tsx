@@ -31,8 +31,8 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <nav className="text-xs text-[var(--muted-foreground)]">
-        <Link className="hover:text-[var(--foreground)]" href="/docs">
+      <nav className="text-xs text-paper-400">
+        <Link className="hover:text-paper-100" href="/docs">
           Docs
         </Link>
         <span className="mx-2">/</span>

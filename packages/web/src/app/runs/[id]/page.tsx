@@ -446,8 +446,8 @@ export default function RunDetailPage({ params }: PageProps) {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link className="text-ember-400 hover:underline text-sm" href="/templates">
-              &larr; Templates
+            <Link className="text-ember-400 hover:underline text-sm" href="/runs">
+              &larr; Runs
             </Link>
             <h2 className="text-2xl font-bold">Run · {run.templateName}</h2>
             <StatusBadge status={run.status} />

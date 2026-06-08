@@ -66,11 +66,11 @@ export default function EpicsPage() {
       </div>
 
       <Card>
-        <p className="text-sm text-[var(--muted-foreground)]">
+        <p className="text-sm text-paper-400">
           Epic orchestration spans multiple repositories with dependency ordering. The Planner agent
           decomposes the brief into per-repo work requests and the Epic Orchestrator runs them as
-          child workflows. Single-repo changes belong in{' '}
-          <span className="text-paper-200">/workflows</span> instead.
+          child workflows. Single-repo changes belong in the{' '}
+          <span className="text-paper-200">Workflows</span> page instead.
         </p>
       </Card>
 
