@@ -92,7 +92,7 @@ export default function LessonsPage() {
                 <p className="text-xs text-paper-400 mt-1">{l.rationale}</p>
               </div>
               {l.failureType && (
-                <span className="text-xs bg-brick-100 text-brick-800 px-2 py-0.5 rounded-full ml-4">
+                <span className="text-xs bg-brick-400/20 text-brick-400 px-2 py-0.5 rounded-sm font-mono uppercase tracking-wider ml-4">
                   {l.failureType.replace(/_/g, ' ')}
                 </span>
               )}

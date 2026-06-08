@@ -25,7 +25,7 @@ export default function WorkflowsPage() {
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-bold">Workflows</h2>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-[var(--muted-foreground)]">
+          <span className="text-sm text-paper-400">
             {(workflows ?? []).length} total
           </span>
           <Button
@@ -43,7 +43,7 @@ export default function WorkflowsPage() {
       <Card className="p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
+            <tr className="border-b border-ink-600 bg-ink-800">
               <th className="text-left px-4 py-3 font-medium">Repository</th>
               <th className="text-left px-4 py-3 font-medium">Branch</th>
               <th className="text-left px-4 py-3 font-medium">Status</th>
@@ -54,25 +54,25 @@ export default function WorkflowsPage() {
           <tbody>
             {(workflows ?? []).map((w) => (
               <tr
-                className="border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors"
+                className="border-b border-ink-600 hover:bg-ink-800 transition-colors"
                 key={w.id}
               >
                 <td className="px-4 py-3">
                   <Link
-                    className="text-[var(--primary)] hover:underline font-medium"
+                    className="text-ember-400 hover:underline font-medium"
                     href={`/workflows/${w.id}`}
                   >
                     {w.repository?.organizationName}/{w.repository?.repoName}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">{w.assignedBranch}</td>
+                <td className="px-4 py-3 text-paper-400">{w.assignedBranch}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={w.currentStatus} />
                 </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                <td className="px-4 py-3 text-paper-400">
                   {formatRelativeTime(w.updatedAt)}
                 </td>
-                <td className="px-4 py-3 text-right text-xs text-[var(--muted-foreground)]">
+                <td className="px-4 py-3 text-right text-xs text-paper-400">
                   {formatCost(w.costUsdAccrued)}
                 </td>
               </tr>

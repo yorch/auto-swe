@@ -37,7 +37,7 @@ export default function RepositoriesPage() {
             <h3 className="font-semibold">
               {r.organizationName}/{r.repoName}
             </h3>
-            <div className="mt-2 text-sm text-[var(--muted-foreground)] space-y-1">
+            <div className="mt-2 text-sm text-paper-400 space-y-1">
               <p>Branch: {r.defaultBranch}</p>
               <p>Team: {r.team?.name ?? 'None'}</p>
               <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
@@ -45,7 +45,7 @@ export default function RepositoriesPage() {
             </div>
             <div className="mt-3 flex items-center justify-between">
               <span
-                className={`text-xs font-medium ${r.isActive ? 'text-[var(--success)]' : 'text-[var(--destructive)]'}`}
+                className={`text-xs font-medium ${r.isActive ? 'text-moss-400' : 'text-brick-400'}`}
               >
                 {r.isActive ? 'Active' : 'Inactive'}
               </span>
@@ -62,7 +62,7 @@ export default function RepositoriesPage() {
           </Card>
         ))}
         {(repos ?? []).length === 0 && (
-          <p className="col-span-full text-center text-sm text-[var(--muted-foreground)] py-12">
+          <p className="col-span-full text-center text-sm text-paper-400 py-12">
             No repositories yet.
             {canManage
               ? ' Use "Add repository" above to connect one.'

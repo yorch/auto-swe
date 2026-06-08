@@ -53,7 +53,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <Link className="text-ember-400 hover:underline text-sm" href="/teams">
-            &larr; Back
+            &larr; Teams
           </Link>
           <h2 className="text-2xl font-bold">{team.name}</h2>
         </div>

@@ -136,7 +136,7 @@ export default function GlobalAnalyticsPage() {
             <button
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 windowDays === w.days
-                  ? 'bg-white shadow text-paper-200'
+                  ? 'bg-ink-600 text-paper-100'
                   : 'text-paper-400 hover:text-paper-200'
               }`}
               key={w.days}
