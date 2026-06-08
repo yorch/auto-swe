@@ -35,12 +35,14 @@ export async function decomposeEpic(
     { attributes: { 'epic.repo_count': availableRepos.length } },
     async (span) => {
       const start = Date.now();
+      let systemPrompt = '';
+      let llmUserMessage = '';
       try {
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
-        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
+        systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'epic-planner',
           instructions: systemPrompt,
@@ -48,18 +50,10 @@ export async function decomposeEpic(
           name: 'epic-planner',
         });
 
-        const result = await agent.generate(
-          [
-            {
-              content: JSON.stringify({
-                availableRepos,
-                epicDescription,
-              }),
-              role: 'user',
-            },
-          ],
-          { structuredOutput: { schema: PlannerOutputSchema } }
-        );
+        llmUserMessage = JSON.stringify({ availableRepos, epicDescription });
+        const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
+          structuredOutput: { schema: PlannerOutputSchema },
+        });
 
         if (result.usage) {
           await recordLlmUsage(currentWorkflowId(), 'planner', result.usage, 'llm.epic_planner');
@@ -83,6 +77,7 @@ export async function decomposeEpic(
 
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           outputJson: {
             repoCount: finalRepos.length,
             repos: finalRepos.map((r) => ({ dependsOn: r.dependsOn, repoId: r.repoId })),
@@ -95,6 +90,7 @@ export async function decomposeEpic(
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
+          inputJson: { systemPrompt, userMessage: '[see above]' },
           role: 'planner',
         });
         span.recordException(e as Error);

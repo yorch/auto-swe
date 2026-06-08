@@ -113,19 +113,18 @@ export async function executeCIFixImplementation(
     );
 
     // Run the agent in CI fix mode
+    const ciSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const ciUserMessage = JSON.stringify({
+      ciLogs: failureContext,
+      mode: 'CI_FIX',
+      previousDiff: previousCodeResult.diff.slice(-20_000),
+      previousTestResults: previousCodeResult.testResults,
+    });
     const agentStart = Date.now();
     const ciFix = await agent.generate(
       [
-        { content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''), role: 'system' },
-        {
-          content: JSON.stringify({
-            ciLogs: failureContext,
-            mode: 'CI_FIX',
-            previousDiff: previousCodeResult.diff.slice(-20_000),
-            previousTestResults: previousCodeResult.testResults,
-          }),
-          role: 'user',
-        },
+        { content: ciSystemPrompt, role: 'system' },
+        { content: ciUserMessage, role: 'user' },
       ],
       { toolChoice: 'auto' }
     );
@@ -139,6 +138,7 @@ export async function executeCIFixImplementation(
     if (ciFix.text) {
       tracer.addLlmResponse({
         durationMs: Date.now() - agentStart,
+        inputJson: { systemPrompt: ciSystemPrompt, userMessage: ciUserMessage },
         outputJson: { text: ciFix.text },
         role: 'implementer',
       });
@@ -262,22 +262,18 @@ export async function executeReviewFixImplementation(
       systemPromptOverride
     );
 
+    const reviewSystemPromptFull = reviewSystemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const reviewUserMessage = JSON.stringify({
+      mode: 'REVIEW_FIX',
+      previousDiff: previousCodeResult.diff.slice(-20_000),
+      previousTestResults: previousCodeResult.testResults,
+      reviewFindings: rejectionSummary,
+    });
     const agentStart = Date.now();
     const reviewFix = await agent.generate(
       [
-        {
-          content: reviewSystemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''),
-          role: 'system',
-        },
-        {
-          content: JSON.stringify({
-            mode: 'REVIEW_FIX',
-            previousDiff: previousCodeResult.diff.slice(-20_000),
-            previousTestResults: previousCodeResult.testResults,
-            reviewFindings: rejectionSummary,
-          }),
-          role: 'user',
-        },
+        { content: reviewSystemPromptFull, role: 'system' },
+        { content: reviewUserMessage, role: 'user' },
       ],
       { toolChoice: 'auto' }
     );
@@ -291,6 +287,7 @@ export async function executeReviewFixImplementation(
     if (reviewFix.text) {
       reviewTracer.addLlmResponse({
         durationMs: Date.now() - agentStart,
+        inputJson: { systemPrompt: reviewSystemPromptFull, userMessage: reviewUserMessage },
         outputJson: { text: reviewFix.text },
         role: 'implementer',
       });

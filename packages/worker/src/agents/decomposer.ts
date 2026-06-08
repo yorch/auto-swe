@@ -59,6 +59,8 @@ export async function planDecomposition(
     { attributes: { 'request.ticket': request.externalTicketId } },
     async (span) => {
       const start = Date.now();
+      let systemPrompt = '';
+      let llmUserMessage = '';
       try {
         const modelSpec = await getModelSpec('planner');
         const model = await getModel('planner');
@@ -68,7 +70,7 @@ export async function planDecomposition(
           DECOMPOSER_AGENT_PROMPT,
           systemPromptOverride
         );
-        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
+        systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'feature-decomposer',
           instructions: systemPrompt,
@@ -76,19 +78,14 @@ export async function planDecomposition(
           name: 'feature-decomposer',
         });
 
-        const result = await agent.generate(
-          [
-            {
-              content: JSON.stringify({
-                description: request.description,
-                externalTicketId: request.externalTicketId,
-                maxSubtasks: MAX_SUBTASKS,
-              }),
-              role: 'user',
-            },
-          ],
-          { structuredOutput: { schema: DecomposerOutputSchema } }
-        );
+        llmUserMessage = JSON.stringify({
+          description: request.description,
+          externalTicketId: request.externalTicketId,
+          maxSubtasks: MAX_SUBTASKS,
+        });
+        const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
+          structuredOutput: { schema: DecomposerOutputSchema },
+        });
 
         if (result.usage) {
           await recordLlmUsage(currentWorkflowId(), 'planner', result.usage, 'llm.decomposer');
@@ -100,6 +97,7 @@ export async function planDecomposition(
           tracer?.addLlmResponse({
             durationMs: Date.now() - start,
             error: 'no structured output — used singleton fallback',
+            inputJson: { systemPrompt, userMessage: llmUserMessage },
             outputJson: fallback,
             role: 'planner',
           });
@@ -116,6 +114,7 @@ export async function planDecomposition(
         span.setAttribute('decomposer.subtask_count', subtasks.length);
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           outputJson: {
             rationale: parsed.rationale,
             subtaskCount: subtasks.length,
@@ -129,6 +128,7 @@ export async function planDecomposition(
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           role: 'planner',
         });
         span.recordException(e as Error);

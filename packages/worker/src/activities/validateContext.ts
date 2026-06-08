@@ -46,6 +46,8 @@ export async function validateContext(
   try {
     successCriteria = await otelTracer.startActiveSpan('llm.context_validation', async (span) => {
       const start = Date.now();
+      let systemPrompt = '';
+      let llmUserMessage = '';
       try {
         const modelSpec = await getModelSpec('validateContext');
         const model = await getModel('validateContext');
@@ -55,7 +57,7 @@ export async function validateContext(
           CONTEXT_VALIDATOR_PROMPT,
           systemPromptOverride
         );
-        const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
+        systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'context-validator',
           instructions: systemPrompt,
@@ -63,19 +65,14 @@ export async function validateContext(
           name: 'context-validator',
         });
 
-        const result = await agent.generate(
-          [
-            {
-              content: JSON.stringify({
-                description: workRequest.description,
-                requestPayload: workRequest.requestPayload,
-                title: workRequest.externalTicketId,
-              }),
-              role: 'user',
-            },
-          ],
-          { structuredOutput: { schema: ContextValidationSchema } }
-        );
+        llmUserMessage = JSON.stringify({
+          description: workRequest.description,
+          requestPayload: workRequest.requestPayload,
+          title: workRequest.externalTicketId,
+        });
+        const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
+          structuredOutput: { schema: ContextValidationSchema },
+        });
 
         if (result.usage) {
           await recordLlmUsage(
@@ -90,6 +87,7 @@ export async function validateContext(
           agentTracer.addLlmResponse({
             durationMs: Date.now() - start,
             error: 'no structured output',
+            inputJson: { systemPrompt, userMessage: llmUserMessage },
             role: 'validateContext',
           });
           return [];
@@ -98,6 +96,7 @@ export async function validateContext(
 
         agentTracer.addLlmResponse({
           durationMs: Date.now() - start,
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           outputJson: {
             criteriaCount: parsed.successCriteria.length,
             successCriteria: parsed.successCriteria,
@@ -110,6 +109,7 @@ export async function validateContext(
         agentTracer.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
+          inputJson: { systemPrompt, userMessage: llmUserMessage },
           role: 'validateContext',
         });
         span.recordException(e as Error);
