@@ -26,6 +26,8 @@ packages/web/next-env.d.ts
 .claude/worktrees/
 tmp/
 
+.superpowers/
+
 # Generated codebase reference artifacts
 output/
 
