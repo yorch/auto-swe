@@ -206,6 +206,7 @@ export async function consolidateLessons(
 
         tracer.addLlmResponse({
           durationMs: Date.now() - start,
+          inputJson: { systemPrompt: consolidatorPrompt, userMessage: prompt },
           outputJson: { lessonsOut: lessons.length, sourceIds },
           role: 'commitToMemory',
         });

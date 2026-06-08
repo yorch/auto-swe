@@ -95,6 +95,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
 
       tracer.addLlmResponse({
         durationMs: Date.now() - start,
+        inputJson: { systemPrompt: instructions, userMessage: diff },
         outputJson: {
           findings: finalResult.findings,
           findingsCount: finalResult.findings.length,
@@ -108,6 +109,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       tracer.addLlmResponse({
         durationMs: Date.now() - start,
         error: (e as Error).message,
+        inputJson: { systemPrompt: instructions, userMessage: diff },
         role: 'securityReview',
       });
       span.recordException(e as Error);

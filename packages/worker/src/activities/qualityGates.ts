@@ -343,20 +343,19 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       systemPromptOverride
     );
 
+    const gateSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const gateUserMessage = JSON.stringify({
+      failedGate: gateName,
+      gateExitCode: gateOutput.exitCode,
+      gateLogs,
+      mode: 'GATE_FIX',
+      previousDiff: previousCodeResult.diff.slice(-20_000),
+    });
     const agentStart = Date.now();
     const gateFix = await agent.generate(
       [
-        { content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''), role: 'system' },
-        {
-          content: JSON.stringify({
-            failedGate: gateName,
-            gateExitCode: gateOutput.exitCode,
-            gateLogs,
-            mode: 'GATE_FIX',
-            previousDiff: previousCodeResult.diff.slice(-20_000),
-          }),
-          role: 'user',
-        },
+        { content: gateSystemPrompt, role: 'system' },
+        { content: gateUserMessage, role: 'user' },
       ],
       { toolChoice: 'auto' }
     );
@@ -370,6 +369,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     if (gateFix.text) {
       gateTracer.addLlmResponse({
         durationMs: Date.now() - agentStart,
+        inputJson: { systemPrompt: gateSystemPrompt, userMessage: gateUserMessage },
         outputJson: { text: gateFix.text },
         role: 'implementer',
       });

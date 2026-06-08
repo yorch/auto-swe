@@ -135,32 +135,30 @@ export async function executeImplementation(
       systemPromptOverride
     );
 
+    const llmSystemPrompt =
+      systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext;
+
     // TDD loop
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
 
+      const llmUserMessage = JSON.stringify({
+        description: subtask?.description ?? request.description,
+        externalTicketId: request.externalTicketId,
+        iteration,
+        previousTestResult: iteration > 0 ? testResult : undefined,
+        ...(subtask
+          ? {
+              fileScope: subtask.files,
+              subtaskId: subtask.id,
+              subtaskTitle: subtask.title,
+            }
+          : {}),
+      });
       const genResult = await agent.generate(
         [
-          {
-            content: systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext,
-            role: 'system',
-          },
-          {
-            content: JSON.stringify({
-              description: subtask?.description ?? request.description,
-              externalTicketId: request.externalTicketId,
-              iteration,
-              previousTestResult: iteration > 0 ? testResult : undefined,
-              ...(subtask
-                ? {
-                    fileScope: subtask.files,
-                    subtaskId: subtask.id,
-                    subtaskTitle: subtask.title,
-                  }
-                : {}),
-            }),
-            role: 'user',
-          },
+          { content: llmSystemPrompt, role: 'system' },
+          { content: llmUserMessage, role: 'user' },
         ],
         { toolChoice: 'auto' }
       );
@@ -192,7 +190,7 @@ export async function executeImplementation(
         }
         tracer.addLlmResponse({
           durationMs: 0,
-          inputJson: { iteration },
+          inputJson: { iteration, systemPrompt: llmSystemPrompt, userMessage: llmUserMessage },
           outputJson: { text: genResult.text },
           role: 'implementer',
         });

@@ -310,7 +310,7 @@ const tracer = new AgentTracer();
 try {
   // LLM calls, tool calls, and event recording:
   tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
-  tracer.addLlmResponse({ role, outputJson, durationMs });
+  tracer.addLlmResponse({ role, inputJson: { systemPrompt, userMessage }, outputJson, durationMs });
   tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
   return result;
 } finally {

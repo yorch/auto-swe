@@ -49,6 +49,7 @@ async function runReviewerAgent(
     { attributes: { 'llm.reviewer_type': reviewerType } },
     async (span) => {
       const start = Date.now();
+      let llmUserMessage = '';
       try {
         const modelSpec = await getModelSpec('reviewer');
         const model = await getModel('reviewer');
@@ -60,20 +61,15 @@ async function runReviewerAgent(
           name: `${reviewerType.toLowerCase()}-reviewer`,
         });
 
-        const result = await agent.generate(
-          [
-            {
-              content: JSON.stringify({
-                diff: codeResult.diff,
-                filesChanged: codeResult.filesChanged,
-                implementationNotes: codeResult.implementationNotes,
-                testResults: codeResult.testResults,
-              }),
-              role: 'user',
-            },
-          ],
-          { structuredOutput: { schema: ReviewVerdictSchema } }
-        );
+        llmUserMessage = JSON.stringify({
+          diff: codeResult.diff,
+          filesChanged: codeResult.filesChanged,
+          implementationNotes: codeResult.implementationNotes,
+          testResults: codeResult.testResults,
+        });
+        const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
+          structuredOutput: { schema: ReviewVerdictSchema },
+        });
 
         if (result.usage) {
           await recordLlmUsage(
@@ -92,6 +88,7 @@ async function runReviewerAgent(
 
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
+          inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
           outputJson: verdictWithType,
           role: reviewerType,
         });
@@ -101,6 +98,7 @@ async function runReviewerAgent(
         tracer?.addLlmResponse({
           durationMs: Date.now() - start,
           error: (e as Error).message,
+          inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
           role: reviewerType,
         });
         span.recordException(e as Error);

@@ -98,27 +98,23 @@ export async function commitToMemory(
     name: 'memory-summarizer',
   });
 
+  const llmUserMessage = JSON.stringify({
+    description: workflow.workRequest?.description,
+    externalTicketId: workflow.workRequest?.externalTicketId,
+    pullRequests: workflow.pullRequests.map((pr) => ({
+      ciStatus: pr.ciStatus,
+      prNumber: pr.prNumber,
+      status: pr.status,
+    })),
+    status: workflow.currentStatus,
+    temporalWorkflowId: workflow.temporalWorkflowId,
+    workflowId: workflow.id,
+  });
+
   try {
-    const result = await memoryAgent.generate(
-      [
-        {
-          content: JSON.stringify({
-            description: workflow.workRequest?.description,
-            externalTicketId: workflow.workRequest?.externalTicketId,
-            pullRequests: workflow.pullRequests.map((pr) => ({
-              ciStatus: pr.ciStatus,
-              prNumber: pr.prNumber,
-              status: pr.status,
-            })),
-            status: workflow.currentStatus,
-            temporalWorkflowId: workflow.temporalWorkflowId,
-            workflowId: workflow.id,
-          }),
-          role: 'user',
-        },
-      ],
-      { structuredOutput: { schema: LessonOutputSchema } }
-    );
+    const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
+      structuredOutput: { schema: LessonOutputSchema },
+    });
 
     if (result.usage) {
       await recordLlmUsage(
@@ -136,6 +132,7 @@ export async function commitToMemory(
 
     agentTracer.addLlmResponse({
       durationMs: Date.now() - start,
+      inputJson: { systemPrompt, userMessage: llmUserMessage },
       outputJson: {
         failureType: lesson.failureType,
         lessonSummary: lesson.lessonSummary,
@@ -160,6 +157,14 @@ export async function commitToMemory(
     });
 
     return lessonId;
+  } catch (e) {
+    agentTracer.addLlmResponse({
+      durationMs: Date.now() - start,
+      error: (e as Error).message,
+      inputJson: { systemPrompt, userMessage: llmUserMessage },
+      role: 'commitToMemory',
+    });
+    throw e;
   } finally {
     await persistActivityTrace(agentTracer, 'commitToMemory');
   }
