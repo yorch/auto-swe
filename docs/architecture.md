@@ -73,7 +73,7 @@ packages/
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
-| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 44 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (10), `CODE_SECURITY` (10) types; seeded as `isBuiltIn: true` by `seed.ts` |
+| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 50 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (10), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/set/cond/signal/terminate/fanOut/shell) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
