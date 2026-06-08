@@ -289,7 +289,7 @@ export async function executeImplementation(
       testResults: testResult,
     };
   } finally {
-    await persistActivityTrace(tracer, 'implementer').catch(() => {});
+    await persistActivityTrace(tracer, 'implementer');
     workspace.destroy();
   }
 }

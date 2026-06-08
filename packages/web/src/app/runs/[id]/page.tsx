@@ -122,9 +122,15 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   );
 }
 
-function TraceEventList({ traces }: { traces: AgentTraceRecord[] }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
+function TraceEventList({
+  traces,
+  expandedId,
+  onToggle,
+}: {
+  traces: AgentTraceRecord[];
+  expandedId: string | null;
+  onToggle: (id: string) => void;
+}) {
   return (
     <ol className="space-y-0.5">
       {traces.map((t) => {
@@ -138,7 +144,7 @@ function TraceEventList({ traces }: { traces: AgentTraceRecord[] }) {
           <li key={t.id}>
             <button
               className="w-full text-left rounded hover:bg-ink-700 px-2 py-1.5 transition-colors"
-              onClick={() => setExpandedId(isExpanded ? null : t.id)}
+              onClick={() => onToggle(t.id)}
               type="button"
             >
               <div className="flex items-center gap-1.5 text-xs">
@@ -186,9 +192,14 @@ function TracesTab({
   activityToNodeId: Record<string, string>;
   onClearFilter: () => void;
 }) {
-  const filtered = filterNodeId
-    ? traces.filter((t) => activityToNodeId[t.nodeId] === filterNodeId)
-    : traces;
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const handleToggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
+
+  const filtered = useMemo(
+    () =>
+      filterNodeId ? traces.filter((t) => activityToNodeId[t.nodeId] === filterNodeId) : traces,
+    [traces, filterNodeId, activityToNodeId]
+  );
 
   const groups = useMemo<TraceGroup[]>(() => {
     const seen = new Map<string, TraceGroup>();
@@ -264,7 +275,11 @@ function TracesTab({
                 </span>
               </div>
               <div className="px-2 py-1">
-                <TraceEventList traces={group.traces} />
+                <TraceEventList
+                  expandedId={expandedId}
+                  onToggle={handleToggle}
+                  traces={group.traces}
+                />
               </div>
             </div>
           ))}

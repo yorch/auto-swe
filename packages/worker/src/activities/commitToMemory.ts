@@ -102,52 +102,52 @@ export async function commitToMemory(
     name: 'memory-summarizer',
   });
 
-  const result = await memoryAgent.generate(
-    [
-      {
-        content: JSON.stringify({
-          description: workflow.workRequest?.description,
-          externalTicketId: workflow.workRequest?.externalTicketId,
-          pullRequests: workflow.pullRequests.map((pr) => ({
-            ciStatus: pr.ciStatus,
-            prNumber: pr.prNumber,
-            status: pr.status,
-          })),
-          status: workflow.currentStatus,
-          temporalWorkflowId: workflow.temporalWorkflowId,
-          workflowId: workflow.id,
-        }),
-        role: 'user',
-      },
-    ],
-    { structuredOutput: { schema: LessonOutputSchema } }
-  );
-
-  if (result.usage) {
-    await recordLlmUsage(
-      temporalWorkflowId,
-      'commitToMemory',
-      result.usage,
-      'llm.commit_to_memory'
-    );
-  }
-
-  if (!result.object) {
-    throw new Error('Memory summarizer agent did not return structured output');
-  }
-  const lesson = result.object as z.infer<typeof LessonOutputSchema>;
-
-  agentTracer.addLlmResponse({
-    durationMs: Date.now() - start,
-    outputJson: {
-      failureType: lesson.failureType,
-      lessonSummary: lesson.lessonSummary,
-      rationale: lesson.rationale,
-    },
-    role: 'commitToMemory',
-  });
-
   try {
+    const result = await memoryAgent.generate(
+      [
+        {
+          content: JSON.stringify({
+            description: workflow.workRequest?.description,
+            externalTicketId: workflow.workRequest?.externalTicketId,
+            pullRequests: workflow.pullRequests.map((pr) => ({
+              ciStatus: pr.ciStatus,
+              prNumber: pr.prNumber,
+              status: pr.status,
+            })),
+            status: workflow.currentStatus,
+            temporalWorkflowId: workflow.temporalWorkflowId,
+            workflowId: workflow.id,
+          }),
+          role: 'user',
+        },
+      ],
+      { structuredOutput: { schema: LessonOutputSchema } }
+    );
+
+    if (result.usage) {
+      await recordLlmUsage(
+        temporalWorkflowId,
+        'commitToMemory',
+        result.usage,
+        'llm.commit_to_memory'
+      );
+    }
+
+    if (!result.object) {
+      throw new Error('Memory summarizer agent did not return structured output');
+    }
+    const lesson = result.object as z.infer<typeof LessonOutputSchema>;
+
+    agentTracer.addLlmResponse({
+      durationMs: Date.now() - start,
+      outputJson: {
+        failureType: lesson.failureType,
+        lessonSummary: lesson.lessonSummary,
+        rationale: lesson.rationale,
+      },
+      role: 'commitToMemory',
+    });
+
     const lessonId = await writeAgentLessonRow({
       failureType: lesson.failureType,
       lessonSummary: lesson.lessonSummary,
