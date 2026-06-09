@@ -18,7 +18,7 @@ flowchart LR
     subgraph auto-swe
         GW[Gateway\nFastify :8080]
         WK[Worker\nTemporal poller]
-        DB[(PostgreSQL 17\n+ pgvector)]
+        DB[(PostgreSQL 18\n+ pgvector)]
         TMP[Temporal Server\n:7233 / :8233]
         OBS[Grafana LGTM\nOTel collector]
     end
@@ -485,7 +485,7 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph docker-compose.infra.yml
-        PG[(postgres\npgvector/pgvector:pg17\n:5432)]
+        PG[(postgres\npgvector/pgvector:pg18\n:5432)]
         PGTMP[(postgres-temporal\n:5433)]
         TMPSETUP[temporal-setup\ntemporalio/auto-setup:1.31]
         TMPADMIN[temporal-admin-tools\n:7233]

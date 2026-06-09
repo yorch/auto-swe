@@ -51,7 +51,7 @@
 | Agent Framework       | Mastra                                 | 1.32.1                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 6.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
 | ORM                   | Prisma                                 | 7.8.0                  |
-| Database              | PostgreSQL 17 + pgvector               | pgvector/pgvector:pg17 |
+| Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
 | Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.6 / 19.2.6 / 4.3.0 |
 | Server State          | TanStack Query                         | 5.100.9                |
 | Client State          | Zustand                                | 5.0.13                 |
@@ -115,7 +115,7 @@ Top-level files that matter:
 
 - **Framework:** Vitest (`vitest.config.ts` at root)
 - **Gateway routes:** Fastify's built-in `light-my-request` via `app.inject()`
-- **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment
+- **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment is the intended pattern, but it is **not yet adopted** — the package isn't a dependency and `RunnableWorkflow` has no workflow-level tests today (the shared interpreter is unit-tested directly). Add the dependency when writing the first workflow test.
 - **Activities:** Mock Prisma client + mock Docker exec calls
 - **Pattern:** Co-locate test files next to source (e.g., `workRequests.test.ts`)
 
@@ -371,7 +371,8 @@ yarn docker:infra:up
 # 3. Database setup
 yarn db:migrate && yarn db:generate && yarn db:seed
 #  ↳ seeds the admin user, default team, sample repo, and default workflow
-#    template. Re-running `yarn db:migrate:reset` is the cleanest way to
+#    template. Re-running `yarn workspace @auto-swe/shared exec prisma migrate reset`
+#    is the cleanest way to
 #    start over locally (migrations consolidate into a single init + the
 #    pgvector HNSW index migration; see packages/shared/src/prisma/migrations).
 

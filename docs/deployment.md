@@ -10,8 +10,8 @@ Five long-running processes plus one Docker daemon:
 
 | Service                    | Image                                              | Purpose                                                                |
 | -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
-| `postgres`                 | `pgvector/pgvector:pg17`                           | App DB — relational state + pgvector for semantic memory.              |
-| `postgres-temporal`        | `postgres:17-alpine`                               | Separate DB for Temporal history. Do **not** combine with the app DB.  |
+| `postgres`                 | `pgvector/pgvector:pg18`                           | App DB — relational state + pgvector for semantic memory.              |
+| `postgres-temporal`        | `postgres:18-alpine`                               | Separate DB for Temporal history. Do **not** combine with the app DB.  |
 | `temporal` (server+admin+ui) | `temporalio/server:1.31.0` + admin-tools 1.31 + ui 2.49.1 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
 | `gateway`                  | built from `packages/gateway/Dockerfile`           | Fastify HTTP API on `:8080`. Stateless, scale horizontally.            |
 | `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces via the host socket. |
@@ -32,7 +32,7 @@ Before touching infrastructure, gather these:
 - **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise.
 - **GitHub PAT** with `repo` scope, or a GitHub App (future work — single PAT today).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
-- **LLM provider key(s)** — configured via the admin UI (`/admin/model-config`) after first boot. `ANTHROPIC_API_KEY` env var is a bootstrap fallback only.
+- **LLM provider key(s)** — configured via the admin UI (`/admin/model-config`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required if you want magic-link and password-reset emails actually delivered — without one the gateway only logs the link to stdout.
 - **OAuth credentials** (optional but recommended) — register a GitHub OAuth app and/or a Google OAuth client, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google}`. Credentials are configured via `/admin/integrations` (OAuth tab) after first boot. See [`oauth-setup.md`](./oauth-setup.md).
 - **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
@@ -63,9 +63,9 @@ POSTGRES_DB=engineering_system
 TEMPORAL_ADDRESS=temporal:7233       # or your managed Temporal Cloud endpoint
 TEMPORAL_NAMESPACE=default
 
-# LLM
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...               # only if EMBEDDING_MODEL stays default
+# LLM — no env vars. Provider keys and model selection are configured in the
+# admin UI (/admin/model-config) after first boot and stored encrypted in the
+# DB; nothing in the codebase reads ANTHROPIC_API_KEY / OPENAI_API_KEY.
 
 # Source control — set here for bootstrap only; managed via /admin/integrations thereafter
 # If these are set they act as fallback when the DB row hasn't been configured yet.
@@ -167,13 +167,14 @@ Several categories of credentials that were previously env-only are now stored e
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/`. There are three migrations:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — list that directory for the authoritative set (a dozen and growing). The two structural ones worth knowing:
 
 | Migration | What it adds |
 | --------- | ------------ |
 | `00000000000000_init` | All core tables (users, teams, repositories, work\_requests, active\_workflows, pull\_requests, context\_snapshots, agent\_lessons, workflow\_runs, workflow\_steps, workflow\_templates, …) |
 | `00000000000001_custom_constraints_and_indexes` | HNSW vector index on `agent_lessons.embedding` (separate because Prisma 7's schema DSL can't express HNSW directly) |
-| `20260603000000_agent_traces` | `agent_traces` table — records every tool call, LLM response, and activity event emitted during a workflow run, linked to `workflow_runs` with `ON DELETE CASCADE` |
+
+Later migrations add feature tables (agent traces, system config, lesson consolidation, HITL human steps, skills, GitHub App config, scanner patterns, user preferences, …); `prisma migrate deploy` applies whatever is pending.
 
 ```bash
 # 1. Create the database with the pgvector extension
@@ -223,9 +224,9 @@ Point `TEMPORAL_ADDRESS` at your Temporal Cloud endpoint and supply the namespac
 Each service has a multi-stage Dockerfile (`packages/{gateway,worker,web}/Dockerfile`) using the Yarn 4 `workspaces focus --production` pattern. From the repo root:
 
 ```bash
-yarn docker:build       # builds gateway + worker + web
+yarn docker:app:build       # builds gateway + worker + web
 # or:
-docker compose -f docker-compose.infra.yml -f docker-compose.yml build gateway worker web
+docker compose -f docker-compose.infra.yml -f docker-compose.app.yml build gateway worker web
 ```
 
 For a real registry push, the typical CI flow is:

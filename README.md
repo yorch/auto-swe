@@ -23,7 +23,7 @@ CLI / API
    ▼
 Fastify Gateway ──────────────────▶ Temporal Server
    │                                      │
-   │  PostgreSQL 17 + pgvector            │ Task Queue
+   │  PostgreSQL 18 + pgvector            │ Task Queue
    │  (state, memory, tokens)             ▼
    │                               Temporal Worker
    │                                 │
@@ -58,7 +58,7 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 | HTTP API            | Fastify 5.8 + Zod 4 validation                             |
 | Orchestration       | Temporal 1.31 (server + admin-tools + ui) + @temporalio/* SDK 1.17 |
 | Agents              | Mastra 1.32 + Vercel AI SDK 6 (default `claude-opus-4-7`)  |
-| Database            | PostgreSQL 17 + pgvector (Prisma 7.8)                      |
+| Database            | PostgreSQL 18 + pgvector (Prisma 7.8)                      |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
 | Workspace isolation | Docker-in-Docker                                           |
 | Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.8.1`)   |
