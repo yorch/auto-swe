@@ -37,15 +37,18 @@ const BASE_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:8080';
 const CLIENT_ORIGIN = process.env.CORS_ORIGIN?.split(',')[0]?.trim() ?? 'http://localhost:3000';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-// Production guard: never let the in-source dev fallback ship. Failing fast
-// here surfaces missing secrets at boot time rather than letting better-auth
-// sign cookies with a known-public string.
+// Guard: never let the in-source dev fallback ship. The fallback is allowed
+// only when NODE_ENV explicitly opts into development/test — an unset NODE_ENV
+// is treated as production so a deploy that forgets it fails fast at boot
+// rather than letting better-auth sign cookies with a known-public string.
 const DEV_FALLBACK_SECRET =
   'dev-better-auth-secret-please-change-this-in-production-at-least-32-chars';
+const DEV_SECRET_ALLOWED =
+  process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 const RESOLVED_SECRET = process.env.BETTER_AUTH_SECRET ?? DEV_FALLBACK_SECRET;
-if (IS_PRODUCTION && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
+if (!DEV_SECRET_ALLOWED && RESOLVED_SECRET === DEV_FALLBACK_SECRET) {
   throw new Error(
-    'BETTER_AUTH_SECRET must be set in production (≥32 chars, generated with crypto rand).'
+    'BETTER_AUTH_SECRET must be set outside development/test (≥32 chars, generated with crypto rand).'
   );
 }
 

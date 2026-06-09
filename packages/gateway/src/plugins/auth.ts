@@ -78,6 +78,14 @@ const OAUTH_STATE_TTL = '10m';
 
 const JWT_DEV_FALLBACK = 'dev-secret-change-me';
 
+// The dev fallback is acceptable only when NODE_ENV explicitly opts into a
+// non-production environment. Treating "unset" as production means a deploy
+// that forgets to set NODE_ENV fails fast instead of silently signing tokens
+// with a publicly known string.
+function devSecretAllowed(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+}
+
 function getPrivateKey(): string {
   const keyPath = process.env.JWT_PRIVATE_KEY_PATH;
   if (keyPath) {
@@ -85,9 +93,9 @@ function getPrivateKey(): string {
   }
   // Fallback for development: use a shared secret (HS256).
   const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
-  if (process.env.NODE_ENV === 'production' && secret === JWT_DEV_FALLBACK) {
+  if (!devSecretAllowed() && secret === JWT_DEV_FALLBACK) {
     throw new Error(
-      'JWT_SECRET (or JWT_PRIVATE_KEY_PATH) must be set in production — refusing to sign with the dev fallback.'
+      'JWT_SECRET (or JWT_PRIVATE_KEY_PATH) must be set outside development/test — refusing to sign with the dev fallback.'
     );
   }
   return secret;
@@ -99,12 +107,12 @@ function getPublicKey(): string {
     return fs.readFileSync(keyPath, 'utf-8');
   }
   // Fallback for development: same shared secret (HS256). Apply the same
-  // production guard as getPrivateKey() so a misconfigured prod deployment
-  // can't silently verify tokens signed with the dev fallback.
+  // guard as getPrivateKey() so a misconfigured prod deployment can't
+  // silently verify tokens signed with the dev fallback.
   const secret = process.env.JWT_SECRET ?? JWT_DEV_FALLBACK;
-  if (process.env.NODE_ENV === 'production' && secret === JWT_DEV_FALLBACK) {
+  if (!devSecretAllowed() && secret === JWT_DEV_FALLBACK) {
     throw new Error(
-      'JWT_SECRET (or JWT_PUBLIC_KEY_PATH) must be set in production — refusing to verify with the dev fallback.'
+      'JWT_SECRET (or JWT_PUBLIC_KEY_PATH) must be set outside development/test — refusing to verify with the dev fallback.'
     );
   }
   return secret;
