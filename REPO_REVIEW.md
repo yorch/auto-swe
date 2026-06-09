@@ -144,7 +144,7 @@ Remediation status reflects the fixes applied in this review's remediation phase
 
 The following fixes were applied in the remediation phase (each as a separate commit on this branch):
 
-1. **SEC-1/SEC-2** — `NODE_ENV=production` set in gateway and worker runtime images; JWT/better-auth dev-fallback secrets rejected unconditionally (not just when `NODE_ENV=production`); `JWT_SECRET:-dev-secret-change-me` default removed from `docker-compose.app.yml`.
+1. **SEC-1/SEC-2** — `NODE_ENV=production` set in gateway and worker runtime images; JWT/better-auth dev-fallback secrets now rejected unless `NODE_ENV` is explicitly `development`/`test` (unset = production, so a deploy that forgets it fails fast); `JWT_SECRET:-dev-secret-change-me` default removed from `docker-compose.app.yml` and both secrets made required via `${VAR:?}`; the gateway dev script sets `NODE_ENV=development` so the local quickstart keeps working.
 2. **TEST-1** — `docker.yml` publish job now runs lint, typecheck, and the full test suite before building/pushing images; non-blocking `yarn npm audit` step added (TEST-11).
 3. **PROD-1** — `finalizeWorkflowRun` writes terminal statuses (`FAILED`/`TIMED_OUT`/`CANCELLED`/`COMPLETED`) back to the `ActiveWorkflow` row, fixing the dashboard KPIs.
 4. **PROD-2/PROD-7** — PR links (derived from `repository.githubUrl` + `prNumber`) rendered on the workflow detail page; workflow detail now links to its runs.
