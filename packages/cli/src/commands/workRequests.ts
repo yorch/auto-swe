@@ -16,11 +16,10 @@ const SUB_HELP = `auto-swe run — submit a work request
                             Budget tier for the run (default: STANDARD)
 `;
 
+/** Shape returned by POST /api/v1/work-requests (201). */
 interface WorkRequestResponse {
-  id: string;
-  externalTicketId: string;
-  description: string;
-  status: string;
+  workRequestId: string;
+  workflowIds: string[];
 }
 
 interface ParsedRunFlags {
@@ -191,15 +190,19 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     repoIds: [resolvedRepoId],
   };
   if (templateId) {
-    body.templateId = templateId;
+    // The gateway does not accept a template override yet (its Zod schema
+    // strips unknown fields) — warn instead of silently using the default.
+    process.stderr.write(
+      `Warning: --workflow is not yet honored by the server; the team/global default template will be used.\n`
+    );
   }
 
   const result = await apiRequest<WorkRequestResponse>(env, 'POST', '/api/v1/work-requests', body);
 
   process.stdout.write(`Work request submitted.\n`);
-  process.stdout.write(`  ID:     ${result.id}\n`);
-  process.stdout.write(`  Ticket: ${result.externalTicketId}\n`);
-  process.stdout.write(`  Status: ${result.status}\n`);
+  process.stdout.write(`  Work request: ${result.workRequestId}\n`);
+  process.stdout.write(`  Workflow:     ${result.workflowIds.join(', ')}\n`);
+  process.stdout.write(`  Ticket:       ${flags.ticket}\n`);
   process.stdout.write(
     `\nMonitor progress:\n  auto-swe runs list --limit=5\n  auto-swe runs tail <runId>\n`
   );
