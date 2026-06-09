@@ -11,8 +11,23 @@ export async function createOrUpdatePullRequest(
   request: RepoWorkRequest,
   codeResult: CodeResult
 ): Promise<{ prNumber: number; prUrl: string }> {
-  const { Octokit } = await import('@octokit/rest');
   const tracer = new AgentTracer();
+  // Persist in a finally block so a failed GitHub call still leaves trace
+  // rows for the run viewer — persisting only on the success paths silently
+  // drops all records for failed attempts.
+  try {
+    return await doCreateOrUpdatePullRequest(request, codeResult, tracer);
+  } finally {
+    await persistActivityTrace(tracer, 'pr');
+  }
+}
+
+async function doCreateOrUpdatePullRequest(
+  request: RepoWorkRequest,
+  codeResult: CodeResult,
+  tracer: AgentTracer
+): Promise<{ prNumber: number; prUrl: string }> {
+  const { Octokit } = await import('@octokit/rest');
 
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
@@ -64,7 +79,6 @@ export async function createOrUpdatePullRequest(
         prUrl,
       },
     });
-    await persistActivityTrace(tracer, 'pr');
     return { prNumber: existingPR.prNumber, prUrl };
   }
 
@@ -132,7 +146,6 @@ export async function createOrUpdatePullRequest(
       prUrl: pr.html_url,
     },
   });
-  await persistActivityTrace(tracer, 'pr');
 
   return { prNumber: pr.number, prUrl: pr.html_url };
 }
