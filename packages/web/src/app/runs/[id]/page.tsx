@@ -102,7 +102,7 @@ function StepsTab({
 
 export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
-  const { data: run, isLoading } = useWorkflowRun(id);
+  const { data: run, isError, isLoading } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
@@ -186,8 +186,13 @@ export default function RunDetailPage({ params }: PageProps) {
     [run?.traces, run?.id, run?.workflowId, run?.workRequest, run?.startedAt]
   );
 
-  if (isLoading || !run || !spec) {
+  if (isLoading) {
     return <LoadingState />;
+  }
+  // Missing/forbidden run or a run without a spec snapshot: render a real
+  // error state instead of spinning forever.
+  if (isError || !run || !spec) {
+    return <div className="text-center py-12 text-paper-400">Run not found</div>;
   }
 
   const traces = (run as WorkflowRunDetail).traces ?? [];
