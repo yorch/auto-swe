@@ -95,14 +95,16 @@ async function start() {
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
 
-  // Global error handler
+  // Global error handler. 4xx messages are intentional (validation, auth);
+  // 5xx messages can leak internals (DB constraint text, library errors), so
+  // log the detail server-side and return a generic message.
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error(error);
     const statusCode = error.statusCode ?? 500;
     return reply.status(statusCode).send({
       error: {
         code: error.code ?? 'INTERNAL_ERROR',
-        message: error.message,
+        message: statusCode >= 500 ? 'Internal server error' : error.message,
       },
     });
   });

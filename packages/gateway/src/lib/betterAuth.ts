@@ -208,7 +208,26 @@ async function deliverPasswordReset({ email, url }: { email: string; url: string
   );
 }
 
-function renderPasswordResetHtml({ email, url }: { email: string; url: string }): string {
+// `email` is user-controlled at sign-up; escape it (and `url`, defensively)
+// before interpolating into email HTML.
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderPasswordResetHtml({
+  email: rawEmail,
+  url: rawUrl,
+}: {
+  email: string;
+  url: string;
+}): string {
+  const email = escapeHtml(rawEmail);
+  const url = escapeHtml(rawUrl);
   return `<!doctype html><html><body style="background:#0b0e13;color:#f2ede2;font-family:'IBM Plex Sans',system-ui,sans-serif;padding:32px;margin:0">
     <div style="max-width:480px;margin:auto;border:1px solid #1f2530;background:#11151d;padding:32px">
       <h1 style="font-family:'Fraunces',Georgia,serif;font-size:28px;font-weight:400;margin:0 0 16px;letter-spacing:-0.015em">Reset your password</h1>
@@ -224,7 +243,15 @@ function renderPasswordResetHtml({ email, url }: { email: string; url: string })
   </body></html>`;
 }
 
-function renderMagicLinkHtml({ email, url }: { email: string; url: string }): string {
+function renderMagicLinkHtml({
+  email: rawEmail,
+  url: rawUrl,
+}: {
+  email: string;
+  url: string;
+}): string {
+  const email = escapeHtml(rawEmail);
+  const url = escapeHtml(rawUrl);
   // Plain, inline-styled HTML so it renders identically across mail clients
   // without external CSS. Matches the workshop-telemetry aesthetic.
   return `<!doctype html><html><body style="background:#0b0e13;color:#f2ede2;font-family:'IBM Plex Sans',system-ui,sans-serif;padding:32px;margin:0">
