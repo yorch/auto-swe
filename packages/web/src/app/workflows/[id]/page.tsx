@@ -5,12 +5,14 @@ import { use } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { useWorkflow } from '@/hooks/useWorkflows';
-import { formatCost, formatDate, formatTokens } from '@/lib/utils';
+import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: workflow, isLoading } = useWorkflow(id);
+  const { data: runs } = useRunsForWorkRequest(workflow?.workRequest?.id);
 
   if (isLoading) {
     return <LoadingState />;
@@ -18,6 +20,13 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   if (!workflow) {
     return <div className="text-center py-12 text-paper-400">Workflow not found</div>;
   }
+
+  // githubUrl is the host base (e.g. https://github.com or a GHE URL).
+  const repo = workflow.repository;
+  const prHref = (prNumber: number | null) =>
+    repo && prNumber != null
+      ? `${repo.githubUrl ?? 'https://github.com'}/${repo.organizationName}/${repo.repoName}/pull/${prNumber}`
+      : null;
 
   return (
     <div className="space-y-6">
@@ -64,15 +73,29 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
             <p className="text-sm text-paper-400">No PRs yet</p>
           ) : (
             <div className="space-y-2">
-              {workflow.pullRequests.map((pr) => (
-                <div className="flex items-center justify-between text-sm" key={pr.id}>
-                  <span className="font-medium">PR #{pr.prNumber}</span>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={pr.ciStatus ?? 'PENDING'} />
-                    <span className="text-xs text-paper-400">{pr.status}</span>
+              {workflow.pullRequests.map((pr) => {
+                const href = prHref(pr.prNumber);
+                return (
+                  <div className="flex items-center justify-between text-sm" key={pr.id}>
+                    {href ? (
+                      <a
+                        className="font-medium text-ember-400 hover:underline"
+                        href={href}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        PR #{pr.prNumber} ↗
+                      </a>
+                    ) : (
+                      <span className="font-medium">PR #{pr.prNumber}</span>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={pr.ciStatus ?? 'PENDING'} />
+                      <span className="text-xs text-paper-400">{pr.status}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
@@ -110,6 +133,29 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           <p className="text-sm">
             {workflow.workRequest.description || workflow.workRequest.externalTicketId}
           </p>
+        </Card>
+      )}
+
+      {(runs ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Runs</CardTitle>
+          </CardHeader>
+          <div className="space-y-2">
+            {(runs ?? []).map((run) => (
+              <div className="flex items-center justify-between text-sm" key={run.id}>
+                <Link className="text-ember-400 hover:underline" href={`/runs/${run.id}`}>
+                  Run {run.id.slice(0, 8)} (v{run.templateVersion})
+                </Link>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={run.status} />
+                  <span className="text-xs text-paper-400">
+                    {formatRelativeTime(run.startedAt)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
     </div>

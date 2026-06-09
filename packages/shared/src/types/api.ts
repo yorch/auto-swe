@@ -26,6 +26,8 @@ export interface WorkflowRepository {
   id: string;
   organizationName: string;
   repoName: string;
+  /** GitHub host base (e.g. https://github.com or a GHE URL); null = github.com */
+  githubUrl?: string | null;
 }
 
 export interface PullRequestSummary {
