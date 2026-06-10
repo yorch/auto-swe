@@ -1,12 +1,15 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { useCreateEpic, useRepositories } from '@/hooks/useWorkflows';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useCreateEpic, useEpics, useRepositories } from '@/hooks/useWorkflows';
+import { formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function EpicsPage() {
@@ -15,6 +18,8 @@ export default function EpicsPage() {
   const canCreate = role === 'ADMIN' || role === 'LEAD';
   const { data: repos = [] } = useRepositories();
   const create = useCreateEpic();
+  const { data: epicsPage, isLoading: epicsLoading, error: epicsError } = useEpics();
+  const epics = epicsPage?.data ?? [];
 
   const [open, setOpen] = useState(false);
   const [externalTicketId, setExternalTicketId] = useState('');
@@ -43,7 +48,7 @@ export default function EpicsPage() {
       setExternalTicketId('');
       setDescription('');
       setRepoIds([]);
-      router.push(`/workflows/${res.data.epicWorkflowId}`);
+      router.push(res.data.detailPath ?? `/epics/${encodeURIComponent(res.data.epicWorkflowId)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create epic');
     }
@@ -72,6 +77,64 @@ export default function EpicsPage() {
           child workflows. Single-repo changes belong in the{' '}
           <span className="text-paper-200">Workflows</span> page instead.
         </p>
+      </Card>
+
+      <Card className="p-0 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-600 bg-ink-800">
+              <th className="text-left px-4 py-3 font-medium">Ticket</th>
+              <th className="text-left px-4 py-3 font-medium">Description</th>
+              <th className="text-left px-4 py-3 font-medium">Repos</th>
+              <th className="text-left px-4 py-3 font-medium">Status</th>
+              <th className="text-left px-4 py-3 font-medium">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {epicsLoading && (
+              <tr>
+                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                  Loading…
+                </td>
+              </tr>
+            )}
+            {!epicsLoading && epicsError && (
+              <tr>
+                <td className="px-4 py-6 text-center text-xs text-brick-400" colSpan={5}>
+                  {epicsError instanceof Error ? epicsError.message : 'Failed to load epics'}
+                </td>
+              </tr>
+            )}
+            {!epicsLoading && !epicsError && epics.length === 0 && (
+              <tr>
+                <td className="px-4 py-6 text-center text-xs text-paper-500" colSpan={5}>
+                  No epics yet. Launch one to fan work out across repositories.
+                </td>
+              </tr>
+            )}
+            {epics.map((epic) => (
+              <tr
+                className="border-b border-ink-600 hover:bg-ink-800 transition-colors"
+                key={epic.workRequestId}
+              >
+                <td className="px-4 py-3">
+                  <Link
+                    className="text-ember-400 hover:underline font-medium"
+                    href={`/epics/${encodeURIComponent(epic.epicWorkflowId)}`}
+                  >
+                    {epic.externalTicketId}
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-paper-400 truncate max-w-md">{epic.description}</td>
+                <td className="px-4 py-3 font-mono text-xs text-paper-400">{epic.repoCount}</td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={epic.status} />
+                </td>
+                <td className="px-4 py-3 text-paper-400">{formatRelativeTime(epic.createdAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Card>
 
       <Modal

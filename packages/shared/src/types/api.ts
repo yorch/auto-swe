@@ -469,3 +469,56 @@ export interface CIWebhookBody {
   };
   repository: { full_name: string };
 }
+
+// ── Epics ──
+
+/** One repo's child workflow inside an epic (GET /api/v1/epics/:workflowId). */
+export interface EpicChildSummary {
+  /** ActiveWorkflow DB UUID — null until the child self-registers its row. */
+  workflowId: string | null;
+  /** Temporal workflow ID (`<epicWorkflowId>-<repoId>`) — null while PENDING. */
+  temporalWorkflowId: string | null;
+  repoId: string | null;
+  repoName: string | null;
+  organizationName: string | null;
+  /** ActiveWorkflow.currentStatus, or PENDING when no child row exists yet. */
+  status: string;
+  /** assignedBranch — always null for self-registered child rows today. */
+  branch: string | null;
+}
+
+/** Shape returned by GET /api/v1/epics (list items). */
+export interface EpicSummary {
+  epicWorkflowId: string;
+  externalTicketId: string;
+  description: string;
+  /** Epic ActiveWorkflow.currentStatus, or STARTING before its first state update. */
+  status: string;
+  repoCount: number;
+  workRequestId: string;
+  createdAt: string;
+  updatedAt: string | null;
+  requestedBy: { id: string; email: string; name: string | null } | null;
+}
+
+/** Shape returned by GET /api/v1/epics/:workflowId. */
+export interface EpicDetail {
+  epicWorkflowId: string;
+  externalTicketId: string;
+  description: string;
+  status: string;
+  workRequestId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  requestedBy: { id: string; email: string; name: string | null } | null;
+  children: EpicChildSummary[];
+}
+
+/** Shape returned by POST /api/v1/epics. */
+export interface CreateEpicResponse {
+  epicWorkflowId: string;
+  externalTicketId: string;
+  workRequestId: string;
+  /** Dashboard path of the epic detail page (PROD-3). */
+  detailPath: string;
+}

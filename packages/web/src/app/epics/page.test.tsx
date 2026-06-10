@@ -53,9 +53,15 @@ const REPOS = [
 describe('EpicsPage — new epic', () => {
   it('rejects single-repo selection (use Work Requests instead)', async () => {
     setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
       'GET /api/v1/repositories': () => ({ data: REPOS }),
       'POST /api/v1/epics': () => ({
-        data: { epicWorkflowId: 'epic-1', workRequestId: 'wr-1' },
+        data: {
+          detailPath: '/epics/epic-1',
+          epicWorkflowId: 'epic-1',
+          externalTicketId: 'EPIC-100',
+          workRequestId: 'wr-1',
+        },
       }),
     });
 
@@ -91,11 +97,17 @@ describe('EpicsPage — new epic', () => {
     expect(pushSpy).not.toHaveBeenCalled();
   });
 
-  it('submits with ≥2 repos and routes to the epic workflow', async () => {
+  it('submits with ≥2 repos and routes to the epic detail page', async () => {
     const spy = setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
       'GET /api/v1/repositories': () => ({ data: REPOS }),
       'POST /api/v1/epics': () => ({
-        data: { epicWorkflowId: 'epic-xyz', workRequestId: 'wr-xyz' },
+        data: {
+          detailPath: '/epics/epic-xyz',
+          epicWorkflowId: 'epic-xyz',
+          externalTicketId: 'EPIC-100',
+          workRequestId: 'wr-xyz',
+        },
       }),
     });
 
@@ -124,7 +136,9 @@ describe('EpicsPage — new epic', () => {
     fireEvent.click(checkboxes[1]);
     fireEvent.click(screen.getByRole('button', { name: /launch epic/i }));
 
-    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/workflows/epic-xyz'));
+    // PROD-3: success must land on the epic detail page, NOT /workflows/<temporal-id>
+    // (which looks workflows up by DB UUID and would dead-end on "not found").
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/epics/epic-xyz'));
 
     expect(bodyOf(spy, '/api/v1/epics', 'POST')).toEqual({
       description: 'Migrate the legacy auth path everywhere.',

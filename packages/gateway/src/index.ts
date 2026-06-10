@@ -3,6 +3,8 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
+import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
+import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -12,9 +14,6 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from './plugins/auth.js';
-
-import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
-import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
