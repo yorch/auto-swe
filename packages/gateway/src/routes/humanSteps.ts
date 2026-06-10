@@ -1,4 +1,4 @@
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -177,12 +177,40 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Send Temporal signal (best-effort — DB update is authoritative)
-      fastify.temporal
-        .signalWorkflow(step.run.workflowId, step.signalName, [signalPayload])
-        .catch((err: unknown) => {
-          request.log.error({ err, stepId: step.id }, 'HITL Temporal signal failed');
+      // Deliver the Temporal signal. The workflow only unblocks via this
+      // signal — if it fails after the row was marked RESOLVED, the step
+      // would vanish from the inbox while the workflow stays stuck until its
+      // timeout. Roll the row back to PENDING on failure so the user can
+      // retry instead of stranding the run.
+      try {
+        await fastify.temporal.signalWorkflow(step.run.workflowId, step.signalName, [
+          signalPayload,
+        ]);
+      } catch (err: unknown) {
+        request.log.error({ err, stepId: step.id }, 'HITL Temporal signal failed; rolling back');
+        await fastify.prisma.workflowHumanStep
+          .updateMany({
+            data: {
+              payload: Prisma.DbNull,
+              resolvedAt: null,
+              resolvedBy: null,
+              status: 'PENDING',
+            },
+            where: { id: step.id, resolvedBy: user.sub, status: 'RESOLVED' },
+          })
+          .catch((rollbackErr: unknown) => {
+            request.log.error(
+              { err: rollbackErr, stepId: step.id },
+              'HITL rollback failed — step stuck RESOLVED without a delivered signal'
+            );
+          });
+        return reply.status(502).send({
+          error: {
+            code: 'SIGNAL_FAILED',
+            message: 'Could not deliver the response to the workflow — please retry',
+          },
         });
+      }
 
       return { data: { id: step.id, status: 'RESOLVED' } };
     }
