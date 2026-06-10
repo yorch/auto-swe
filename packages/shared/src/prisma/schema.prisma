@@ -98,14 +98,16 @@ model ActiveWorkflow {
   pullRequests       PullRequest[]
   agentLessons       AgentLesson[]
 
+  @@index([workRequestId])
+  @@index([repoId, assignedBranch])
   @@map("active_workflows")
 }
 
 // HNSW index on `embedding` is defined in raw SQL inside
-// migrations/20260510000001_pgvector_hnsw_index/migration.sql. Prisma's schema
-// DSL cannot model pgvector index types, so `prisma migrate dev` will report
-// drift here. Use `yarn db:migrate` (= migrate deploy) for routine application;
-// run `yarn db:migrate:dev` only when authoring a new migration.
+// migrations/00000000000001_custom_constraints_and_indexes/migration.sql.
+// Prisma's schema DSL cannot model pgvector index types, so `prisma migrate dev`
+// will report drift here. Use `yarn db:migrate` (= migrate deploy) for routine
+// application; run `yarn db:migrate:dev` only when authoring a new migration.
 model AgentLesson {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId      String?         @map("workflow_id") @db.Uuid
@@ -123,6 +125,7 @@ model AgentLesson {
   // Active lessons always have consolidatedAt = null.
   consolidatedAt  DateTime?       @map("consolidated_at") @db.Timestamptz
 
+  @@index([repoId, consolidatedAt])
   @@map("agent_lessons")
 }
 
