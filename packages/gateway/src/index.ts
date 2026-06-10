@@ -238,6 +238,29 @@ async function start() {
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
 
+  // Graceful shutdown: stop accepting connections, drain in-flight requests
+  // (app.close() also runs plugin onClose hooks — prisma disconnect lives in
+  // the prisma plugin), then flush OTel. Without this, Docker/Watchtower
+  // restarts dropped in-flight requests and lost final spans.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    app.log.info({ signal }, 'shutting down gracefully');
+    try {
+      await app.close();
+      await otel.shutdown();
+      process.exit(0);
+    } catch (err) {
+      app.log.error({ err }, 'graceful shutdown failed');
+      process.exit(1);
+    }
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ host: '0.0.0.0', port });
 }

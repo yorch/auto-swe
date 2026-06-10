@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@vitest/coverage-v8": "4.1.8",
     "tsx": "4.22.4",
     "vitest": "4.1.8"
   },

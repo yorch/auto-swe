@@ -43,8 +43,8 @@ jobs:
       - name: Lint
         run: yarn lint
 
-      - name: Test
-        run: yarn test
+      - name: Test (with coverage report)
+        run: yarn test --coverage
 
       - name: Build
         run: yarn build
