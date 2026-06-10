@@ -15,6 +15,9 @@ import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './w
 
 describe('POST /api/v1/work-requests', () => {
   const app = Fastify();
+  // Per-test control over allocateWorkflowId's view of prior executions.
+  let existingWorkflows: Array<{ currentStatus: string; temporalWorkflowId: string }> = [];
+  const startedWorkflowIds: string[] = [];
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -37,6 +40,7 @@ describe('POST /api/v1/work-requests', () => {
           id: 'wf-1',
           ...args.data,
         }),
+        findMany: async () => existingWorkflows,
       },
       repository: {
         findUnique: async () => ({
@@ -68,7 +72,9 @@ describe('POST /api/v1/work-requests', () => {
       signalWorkflow: async () => {},
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
-      startRunnableWorkflow: async () => {},
+      startRunnableWorkflow: async (id: string) => {
+        startedWorkflowIds.push(id);
+      },
       syncConsolidationSchedule: async () => {},
       triggerConsolidationNow: async () => {},
     });
@@ -103,6 +109,7 @@ describe('POST /api/v1/work-requests', () => {
   });
 
   it('creates a work request', async () => {
+    existingWorkflows = [];
     const res = await app.inject({
       headers: { authorization: 'Bearer test-token' },
       method: 'POST',
@@ -116,6 +123,60 @@ describe('POST /api/v1/work-requests', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+  });
+
+  it('returns 409 when an execution for the ticket is still running', async () => {
+    existingWorkflows = [
+      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1' },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+  });
+
+  it('allocates an -rN workflow ID when re-submitting a finished ticket', async () => {
+    existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-1' }];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1-r2');
+  });
+
+  it('ignores prefix-similar workflow IDs from other tickets when allocating', async () => {
+    // 'eng-org-test-JIRA-1-restore' belongs to ticket 'JIRA-1-restore', not a re-run.
+    existingWorkflows = [
+      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1-restore' },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
   });
 });
 

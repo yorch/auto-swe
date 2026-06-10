@@ -22,7 +22,12 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
-import { useCancelWorkflowRun, useInbox, useWorkflowRun } from '@/hooks/useWorkflows';
+import {
+  useCancelWorkflowRun,
+  useInbox,
+  useRetryWorkRequest,
+  useWorkflowRun,
+} from '@/hooks/useWorkflows';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -104,6 +109,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: run, isError, isLoading } = useWorkflowRun(id);
   const cancelRun = useCancelWorkflowRun(id);
+  const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('traces');
@@ -243,6 +249,33 @@ export default function RunDetailPage({ params }: PageProps) {
               >
                 {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
               </Button>
+            )}
+            {['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(run.status) && run.workRequest && (
+              <Button
+                disabled={retryRun.isPending}
+                onClick={() => {
+                  if (run.workRequest) {
+                    retryRun.mutate(run.workRequest.id);
+                  }
+                }}
+                size="sm"
+                variant="secondary"
+              >
+                {retryRun.isPending ? 'Re-running…' : 'Re-run'}
+              </Button>
+            )}
+            {retryRun.isSuccess && (
+              <span className="text-xs text-paper-400">
+                New run started —{' '}
+                <Link className="text-ember-400 hover:underline" href="/runs">
+                  view runs
+                </Link>
+              </span>
+            )}
+            {retryRun.isError && (
+              <span className="text-xs text-red-400">
+                Re-run failed: {(retryRun.error as Error)?.message ?? 'unknown error'}
+              </span>
             )}
             <Link
               className="text-sm text-paper-400 hover:underline"

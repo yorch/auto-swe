@@ -104,6 +104,18 @@ export function useCancelWorkflowRun(runId: string) {
   });
 }
 
+export function useRetryWorkRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (workRequestId: string) =>
+      api.post<CreateWorkRequestResponse>(`/api/v1/work-requests/${workRequestId}/retry`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflows'] });
+      qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+    },
+  });
+}
+
 export function useCreateWorkRequest() {
   const qc = useQueryClient();
   return useMutation({

@@ -68,6 +68,41 @@ export async function resolveDefaultTemplate(
   return { isExperiment: false, templateId: tpl.id, version: tpl.activeVersion };
 }
 
+/** ActiveWorkflow statuses that mean "this execution is over". */
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED']);
+
+/**
+ * Allocate the Temporal workflow ID for a ticket+repo. First submission uses
+ * the deterministic base ID; re-running a finished ticket gets an `-rN`
+ * suffix so Temporal, WorkflowRun (unique on workflowId), and ActiveWorkflow
+ * (unique on temporalWorkflowId) all see a fresh execution instead of
+ * colliding with the previous one. Returns a conflict when an execution for
+ * this ticket+repo is still in flight.
+ */
+async function allocateWorkflowId(
+  prisma: FastifyInstance['prisma'],
+  baseId: string
+): Promise<{ workflowId: string; isRerun: boolean } | { conflictWorkflowId: string }> {
+  const rows = await prisma.activeWorkflow.findMany({
+    select: { currentStatus: true, temporalWorkflowId: true },
+    where: {
+      OR: [{ temporalWorkflowId: baseId }, { temporalWorkflowId: { startsWith: `${baseId}-r` } }],
+    },
+  });
+  // The startsWith match can catch a *different* ticket whose ID happens to
+  // extend this one — keep only the base ID and exact `-r<N>` suffixes.
+  const suffixRe = new RegExp(`^${baseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-r\\d+)?$`);
+  const existing = rows.filter((w) => suffixRe.test(w.temporalWorkflowId));
+  if (existing.length === 0) {
+    return { isRerun: false, workflowId: baseId };
+  }
+  const active = existing.find((w) => !TERMINAL_STATUSES.has(w.currentStatus));
+  if (active) {
+    return { conflictWorkflowId: active.temporalWorkflowId };
+  }
+  return { isRerun: true, workflowId: `${baseId}-r${existing.length + 1}` };
+}
+
 const CreateWorkRequestSchema = z.object({
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
   description: z.string().min(1, 'description is required — tell the agent what to implement'),
@@ -121,12 +156,25 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Generate deterministic workflow ID (includes org to prevent cross-org collisions)
-      const temporalWorkflowId = generateWorkflowId(
+      // Generate deterministic workflow ID (includes org to prevent cross-org collisions).
+      // Re-submitting a finished ticket allocates an -rN suffix instead of
+      // 500ing on the unique temporalWorkflowId and leaving a zombie
+      // Temporal execution with no tracking row.
+      const baseWorkflowId = generateWorkflowId(
         externalTicketId,
         repo.organizationName,
         repo.repoName
       );
+      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      if ('conflictWorkflowId' in allocated) {
+        return reply.status(409).send({
+          error: {
+            code: 'WORKFLOW_ALREADY_EXISTS',
+            message: `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`,
+          },
+        });
+      }
+      const temporalWorkflowId = allocated.workflowId;
       const { branchPrefix } = await resolveWorkflowDefaults();
       const branch = generateBranchName(externalTicketId, branchPrefix);
 
@@ -202,6 +250,116 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           currentStatus: 'IMPLEMENTING',
           repoId: repo.id,
           temporalWorkflowId,
+          workRequestId: workRequest.id,
+        },
+      });
+
+      return reply.status(201).send({
+        data: {
+          workflowIds: [activeWorkflow.id],
+          workRequestId: workRequest.id,
+        },
+      });
+    }
+  );
+
+  // Re-run a finished work request: starts a fresh Temporal execution (with
+  // an -rN workflow-ID suffix) against the same ticket/repo/branch, reusing
+  // the recorded template snapshot so the retry is reproducible.
+  app.post<{ Params: { id: string } }>(
+    '/:id/retry',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: z.object({ id: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const workRequest = await fastify.prisma.workRequest.findUnique({
+        include: {
+          activeWorkflows: {
+            include: {
+              repository: {
+                include: {
+                  team: { select: { memberships: { select: { userId: true }, where: { userId: user.sub } } } },
+                },
+              },
+            },
+            orderBy: { updatedAt: 'desc' },
+          },
+        },
+        where: { id: request.params.id },
+      });
+      const latest = workRequest?.activeWorkflows.find((w) => w.repository);
+      const repo = latest?.repository;
+      if (!workRequest || !latest || !repo) {
+        return reply.status(404).send({
+          error: { code: 'WORK_REQUEST_NOT_FOUND', message: 'Work request not found' },
+        });
+      }
+      if (!repo.isActive) {
+        return reply.status(409).send({
+          error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
+        });
+      }
+      if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
+        });
+      }
+      if (!workRequest.templateId || !workRequest.templateVersion) {
+        return reply.status(409).send({
+          error: { code: 'NO_TEMPLATE_SNAPSHOT', message: 'Work request has no recorded template' },
+        });
+      }
+
+      const baseWorkflowId = generateWorkflowId(
+        workRequest.externalTicketId,
+        repo.organizationName,
+        repo.repoName
+      );
+      const allocated = await allocateWorkflowId(fastify.prisma, baseWorkflowId);
+      if ('conflictWorkflowId' in allocated) {
+        return reply.status(409).send({
+          error: {
+            code: 'WORKFLOW_ALREADY_EXISTS',
+            message: `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`,
+          },
+        });
+      }
+
+      const repoWorkRequest: RepoWorkRequest = {
+        budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],
+        description: workRequest.description,
+        externalTicketId: workRequest.externalTicketId,
+        repoId: repo.id,
+        requestPayload: workRequest.requestPayload,
+        workRequestId: workRequest.id,
+      };
+      try {
+        await fastify.temporal.startRunnableWorkflow(allocated.workflowId, {
+          request: repoWorkRequest,
+          templateId: workRequest.templateId,
+          templateVersion: workRequest.templateVersion,
+        });
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply.status(409).send({
+            error: {
+              code: 'WORKFLOW_ALREADY_EXISTS',
+              message: `Workflow already running for ${workRequest.externalTicketId}`,
+            },
+          });
+        }
+        throw err;
+      }
+
+      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+        data: {
+          assignedBranch: latest.assignedBranch,
+          budgetTier: latest.budgetTier,
+          currentStatus: 'IMPLEMENTING',
+          repoId: repo.id,
+          temporalWorkflowId: allocated.workflowId,
           workRequestId: workRequest.id,
         },
       });
