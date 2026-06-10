@@ -20,8 +20,8 @@ export class ApiClient {
     this.tokenGeneration++;
     if (typeof window !== 'undefined') {
       localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
-      // biome-ignore lint/suspicious/noDocumentCookie: keeps the middleware-visible cookie in sync with the rotated JWT
       const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      // biome-ignore lint/suspicious/noDocumentCookie: keeps the middleware-visible cookie in sync with the rotated JWT
       document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${secure}`;
     }
   }
