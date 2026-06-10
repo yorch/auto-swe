@@ -53,6 +53,39 @@ export function DashboardOnboarding({
         />
       </div>
 
+      {role === 'ADMIN' && (
+        <section className="fade-up stagger-1">
+          <SectionHeader
+            hint="admins only · do this first"
+            number="00"
+            title="Configure the platform"
+          />
+          <Card className="border-ember-400/40">
+            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-ember-400">
+              Step 00 · prerequisite
+            </div>
+            <p className="text-sm leading-relaxed text-paper-400">
+              The worker refuses to boot until every agent role has a model, a provider credential,
+              and GitHub access — skip this and the first run hangs silently. Two stops:
+            </p>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <ResourceLink
+                body="Seed Anthropic defaults + add a provider credential."
+                eyebrow="models"
+                href="/admin/model-config"
+                title="Model config"
+              />
+              <ResourceLink
+                body="GitHub token + webhook secret."
+                eyebrow="integrations"
+                href="/admin/integrations"
+                title="Integrations"
+              />
+            </div>
+          </Card>
+        </section>
+      )}
+
       <section className="fade-up stagger-1">
         <SectionHeader hint="three steps" number="01" title="Get started" />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

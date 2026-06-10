@@ -2,10 +2,11 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
- * Slack notifications. Three surfaces:
+ * Slack notifications. Four surfaces:
  *   - {@link notifySlackStepFailure} — per-step failure (phase 7)
  *   - {@link notifySlackPrReady}     — PR opened / ready for review (phase 7)
  *   - {@link notifySlackRunComplete} — terminal-run summary (phase 8, opt-in)
+ *   - {@link notifySlackHumanStep}   — HITL step pending, with inbox link
  *
  * Channel resolution is shared via {@link resolveSlackChannel}: prefer the
  * originating `WorkRequest.slackChannelId` (thread back to source); fall back
@@ -244,6 +245,44 @@ export async function notifySlackPrReady(input: {
     }
     const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
     await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * HITL "human step pending" notification. Fires when a workflow reaches an
+ * approval/decision/input/review node so the team sees the pending step without
+ * watching the inbox. No opt-in needed — mirrors the step-failure surface
+ * (origin thread preferred, team channel fallback). Best-effort; silently
+ * no-ops on any error.
+ */
+export async function notifySlackHumanStep(input: {
+  runId: string;
+  kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+  title: string;
+  description?: string | undefined;
+}): Promise<void> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    return;
+  }
+
+  try {
+    const resolved = await resolveSlackChannel(input.runId, false);
+    if (!resolved) {
+      return;
+    }
+    const kindLabel: Record<string, string> = {
+      APPROVAL: 'Approval required',
+      DECISION: 'Decision required',
+      INPUT: 'Input required',
+      REVIEW: 'Review required',
+    };
+    const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
+    const inboxUrl = `${process.env.WEB_URL ?? 'http://localhost:3000'}/inbox`;
+    const text = `:hourglass_flowing_sand: *[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
+    await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify (human-step)');
   } catch {
     /* best-effort */
   }
