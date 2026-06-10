@@ -1,6 +1,28 @@
+# ============================================================================
+# SECURITY NOTE — DEV-ONLY DEFAULT CREDENTIALS (SEC-4)
+#
+# The `:-` fallbacks in this file (POSTGRES_PASSWORD=password,
+# MINIO_ROOT_USER/MINIO_ROOT_PASSWORD=minioadmin) exist ONLY so the local
+# quickstart (`yarn docker:infra:up`) works out of the box.
+#
+# NEVER run production on these defaults. The production overlay
+# (docker-compose.prod.yml) enforces real values via `${VAR:?...}` — it
+# refuses to start unless POSTGRES_PASSWORD, MINIO_ROOT_USER, and
+# MINIO_ROOT_PASSWORD are set in `.env`, and those same variables feed the
+# services below, so the prod path cannot come up on the dev defaults.
+#
+# Ports for Postgres (5432), Temporal (7233/8233), and MinIO (9000/9001) are
+# published to the host for local development and so the documented runbook
+# can run `psql` / `prisma migrate deploy` from the host. To restrict them to
+# loopback on a shared host, set e.g. POSTGRES_PORT=127.0.0.1:5432,
+# MINIO_API_PORT=127.0.0.1:9000, MINIO_CONSOLE_PORT=127.0.0.1:9001 in `.env`.
+# ============================================================================
 services:
   postgres:
     image: pgvector/pgvector:${PGVECTOR_TAG:-pg18}
+    # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PASSWORD falls back to
+    # !! "password" for local dev. Production MUST override it in `.env`
+    # !! (docker-compose.prod.yml makes it mandatory via `:?`).
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-engineering_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -19,6 +41,8 @@ services:
   # Temporal gets its own Postgres to avoid schema conflicts with pgvector
   postgres-temporal:
     image: postgres:${POSTGRES_TEMPORAL_TAG:-18-alpine}
+    # !! DEV-ONLY DEFAULT CREDENTIALS — same POSTGRES_PASSWORD fallback as the
+    # !! `postgres` service above. Production MUST set POSTGRES_PASSWORD.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
@@ -35,6 +59,8 @@ services:
   # Replaces the schema-setup step that temporalio/auto-setup used to do internally.
   temporal-setup:
     image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION:-1.31.0}
+    # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD/SQL_PASSWORD fall back to
+    # !! "password" for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
       postgres-temporal:
         condition: service_healthy
@@ -53,6 +79,8 @@ services:
 
   temporal:
     image: temporalio/server:${TEMPORAL_VERSION:-1.31.0}
+    # !! DEV-ONLY DEFAULT CREDENTIALS — POSTGRES_PWD falls back to "password"
+    # !! for local dev. Production MUST set POSTGRES_PASSWORD.
     depends_on:
       temporal-setup:
         condition: service_completed_successfully
@@ -112,6 +140,11 @@ services:
   minio:
     image: minio/minio:${MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
     command: server /data --console-address ":9001"
+    # !! DEV-ONLY DEFAULT CREDENTIALS — MINIO_ROOT_USER/MINIO_ROOT_PASSWORD
+    # !! fall back to "minioadmin"/"minioadmin" for local dev only. Production
+    # !! MUST override both in `.env` (docker-compose.prod.yml makes them
+    # !! mandatory via `:?` because the worker derives its AWS_* creds from
+    # !! these same variables).
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -131,6 +164,7 @@ services:
   # use the S3 backend out-of-the-box. Idempotent — re-runs are a no-op.
   minio-setup:
     image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-04-16T18-13-26Z}
+    # !! DEV-ONLY DEFAULT CREDENTIALS — see the `minio` service note above.
     depends_on:
       minio:
         condition: service_healthy

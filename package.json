@@ -35,6 +35,11 @@
   "engines": {
     "node": ">=24.0.0"
   },
+  "resolutions": {
+    "@prisma/dev/@hono/node-server": "1.19.14",
+    "@temporalio/proto/protobufjs": "7.6.2",
+    "next/postcss": "8.5.15"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@vitest/coverage-v8": "4.1.8",

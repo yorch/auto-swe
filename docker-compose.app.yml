@@ -3,6 +3,12 @@
 # Always overlay both files: `docker compose -f docker-compose.app.yml -f docker-compose.infra.yml ...`
 # Use the `yarn docker:app:up` / `docker:app:down` / `docker:app:logs` / `docker:app:build` scripts for the
 # full stack, or `yarn docker:infra:up` for infra only.
+#
+# SECURITY (SEC-4): this file is the LOCAL DEV overlay (builds images from
+# source) and intentionally keeps the dev-default credential fallbacks
+# (POSTGRES_PASSWORD=password, MINIO_ROOT_USER/PASSWORD=minioadmin) so
+# `yarn docker:app:up` works out of the box. The production path is
+# docker-compose.prod.yml, which makes those variables mandatory via `:?`.
 services:
   gateway:
     build:
