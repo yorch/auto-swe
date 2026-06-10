@@ -139,19 +139,58 @@ Remediation status reflects the fixes applied in this review's remediation phase
 8. **STATUS.md:** keep as a living "what shipped" doc (then it needs the June burst added) or freeze it with a cutoff banner? (DOC-8)
 
 ---
+## 7. Remediation Record
 
-## 7. Remediation Applied in This Review
+Two remediation rounds were applied on this branch. **Round 1** (first-wave, see the PR's initial commits) fixed the P0 and quick P1s. **Round 2** addressed every remaining finding:
 
-The following fixes were applied in the remediation phase (each as a separate commit on this branch):
+| Finding(s) | Resolution | Commit |
+|---|---|---|
+| SEC-1/SEC-2 (P0) | Dev-secret guards effective in shipped images; compose defaults removed | `db935b0` |
+| TEST-1 | Image publish gated on lint+typecheck+tests; advisory audit | `4ba9197` |
+| PROD-1 | Terminal status writeback to ActiveWorkflow | `d8de154` |
+| PROD-2, PROD-7 | PR links + run cross-links on workflow page | `fd48a2c` |
+| PROD-8 | Run-not-found state | `069793d` |
+| PROD-5 | CLI prints real response; `--workflow` warns | `8e89b14` |
+| TEST-10 | PR traces persisted in `finally` | `53e3d27` |
+| SEC-6, SEC-7 | Email HTML escaping; generic 5xx | `065aba2` |
+| DOC-1/2/3/7/9/12 | deployment.md repair + version/script truth pass | `aa4c4ed` |
+| ARCH-3, ARCH-2 | Shared `runImplementerFixSession` with scan parity; `CodeResult.repoId` replaces branch-string lookups; remote-branch sync added to CI/review fix paths | `c382d81` |
+| ARCH-6 | Indexes on `active_workflows` + `agent_lessons` hot columns | `a986d1d` |
+| ARCH-1 / EVOL-2 | Async workspace exec + heartbeat pumping; explicit activity concurrency cap | `4f05f9d` |
+| TEST-3 | 145 unit tests for the four uncovered scanners | `7e8e97c` |
+| SEC-5 follow-up | Built-in pattern hardening (curl\|bash blocked, .envrc covered, chmod 755 unblocked, exfiltrat\w* fixed) | `0f1bff9` |
+| EVOL-6 | Check-run aggregation before CI success signaling | `d5c55a2` |
+| PROD-6 | HITL resolve rolls back on signal failure (502 + retry) | `7df4080` |
+| PROD-4 | Re-run support (`-rN` workflow IDs, retry endpoint, UI button) | `0bb903f` |
+| TEST-7, TEST-8 | Gateway graceful shutdown; CI coverage reporting | `92515ba` |
+| PROD-10/11/13, ARCH-7 | Requester attribution + GET /work-requests; /workflows pagination; trace payload trimming; templateName in runs list | `21d4160` |
+| TEST-5, TEST-6 | Webhook + HITL route tests; HITL interpreter tests | `ca91307` |
+| DOC-8/10/11/13–19 | STATUS.md refresh, version truth pass, prod-compose runbook, CONTRIBUTING.md + SECURITY.md | `d69d610` |
+| TEST-4 | Real-Postgres CI job (migrate + seed + idempotency re-run) | `981f889` |
+| ARCH-9 | Session-cookie helper dedupe; TemplateEditor split (1,359→5 modules); skills-section dedup | `d498d7c`, `016d1c5` |
+| TEST-9 | Tests for the shared fix session | `8cd8383` |
+| EVOL-4 | `embedding_model` per lesson; retrieval/consolidation scoped to one embedding space | `b99c5fd` |
+| PROD-9, PROD-14 | Admin bootstrap onboarding step; unified HITL Slack notifier (origin-thread support) | `8c2381e` |
+| EVOL-8 | Skill effectiveness analytics (endpoint + /admin/skills table) | `68a4328` |
+| PROD-3, PROD-12 | Epic list/detail observability, fixed launch redirect, per-repo authorization | `5f168b8` |
+| SEC-3, SEC-4, SEC-8 | Dependency advisories 12→2 via scoped resolutions; prod compose requires real credentials | `4b2268f` |
+| EVOL-3 | Reserved `orgId` parameter on system-config resolvers | `c1f766f` |
+| TEST-2 | `RunnableWorkflow` suites via `@temporalio/testing` (4 time-skipping tests) | `c662c27` |
+| ARCH-4 | **Full auth consolidation** (user decision): legacy `/auth/login` + refresh-token families deleted; better-auth sessions + PATs only; CLI is PAT-only (**breaking** for password-based headless scripts) | `4aa625c` |
+| ARCH-8 | Cost accumulation rounded to micro-dollars (Decimal column rejected: wire-format break) | `855c0f6` |
+| EVOL-1 | `ScmProvider` seam extracted, GitHub as first implementation; webhook payload normalization split out | `f93dc61` |
+| EVOL-5, EVOL-7, ARCH-5, growth (Slack HITL buttons, scheduled runs) | In flight on this branch — see later commits | — |
 
-1. **SEC-1/SEC-2** — `NODE_ENV=production` set in gateway and worker runtime images; JWT/better-auth dev-fallback secrets now rejected unless `NODE_ENV` is explicitly `development`/`test` (unset = production, so a deploy that forgets it fails fast); `JWT_SECRET:-dev-secret-change-me` default removed from `docker-compose.app.yml` and both secrets made required via `${VAR:?}`; the gateway dev script sets `NODE_ENV=development` so the local quickstart keeps working.
-2. **TEST-1** — `docker.yml` publish job now runs lint, typecheck, and the full test suite before building/pushing images; non-blocking `yarn npm audit` step added (TEST-11).
-3. **PROD-1** — `finalizeWorkflowRun` writes terminal statuses (`FAILED`/`TIMED_OUT`/`CANCELLED`/`COMPLETED`) back to the `ActiveWorkflow` row, fixing the dashboard KPIs.
-4. **PROD-2/PROD-7** — PR links (derived from `repository.githubUrl` + `prNumber`) rendered on the workflow detail page; workflow detail now links to its runs.
-5. **PROD-8** — run detail page shows a "Run not found" error state instead of an infinite spinner.
-6. **PROD-5 (partial)** — CLI `run` prints the actual response fields (`workRequestId`, workflow IDs) instead of `undefined`.
-7. **TEST-10** — `createOrUpdatePullRequest` persists its trace in a `finally` block per the project's own AgentTracer rule.
-8. **SEC-6/SEC-7** — auth-email HTML interpolation escaped; 5xx responses return a generic message instead of raw `error.message`.
-9. **DOC-1/DOC-2/DOC-3/DOC-7/DOC-9/DOC-12** — deployment.md phantom env vars removed and commands fixed; PG version references aligned with compose; migrations table corrected; `db:migrate:reset` reference fixed; `.env.example` script names fixed; CLAUDE.md/AGENTS.md testing claim corrected (TEST-2).
+### Accepted residuals (documented, not fixed)
 
-Everything not listed above remains open and is tracked in §4/§5.
+- **`@ai-sdk/provider-utils` low advisory** — pinned exactly by `@mastra/core@1.40.0`; the patch exists only in a different interface major. Needs an upstream mastra release.
+- **Deprecated `@opentelemetry/instrumentation-fastify`** — a migration to `@fastify/otel`, not a CVE; follow-up.
+- **Epic child `assignedBranch`** is not persisted by the orchestrator; the epic detail view renders "—" for it.
+- **Legacy lessons** (null `embedding_model`) are assumed to share the current embedding space; a re-embed job remains a follow-up.
+
+### Open questions for the team (updated)
+
+1. **Rotate secrets** if any deployment ran on the dev JWT/better-auth fallbacks before SEC-1 landed.
+2. **ARCH-4 is breaking:** headless scripts using `AUTO_SWE_USERNAME`/`AUTO_SWE_PASSWORD` must switch to PATs; announce before deploying.
+3. **GitHub Actions billing** still blocks CI on this repo (all runs fail with no runner assigned) — fix at Settings → Billing → Actions, then re-run checks.
+4. **EVOL-6 verification:** confirm on a real multi-check repo that the suite-level aggregation resumes workflows at the right time.
