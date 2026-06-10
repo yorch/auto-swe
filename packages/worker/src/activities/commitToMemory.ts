@@ -7,7 +7,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { generateEmbedding } from '../lib/embeddings.js';
+import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
@@ -36,16 +36,17 @@ async function writeAgentLessonRow(input: {
   metadata: Record<string, unknown> | null;
   skillsActive?: string[];
 }): Promise<string> {
-  const embedding = await generateEmbedding(input.lessonSummary);
+  const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
   const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, skills_active, created_at)
-     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7::jsonb, $8::text[], now())
+    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, skills_active, created_at)
+     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7, $8::jsonb, $9::text[], now())
      RETURNING id`,
     input.workflowId,
     input.repoId,
     input.rationale,
     input.lessonSummary,
     JSON.stringify(embedding),
+    spec,
     input.failureType,
     JSON.stringify(input.metadata ?? {}),
     input.skillsActive ?? []

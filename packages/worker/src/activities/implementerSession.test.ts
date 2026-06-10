@@ -63,17 +63,20 @@ vi.mock('../agents/implementer.js', () => ({
   })),
 }));
 
-const scanDiffForSecurityIssuesMock = vi.fn(async () => ({ findings: [], passed: true }));
+const scanDiffForSecurityIssuesMock = vi.fn(async (_diff: string) => ({
+  findings: [] as unknown[],
+  passed: true,
+}));
 vi.mock('../agents/securityReviewProcessor.js', () => ({
   scanDiffForSecurityIssues: (diff: string) => scanDiffForSecurityIssuesMock(diff),
 }));
 
-const scanDiffForCodeIssuesMock = vi.fn(async () => []);
+const scanDiffForCodeIssuesMock = vi.fn(async (_diff: string) => [] as unknown[]);
 vi.mock('../lib/codeSecurityScanner.js', () => ({
   scanDiffForCodeIssues: (diff: string) => scanDiffForCodeIssuesMock(diff),
 }));
 
-const persistMock = vi.fn(async () => {});
+const persistMock = vi.fn(async (..._args: unknown[]) => {});
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: () => 'wf-1',
   persistActivityTrace: (...args: unknown[]) => persistMock(...args),

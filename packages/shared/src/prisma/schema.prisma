@@ -117,6 +117,10 @@ model AgentLesson {
   rationale       String
   lessonSummary   String          @map("lesson_summary")
   embedding       Unsupported("vector(1536)")?
+  /// `<provider>/<model>` spec the embedding was generated with. Null on rows
+  /// written before tracking existed — those are assumed to share the space
+  /// of whatever model was configured at the time (single-model deployments).
+  embeddingModel  String?         @map("embedding_model")
   failureType     String?         @map("failure_type")
   metadata        Json?
   skillsActive    String[]        @default([]) @map("skills_active")
