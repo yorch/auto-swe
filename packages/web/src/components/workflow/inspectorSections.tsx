@@ -1,0 +1,397 @@
+'use client';
+
+/**
+ * Per-node-type inspector sections for the TemplateEditor's right rail.
+ * Each section edits the selected node's type-specific fields and emits the
+ * whole patched node back through `onChange`. Extracted from
+ * TemplateEditor.tsx.
+ */
+
+import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
+import { useEffect, useRef, useState } from 'react';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { OnFailSection, type OnFailValue, SchemaAwareForm } from './inspectorFields';
+
+export function StepConfigSection({
+  node,
+  stepMeta,
+  stepRegistry,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'step' }>;
+  stepMeta: StepMetadata | null;
+  stepRegistry: StepMetadata[];
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <datalist id="step-registry-datalist">
+        {stepRegistry.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.label}
+          </option>
+        ))}
+      </datalist>
+      <Input
+        hint={stepMeta?.label ?? 'type or pick a step from the registry'}
+        label="Step"
+        list="step-registry-datalist"
+        onChange={(e) => onChange({ ...node, step: e.target.value } as SpecNode)}
+        value={node.step}
+      />
+      {stepMeta?.description && (
+        <p className="text-[11px] leading-relaxed text-paper-400">{stepMeta.description}</p>
+      )}
+      {stepMeta && stepMeta.configFields.length > 0 && (
+        <SchemaAwareForm
+          fields={stepMeta.configFields}
+          onChange={(k, v) => {
+            const cur = node.config ?? {};
+            const next = { ...cur };
+            if (v === undefined) {
+              delete next[k];
+            } else {
+              next[k] = v;
+            }
+            onChange({ ...node, config: next } as SpecNode);
+          }}
+          values={(node.config ?? {}) as Record<string, unknown>}
+        />
+      )}
+      {stepMeta && stepMeta.configFields.length === 0 && (
+        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+          — no configurable fields —
+        </p>
+      )}
+      {node.step && !stepMeta && (
+        <p className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
+          ! Step not in registry — config schema unknown
+        </p>
+      )}
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}
+
+export function CondSection({ expr, onChange }: { expr: string; onChange: (v: string) => void }) {
+  return (
+    <Input
+      hint="JS-like expression evaluated against the workflow context"
+      label="Expression"
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="ctx.foo === 'bar'"
+      value={expr}
+    />
+  );
+}
+
+export function SignalSection({
+  name,
+  timeout,
+  onNameChange,
+  onTimeoutChange,
+}: {
+  name: string;
+  timeout: string;
+  onNameChange: (v: string) => void;
+  onTimeoutChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Input
+        label="Signal name"
+        onChange={(e) => onNameChange(e.target.value)}
+        placeholder="e.g. human.approval"
+        value={name}
+      />
+      <Input
+        hint="Duration string — fires onTimeout if exceeded"
+        label="Timeout"
+        onChange={(e) => onTimeoutChange(e.target.value)}
+        placeholder="24h"
+        value={timeout}
+      />
+    </div>
+  );
+}
+
+export function FanOutSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'fanOut' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  const overFrom = 'from' in node.over ? (node.over as { from: string }).from : '';
+  const [exportsText, setExportsText] = useState<string>(() => (node.exports ?? []).join('\n'));
+  const prevExportsRef = useRef(node.exports);
+  useEffect(() => {
+    if (node.exports !== prevExportsRef.current) {
+      prevExportsRef.current = node.exports;
+      setExportsText((node.exports ?? []).join('\n'));
+    }
+  });
+
+  return (
+    <div className="space-y-3">
+      <Input
+        hint="Context path that yields the parallel items (array)"
+        label="Over (from path)"
+        onChange={(e) => onChange({ ...node, over: { from: e.target.value } } as SpecNode)}
+        placeholder="ctx.targets"
+        value={overFrom}
+      />
+      <Input
+        hint="Name each element is bound under inside the per-branch context"
+        label="Item key"
+        onChange={(e) => onChange({ ...node, itemKey: e.target.value } as SpecNode)}
+        placeholder="subtask"
+        value={node.itemKey ?? 'subtask'}
+      />
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="fanout-branch-fail"
+        label="On branch fail"
+        onChange={(e) =>
+          onChange({ ...node, onBranchFail: e.target.value as 'block' | 'continue' } as SpecNode)
+        }
+        value={node.onBranchFail ?? 'block'}
+      >
+        <option value="block">Block (default) — stop on first failure</option>
+        <option value="continue">Continue — collect all results</option>
+      </Select>
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+          htmlFor="fanout-concurrency"
+        >
+          Max concurrency
+        </label>
+        <input
+          className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+          id="fanout-concurrency"
+          max={20}
+          min={1}
+          onChange={(e) => {
+            const v =
+              e.target.value === '' ? undefined : Math.max(1, Math.min(20, Number(e.target.value)));
+            onChange({ ...node, concurrency: v } as SpecNode);
+          }}
+          placeholder="4 (default)"
+          type="number"
+          value={node.concurrency ?? ''}
+        />
+      </div>
+      <Input
+        hint="Dot-path projected from each branch result into output.plucked — e.g. result.branch"
+        label="Pluck path"
+        onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined } as SpecNode)}
+        placeholder="result.branch"
+        value={node.pluck ?? ''}
+      />
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="fanout-exports"
+        >
+          Exports <span className="normal-case text-paper-600">(one per line)</span>
+        </label>
+        <p className="mt-0.5 text-[10px] leading-snug text-paper-500">
+          Context paths that flow back to the parent scope after the fan-out joins.
+        </p>
+        <textarea
+          className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+          id="fanout-exports"
+          onBlur={() => {
+            const exports = exportsText
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean);
+            onChange({ ...node, exports: exports.length > 0 ? exports : undefined } as SpecNode);
+          }}
+          onChange={(e) => setExportsText(e.target.value)}
+          placeholder="ctx.result"
+          spellCheck={false}
+          value={exportsText}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ShellSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'shell' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-brick-400">
+        ⚠ shell — elevated privileges · team-admin authoring only
+      </div>
+      <Input
+        hint="Must be on the team's image allowlist"
+        label="Container image"
+        onChange={(e) => onChange({ ...node, image: e.target.value } as SpecNode)}
+        placeholder="node:24-alpine"
+        value={node.image ?? ''}
+      />
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="shell-command"
+        >
+          Command
+        </label>
+        <textarea
+          className="mt-1.5 h-24 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+          id="shell-command"
+          onChange={(e) => onChange({ ...node, command: e.target.value } as SpecNode)}
+          placeholder="echo hello"
+          spellCheck={false}
+          value={node.command ?? ''}
+        />
+      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="shell-network"
+        label="Network"
+        onChange={(e) => {
+          const v = e.target.value as 'none' | 'egress';
+          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+        }}
+        value={node.network ?? 'none'}
+      >
+        <option value="none">None (default) — no outbound access</option>
+        <option value="egress">Egress — outbound via team allowlist</option>
+      </Select>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+            htmlFor="shell-memory"
+          >
+            Memory limit
+          </label>
+          <input
+            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            id="shell-memory"
+            onChange={(e) => onChange({ ...node, memory: e.target.value || undefined } as SpecNode)}
+            placeholder="512m"
+            value={node.memory ?? ''}
+          />
+        </div>
+        <div>
+          <label
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+            htmlFor="shell-cpus"
+          >
+            CPUs
+          </label>
+          <input
+            className="mt-1.5 h-9 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+            id="shell-cpus"
+            max={8}
+            min={0.1}
+            onChange={(e) =>
+              onChange({
+                ...node,
+                cpus: e.target.value === '' ? undefined : Number(e.target.value),
+              } as SpecNode)
+            }
+            placeholder="1"
+            step={0.1}
+            type="number"
+            value={node.cpus ?? ''}
+          />
+        </div>
+      </div>
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}
+
+type TerminateStatus = 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
+
+export function TerminateSection({
+  status,
+  onChange,
+}: {
+  status: TerminateStatus;
+  onChange: (v: TerminateStatus) => void;
+}) {
+  return (
+    <Select
+      id="terminate-status"
+      label="Status"
+      onChange={(e) => onChange(e.target.value as TerminateStatus)}
+      value={status}
+    >
+      {(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] satisfies TerminateStatus[]).map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+export function SetSection({
+  values,
+  onChange,
+}: {
+  values: Record<string, unknown>;
+  onChange: (v: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState(JSON.stringify(values, null, 2));
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(JSON.stringify(values, null, 2));
+  }, [values]);
+
+  return (
+    <div>
+      <label
+        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+        htmlFor="set-values"
+      >
+        Values (JSON)
+      </label>
+      <textarea
+        className="mt-1.5 h-40 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+        id="set-values"
+        onBlur={() => {
+          try {
+            const parsed = JSON.parse(draft);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              setErr(null);
+              onChange(parsed as Record<string, unknown>);
+            } else {
+              setErr('Must be a JSON object');
+            }
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : 'invalid JSON');
+          }
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        spellCheck={false}
+        value={draft}
+      />
+      {err && (
+        <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-brick-400">
+          ! {err}
+        </div>
+      )}
+    </div>
+  );
+}
