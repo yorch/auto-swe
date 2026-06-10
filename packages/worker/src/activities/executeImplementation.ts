@@ -59,7 +59,7 @@ export async function executeImplementation(
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
   const githubToken = await requireGitHubToken(ghConfig);
 
-  const workspace = createWorkspace(
+  const workspace = await createWorkspace(
     repoUrl,
     branch,
     repo.defaultBranch,
@@ -73,7 +73,7 @@ export async function executeImplementation(
     heartbeat('workspace provisioned');
 
     // Detect test framework
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
     // Load tool config and skills for this role at the current scope
@@ -199,7 +199,7 @@ export async function executeImplementation(
       // Run tests
       const testStart = Date.now();
       try {
-        const testOutput = workspace.exec(testCommand);
+        const testOutput = await workspace.exec(testCommand);
         testResult = parseTestOutput(testOutput, Date.now() - testStart);
         tracer.addActivityEvent({
           durationMs: Date.now() - testStart,
@@ -237,13 +237,13 @@ export async function executeImplementation(
     const commitSummary = subtask
       ? `auto: ${subtask.id} — ${subtask.title} (${request.externalTicketId})`
       : `auto: implement ${request.externalTicketId}`;
-    workspace.exec('git add -A');
-    workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
-    workspace.exec(`git push origin ${shellQuote(branch)}`);
+    await workspace.exec('git add -A');
+    await workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
+    await workspace.exec(`git push origin ${shellQuote(branch)}`);
 
     // Collect results
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
+    const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);
+    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -289,6 +289,6 @@ export async function executeImplementation(
     };
   } finally {
     await persistActivityTrace(tracer, 'implementer');
-    workspace.destroy();
+    await workspace.destroy();
   }
 }

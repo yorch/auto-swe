@@ -59,7 +59,7 @@ export async function createImplementerAgent(
       const start = Date.now();
       try {
         const p = safePath(path);
-        const result = { content: workspace.exec(`cat ${shellQuote(p)}`) };
+        const result = { content: await workspace.exec(`cat ${shellQuote(p)}`) };
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path },
@@ -89,9 +89,9 @@ export async function createImplementerAgent(
   // the security wrapper returns early without calling the inner function.
   const writeExecute = wrapWriteToolWithSecurityCheck(async ({ path, content }) => {
     const safep = safePath(path);
-    workspace.exec(`mkdir -p "$(dirname ${shellQuote(safep)})"`);
+    await workspace.exec(`mkdir -p "$(dirname ${shellQuote(safep)})"`);
     const b64 = Buffer.from(content).toString('base64');
-    workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(safep)}`);
+    await workspace.exec(`echo ${shellQuote(b64)} | base64 -d > ${shellQuote(safep)}`);
     return { result: `File written: ${safep}` };
   });
 
@@ -155,7 +155,7 @@ export async function createImplementerAgent(
       try {
         // Mastra 1.31 types Zod `.default()` fields as string|undefined in tool execute args.
         const p = safePath(path ?? '.');
-        const result = { listing: workspace.exec(`ls -la ${shellQuote(p)}`) };
+        const result = { listing: await workspace.exec(`ls -la ${shellQuote(p)}`) };
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { path: p },
@@ -204,7 +204,7 @@ export async function createImplementerAgent(
       }
 
       try {
-        const result = { output: workspace.exec(command) };
+        const result = { output: await workspace.exec(command) };
         tracer?.addToolCall({
           durationMs: Date.now() - start,
           inputJson: { command },

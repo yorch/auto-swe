@@ -149,7 +149,7 @@ async function provisionGateWorkspace(
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
   const githubToken = await requireGitHubToken(ghConfig);
 
-  const workspace = createWorkspace(
+  const workspace = await createWorkspace(
     repoUrl,
     branch,
     repo.defaultBranch,
@@ -162,8 +162,8 @@ async function provisionGateWorkspace(
   // If the remote branch doesn't exist yet (e.g. gate runs before first
   // push), the reset will fail and the implementer's local copy stays.
   try {
-    workspace.exec(`git fetch origin ${shellQuote(branch)}`);
-    workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+    await workspace.exec(`git fetch origin ${shellQuote(branch)}`);
+    await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
   } catch {
     // Gate runs against the local branch starting at defaultBranch.
     heartbeat(`gate ${gate}: remote branch not found, using clone HEAD`);
@@ -190,7 +190,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
   const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);
   try {
     heartbeat(`gate ${gate}: running command`);
-    const result = workspace.execCapture(command, { timeoutMs: input.timeoutMs });
+    const result = await workspace.execCapture(command, { timeoutMs: input.timeoutMs });
 
     const fullLog = `$ ${command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
     const runId = await currentWorkflowRunId();
@@ -214,7 +214,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
         : `${gate} failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
     };
   } finally {
-    workspace.destroy();
+    await workspace.destroy();
   }
 }
 
@@ -298,7 +298,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
         return `${gateName} not re-runnable (no command resolved)`;
       }
       heartbeat(`gate fix: re-running ${gateName}`);
-      const rerun = workspace.execCapture(rerunCommand);
+      const rerun = await workspace.execCapture(rerunCommand);
       const passed = rerun.exitCode === 0 && !rerun.signal;
       return `${gateName} ${passed ? 'passing' : 'still failing'}`;
     },

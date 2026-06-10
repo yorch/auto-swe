@@ -46,6 +46,14 @@ async function run() {
   const worker = await Worker.create({
     activities,
     connection,
+    // Most activities hold a Docker workspace (clone + container) — an
+    // explicit cap keeps a burst of workflows from exhausting the Docker
+    // host. The Temporal default (100) is far past what one host can serve.
+    // Override with WORKER_MAX_CONCURRENT_ACTIVITIES.
+    maxConcurrentActivityTaskExecutions: Number.parseInt(
+      process.env.WORKER_MAX_CONCURRENT_ACTIVITIES ?? '10',
+      10
+    ),
     namespace: 'default',
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).

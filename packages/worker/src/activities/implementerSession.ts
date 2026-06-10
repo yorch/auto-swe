@@ -86,7 +86,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const githubToken = await requireGitHubToken(ghConfig);
 
-  const workspace = createWorkspace(
+  const workspace = await createWorkspace(
     repoUrl,
     previousCodeResult.branch,
     repo.defaultBranch,
@@ -105,14 +105,14 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // push fast-forwards. (Previously only the gate-fix path did this; the
     // CI/review fix paths operated on a stale tree.)
     try {
-      workspace.exec(`git fetch origin ${shellQuote(previousCodeResult.branch)}`);
-      workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
+      await workspace.exec(`git fetch origin ${shellQuote(previousCodeResult.branch)}`);
+      await workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
     } catch {
       // Branch may not exist remotely yet; proceed against the local clone.
       heartbeat(`${mode}: remote branch not found, using clone HEAD`);
     }
 
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
@@ -194,7 +194,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     let testResult: TestRunResult;
     const testStart = Date.now();
     try {
-      const testOutput = workspace.exec(testCommand);
+      const testOutput = await workspace.exec(testCommand);
       testResult = parseTestOutput(testOutput, Date.now() - testStart);
     } catch (err: unknown) {
       testResult = {
@@ -219,12 +219,14 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
 
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
-    workspace.exec('git add -A');
-    workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`);
-    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
+    await workspace.exec('git add -A');
+    await workspace.exec(
+      `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
+    );
+    await workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
 
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
+    const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);
+    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -271,7 +273,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     };
   } finally {
     const done = persistActivityTrace(tracer, 'implementer');
-    workspace.destroy();
+    await workspace.destroy();
     await done;
   }
 }
