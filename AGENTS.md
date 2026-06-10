@@ -43,21 +43,21 @@
 | Component             | Technology                             | Version                |
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=24.0.0               |
-| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.14.1                 |
+| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.16.0                 |
 | Language              | TypeScript                             | 6.0.3                  |
 | HTTP Framework        | Fastify                                | 5.8.5                  |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
-| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.1                 |
-| Agent Framework       | Mastra                                 | 1.32.1                 |
+| Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.2                 |
+| Agent Framework       | Mastra                                 | 1.40.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 6.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
 | ORM                   | Prisma                                 | 7.8.0                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.6 / 19.2.6 / 4.3.0 |
-| Server State          | TanStack Query                         | 5.100.9                |
-| Client State          | Zustand                                | 5.0.13                 |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.7 / 19.2.7 / 4.3.0 |
+| Server State          | TanStack Query                         | 5.101.0                |
+| Client State          | Zustand                                | 5.0.14                 |
 | Validation            | Zod                                    | 4.4.3                  |
-| Testing               | Vitest                                 | 4.1.5                  |
-| Lint / Format         | Biome                                  | 2.4.14                 |
+| Testing               | Vitest                                 | 4.1.8                  |
+| Lint / Format         | Biome                                  | 2.4.16                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.8.1 |
 
 ---
@@ -76,7 +76,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 
 Top-level files that matter:
 
-- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + setup containers
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + MinIO (artifact store) + setup containers
 - `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
@@ -138,7 +138,7 @@ yarn lint                 # Lint + format check (biome check)
 yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
 yarn format               # Format only (biome format --write)
 
-# Docker (infra = postgres + postgres-temporal + temporal (server + admin + ui); app = gateway + worker + web + otel-lgtm)
+# Docker (infra = postgres + postgres-temporal + temporal (server + admin + ui) + minio; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
 yarn docker:app:up            # Start everything (infra + app)
@@ -162,7 +162,7 @@ yarn docker:app:build         # Rebuild app images
 
 ### Mastra API
 
-The project uses `@mastra/core@1.32.1` with the Vercel AI SDK for model binding:
+The project uses `@mastra/core@1.40.0` with the Vercel AI SDK for model binding:
 
 - `Agent` constructor requires both `id` and `name` fields
 - `createTool()` requires `outputSchema` on all tools (structured output)
@@ -190,7 +190,7 @@ All five tables follow the singleton pattern (single row, `id = 'default'`, enfo
 
 Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
 
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 50 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 51 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
 - **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `AgentToolConfig`. `null` tool config = all four workspace tools enabled.
 
 **Role types** accepted by `loadAgentSkills` and `loadAgentToolConfig` (`AnySkillRole`):
@@ -225,7 +225,7 @@ Six scanners run during agent execution. Each is independently advisory or block
 
 **Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
 
-**Built-in patterns:** 50 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 10 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced via `syncBuiltins()` at gateway startup (idempotent). Built-in patterns have `isBuiltIn: true`.
+**Built-in patterns:** 51 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION, 11 EXFILTRATION, 11 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced via `syncBuiltins()` at gateway startup (idempotent). Built-in patterns have `isBuiltIn: true`.
 
 **Security events:** Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The `GET /api/v1/admin/security-events` endpoint uses DB-level predicates per `SecurityEventType` so pagination is correct. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel).
 
@@ -364,7 +364,7 @@ try {
 # 1. Install
 corepack enable && yarn install
 
-# 2. Start infrastructure (postgres + temporal + otel-lgtm)
+# 2. Start infrastructure (postgres + postgres-temporal + temporal + minio — otel-lgtm starts with the app overlay, not here)
 cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally GITHUB_TOKEN/GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
 

@@ -73,7 +73,7 @@ packages/
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
-| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 50 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (10), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
+| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 51 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/set/cond/signal/terminate/fanOut/shell) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
@@ -115,8 +115,11 @@ packages/
 | `src/routes/tokens.ts` | Personal access token create / list / revoke |
 | `src/routes/modelConfig.ts` | `ModelRoleConfig` + `ProviderCredential` + `EmbeddingConfig` CRUD (admin + team-owner) |
 | `src/routes/admin.ts` | Admin-only: list/revoke all PATs, list/revoke sessions, shell-audit prune |
-| `src/routes/scannerPatterns.ts` | CRUD for `ScannerPattern` — `INJECTION`, `EXFILTRATION`, `SHELL_COMMAND`, `CODE_SECURITY` types; validates regex + safe flag subset (i,m,s,u,v); calls `invalidateScannerPatternCache()` on writes |
+| `src/routes/scannerPatterns.ts` | CRUD for `ScannerPattern` — `INJECTION`, `EXFILTRATION`, `SHELL_COMMAND`, `CODE_SECURITY`, `SENSITIVE_FILE` types; validates regex + safe flag subset (i,m,s,u,v); calls `invalidateScannerPatternCache()` on writes |
 | `src/routes/securityEvents.ts` | `GET /api/v1/admin/security-events` — queries `agent_traces` for security-relevant rows; derives `SecurityEventType` at read time using DB-level predicates; supports `limit`/`offset`/`runId`/`type` filters |
+| `src/routes/humanSteps.ts` | `GET /api/v1/inbox` + `GET /api/v1/inbox/:id` + `POST /api/v1/inbox/:id/respond` — HITL pending-step inbox and response endpoint (see [hitl-workflows.md](./hitl-workflows.md)) |
+| `src/routes/systemConfig.ts` | `/api/v1/admin` system-config CRUD — GitHub (incl. GitHub App), Slack, Storage, OAuth, and workflow-defaults singletons backing `/admin/integrations` and `/admin/workflow` |
+| `src/routes/slack.ts` | `/api/v1/auth/slack` — OAuth connect + callback, `/auto-swe` slash command, signature-verified interactive webhooks |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — shared helper that writes `ConfigAuditLog` rows for all config mutations |
 
 ### 2.3 `packages/worker`
@@ -144,9 +147,9 @@ packages/
 | `src/agents/plannerAgent.ts` | Mastra `Agent` for per-repo plan decomposition |
 | `src/agents/decomposer.ts` | Mastra `Agent` for fan-out subtask decomposition |
 | `src/agents/preWriteSecurityCheck.ts` | Regex-based pre-write content scanner wrapping the `writeFile` tool; exports `SECURITY_CHECK_FAILED_PREFIX` and `SECURITY_WARNINGS_PREFIX` constants |
-| `src/lib/scannerPatternLoader.ts` | `makePatternLoader(type, logPrefix)` — factory returning `load()` / `invalidate()` backed by a per-instance 60 s TTL cache; used by `shellCommandScanner` and `codeSecurityScanner` to avoid boilerplate |
+| `src/lib/scannerPatternLoader.ts` | `makePatternLoader(type, logPrefix)` — factory returning `load()` / `invalidate()` backed by a per-instance 60 s TTL cache; used by `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` to avoid boilerplate |
 | `src/lib/shellCommandScanner.ts` | `scanShellCommand(cmd)` — checks bash tool calls against active `SHELL_COMMAND` patterns; soft-block returns error string to agent for self-correction |
-| `src/lib/sensitiveFileScanner.ts` | `checkSensitiveFilePath(path)` — hard-blocks writes to `.env`, PEM/key files, SSH private keys, credential JSON files (hardcoded rules; intentionally not DB-driven) |
+| `src/lib/sensitiveFileScanner.ts` | `checkSensitiveFilePath(path)` — hard-blocks writes to paths matching DB-backed `SENSITIVE_FILE` patterns (6 built-ins: `.env`, PEM/key files, SSH private keys, credential JSON; admin-extensible at `/admin/scanner`) via `makePatternLoader` |
 | `src/lib/codeSecurityScanner.ts` | `scanDiffForCodeIssues(diff)` — advisory scan of git diff added-lines against `CODE_SECURITY` patterns; `formatCodeSecurityFindings(findings)` — formats for security reviewer prompt |
 | `src/lib/models.ts` | `getModel(role, ctx)` — 3-level scope cascade (template → team → global) |
 | `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` + `loadAgentToolConfig(role, ctx)` + `skillsToPromptSuffix(skills)` — skill and tool config loading at WORKFLOW_TEMPLATE → TEAM → GLOBAL scope |
@@ -170,11 +173,14 @@ packages/
 | `src/app/teams/` | Team management — members, roles, shell-image allowlist |
 | `src/app/users/` | User management (ADMIN) |
 | `src/app/lessons/` | Agent memory search |
+| `src/app/inbox/` | HITL inbox — pending human steps with respond forms; 10 s polling; sidebar count badge |
 | `src/app/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
 | `src/app/settings/` | User settings — API tokens (create / list / revoke) |
 | `src/app/admin/security/` | Security events dashboard — type filter, per-type summary bar, expandable event rows, 30 s auto-refresh |
-| `src/app/admin/scanner/` | Scanner pattern admin — CRUD for all 4 `ScannerPatternType` values; regex validation; built-in vs custom badges |
-| `src/app/admin/` | Admin pages — model config, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability, scanner patterns, security events |
+| `src/app/admin/scanner/` | Scanner pattern admin — CRUD for all 5 `ScannerPatternType` values; regex validation; built-in vs custom badges |
+| `src/app/admin/integrations/` | System integrations — GitHub (PAT or GitHub App), Slack, Storage (S3/MinIO), OAuth tabs |
+| `src/app/admin/workflow/` | Workflow defaults — branch prefix, PR title/body templates, default team slug, lesson consolidation schedule |
+| `src/app/admin/` | Admin pages — model config, integrations, workflow defaults, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability, scanner patterns, security events |
 | `src/components/security/SecurityEventList.tsx` | `SecurityEventBadge`, `SecurityEventList` — expandable list with per-type formatted details (code findings, LLM warnings, content security lines, bash command); `classifyTraceAsSecurityEvent` — client-side classification for run-detail security panel |
 | `src/hooks/` | TanStack Query hooks split by resource domain — `useRuns`, `useTemplates`, `useTeams`, `useRepositories`, `useUsers`, `useAdmin`, `usePats`, `useInbox`, `useEpics`, `useLessons`, `useUserPreferences` (run detail layout preference with optimistic update); `useWorkflows` is a barrel re-export |
 | `src/stores/` | Zustand stores — `authStore.ts` (JWT + user identity), `teamStore.ts` (active team context) |
@@ -357,7 +363,7 @@ For each LLM call / activity invocation:
 
 Model config  → getModel()            in packages/worker/src/lib/models.ts            (GLOBAL required — 6 AgentRoles only)
 Skills        → loadAgentSkills()     in packages/worker/src/lib/config/agentSkills.ts (falls back to empty — all 10 AnySkillRoles)
-Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/resolver.ts    (null = all tools)
+Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/agentSkills.ts (null = all tools)
 ```
 
 **Role types:**
@@ -373,7 +379,7 @@ Sub-role usage:
 - `decomposer` — loaded by `planDecomposition`; the decomposer agent gets its own skill suffix (model comes from the parent `planner` role config).
 
 **Skills vs tools:**
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 11 built-in patterns seeded by migration, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 51 built-in patterns (all 5 types) synced by `syncBuiltins()` at gateway startup, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
 - **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) tracked in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added alongside the workspace tools when skills are present — it is not configurable via `AgentToolConfig`. Other agents have no tools; they use skills for reasoning guidance only.
 
 **Progressive skill disclosure (implementer agent):** Skills are not pre-injected wholesale. The implementer agent receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch the full `promptText` only when it decides to engage a skill. This avoids token bloat from unused skills. Other agents (reviewer sub-agents, planner, decomposer) continue to receive their skill fragments directly in the system prompt since they have no tools.
@@ -486,32 +492,39 @@ erDiagram
 flowchart LR
     subgraph docker-compose.infra.yml
         PG[(postgres\npgvector/pgvector:pg18\n:5432)]
-        PGTMP[(postgres-temporal\n:5433)]
-        TMPSETUP[temporal-setup\ntemporalio/auto-setup:1.31]
-        TMPADMIN[temporal-admin-tools\n:7233]
-        TMPUI[temporal-ui\n:8233]
+        PGTMP[(postgres-temporal\npostgres:18-alpine\nno host port)]
+        TMPSETUP[temporal-setup\ntemporalio/admin-tools:1.31.0\none-shot: schema install]
+        TMP[temporal\ntemporalio/server:1.31.0\n:7233]
+        TMPNS[temporal-setup-namespace\ntemporalio/admin-tools:1.31.0\none-shot: create namespace]
+        TMPUI[temporal-ui\ntemporalio/ui:2.49.1\n:8233 → 8080]
+        MINIO[minio\n:9000 API / :9001 console]
+        MINIOSETUP[minio-setup\nminio/mc\none-shot: create bucket]
         TMPSETUP --> PGTMP
-        TMPADMIN --> TMPSETUP
-        TMPUI --> TMPSETUP
+        TMP --> TMPSETUP
+        TMPNS --> TMP
+        TMPUI --> TMP
+        MINIOSETUP --> MINIO
     end
 
     subgraph docker-compose.app.yml
         GW2[gateway\n:8080]
         WK2[worker]
         WEB2[web\n:3000]
-        OTEL[otel-lgtm\nGrafana + OTel\n:3001 Grafana]
+        OTEL[otel-lgtm\nGrafana + OTel\n:3001 Grafana\n:4317/:4318 OTLP]
         GW2 --> PG
         WK2 --> PG
-        GW2 --> TMPSETUP
-        WK2 --> TMPSETUP
+        GW2 -->|gRPC| TMP
+        WK2 -->|gRPC| TMP
+        WK2 -->|artifacts| MINIO
         WK2 -->|/var/run/docker.sock| HOST[Docker daemon]
-        OTEL --> GW2
-        OTEL --> WK2
+        GW2 -->|OTLP| OTEL
+        WK2 -->|OTLP| OTEL
+        WEB2 --> GW2
     end
 ```
 
-- **`docker-compose.infra.yml`** — Postgres (app) + Postgres (Temporal) + Temporal (server + admin-tools + UI).
-- **`docker-compose.app.yml`** — Gateway + Worker + Web + Grafana LGTM. Overlay — references infra network, not standalone.
+- **`docker-compose.infra.yml`** — Postgres (app) + Postgres (Temporal, container-internal only — no published host port) + Temporal split across separate images (`temporalio/server` + two one-shot `admin-tools` setup containers + `temporalio/ui`) + MinIO with a one-shot bucket-bootstrap container.
+- **`docker-compose.app.yml`** — Gateway + Worker + Web + Grafana LGTM. Overlay — references infra services, not standalone.
 - **Worker Docker socket** — The worker needs `/var/run/docker.sock` mounted to spin up DinD workspaces.
 - **MinIO** (optional) — S3-compatible artifact store started alongside infra. Configure the backend via `/admin/integrations → Storage`; falls back to Postgres inline blobs when no S3 config is present.
 

@@ -1,6 +1,6 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-05-18.
+> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-06-10.
 
 ## Legend
 
@@ -150,6 +150,27 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 
 ---
 
+## Post-Phase 4: June 2026 — Observability, HITL, Agent Management, Security (updated 2026-06-10)
+
+The early-June feature burst (PRs #48–#68 plus the post-review remediation pass of June 9–10):
+
+| Item                                                                  | Status | PR          | Notes                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | ------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Full agent observability — `AgentTracer`                              | Done   | #48         | Every LLM-calling activity records tool calls, LLM responses, and activity events as `AgentTrace` rows (`agent_traces`); powers the `/runs/[id]` trace viewer. Pattern documented in `docs/agents.md` §8.                              |
+| DB-backed system config for integrations                              | Done   | #49, #51    | GitHub, Slack, S3 storage, OAuth, and workflow defaults stored encrypted in singleton tables; managed at `/admin/integrations` + `/admin/workflow`; `resolveXxxConfig()` resolvers with env-var bootstrap fallback.                    |
+| Per-team / per-template agent prompt customization                    | Done   | #52         | Optional `ModelRoleConfig.systemPrompt` with the same WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade as model selection (`resolveSystemPrompt`).                                                                                            |
+| Lesson consolidation via offline dreaming                             | Done   | #53         | `consolidateLessons` periodically merges related `AgentLesson` rows; schedule configured at `/admin/workflow`; research in `docs/agent-dreaming-research.md`.                                                                          |
+| Human-in-the-Loop (HITL) workflow nodes + inbox                       | Done   | #55, #56, #60–#62 | Four node types (`humanApproval` / `humanDecision` / `humanInput` / `humanReview`) park the workflow on a Temporal signal; `WorkflowHumanStep` table, `/api/v1/inbox` API, `/inbox` UI with run-detail pending-actions card, Slack notifications. See `docs/hitl-workflows.md`. |
+| Agent skills (prompt fragments) + tool access control                 | Done   | #58, #62    | `Skill` / `AgentSkillAssignment` / `AgentToolConfig` with the 3-level scope cascade; 27 built-in skills seeded; implementer gets progressive disclosure via the `loadSkill` tool; admin UIs at `/admin/skills` + `/admin/agents`. See `docs/agents.md`. |
+| Runtime security scanners                                             | Done   | #62         | Six scanners (skill content, shell command, sensitive file, pre-write content, code security, LLM output); DB-backed `ScannerPattern` table with 51 built-ins synced by `syncBuiltins()` at gateway startup; `/admin/scanner`, `/admin/security`, and the security-events API. |
+| GitHub App authentication                                             | Done   | #60, #62    | Alternative to the single PAT — short-lived installation tokens, `GITHUB_AUTH_MODE` (`pat` / `app` / auto), configured at `/admin/integrations → GitHub`. Setup guide in `docs/github-app-setup.md`.                                   |
+| Web UI primitives extraction + consistency pass                       | Done   | #59, #66    | UI primitives extracted to `src/components/ui/`, design tokens migrated, hook barrel split per resource domain.                                                                                                                        |
+| Run-detail split-panel + inline-expansion layouts                     | Done   | #67         | `/runs/[id]` bottom panel toggles between `SplitRunPanel` (steps + traces side-by-side) and inline trace accordions; preference persisted per user via `User.preferences` (`useUserPreferences`).                                       |
+| Full LLM request capture in agent traces                              | Done   | #65, #68    | `AgentTrace` LLM rows now capture the full request (system prompt + user message) alongside the response; trace persistence moved into `finally` blocks so failed attempts still show their events.                                    |
+| Repo-review remediation pass                                          | Done   | —           | CI-gated Docker image publishing (lint/typecheck/tests before push), effective dev-secret guards in shipped images (`NODE_ENV=production`), terminal run status written back to `ActiveWorkflow`, async workspace exec with heartbeat pumping + `WORKER_MAX_CONCURRENT_ACTIVITIES` cap, hot-FK indexes, unit tests for the four previously uncovered scanners. |
+
+---
+
 ## Summary
 
 | Phase     | Planned Features | Done   | Partial | Not Started |
@@ -161,7 +182,7 @@ Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurab
 | Post-MVP  | 6                | 6      | 0       | 0           |
 | **Total** | **52**           | **51** | **0**   | **1**       |
 
-> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, the better-auth multi-provider sign-in migration, the UI-coverage closure pass (one-stop admin/engineer surface on the dashboard), the Prisma migration consolidation, and the DB-backed LLM model + credential configuration.
+> "Post-MVP" covers items added after the original plan: the Workshop Telemetry web redesign, the React Flow visual workflow editor, the better-auth multi-provider sign-in migration, the UI-coverage closure pass (one-stop admin/engineer surface on the dashboard), the Prisma migration consolidation, and the DB-backed LLM model + credential configuration. The June 2026 burst (agent observability, system config, HITL, agent skills, security scanners, GitHub App auth — see the section above) adds 12 more completed items not counted in this table.
 
 ### Not started (full list)
 
