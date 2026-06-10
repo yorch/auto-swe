@@ -300,6 +300,7 @@ model User {
   accounts              Account[]
   sessions              Session[]
   humanStepsResolved    WorkflowHumanStep[]
+  workRequests          WorkRequest[]
 
   @@map("users")
 }
@@ -377,6 +378,10 @@ model WorkRequest {
   /// WorkflowRun at start so live edits to templates don't affect in-flight runs.
   templateId         String?          @map("template_id") @db.Uuid
   templateVersion    Int?             @map("template_version")
+  /// Who submitted the request (audit). Null for pre-existing rows and
+  /// webhook-originated requests without a platform user.
+  requestedById      String?          @map("requested_by_id") @db.Uuid
+  requestedBy        User?            @relation(fields: [requestedById], references: [id], onDelete: SetNull)
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
   contextSnapshot    ContextSnapshot?

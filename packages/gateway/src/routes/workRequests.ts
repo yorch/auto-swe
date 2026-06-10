@@ -110,8 +110,68 @@ const CreateWorkRequestSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
+const ListWorkRequestsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  /** Substring match on the external ticket ID. */
+  ticket: z.string().max(200).optional(),
+});
+
 export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // List/search work requests — answers "who asked the agent to do this?"
+  app.get(
+    '/',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: ListWorkRequestsQuery },
+    },
+    async (request) => {
+      const user = requireUser(request);
+      const { limit, offset, ticket } = request.query;
+      const where = {
+        ...(ticket ? { externalTicketId: { contains: ticket, mode: 'insensitive' as const } } : {}),
+        ...(user.role === 'ADMIN'
+          ? {}
+          : {
+              activeWorkflows: {
+                some: {
+                  repository: { team: { memberships: { some: { userId: user.sub } } } },
+                },
+              },
+            }),
+      };
+      const [rows, total] = await Promise.all([
+        fastify.prisma.workRequest.findMany({
+          include: {
+            activeWorkflows: {
+              select: { currentStatus: true, id: true, temporalWorkflowId: true },
+            },
+            requestedBy: { select: { email: true, id: true, name: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.workRequest.count({ where }),
+      ]);
+      return {
+        data: rows.map((wr) => ({
+          activeWorkflows: wr.activeWorkflows,
+          createdAt: wr.createdAt,
+          description: wr.description,
+          externalTicketId: wr.externalTicketId,
+          id: wr.id,
+          requestedBy: wr.requestedBy,
+          templateId: wr.templateId,
+          templateVersion: wr.templateVersion,
+        })),
+        meta: { limit, offset, total },
+      };
+    }
+  );
 
   app.post(
     '/',
@@ -237,6 +297,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           description,
           externalTicketId,
           id: workRequestId,
+          requestedById: user.sub,
           requestPayload: JSON.stringify(request.body),
           templateId: resolvedTemplate.templateId,
           templateVersion: resolvedTemplate.version,
@@ -280,7 +341,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               repository: {
                 include: {
-                  team: { select: { memberships: { select: { userId: true }, where: { userId: user.sub } } } },
+                  team: {
+                    select: {
+                      memberships: { select: { userId: true }, where: { userId: user.sub } },
+                    },
+                  },
                 },
               },
             },

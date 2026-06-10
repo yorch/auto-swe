@@ -36,3 +36,6 @@ output/
 data/
 test-results/
 .worktrees/
+
+# vitest coverage output
+coverage/

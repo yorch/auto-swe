@@ -337,6 +337,7 @@ export interface WorkflowRunSummary {
   id: string;
   workflowId: string;
   templateId: string;
+  templateName?: string | null;
   templateVersion: number;
   status: WorkflowRunStatus;
   startedAt: string;

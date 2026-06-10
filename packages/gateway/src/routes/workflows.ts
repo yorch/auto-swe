@@ -1,16 +1,29 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
+// Default high enough that the dashboard's KPI view covers recent history,
+// but bounded — the table only grows and this endpoint is polled every 10s.
+const ListWorkflowsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
   // GET /api/v1/workflows
-  fastify.get(
+  app.get(
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: ListWorkflowsQuery },
     },
     async (request) => {
       const user = requireUser(request);
+      const { limit, offset } = request.query;
       const where: Prisma.ActiveWorkflowWhereInput =
         user.role === 'ADMIN'
           ? {}
@@ -20,12 +33,17 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
               },
             };
 
-      const workflows = await fastify.prisma.activeWorkflow.findMany({
-        include: { pullRequests: true, repository: true },
-        orderBy: { updatedAt: 'desc' },
-        where,
-      });
-      return { data: workflows };
+      const [workflows, total] = await Promise.all([
+        fastify.prisma.activeWorkflow.findMany({
+          include: { pullRequests: true, repository: true },
+          orderBy: { updatedAt: 'desc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.activeWorkflow.count({ where }),
+      ]);
+      return { data: workflows, meta: { limit, offset, total } };
     }
   );
 

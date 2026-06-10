@@ -21,6 +21,7 @@ export interface RunWithWorkRequest {
   status: string;
   startedAt: Date;
   endedAt: Date | null;
+  template?: { name: string } | null;
   workRequest: {
     id: string;
     externalTicketId: string;
@@ -35,6 +36,7 @@ export function projectRunSummary(r: RunWithWorkRequest) {
     startedAt: r.startedAt,
     status: r.status,
     templateId: r.templateId,
+    templateName: r.template?.name ?? null,
     templateVersion: r.templateVersion,
     workflowId: r.workflowId,
     workRequest: r.workRequest,
