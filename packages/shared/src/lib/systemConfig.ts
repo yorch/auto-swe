@@ -16,6 +16,18 @@ async function db() {
 /// that need caching (worker activities, gateway request handlers) should wrap
 /// in their own TTL cache. This keeps the shared package dependency-free of
 /// any cache implementation.
+///
+/// Multi-org readiness (EVOL-3): every resolver accepts an optional
+/// `ResolveOpts` whose `orgId` is RESERVED — today all six config tables are
+/// singletons (`id = 'default'`) and the parameter is ignored, but new call
+/// sites should thread their org context through now so introducing per-org
+/// rows later is a resolver-internal change instead of a codebase-wide
+/// signature break.
+
+/** Reserved for multi-org config resolution. Ignored while config tables are singletons. */
+export interface ResolveOpts {
+  orgId?: string;
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -67,7 +79,7 @@ export interface ResolvedGitHubConfig {
   authMode: string | null;
 }
 
-export async function resolveGitHubConfig(): Promise<ResolvedGitHubConfig> {
+export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<ResolvedGitHubConfig> {
   const row = await (await db()).gitHubConfig.findUnique({ where: { id: 'default' } });
 
   const token =
@@ -145,7 +157,7 @@ export interface ResolvedSlackConfig {
   botToken: string | null;
 }
 
-export async function resolveSlackConfig(): Promise<ResolvedSlackConfig> {
+export async function resolveSlackConfig(_opts?: ResolveOpts): Promise<ResolvedSlackConfig> {
   const row = await (await db()).slackConfig.findUnique({ where: { id: 'default' } });
 
   const clientSecret =
@@ -199,7 +211,7 @@ export interface ResolvedStorageConfig {
   awsSecretAccessKey: string | null;
 }
 
-export async function resolveStorageConfig(): Promise<ResolvedStorageConfig> {
+export async function resolveStorageConfig(_opts?: ResolveOpts): Promise<ResolvedStorageConfig> {
   const row = await (await db()).storageConfig.findUnique({ where: { id: 'default' } });
 
   const awsSecretAccessKey =
@@ -241,7 +253,7 @@ export interface ResolvedWorkflowDefaults {
   defaultTeamSlug: string;
 }
 
-export async function resolveWorkflowDefaults(): Promise<ResolvedWorkflowDefaults> {
+export async function resolveWorkflowDefaults(_opts?: ResolveOpts): Promise<ResolvedWorkflowDefaults> {
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     branchPrefix: row?.branchPrefix ?? process.env.BRANCH_PREFIX ?? 'auto',
@@ -265,7 +277,7 @@ export interface ResolvedConsolidationConfig {
   similarityThreshold: number;
 }
 
-export async function resolveConsolidationConfig(): Promise<ResolvedConsolidationConfig> {
+export async function resolveConsolidationConfig(_opts?: ResolveOpts): Promise<ResolvedConsolidationConfig> {
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     cronExpression: row?.consolidationCron ?? '0 3 * * 0',
@@ -282,7 +294,7 @@ export interface ResolvedGoogleOAuthConfig {
   clientSecret: string | null;
 }
 
-export async function resolveGoogleOAuthConfig(): Promise<ResolvedGoogleOAuthConfig> {
+export async function resolveGoogleOAuthConfig(_opts?: ResolveOpts): Promise<ResolvedGoogleOAuthConfig> {
   const row = await (await db()).googleOAuthConfig.findUnique({ where: { id: 'default' } });
 
   const clientSecret =
