@@ -12,6 +12,7 @@ import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { scanShellCommand } from '../lib/shellCommandScanner.js';
+import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
 import {
   SECURITY_CHECK_FAILED_PREFIX,
   SECURITY_WARNINGS_PREFIX,
@@ -46,12 +47,32 @@ function safePath(relPath: string): string {
 export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
 export { IMPLEMENTER_TOOL_IDS };
 
+export interface ImplementerAgentOptions {
+  /**
+   * `Repository.mcpServerRef` for the repo being worked on — an http(s) URL
+   * of a streamable-HTTP/SSE MCP server whose tools are added alongside the
+   * built-in workspace tools. Defaults to disabled (callers must opt in).
+   * Loading is additionally gated by the `'mcp'` pseudo-key in the effective
+   * `AgentToolConfig` (see `isMcpToolEnabled`) and is failure-isolated: an
+   * unreachable server logs `mcp.connect_failed` and the agent proceeds with
+   * built-in tools only.
+   */
+  mcpServerRef?: string | null;
+}
+
 export async function createImplementerAgent(
   workspace: Workspace,
   tracer?: AgentTracer,
   tools?: string[] | null,
-  skills?: ResolvedSkill[]
-): Promise<{ agent: Agent; mastra: Mastra; promptSuffix: string }> {
+  skills?: ResolvedSkill[],
+  options?: ImplementerAgentOptions
+): Promise<{
+  agent: Agent;
+  mastra: Mastra;
+  promptSuffix: string;
+  /** Present when MCP tools were loaded — callers should invoke it in a `finally` block. */
+  closeMcp?: () => Promise<void>;
+}> {
   // Tool: Read a file from the workspace
   const readFile = createTool({
     description: 'Read the contents of a file in the workspace',
@@ -297,6 +318,20 @@ export async function createImplementerAgent(
     ? { ...resolvedWorkspaceTools, loadSkill }
     : resolvedWorkspaceTools;
 
+  // MCP tools (Repository.mcpServerRef): opt-in via options, gated by the 'mcp'
+  // pseudo-key in AgentToolConfig (a non-empty tool config must explicitly
+  // include 'mcp'; no config = all tools = MCP allowed). loadMcpTools never
+  // throws — connection failures leave the agent with built-in tools only.
+  let mcpTools: McpToolRecord = {};
+  let closeMcp: (() => Promise<void>) | undefined;
+  if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
+    const loaded = await loadMcpTools(options.mcpServerRef, tracer);
+    if (Object.keys(loaded.tools).length > 0) {
+      mcpTools = loaded.tools;
+      closeMcp = loaded.close;
+    }
+  }
+
   // L1 skill menu: compact name + description list injected into system prompt.
   // Agent calls load_skill(name) to get the full promptText when needed.
   const promptSuffix = hasSkills
@@ -315,12 +350,14 @@ export async function createImplementerAgent(
     instructions: '',
     model: await getModel('implementer'),
     name: 'implementer',
-    tools: resolvedActiveTools,
+    // Built-in tool keys always win over MCP tool keys on collision —
+    // a remote server must not be able to shadow bash/readFile/writeFile.
+    tools: { ...mcpTools, ...resolvedActiveTools },
   });
 
   const mastra = new Mastra({
     agents: { implementer: implementerAgent },
   });
 
-  return { agent: mastra.getAgent('implementer'), mastra, promptSuffix };
+  return { agent: mastra.getAgent('implementer'), closeMcp, mastra, promptSuffix };
 }

@@ -66,9 +66,9 @@ GLOBAL scope             →  (required — 6 AgentRoles only)
 
 **File:** `packages/worker/src/agents/implementer.ts`
 
-**Factory:** `createImplementerAgent(workspace, tracer?, tools?, skills?)`
+**Factory:** `createImplementerAgent(workspace, tracer?, tools?, skills?, options?)`
 
-Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string }`.
+Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present only when MCP tools were loaded and should be called in a `finally` block.
 
 ### 3.1 Workspace Tools (4, configurable)
 
@@ -113,6 +113,32 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
 2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security-events` can classify the event without raw SQL.
+
+### 3.5 MCP Tools (`Repository.mcpServerRef`, opt-in)
+
+**File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
+
+When a repository has `mcpServerRef` set, the implementer agent can be given the tools served by that MCP server **in addition to** its built-in workspace tools. Implemented via `@mastra/mcp` (`MCPClient`).
+
+**Semantics of `mcpServerRef`:**
+
+- Interpreted as an **http(s) URL** of a streamable-HTTP (or legacy SSE) MCP server, e.g. `https://mcp.example.com/mcp`.
+- Anything that is not `http://` or `https://` is rejected (`mcp.invalid_ref` activity event). **stdio MCP servers are deliberately unsupported** — the worker must never exec arbitrary commands sourced from a DB column.
+
+**Activation requires all three:**
+
+1. The caller passes `options.mcpServerRef` to `createImplementerAgent` — **defaults to disabled**; activities have not opted in yet (follow-up).
+2. The effective `AgentToolConfig` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty config = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `enabledTools` must explicitly contain `'mcp'`. Since the gateway tool-config enum does not accept `'mcp'` yet, **every existing tool config row disables MCP**.
+3. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only — it never fails the implementation.
+
+**Security and observability:**
+
+- Loaded tools are keyed `mcp_<toolName>` in the agent tool record (sanitized to provider-safe names); built-in tool keys always win on collision.
+- Every MCP tool call is audit-logged (`[mcp:audit] server=… tool=… args=…`, like the `bash` tool) and recorded on the `AgentTracer` with `toolName: 'mcp:<toolName>'`.
+- Successful loads record an `mcp.tools_loaded` activity event with the tool list.
+- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
+
+**Follow-ups:** (a) the gateway Zod enum for `AgentToolConfig.enabledTools` (`routes/skills.ts`) must accept `'mcp'` before admins can enable it on configs that restrict tools; (b) the implementer activities (`executeImplementation`, `implementerSession`, decomposition) need to pass the repo's `mcpServerRef` into `createImplementerAgent` and call `closeMcp()` in their `finally` blocks.
 
 ---
 
@@ -249,6 +275,8 @@ The scan runs:
 | `teamId` / `workflowTemplateId` | Scope keys (partial unique index) |
 
 **Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` follows the same WORKFLOW_TEMPLATE → TEAM → GLOBAL order. Returns `null` when no row exists at any scope, which means all tools are enabled.
+
+**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `enabledTools` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` and the gateway enum does not accept it yet — a non-empty config therefore disables MCP until that follow-up lands.
 
 Note: `AgentToolConfig` and `AgentSkillAssignment` use partial unique indexes (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
 
