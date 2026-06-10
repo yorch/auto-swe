@@ -21,7 +21,11 @@ const findMany = vi.mocked(prisma.scannerPattern.findMany);
 // reachable through the shared package's export map from the worker package, so
 // the shipped definitions are mirrored here to verify the real patterns).
 const BUILTIN_SENSITIVE_FILE_PATTERNS = [
-  { flags: '', label: 'sensitive-env-file', pattern: '^\\.env(\\..+)?$' },
+  {
+    flags: 'i',
+    label: 'sensitive-env-file',
+    pattern: '^\\.env(rc)?(\\.(?!example$|sample$|template$).+)?$',
+  },
   { flags: 'i', label: 'sensitive-pem-cert', pattern: '\\.(pem|crt|cer|p7b|p7c)$' },
   {
     flags: 'i',
@@ -64,6 +68,8 @@ describe('checkSensitiveFilePath — paths that must be blocked', () => {
   it.each([
     ['.env', 'sensitive-env-file'],
     ['.env.production', 'sensitive-env-file'],
+    ['.envrc', 'sensitive-env-file'], // direnv files can export secrets
+    ['config/.envrc', 'sensitive-env-file'],
     // The ^-anchored pattern only matches the basename for nested paths.
     ['packages/web/.env.local', 'sensitive-env-file'],
     ['certs/server.pem', 'sensitive-pem-cert'],
@@ -100,8 +106,8 @@ describe('checkSensitiveFilePath — paths that must be blocked', () => {
     expect(result).toContain('[sensitive-ssh-private-key]');
   });
 
-  it('blocks even .env.example (template files match the .env pattern)', async () => {
-    const result = await checkSensitiveFilePath('.env.example');
+  it('matches .env case-insensitively (the env pattern carries the i flag)', async () => {
+    const result = await checkSensitiveFilePath('.ENV');
     expect(result).toContain('[sensitive-env-file]');
   });
 });
@@ -116,16 +122,12 @@ describe('checkSensitiveFilePath — benign paths pass', () => {
     'id_rsa.pub', // public half of the keypair is fine
     'docs/credentials.md', // only json/yaml credential files are blocked
     'packages/shared/src/prisma/schema.prisma',
+    '.env.example', // secrets-free template — legitimate to write
+    '.env.sample', // secrets-free template — legitimate to write
+    '.env.template', // secrets-free template — legitimate to write
+    'packages/web/.env.example',
   ])('allows %j', async (filePath) => {
     await expect(checkSensitiveFilePath(filePath)).resolves.toBeNull();
-  });
-
-  it('does NOT block .envrc (direnv files slip through the anchored .env pattern)', async () => {
-    await expect(checkSensitiveFilePath('.envrc')).resolves.toBeNull();
-  });
-
-  it('does NOT block uppercase .ENV (the env pattern has no i flag)', async () => {
-    await expect(checkSensitiveFilePath('.ENV')).resolves.toBeNull();
   });
 });
 

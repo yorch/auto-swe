@@ -156,7 +156,7 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   {
     flags: 'i',
     label: 'send-to-external',
-    pattern: '\\b(exfiltrat|send\\s+to\\s+(http|ftp)|transmit\\s+(to|via))\\b',
+    pattern: '\\b(exfiltrat\\w*|send\\s+to\\s+(https?|ftp)|transmit\\s+(to|via))\\b',
     type: 'EXFILTRATION',
   },
 
@@ -190,18 +190,27 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   // agent so it can self-correct. Patterns target destructive or persistence ops
   // that have no legitimate use inside the agent's Docker workspace.
 
-  // Destructive filesystem operations on system paths
+  // Destructive filesystem operations on system paths (incl. paths nested under them)
   {
     flags: 'i',
     label: 'shell-rm-system-paths',
-    pattern: 'rm\\s+-[rRfF]{1,4}\\s+\\/(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\s|$)',
+    pattern:
+      'rm\\s+-[rRfF]{1,4}\\s+\\/(?:etc|usr|var|bin|lib|boot|root|home|sys|proc)(?:\\/[^\\s]*)?(?:\\s|$)',
     type: 'SHELL_COMMAND',
   },
-  // World-writable chmod — security misconfiguration
+  // World-writable chmod — security misconfiguration (last octal digit with the
+  // world-write bit set: 2, 3, 6 or 7)
   {
     flags: 'i',
     label: 'shell-chmod-world-writable',
-    pattern: 'chmod\\s+(?:o\\+[rwx]*w[rwx]*|[0-7]*7[0-7][0-7])\\s',
+    pattern: 'chmod\\s+(?:o\\+[rwx]*w[rwx]*|[0-7]?[0-7][0-7][2367])\\s',
+    type: 'SHELL_COMMAND',
+  },
+  // Piping a remote download straight into a shell — remote code execution
+  {
+    flags: 'i',
+    label: 'shell-curl-pipe-to-shell',
+    pattern: '\\b(?:curl|wget)\\b[^|;&]*\\|\\s*(?:ba|z|da)?sh\\b',
     type: 'SHELL_COMMAND',
   },
   // Crontab modification — persistence mechanism
@@ -345,8 +354,14 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
   // prevents the agent from writing secrets or credentials to the workspace.
   // Patterns are matched against both the basename and the full normalized path.
 
-  // .env and environment variable files
-  { flags: '', label: 'sensitive-env-file', pattern: '^\\.env(\\..+)?$', type: 'SENSITIVE_FILE' },
+  // .env / .envrc and environment variable files — secrets-free templates
+  // (.env.example / .env.sample / .env.template) are excluded
+  {
+    flags: 'i',
+    label: 'sensitive-env-file',
+    pattern: '^\\.env(rc)?(\\.(?!example$|sample$|template$).+)?$',
+    type: 'SENSITIVE_FILE',
+  },
   // PEM certificates and trust stores
   {
     flags: 'i',
