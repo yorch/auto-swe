@@ -19,6 +19,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import {
+  notifySlackHumanStep,
   notifySlackPrReady,
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -303,5 +304,153 @@ describe('notifySlackRunComplete (phase 8)', () => {
     delete process.env.SLACK_BOT_TOKEN;
     await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
     expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
+  interface Button {
+    type: string;
+    action_id: string;
+    text: { type: string; text: string };
+    value?: string;
+    url?: string;
+    style?: string;
+  }
+
+  function mockChannelResolution() {
+    findRun.mockResolvedValue({
+      template: { name: 'default-engineering' },
+      workflowId: 'eng-acme-x-JIRA-1',
+      workRequest: {
+        activeWorkflows: [],
+        externalTicketId: 'JIRA-1',
+        slackChannelId: 'C123',
+        slackMessageTs: null,
+      },
+    } as never);
+  }
+
+  function postedBlocks(): { text: string; buttons: Button[] } {
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as { text: string; blocks: Array<Record<string, unknown>> };
+    expect(Array.isArray(body.blocks)).toBe(true);
+    const actions = body.blocks.find((b) => b.type === 'actions') as { elements: Button[] };
+    expect(actions).toBeDefined();
+    return { buttons: actions.elements, text: body.text };
+  }
+
+  function resolveButtons(buttons: Button[]): Button[] {
+    return buttons.filter((b) => b.action_id.startsWith('hitl_resolve'));
+  }
+
+  it('APPROVAL: attaches Approve/Reject buttons with {stepId, action} values + inbox link', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      kind: 'APPROVAL',
+      runId: 'r1',
+      stepId: 'step-1',
+      title: 'Approve plan',
+    });
+
+    const { buttons } = postedBlocks();
+    const resolve = resolveButtons(buttons);
+    expect(resolve).toHaveLength(2);
+
+    const approve = resolve.find((b) => b.text.text === 'Approve');
+    expect(approve?.style).toBe('primary');
+    expect(JSON.parse(approve?.value ?? '{}')).toEqual({ action: 'approve', stepId: 'step-1' });
+
+    const reject = resolve.find((b) => b.text.text === 'Reject');
+    expect(reject?.style).toBe('danger');
+    expect(JSON.parse(reject?.value ?? '{}')).toEqual({ action: 'reject', stepId: 'step-1' });
+
+    // Inbox link button always present.
+    const inbox = buttons.find((b) => b.action_id === 'open_inbox');
+    expect(inbox?.url).toContain('/inbox');
+  });
+
+  it('DECISION: one select button per option, label truncated, value carried verbatim', async () => {
+    mockChannelResolution();
+    const longLabel = 'x'.repeat(200);
+    await notifySlackHumanStep({
+      kind: 'DECISION',
+      options: [
+        { label: 'Ship it', value: 'ship' },
+        { label: longLabel, value: 'hold' },
+      ],
+      runId: 'r1',
+      stepId: 'step-2',
+      title: 'Pick a path',
+    });
+
+    const { buttons } = postedBlocks();
+    const resolve = resolveButtons(buttons);
+    expect(resolve).toHaveLength(2);
+    expect(JSON.parse(resolve[0]?.value ?? '{}')).toEqual({
+      action: 'select',
+      stepId: 'step-2',
+      value: 'ship',
+    });
+    // Long labels are truncated to Slack's 75-char button text limit; the
+    // option VALUE must stay intact (it's what the workflow receives).
+    expect(resolve[1]?.text.text.length).toBeLessThanOrEqual(75);
+    expect(JSON.parse(resolve[1]?.value ?? '{}').value).toBe('hold');
+  });
+
+  it('DECISION: skips a button whose value payload would exceed Slack 2000-char cap', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      kind: 'DECISION',
+      options: [
+        { label: 'Fine', value: 'ok' },
+        { label: 'Huge', value: 'y'.repeat(3000) },
+      ],
+      runId: 'r1',
+      stepId: 'step-3',
+      title: 'Pick',
+    });
+
+    const { buttons } = postedBlocks();
+    const resolve = resolveButtons(buttons);
+    expect(resolve).toHaveLength(1);
+    expect(JSON.parse(resolve[0]?.value ?? '{}').value).toBe('ok');
+  });
+
+  it('INPUT: stays link-only (no resolve buttons), inbox button present', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      kind: 'INPUT',
+      runId: 'r1',
+      stepId: 'step-4',
+      title: 'Provide credentials note',
+    });
+
+    const { buttons } = postedBlocks();
+    expect(resolveButtons(buttons)).toHaveLength(0);
+    expect(buttons.find((b) => b.action_id === 'open_inbox')).toBeDefined();
+  });
+
+  it('REVIEW: stays link-only (free-form submit payload)', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      kind: 'REVIEW',
+      runId: 'r1',
+      stepId: 'step-5',
+      title: 'Review the diff',
+    });
+
+    const { buttons } = postedBlocks();
+    expect(resolveButtons(buttons)).toHaveLength(0);
+  });
+
+  it('degrades to link-only when stepId is unknown', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({ kind: 'APPROVAL', runId: 'r1', title: 'Approve plan' });
+
+    const { buttons, text } = postedBlocks();
+    expect(resolveButtons(buttons)).toHaveLength(0);
+    expect(buttons.find((b) => b.action_id === 'open_inbox')).toBeDefined();
+    // Plain-text fallback keeps the inbox link for clients that drop blocks.
+    expect(text).toContain('/inbox');
   });
 });

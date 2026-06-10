@@ -75,8 +75,9 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   // is still sent even when the DB write was already done by an earlier attempt.
   // Note: we intentionally do NOT return early on P2002 — the Slack notification must
   // reach the user even when the DB create was skipped.
+  let stepId: string | undefined;
   try {
-    await prisma.workflowHumanStep.create({
+    const created = await prisma.workflowHumanStep.create({
       data: {
         context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
         description: input.description,
@@ -89,21 +90,32 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
         title: input.title,
       },
     });
+    stepId = created.id;
   } catch (err) {
     // Unique constraint violation — another Temporal attempt already created the PENDING row.
     // Fall through to attempt the Slack notification.
     if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
       throw err;
     }
+    // Recover the existing row's id so the Slack message still carries
+    // resolve buttons. Best-effort — a miss just degrades to link-only.
+    const existing = await prisma.workflowHumanStep.findFirst({
+      select: { id: true },
+      where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
+    });
+    stepId = existing?.id;
   }
 
   // Best-effort Slack notification. notifySlackHumanStep owns the channel
   // resolution (origin thread → team channel), the token check, the timeout,
-  // and the catch — a Slack failure must not fail the activity.
+  // and the catch — a Slack failure must not fail the activity. `stepId` and
+  // `options` let it attach Block Kit resolve buttons (approval/decision).
   await notifySlackHumanStep({
     description: input.description,
     kind: input.kind,
+    options: input.options,
     runId: input.runId,
+    stepId,
     title: input.title,
   });
 }

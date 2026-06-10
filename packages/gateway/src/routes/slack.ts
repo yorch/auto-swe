@@ -3,7 +3,8 @@ import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/li
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
-import { openSlackView, verifySlackSignature } from '../lib/slack.js';
+import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { openSlackView, postSlackMessage, verifySlackSignature } from '../lib/slack.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -20,9 +21,12 @@ interface SlackIdentityResponse {
 
 interface SlackInteractivePayload {
   type?: string;
-  actions?: Array<{ action_id: string; value: string }>;
+  actions?: Array<{ action_id: string; value?: string }>;
   user?: { id: string };
   trigger_id?: string;
+  response_url?: string;
+  channel?: { id?: string };
+  message?: { ts?: string };
   view?: {
     callback_id?: string;
     state?: {
@@ -221,12 +225,26 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true } };
       }
 
+      const actionId = payload.actions?.[0]?.action_id ?? '';
+      const isHitlResolve = actionId === 'hitl_resolve' || actionId.startsWith('hitl_resolve:');
+
       // Resolve user by Slack ID
       const user = await fastify.prisma.user.findFirst({
         where: { slackId: slackUserId },
       });
 
       if (!user) {
+        if (isHitlResolve) {
+          // Button clicks come from arbitrary channel members — answer the
+          // clicker with an ephemeral hint instead of a bare 403 (Slack shows
+          // nothing useful for non-2xx interaction responses).
+          await respondToInteraction(
+            payload,
+            ':lock: Link your Slack account in Settings first — then you can resolve steps from Slack.',
+            { ephemeral: true }
+          );
+          return { data: { ignored: true, reason: 'slack_user_not_linked' } };
+        }
         return reply.status(403).send({
           error: { code: 'USER_NOT_FOUND', message: 'No user linked to this Slack account' },
         });
@@ -240,9 +258,15 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return handleRunModalSubmission(fastify, user, payload);
       }
 
-      const actionId = payload.actions?.[0]?.action_id;
       if (!actionId) {
         return { data: { ignored: true } };
+      }
+
+      // HITL resolve buttons posted by the worker's notifySlackHumanStep.
+      // Shares the inbox route's resolve core (lib/hitlResolve.ts): same team
+      // visibility, action validation, atomic guard, and signal rollback.
+      if (isHitlResolve) {
+        return handleHitlResolveAction(fastify, request, user, payload);
       }
 
       // Handle known actions
@@ -387,6 +411,125 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 };
+
+// ── HITL resolve button (block_actions, action_id `hitl_resolve[:…]`) ───────
+
+interface HitlButtonValue {
+  stepId?: string;
+  action?: string;
+  value?: unknown;
+}
+
+/**
+ * Resolve a pending human step from a Slack Block Kit button. The button
+ * `value` carries JSON `{stepId, action, value?}` written by the worker's
+ * `notifySlackHumanStep`. Authorization and resolve semantics are exactly the
+ * inbox route's — both call `resolveHitlStep`.
+ *
+ * Always acks with HTTP 200 (Slack treats non-2xx as a delivery failure and
+ * shows a generic warning); the human-readable outcome is delivered as a
+ * thread reply / ephemeral message instead.
+ */
+async function handleHitlResolveAction(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  user: { id: string; role: string },
+  payload: SlackInteractivePayload
+): Promise<unknown> {
+  let parsed: HitlButtonValue = {};
+  try {
+    parsed = JSON.parse(payload.actions?.[0]?.value ?? '{}') as HitlButtonValue;
+  } catch {
+    /* malformed JSON — handled below */
+  }
+  if (typeof parsed.stepId !== 'string' || !parsed.stepId || typeof parsed.action !== 'string') {
+    await respondToInteraction(
+      payload,
+      ':warning: This button is malformed — please resolve the step from the inbox instead.',
+      { ephemeral: true }
+    );
+    return { data: { action: 'hitl_resolve', ignored: true, reason: 'malformed_value' } };
+  }
+
+  const result = await resolveHitlStep(
+    { log: request.log, prisma: fastify.prisma, temporal: fastify.temporal },
+    parsed.stepId,
+    parsed.action,
+    parsed.value,
+    { role: user.role, sub: user.id }
+  );
+
+  if (result.ok) {
+    const who = payload.user?.id ? `<@${payload.user.id}>` : 'someone';
+    await respondToInteraction(
+      payload,
+      `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who}.`,
+      { ephemeral: false }
+    );
+    return { data: { action: 'hitl_resolve', ok: true, stepId: result.stepId } };
+  }
+
+  await respondToInteraction(payload, hitlErrorText(result.code, result.message), {
+    ephemeral: true,
+  });
+  return { data: { action: 'hitl_resolve', code: result.code, ok: false } };
+}
+
+function hitlErrorText(code: HitlResolveErrorCode, message: string): string {
+  switch (code) {
+    case 'ALREADY_RESOLVED':
+      return ':information_source: This step has already been resolved — nothing left to do.';
+    case 'NOT_FOUND':
+      return ':warning: This step no longer exists or is not visible to you.';
+    case 'RUN_NOT_RUNNING':
+      return ':warning: The workflow run is no longer running.';
+    case 'SIGNAL_FAILED':
+      return ':warning: Could not deliver your response to the workflow — please try the button again.';
+    default:
+      return `:warning: ${message}`;
+  }
+}
+
+/**
+ * Best-effort reply to a Slack interaction. Success confirmations annotate the
+ * original message as a thread reply (chat.postMessage — what lib/slack.ts
+ * already supports); errors and the unlinked-account hint go to `response_url`
+ * as an ephemeral message visible only to the clicker. Never replaces the
+ * original message (`replace_original: false`) so the audit trail stays
+ * intact. All failures are swallowed — Slack chatter must never fail the ack.
+ */
+async function respondToInteraction(
+  payload: SlackInteractivePayload,
+  text: string,
+  opts: { ephemeral: boolean }
+): Promise<void> {
+  try {
+    if (!opts.ephemeral && payload.channel?.id && payload.message?.ts) {
+      const { botToken } = await resolveSlackConfig();
+      const ts = await postSlackMessage(
+        { channel: payload.channel.id, text, threadTs: payload.message.ts },
+        botToken ?? undefined
+      );
+      if (ts) {
+        return;
+      }
+      // fall through to response_url if the thread reply failed
+    }
+    if (payload.response_url) {
+      await fetch(payload.response_url, {
+        body: JSON.stringify({
+          replace_original: false,
+          response_type: opts.ephemeral ? 'ephemeral' : 'in_channel',
+          text,
+        }),
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        method: 'POST',
+      });
+    }
+  } catch {
+    /* best-effort */
+  }
+}
 
 // ── Slash-command helpers ───────────────────────────────────────────────────
 
