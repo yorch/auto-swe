@@ -50,6 +50,69 @@ async function verifyWebhookOrReject(
   return true;
 }
 
+/** Conclusions that don't fail a check suite. */
+const NON_FAILING_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+interface AggregatedChecks {
+  /** True when every check run on the SHA has completed. */
+  complete: boolean;
+  /** True when no completed run has a failing conclusion. */
+  passed: boolean;
+  /** html_url of the first failing run, for the CI-fix loop's log fetch. */
+  failingLogsUrl?: string;
+}
+
+/**
+ * Aggregate all check runs for a commit. A PR typically has several check
+ * runs (lint, test, build, third-party apps); signaling the workflow on the
+ * first completed run would resume it on a partial result. Returns null when
+ * aggregation is unavailable (no PAT configured, API error) — callers fall
+ * back to legacy per-run signaling rather than stranding the workflow.
+ */
+async function aggregateCheckRuns(
+  apiUrl: string,
+  token: string | null,
+  org: string,
+  repoName: string,
+  headSha: string
+): Promise<AggregatedChecks | null> {
+  if (!token) {
+    return null;
+  }
+  try {
+    const res = await fetch(
+      `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=100`,
+      {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    if (!res.ok) {
+      return null;
+    }
+    const body = (await res.json()) as {
+      check_runs?: Array<{ status: string; conclusion: string | null; html_url: string }>;
+    };
+    const runs = body.check_runs ?? [];
+    if (runs.length === 0) {
+      return null;
+    }
+    const complete = runs.every((r) => r.status === 'completed');
+    const failing = runs.find(
+      (r) => r.status === 'completed' && !NON_FAILING_CONCLUSIONS.has(r.conclusion ?? '')
+    );
+    return {
+      complete,
+      passed: !failing,
+      ...(failing ? { failingLogsUrl: failing.html_url } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/webhooks/git
   fastify.post(
@@ -161,7 +224,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const [org, repoName] = repoFullName.split('/');
       const headSha = checkRun.head_sha;
       const conclusion = checkRun.conclusion;
-      const logsUrl = checkRun.html_url;
+      let logsUrl = checkRun.html_url;
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
@@ -177,8 +240,33 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true, reason: 'No tracked PR for this commit' } };
       }
 
+      // A failing run decides the outcome on its own — signal immediately so
+      // the CI-fix loop gets the failing logs without waiting for the rest.
+      let passed = conclusion === 'success';
+      if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
+        // A passing run says nothing about the other checks on the SHA.
+        // Aggregate and only signal once everything has completed.
+        const { apiUrl, token } = await resolveGitHubConfig();
+        const aggregated = await aggregateCheckRuns(apiUrl, token ?? null, org, repoName, headSha);
+        if (aggregated) {
+          if (!aggregated.complete) {
+            return {
+              data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
+            };
+          }
+          passed = aggregated.passed;
+          if (!passed && aggregated.failingLogsUrl) {
+            logsUrl = aggregated.failingLogsUrl;
+          }
+        } else {
+          request.log.warn(
+            { headSha, repoFullName },
+            'check-run aggregation unavailable (no PAT or API error); signaling per run'
+          );
+        }
+      }
+
       // Batch-update CI status in a single transaction to avoid N+1 queries
-      const passed = conclusion === 'success';
       await fastify.prisma.$transaction(
         pullRequests.map((pr: (typeof pullRequests)[number]) =>
           fastify.prisma.pullRequest.update({
