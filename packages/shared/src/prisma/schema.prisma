@@ -161,21 +161,6 @@ model PullRequest {
   @@map("pull_requests")
 }
 
-model RefreshToken {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId         String    @map("user_id") @db.Uuid
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash      String    @unique @map("token_hash")
-  family         String    @default(dbgenerated("gen_random_uuid()"))
-  expiresAt      DateTime  @map("expires_at") @db.Timestamptz
-  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-
-  @@index([userId])
-  @@index([family])
-  @@map("refresh_tokens")
-}
-
 /// Phase-8 long-lived API token for CI / CLI use. The plaintext token is
 /// returned exactly once on create (`ats_<random>` format); only the sha-256
 /// hash is stored. `lastUsedAt` is updated best-effort on each successful
@@ -297,7 +282,6 @@ model User {
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   preferences    Json           @default("{}") @map("preferences")
 
-  refreshTokens         RefreshToken[]
   memberships           TeamMembership[]
   accessTokens          PersonalAccessToken[]
   /// Better-auth relations.

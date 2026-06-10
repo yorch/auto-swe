@@ -17,7 +17,6 @@ import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from '.
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
-import { authRoutes } from './routes/auth.js';
 import { epicRoutes } from './routes/epics.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -195,7 +194,6 @@ async function start() {
   });
 
   // ── Public routes (no auth) ──
-  await app.register(authRoutes, { prefix: '/api/v1/auth' });
 
   // ── Personal access tokens (auth required, but self-service for engineers+) ──
   await app.register(tokenRoutes, { prefix: '/api/v1/auth/tokens' });

@@ -20,7 +20,6 @@ declare module 'fastify' {
     auth: {
       signAccessToken: (payload: Omit<JwtPayload, 'iat' | 'exp'>) => string;
       verifyAccessToken: (token: string) => JwtPayload;
-      generateRefreshToken: () => string;
       hashToken: (token: string) => string;
       /** Sign a single-purpose, short-lived token for OAuth `state`. Audience-
        *  scoped so it can never be replayed as an API bearer (and vice versa). */
@@ -67,7 +66,6 @@ function getErrorName(err: unknown): string | undefined {
 export { getErrorMessage, getErrorName };
 
 const ACCESS_TOKEN_TTL = '1h';
-const REFRESH_TOKEN_BYTES = 48;
 
 // Audience claims keep token classes from being swapped: an API access token
 // can't be presented as OAuth `state`, and an OAuth-state token can't be used
@@ -129,10 +127,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   const algorithm = getAlgorithm();
 
   fastify.decorate('auth', {
-    generateRefreshToken(): string {
-      return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('base64url');
-    },
-
     hashToken(token: string): string {
       return crypto.createHash('sha256').update(token).digest('hex');
     },

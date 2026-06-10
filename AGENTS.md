@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**auto-swe** is an autonomous agentic software engineering system built as a Yarn 4 TypeScript monorepo. It accepts work requests (external ticket IDs from any issue tracker), runs LLM-powered agents to implement code in isolated Docker workspaces, reviews changes via a multi-agent review network, opens pull requests, and waits for human merge. It includes JWT auth with RBAC, team management, Slack integration, a CI self-healing loop, semantic memory (pgvector), and a Next.js web dashboard.
+**auto-swe** is an autonomous agentic software engineering system built as a Yarn 4 TypeScript monorepo. It accepts work requests (external ticket IDs from any issue tracker), runs LLM-powered agents to implement code in isolated Docker workspaces, reviews changes via a multi-agent review network, opens pull requests, and waits for human merge. It includes better-auth sessions + personal-access-token auth with RBAC, team management, Slack integration, a CI self-healing loop, semantic memory (pgvector), and a Next.js web dashboard.
 
 ---
 
@@ -72,7 +72,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
-| `packages/cli`     | `auto-swe` CLI (workflows list/show/export/import)   | ESM Node 24+; auth via `AUTO_SWE_TOKEN` or `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD`; thin fetch wrapper over the gateway REST API                                                              |
+| `packages/cli`     | `auto-swe` CLI (workflows list/show/export/import)   | ESM Node 24+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API                                                              |
 
 Top-level files that matter:
 
@@ -411,7 +411,7 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | Decision                     | Choice                                                    | Rationale                                                         |
 | ---------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
 | HTTP framework               | Fastify 5.x over Express                                  | ~3x throughput, built-in schema validation, plugin architecture   |
-| JWT auth                     | Access + refresh tokens with family-based reuse detection | Stateless auth with secure rotation; bcrypt for password hashing  |
+| Auth                         | better-auth sessions (browser) + PATs (CLI/CI); short-lived JWTs only via the session-token bridge | One identity store; PATs survive restarts; the legacy refresh-token rotation flow was removed (ARCH-4) |
 | DinD over K8s                | `docker run`/`exec`                                       | No cluster needed; same isolation model, zero infra beyond Docker |
 | PAT or GitHub App            | PAT for simplicity; GitHub App for production             | GitHub App: short-lived tokens, per-installation scope, full audit trail; admin UI at /admin/integrations |
 | pgvector for memory          | Vector embeddings on AgentLesson                          | Semantic similarity search for agent context enrichment           |

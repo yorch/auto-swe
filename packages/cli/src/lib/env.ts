@@ -1,25 +1,17 @@
 /**
  * CLI environment + auth resolution.
  *
- * Resolution order for the bearer token:
- *   1. `AUTO_SWE_TOKEN` (raw JWT or phase-8 `ats_*` personal access token —
- *      the gateway accepts both formats transparently)
- *   2. `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD` (POST /auth/login)
- *
- * PATs are the recommended path for long-running CI integrations — they
- * survive the JWT's 1h TTL without re-logging in. The login fallback exists
- * so a CI cron can authenticate without copy-pasting a token. Tokens are NOT
- * cached on disk — re-derived per process.
+ * Auth is `AUTO_SWE_TOKEN` only — a personal access token (`ats_*`, minted
+ * at Settings → API tokens in the dashboard) or any bearer the gateway
+ * accepts. The legacy `AUTO_SWE_USERNAME`/`AUTO_SWE_PASSWORD` exchange was
+ * removed along with the hand-rolled /auth/login endpoint (ARCH-4) —
+ * password sign-in is a browser flow via better-auth now. Tokens are NOT
+ * cached on disk — re-read per process.
  */
 
 export interface CliEnv {
   apiUrl: string;
   token: string;
-}
-
-interface AuthLoginResponse {
-  data?: { accessToken?: string };
-  error?: { code?: string; message?: string };
 }
 
 export async function loadCliEnv(): Promise<CliEnv> {
@@ -28,21 +20,12 @@ export async function loadCliEnv(): Promise<CliEnv> {
   if (raw) {
     return { apiUrl, token: raw };
   }
-  const username = process.env.AUTO_SWE_USERNAME?.trim();
-  const password = process.env.AUTO_SWE_PASSWORD;
-  if (username && password) {
-    const res = await fetch(`${apiUrl}/api/v1/auth/login`, {
-      body: JSON.stringify({ email: username, password }),
-      headers: { 'Content-Type': 'application/json' },
-      method: 'POST',
-    });
-    const data = (await res.json().catch(() => ({}))) as AuthLoginResponse;
-    if (!res.ok || !data.data?.accessToken) {
-      throw new Error(
-        `Login failed: ${data.error?.message ?? `HTTP ${res.status}`} — set AUTO_SWE_TOKEN to skip login.`
-      );
-    }
-    return { apiUrl, token: data.data.accessToken };
+  if (process.env.AUTO_SWE_USERNAME || process.env.AUTO_SWE_PASSWORD) {
+    throw new Error(
+      'AUTO_SWE_USERNAME/AUTO_SWE_PASSWORD are no longer supported — mint a personal access token at Settings → API tokens and set AUTO_SWE_TOKEN.'
+    );
   }
-  throw new Error('No credentials. Set AUTO_SWE_TOKEN, or AUTO_SWE_USERNAME + AUTO_SWE_PASSWORD.');
+  throw new Error(
+    'No credentials. Set AUTO_SWE_TOKEN (personal access token from Settings → API tokens).'
+  );
 }

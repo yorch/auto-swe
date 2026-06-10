@@ -34,7 +34,7 @@ COMMANDS
 ENVIRONMENT
   AUTO_SWE_API_URL   Base URL of the gateway (default: http://localhost:8080)
   AUTO_SWE_TOKEN     Bearer token: JWT or phase-8 \`ats_*\` personal access token
-                     Falls back to AUTO_SWE_USERNAME + AUTO_SWE_PASSWORD for /auth/login
+                     Mint one at Settings → API tokens in the dashboard
 
 EXIT CODES
   0  success

@@ -132,7 +132,10 @@ export class ApiClient {
   private async performRefresh(): Promise<boolean> {
     const generation = this.tokenGeneration;
     try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      // ARCH-4: the legacy /auth/refresh rotation endpoint is gone. A fresh
+      // bearer is minted from the live better-auth session via the bridge;
+      // with no session this fails and the caller falls through to login.
+      const response = await fetch(`${API_BASE}/api/v1/auth/session-token`, {
         credentials: 'include',
         method: 'POST',
       });

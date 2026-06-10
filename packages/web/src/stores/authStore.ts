@@ -15,11 +15,10 @@ interface AuthState {
     isActive?: boolean;
   } | null;
   isAuthenticated: boolean;
-  /** Legacy email+password sign-in via the hand-rolled /api/v1/auth/login.
-   *  Kept for back-compat with pre-better-auth seeded users. Mints a JWT
-   *  that lives in localStorage; subsequent API calls also send the
-   *  better-auth session cookie automatically (credentials: 'include'),
-   *  but the gateway prefers the bearer when both are present. */
+  /** Email+password sign-in via better-auth (`/api/auth/sign-in/email`).
+   *  Establishes the session cookie; subsequent API calls authenticate via
+   *  `credentials: 'include'` exactly like the social / magic-link flows.
+   *  (ARCH-4: the legacy hand-rolled /api/v1/auth/login was removed.) */
   login: (email: string, password: string) => Promise<void>;
   /** Resolve the active session from a better-auth cookie. Used after the
    *  social / magic-link callback lands back on /login?bridge=1 — no JWT
@@ -49,15 +48,6 @@ interface AuthState {
 /** Lifetime of the proxy-visible marker cookie. Just long enough to span
  *  a typical session — actual auth always re-verifies against the gateway. */
 const MARKER_TTL_SECONDS = 60 * 60 * 24 * 7;
-
-function setLegacyTokenCookie(token: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  const isSecure = window.location.protocol === 'https:' ? '; Secure' : '';
-  // biome-ignore lint/suspicious/noDocumentCookie: same-origin cookie read by the Next.js proxy to gate routes; gateway re-verifies the JWT.
-  document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${isSecure}`;
-}
 
 function setSessionMarkerCookie(): void {
   if (typeof window === 'undefined') {
@@ -197,16 +187,29 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   login: async (email, password) => {
-    const { data } = await api.post<{ data: { accessToken: string } }>('/api/v1/auth/login', {
-      email,
-      password,
-    });
-    api.setToken(data.accessToken);
-    setLegacyTokenCookie(data.accessToken);
-    set({
-      isAuthenticated: true,
-      user: decodeJwtPayload(data.accessToken) as AuthState['user'],
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/auth/sign-in/email`, {
+        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    } catch (err) {
+      throw new Error(
+        gatewayUnreachableMessage(err, API_BASE) ?? 'Sign-in failed — gateway unreachable.'
+      );
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(body?.message ?? 'Invalid email or password');
+    }
+    const user = await fetchBetterAuthSession();
+    if (!user) {
+      throw new Error('Sign-in succeeded but no session was established — try again.');
+    }
+    setSessionMarkerCookie();
+    set({ isAuthenticated: true, user });
   },
 
   logout: async () => {
