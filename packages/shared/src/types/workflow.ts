@@ -24,6 +24,13 @@ export interface CodeSecurityFinding {
 
 export interface CodeResult {
   branch: string;
+  /**
+   * Repository the code was written against. Populated by the implementer
+   * activities so downstream fix activities can resolve the repo directly
+   * instead of guessing from the (non-unique) branch name. Optional for
+   * backwards compatibility with context snapshots persisted before it existed.
+   */
+  repoId?: string;
   codeSecurityFindings?: CodeSecurityFinding[];
   diff: string;
   filesChanged: FileChange[];

@@ -284,6 +284,7 @@ export async function executeImplementation(
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
       implementationNotes: `Completed in ${testResult.passed ? '≤5' : '5 (max)'} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      repoId: request.repoId,
       testResults: testResult,
     };
   } finally {

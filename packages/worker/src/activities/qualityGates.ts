@@ -21,24 +21,13 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import type { CodeResult, RepoWorkRequest, TestRunResult } from '@auto-swe/shared/types/workflow';
+import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import {
-  currentWorkflowId,
-  currentWorkflowRunId,
-  persistActivityTrace,
-} from '../lib/activityContext.js';
-import { AgentTracer } from '../lib/agentTracer.js';
+import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
-import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout } from '../lib/errors.js';
 import { requireGitHubToken } from '../lib/githubAuth.js';
-import { resolveSystemPrompt } from '../lib/models.js';
-import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
+import { runImplementerFixSession } from './implementerSession.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export type GateName =
@@ -276,20 +265,6 @@ export interface GateFixInput {
 export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
   const { gateName, gateOutput, previousCodeResult, systemPromptOverride } = input;
 
-  const workflow = await prisma.activeWorkflow.findFirst({
-    include: { repository: true },
-    where: { assignedBranch: previousCodeResult.branch },
-  });
-  if (!workflow?.repository) {
-    throw new Error(`No workflow found for branch ${previousCodeResult.branch}`);
-  }
-
-  const repo = workflow.repository;
-  const ghConfig = await resolveGitHubConfig();
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = await requireGitHubToken(ghConfig);
-
   // Load full gate logs from the artifact store, falling back to the inline
   // summary if the artifact is missing or unreadable.
   let gateLogs = gateOutput.summary;
@@ -302,159 +277,43 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     }
   }
 
-  const workspace = createWorkspace(
-    repoUrl,
-    previousCodeResult.branch,
-    repo.defaultBranch,
-    githubToken,
-    repo.executorImage ?? 'node:24-alpine'
-  );
-  const gateTracer = new AgentTracer();
-
-  try {
-    heartbeat('gate fix workspace provisioned');
-
-    // Sync to remote HEAD so the implementer sees the latest pushed commits.
-    try {
-      workspace.exec(`git fetch origin ${shellQuote(previousCodeResult.branch)}`);
-      workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
-    } catch {
-      // branch may not exist remotely yet; proceed against the local clone
-    }
-
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson);
-
-    const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      gateTracer,
-      toolConfig,
-      skills
-    );
-
-    const systemPrompt = await resolveSystemPrompt(
-      'implementer',
-      GATE_FIX_SYSTEM_PROMPT,
-      systemPromptOverride
-    );
-
-    const gateSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
-    const gateUserMessage = JSON.stringify({
+  return runImplementerFixSession({
+    // Re-run the failed gate against the fixed code (mirrors the system
+    // prompt's "Re-run the affected gate locally" instruction). Tests still
+    // run afterwards as a regression check so a fix that silences the gate
+    // but breaks tests is caught.
+    afterGenerate: async (workspace, repo) => {
+      if (
+        gateName === 'unknown' ||
+        (DEFAULT_COMMANDS as Record<string, string | null>)[gateName] === undefined
+      ) {
+        return `${gateName} not re-runnable (no command resolved)`;
+      }
+      const rerunCommand = await resolveCommand(
+        gateName as GateName,
+        { externalTicketId: '', repoId: repo.id } as RepoWorkRequest,
+        undefined
+      );
+      if (!rerunCommand) {
+        return `${gateName} not re-runnable (no command resolved)`;
+      }
+      heartbeat(`gate fix: re-running ${gateName}`);
+      const rerun = workspace.execCapture(rerunCommand);
+      const passed = rerun.exitCode === 0 && !rerun.signal;
+      return `${gateName} ${passed ? 'passing' : 'still failing'}`;
+    },
+    commitMessage: `auto: fix ${gateName} for ${previousCodeResult.branch}`,
+    defaultSystemPrompt: GATE_FIX_SYSTEM_PROMPT,
+    mode: 'GATE_FIX',
+    notes: (testResult, extraNote) =>
+      `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+    previousCodeResult,
+    systemPromptOverride,
+    usageEventName: 'llm.gate_fix',
+    userPayload: {
       failedGate: gateName,
       gateExitCode: gateOutput.exitCode,
       gateLogs,
-      mode: 'GATE_FIX',
-      previousDiff: previousCodeResult.diff.slice(-20_000),
-    });
-    const agentStart = Date.now();
-    const gateFix = await agent.generate(
-      [
-        { content: gateSystemPrompt, role: 'system' },
-        { content: gateUserMessage, role: 'user' },
-      ],
-      { toolChoice: 'auto' }
-    );
-
-    heartbeat('gate fix agent completed');
-
-    if (gateFix.usage) {
-      await recordLlmUsage(currentWorkflowId(), 'implementer', gateFix.usage, 'llm.gate_fix');
-    }
-
-    if (gateFix.text) {
-      gateTracer.addLlmResponse({
-        durationMs: Date.now() - agentStart,
-        inputJson: { systemPrompt: gateSystemPrompt, userMessage: gateUserMessage },
-        outputJson: { text: gateFix.text },
-        role: 'implementer',
-      });
-    }
-
-    // Re-run the failed gate against the fixed code (mirrors the system
-    // prompt's "Re-run the affected gate locally" instruction). Tests still
-    // run as a regression check so a fix that silences the gate but breaks
-    // tests is caught.
-    let gateRerunPassed: boolean | null = null;
-    if (
-      gateName !== 'unknown' &&
-      (DEFAULT_COMMANDS as Record<string, string | null>)[gateName] !== undefined
-    ) {
-      try {
-        const rerunCommand = await resolveCommand(
-          gateName as GateName,
-          { externalTicketId: '', repoId: repo.id } as RepoWorkRequest,
-          undefined
-        );
-        if (rerunCommand) {
-          heartbeat(`gate fix: re-running ${gateName}`);
-          const rerun = workspace.execCapture(rerunCommand);
-          gateRerunPassed = rerun.exitCode === 0 && !rerun.signal;
-        }
-      } catch {
-        // Re-run is informational; failure here does not abort the fix.
-      }
-    }
-
-    let testResult: TestRunResult;
-    const testStart = Date.now();
-    try {
-      const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - testStart);
-    } catch (err: unknown) {
-      testResult = {
-        duration_ms: 0,
-        failing: 1,
-        passed: false,
-        passing: 0,
-        stdout: getExecErrorStdout(err),
-        total: 0,
-      };
-    }
-    gateTracer.addActivityEvent({
-      durationMs: Date.now() - testStart,
-      name: 'tdd.test_run',
-      outputJson: {
-        failing: testResult.failing,
-        passed: testResult.passed,
-        passing: testResult.passing,
-        total: testResult.total,
-      },
-    });
-
-    workspace.exec('git add -A');
-    workspace.exec(
-      `git diff --cached --quiet || git commit -m ${shellQuote(`auto: fix ${gateName} for ${previousCodeResult.branch}`)}`
-    );
-    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
-
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
-
-    gateTracer.addActivityEvent({
-      name: 'git.commit_push',
-      outputJson: { branch: previousCodeResult.branch, headSha },
-    });
-
-    const gateNote =
-      gateRerunPassed === null
-        ? `${gateName} not re-runnable (no command resolved)`
-        : `${gateName} ${gateRerunPassed ? 'passing' : 'still failing'}`;
-    return {
-      branch: previousCodeResult.branch,
-      diff,
-      filesChanged: parseDiffToFileChanges(diff),
-      headSha,
-      implementationNotes: `Gate fix iteration for ${gateName}. ${gateNote}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
-      testResults: testResult,
-    };
-  } finally {
-    const done = persistActivityTrace(gateTracer, 'implementer');
-    workspace.destroy();
-    await done;
-  }
+    },
+  });
 }
