@@ -28,6 +28,82 @@ function useSkills() {
   });
 }
 
+interface SkillEffectiveness {
+  windowDays: number;
+  totalRuns: number;
+  baselineSuccessRate: number | null;
+  caveat: string;
+  perSkill: Array<{
+    name: string;
+    runs: number;
+    successRate: number | null;
+    avgCostUsd: number | null;
+  }>;
+}
+
+function useSkillEffectiveness() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: SkillEffectiveness }>('/api/v1/admin/skills/effectiveness')
+        .then((r) => r.data),
+    queryKey: ['skills', 'effectiveness'],
+  });
+}
+
+function pct(v: number | null): string {
+  return v == null ? '—' : `${(v * 100).toFixed(0)}%`;
+}
+
+function EffectivenessCard() {
+  const { data, isLoading } = useSkillEffectiveness();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Skill effectiveness (last {data?.windowDays ?? 30} days)</CardTitle>
+      </CardHeader>
+      <p className="mb-3 text-xs text-paper-500">
+        Run outcomes for runs where each skill was active, vs. the all-runs baseline (
+        {pct(data?.baselineSuccessRate ?? null)} success across {data?.totalRuns ?? 0} runs).
+        Correlational — skills are assigned per team/template, so differences may reflect the team
+        or workload, not the skill.
+      </p>
+      {isLoading ? (
+        <LoadingState />
+      ) : !data?.perSkill.length ? (
+        <div className="py-6 text-center text-sm text-paper-400">
+          No runs with active skills in this window yet.
+        </div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-600">
+              <th className="py-2 text-left text-xs text-paper-500">Skill</th>
+              <th className="py-2 text-right text-xs text-paper-500">Runs</th>
+              <th className="py-2 text-right text-xs text-paper-500">Success rate</th>
+              <th className="py-2 text-right text-xs text-paper-500">Avg cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.perSkill.map((s) => (
+              <tr className="border-b border-ink-600 last:border-0" key={s.name}>
+                <td className="py-2 pr-4 font-medium text-paper-100">{s.name}</td>
+                <td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</td>
+                <td className="py-2 text-right tabular-nums text-paper-400">
+                  {pct(s.successRate)}
+                </td>
+                <td className="py-2 text-right tabular-nums text-paper-400">
+                  {s.avgCostUsd == null ? '—' : `$${s.avgCostUsd.toFixed(2)}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
 function useCreateSkill() {
   const qc = useQueryClient();
   return useMutation({
@@ -226,6 +302,8 @@ export default function AdminSkillsPage() {
           </table>
         )}
       </Card>
+
+      <EffectivenessCard />
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
       <DeleteConfirmModal onClose={() => setDeleteTarget(null)} skill={deleteTarget} />
