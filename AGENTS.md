@@ -115,7 +115,7 @@ Top-level files that matter:
 
 - **Framework:** Vitest (`vitest.config.ts` at root)
 - **Gateway routes:** Fastify's built-in `light-my-request` via `app.inject()`
-- **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment is the intended pattern, but it is **not yet adopted** — the package isn't a dependency and `RunnableWorkflow` has no workflow-level tests today (the shared interpreter is unit-tested directly). Add the dependency when writing the first workflow test.
+- **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment (time-skipping) with fake activities — see `packages/worker/src/workflows/runnable.workflow.test.ts`. The shared interpreter is additionally unit-tested directly. First run downloads the test-server binary.
 - **Activities:** Mock Prisma client + mock Docker exec calls
 - **Pattern:** Co-locate test files next to source (e.g., `workRequests.test.ts`)
 

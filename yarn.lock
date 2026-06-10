@@ -298,6 +298,7 @@ __metadata:
     "@opentelemetry/instrumentation-http": "npm:0.218.0"
     "@opentelemetry/sdk-metrics": "npm:2.7.1"
     "@temporalio/activity": "npm:1.17.2"
+    "@temporalio/testing": "npm:1.17.2"
     "@temporalio/worker": "npm:1.17.2"
     "@temporalio/workflow": "npm:1.17.2"
     ai: "npm:6.0.196"
@@ -3891,6 +3892,22 @@ __metadata:
     long: "npm:^5.2.3"
     protobufjs: "npm:7.5.5"
   checksum: 10c0/920177ef3db846738b644641bced5660b653d931f51c5d650acf86e9cdf7f61a5febee1158983107bba4b261b4db677a2fb79b19a2087f03763d91b6d5970b6d
+  languageName: node
+  linkType: hard
+
+"@temporalio/testing@npm:1.17.2":
+  version: 1.17.2
+  resolution: "@temporalio/testing@npm:1.17.2"
+  dependencies:
+    "@temporalio/activity": "npm:1.17.2"
+    "@temporalio/client": "npm:1.17.2"
+    "@temporalio/common": "npm:1.17.2"
+    "@temporalio/core-bridge": "npm:1.17.2"
+    "@temporalio/proto": "npm:1.17.2"
+    "@temporalio/worker": "npm:1.17.2"
+    "@temporalio/workflow": "npm:1.17.2"
+    abort-controller: "npm:^3.0.0"
+  checksum: 10c0/7e9647fce631b94a6c266ab56c2f071d11ecb0bef37f0916678609af07a30542a3874241be80fea217130a8f2d1ea9055209cda58bab98848fadcfe06550e1e5
   languageName: node
   linkType: hard
 
