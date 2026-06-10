@@ -11,21 +11,7 @@ import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
-import authPlugin, { invalidateSessionCache } from './plugins/auth.js';
-
-/** Extract the better-auth session token from a cookie header string. */
-function extractSessionCookie(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) {
-    return null;
-  }
-  const idx = cookieHeader.indexOf('better-auth.session_token=');
-  if (idx === -1) {
-    return null;
-  }
-  const start = idx + 'better-auth.session_token='.length;
-  const end = cookieHeader.indexOf(';', start);
-  return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
-}
+import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from './plugins/auth.js';
 
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -130,7 +116,7 @@ async function start() {
         // Snapshot the session-cookie value BEFORE better-auth runs — on a
         // successful /sign-out it'll clear the cookie in the response, and
         // we want to invalidate our in-memory cache for that token regardless.
-        const sessionCookieBefore = extractSessionCookie(request.headers.cookie);
+        const sessionCookieBefore = extractSessionCookieValue(request.headers);
         const req = new Request(url.toString(), {
           ...(request.body ? { body: JSON.stringify(request.body) } : {}),
           headers,

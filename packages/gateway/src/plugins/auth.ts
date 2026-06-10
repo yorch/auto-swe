@@ -245,7 +245,10 @@ const SESSION_CACHE_TTL_MS = 60_000;
 const SESSION_CACHE_MAX = 2000;
 const sessionPayloadCache = new Map<string, { payload: JwtPayload; expiresAt: number }>();
 
-function extractSessionCookieValue(headers: FastifyRequest['headers']): string | null {
+/** Extract the better-auth session token from a cookie header string.
+ *  Quick scan for the one cookie name we care about — no full parse.
+ *  Exported so index.ts shares this instead of keeping its own copy. */
+export function extractSessionCookieValue(headers: FastifyRequest['headers']): string | null {
   const raw = headers.cookie;
   if (typeof raw !== 'string') {
     return null;
