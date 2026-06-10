@@ -21,6 +21,82 @@ const CheckRunWebhookSchema = z.object({
   repository: z.object({ full_name: z.string() }),
 });
 
+// ── GitHub payload → domain-event normalization ──
+//
+// The route handlers below operate on these provider-agnostic events; only
+// the normalize functions know GitHub's payload shapes. A future GitLab
+// webhook route maps its own payloads to the same event types and reuses the
+// downstream DB-update + Temporal-signal logic unchanged.
+
+/** A PR-merge domain event extracted from a provider webhook payload. */
+export type PullRequestMergedEvent =
+  /** Payload didn't match the expected shape at all. */
+  | { type: 'unrecognized' }
+  /** Valid payload but not a merged-PR event (e.g. opened, closed-unmerged). */
+  | { type: 'ignored' }
+  | { type: 'merged'; prNumber: number; org: string; repoName: string };
+
+/** A CI check-completion domain event extracted from a provider webhook payload. */
+export type CheckRunCompletedEvent =
+  | { type: 'unrecognized' }
+  /** Valid payload but not a completed check run. */
+  | { type: 'ignored' }
+  | {
+      type: 'completed';
+      org: string;
+      repoName: string;
+      headSha: string;
+      conclusion: string;
+      logsUrl: string;
+    };
+
+/** Pure mapping from a GitHub `pull_request` webhook body to a domain event. */
+export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestMergedEvent {
+  const parsed = PullRequestWebhookSchema.safeParse(body);
+  if (!parsed.success) {
+    return { type: 'unrecognized' };
+  }
+  const payload = parsed.data;
+
+  // Only handle merged pull_request events
+  if (payload.action !== 'closed' || !payload.pull_request.merged) {
+    return { type: 'ignored' };
+  }
+
+  const [org, repoName] = payload.repository.full_name.split('/');
+  return {
+    org,
+    prNumber: payload.pull_request.number,
+    repoName,
+    type: 'merged',
+  };
+}
+
+/** Pure mapping from a GitHub `check_run` webhook body to a domain event. */
+export function normalizeGitHubCheckRunEvent(body: unknown): CheckRunCompletedEvent {
+  const parsed = CheckRunWebhookSchema.safeParse(body);
+  if (!parsed.success) {
+    return { type: 'unrecognized' };
+  }
+  const payload = parsed.data;
+
+  // Handle check_run completed events
+  const checkRun = payload.check_run;
+  if (!checkRun || payload.action !== 'completed') {
+    return { type: 'ignored' };
+  }
+
+  const [org, repoName] = payload.repository.full_name.split('/');
+  return {
+    conclusion: checkRun.conclusion,
+    headSha: checkRun.head_sha,
+    logsUrl: checkRun.html_url,
+    org,
+    repoName,
+    type: 'completed',
+  };
+}
+
 async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
   reply: FastifyReply
@@ -125,20 +201,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const parsed = PullRequestWebhookSchema.safeParse(request.body);
-      if (!parsed.success) {
+      const event = normalizeGitHubPullRequestEvent(request.body);
+      if (event.type === 'unrecognized') {
         return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
       }
-      const payload = parsed.data;
-
-      // Only handle merged pull_request events
-      if (payload.action !== 'closed' || !payload.pull_request.merged) {
+      if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
 
-      const prNumber = payload.pull_request.number;
-      const repoFullName = payload.repository.full_name;
-      const [org, repoName] = repoFullName.split('/');
+      const { org, prNumber, repoName } = event;
 
       // Find the tracked PR (include Slack context for the merge notification)
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
@@ -208,23 +279,16 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const parsed = CheckRunWebhookSchema.safeParse(request.body);
-      if (!parsed.success) {
+      const event = normalizeGitHubCheckRunEvent(request.body);
+      if (event.type === 'unrecognized') {
         return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
       }
-      const payload = parsed.data;
-
-      // Handle check_run completed events
-      const checkRun = payload.check_run;
-      if (!checkRun || payload.action !== 'completed') {
+      if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
 
-      const repoFullName = payload.repository.full_name;
-      const [org, repoName] = repoFullName.split('/');
-      const headSha = checkRun.head_sha;
-      const conclusion = checkRun.conclusion;
-      let logsUrl = checkRun.html_url;
+      const { conclusion, headSha, org, repoName } = event;
+      let logsUrl = event.logsUrl;
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
@@ -260,7 +324,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           }
         } else {
           request.log.warn(
-            { headSha, repoFullName },
+            { headSha, repoFullName: `${org}/${repoName}` },
             'check-run aggregation unavailable (no PAT or API error); signaling per run'
           );
         }

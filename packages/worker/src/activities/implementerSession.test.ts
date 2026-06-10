@@ -25,8 +25,17 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
-vi.mock('../lib/githubAuth.js', () => ({
-  requireGitHubToken: vi.fn(async () => 'tok'),
+// Clone URL + token resolution moved from systemConfig/githubAuth call sites
+// into the ScmProvider seam (lib/scm).
+vi.mock('../lib/scm/index.js', () => ({
+  getScmProvider: () => ({
+    cloneCredentials: vi.fn(async () => ({
+      authedCloneUrl: 'https://x-access-token:tok@github.com/org/app.git',
+      cloneUrl: 'https://github.com/org/app.git',
+      token: 'tok',
+    })),
+  }),
+  toRepoRef: (repo: Record<string, unknown>) => repo,
 }));
 
 const execMock = vi.fn(async (cmd: string) => {

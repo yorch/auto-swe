@@ -253,7 +253,9 @@ export interface ResolvedWorkflowDefaults {
   defaultTeamSlug: string;
 }
 
-export async function resolveWorkflowDefaults(_opts?: ResolveOpts): Promise<ResolvedWorkflowDefaults> {
+export async function resolveWorkflowDefaults(
+  _opts?: ResolveOpts
+): Promise<ResolvedWorkflowDefaults> {
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     branchPrefix: row?.branchPrefix ?? process.env.BRANCH_PREFIX ?? 'auto',
@@ -277,7 +279,9 @@ export interface ResolvedConsolidationConfig {
   similarityThreshold: number;
 }
 
-export async function resolveConsolidationConfig(_opts?: ResolveOpts): Promise<ResolvedConsolidationConfig> {
+export async function resolveConsolidationConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedConsolidationConfig> {
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     cronExpression: row?.consolidationCron ?? '0 3 * * 0',
@@ -294,7 +298,9 @@ export interface ResolvedGoogleOAuthConfig {
   clientSecret: string | null;
 }
 
-export async function resolveGoogleOAuthConfig(_opts?: ResolveOpts): Promise<ResolvedGoogleOAuthConfig> {
+export async function resolveGoogleOAuthConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedGoogleOAuthConfig> {
   const row = await (await db()).googleOAuthConfig.findUnique({ where: { id: 'default' } });
 
   const clientSecret =

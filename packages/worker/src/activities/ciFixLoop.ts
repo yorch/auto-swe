@@ -1,44 +1,18 @@
-import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { GitHubTokenMissingError, resolveGitHubToken } from '../lib/githubAuth.js';
+import { getScmProvider } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 
 /**
- * Fetches CI logs from the provided URL.
- * Truncates to last 50KB to fit in LLM context.
+ * Fetches CI logs from the provided URL. Provider-specific URL/auth handling
+ * (and truncation to the last 50KB to fit in LLM context) lives in the
+ * ScmProvider implementation.
  */
 export async function fetchCILogs(logsUrl?: string): Promise<string> {
   if (!logsUrl) {
     return 'No logs URL provided by CI webhook';
   }
-
-  const ghConfig = await resolveGitHubConfig();
-  let githubToken: string | null = null;
-  try {
-    githubToken = await resolveGitHubToken(ghConfig);
-  } catch (err) {
-    if (!(err instanceof GitHubTokenMissingError)) {
-      // Real auth error (e.g. malformed App credentials) — surface it so the
-      // operator knows why the log fetch failed rather than seeing a 401.
-      return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
-    }
-    // No token configured at all: proceed unauthenticated for public repos.
-  }
-  const response = await fetch(logsUrl, {
-    headers: {
-      Accept: 'application/vnd.github.v3+json',
-      ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
-    },
-  });
-
-  if (!response.ok) {
-    return `Failed to fetch CI logs (HTTP ${response.status}): ${await response.text().catch(() => 'no body')}`;
-  }
-
-  const fullLog = await response.text();
-  // Truncate to last 50KB to fit in LLM context
-  return fullLog.slice(-50_000);
+  return getScmProvider().fetchCiLogs(logsUrl);
 }
 
 /**

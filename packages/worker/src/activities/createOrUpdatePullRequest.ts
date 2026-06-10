@@ -1,10 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
 export async function createOrUpdatePullRequest(
@@ -27,24 +27,13 @@ async function doCreateOrUpdatePullRequest(
   codeResult: CodeResult,
   tracer: AgentTracer
 ): Promise<{ prNumber: number; prUrl: string }> {
-  const { Octokit } = await import('@octokit/rest');
-
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { id: request.repoId },
   });
 
-  const [ghConfig, workflowDefaults] = await Promise.all([
-    resolveGitHubConfig(),
-    resolveWorkflowDefaults(),
-  ]);
-  const token = await requireGitHubToken(ghConfig);
-  const githubApiUrl =
-    repo.githubApiUrl ??
-    (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
-  const octokit = new Octokit({
-    auth: token,
-    ...(githubApiUrl && { baseUrl: githubApiUrl }),
-  });
+  const workflowDefaults = await resolveWorkflowDefaults();
+  const repoRef = toRepoRef(repo);
+  const scm = getScmProvider(repoRef);
 
   // Check if PR already exists
   const existingPR = await prisma.pullRequest.findFirst({
@@ -68,8 +57,7 @@ async function doCreateOrUpdatePullRequest(
       where: { id: existingPR.id },
     });
 
-    const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-    const prUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}/pull/${existingPR.prNumber}`;
+    const prUrl = await scm.prUrl(repoRef, existingPR.prNumber);
     tracer.addActivityEvent({
       name: 'pr.updated',
       outputJson: {
@@ -82,38 +70,18 @@ async function doCreateOrUpdatePullRequest(
     return { prNumber: existingPR.prNumber, prUrl };
   }
 
-  // Reuse an already-open PR for this head branch if GitHub has one. This makes
-  // the activity idempotent across Temporal retries: if a prior attempt created
-  // the PR on GitHub but crashed before persisting the DB row, the retry finds
-  // it here instead of failing with GitHub's 422 "a pull request already exists
-  // for this branch" — and still writes the tracking row below. Only a prior
-  // attempt could have orphaned a PR, so we skip this extra GitHub round-trip on
-  // the first attempt and create directly.
-  const priorOpenPr =
-    activityInfo().attempt > 1
-      ? (
-          await octokit.pulls.list({
-            base: repo.defaultBranch,
-            head: `${repo.organizationName}:${codeResult.branch}`,
-            owner: repo.organizationName,
-            repo: repo.repoName,
-            state: 'open',
-          })
-        ).data[0]
-      : undefined;
-
-  const pr =
-    priorOpenPr ??
-    (
-      await octokit.pulls.create({
-        base: repo.defaultBranch,
-        body: formatPRBody(request, codeResult, workflowDefaults.prBodyTemplate || undefined),
-        head: codeResult.branch,
-        owner: repo.organizationName,
-        repo: repo.repoName,
-        title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
-      })
-    ).data;
+  // Create the PR (or, on Temporal retries, reuse one a prior attempt created
+  // on the host but crashed before persisting the DB row — the tracking row is
+  // still written below). Only a prior attempt could have orphaned a PR, so
+  // the extra lookup round-trip is skipped on the first attempt.
+  const { prNumber, prUrl } = await scm.createOrUpdatePullRequest({
+    baseBranch: repo.defaultBranch,
+    body: formatPRBody(request, codeResult, workflowDefaults.prBodyTemplate || undefined),
+    headBranch: codeResult.branch,
+    repo: repoRef,
+    reuseExisting: activityInfo().attempt > 1,
+    title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
+  });
 
   const workflow = await prisma.activeWorkflow.findFirst({
     where: { workRequestId: request.workRequestId },
@@ -123,7 +91,7 @@ async function doCreateOrUpdatePullRequest(
     data: {
       ciStatus: 'PENDING',
       headSha: codeResult.headSha,
-      prNumber: pr.number,
+      prNumber,
       repoId: repo.id,
       status: 'OPEN',
       workflowId: workflow?.id,
@@ -132,8 +100,8 @@ async function doCreateOrUpdatePullRequest(
 
   // Best-effort: let the originating Slack channel know the PR is open.
   await notifySlackPrReady({
-    prNumber: pr.number,
-    prUrl: pr.html_url,
+    prNumber,
+    prUrl,
     workRequestId: request.workRequestId,
   });
 
@@ -142,12 +110,12 @@ async function doCreateOrUpdatePullRequest(
     outputJson: {
       branch: codeResult.branch,
       headSha: codeResult.headSha,
-      prNumber: pr.number,
-      prUrl: pr.html_url,
+      prNumber,
+      prUrl,
     },
   });
 
-  return { prNumber: pr.number, prUrl: pr.html_url };
+  return { prNumber, prUrl };
 }
 
 // ── Configurable PR Title & Body ──

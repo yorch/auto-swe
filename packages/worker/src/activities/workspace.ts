@@ -22,16 +22,18 @@ export function shellQuote(s: string): string {
 
 /**
  * Provision an ephemeral Docker workspace with the repo cloned at the default
- * branch and a fresh local branch checked out. All execs are async (the old
- * execSync versions blocked the worker event loop, starving Temporal
- * heartbeats for every concurrent activity) and pump heartbeats while the
- * child process runs.
+ * branch and a fresh local branch checked out. `authedRepoUrl` must already
+ * carry credentials — callers obtain it from
+ * `ScmProvider.cloneCredentials().authedCloneUrl` (lib/scm), which keeps the
+ * provider-specific credential embedding out of this file. All execs are
+ * async (the old execSync versions blocked the worker event loop, starving
+ * Temporal heartbeats for every concurrent activity) and pump heartbeats
+ * while the child process runs.
  */
 export async function createWorkspace(
-  repoUrl: string,
+  authedRepoUrl: string,
   branch: string,
   defaultBranch: string,
-  githubToken: string,
   image: string = 'node:24-alpine'
 ): Promise<Workspace> {
   if (!DOCKER_IMAGE_REF_RE.test(image)) {
@@ -40,8 +42,6 @@ export async function createWorkspace(
 
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
-
-  const authedUrl = repoUrl.replace('https://', `https://x-access-token:${githubToken}@`);
 
   // Start container — use '--' to separate docker flags from the image argument
   await execShellAsync(
@@ -68,7 +68,7 @@ export async function createWorkspace(
 
     // Clone repo — shell-quote branch names to prevent injection
     await rootExec(
-      `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedUrl)} /workspace/target-repo`
+      `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
     );
     await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
   } catch (err) {

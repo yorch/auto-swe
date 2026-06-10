@@ -20,13 +20,13 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -139,21 +139,19 @@ async function provisionGateWorkspace(
   workspace: Workspace;
   branch: string;
 }> {
-  const [repo, ghConfig, workflowDefaults] = await Promise.all([
+  const [repo, workflowDefaults] = await Promise.all([
     prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } }),
-    resolveGitHubConfig(),
     resolveWorkflowDefaults(),
   ]);
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
-  const githubToken = await requireGitHubToken(ghConfig);
+
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
   const workspace = await createWorkspace(
-    repoUrl,
+    authedCloneUrl,
     branch,
     repo.defaultBranch,
-    githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
 

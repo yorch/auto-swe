@@ -61,6 +61,19 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
+// Clone URL + token resolution moved from env-var/githubAuth call sites into
+// the ScmProvider seam (lib/scm).
+vi.mock('../lib/scm/index.js', () => ({
+  getScmProvider: () => ({
+    cloneCredentials: vi.fn(async () => ({
+      authedCloneUrl: 'https://x-access-token:fake-token@github.com/acme/svc.git',
+      cloneUrl: 'https://github.com/acme/svc.git',
+      token: 'fake-token',
+    })),
+  }),
+  toRepoRef: (repo: Record<string, unknown>) => repo,
+}));
+
 const generateMock = vi.fn();
 vi.mock('../agents/implementer.js', () => ({
   createImplementerAgent: vi.fn(() => ({

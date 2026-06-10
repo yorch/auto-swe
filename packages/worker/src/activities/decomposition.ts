@@ -29,7 +29,8 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
+import { getExecErrorOutput } from '../lib/errors.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -314,15 +315,13 @@ async function provisionMergeWorkspace(
   label: string
 ): Promise<{ workspace: Workspace; log: string[] }> {
   const repo = await prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } });
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
   const workspace = await createWorkspace(
-    repoUrl,
+    authedCloneUrl,
     targetBranch,
     repo.defaultBranch,
-    githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
   heartbeat(`${label}: workspace provisioned`);

@@ -22,7 +22,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
@@ -30,7 +30,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
@@ -114,32 +114,26 @@ async function safeRunDocker(args: string[]): Promise<void> {
 }
 
 interface RepoMeta {
+  /** Credential-embedded clone URL from ScmProvider.cloneCredentials. */
   cloneUrl: string;
   defaultBranch: string;
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
-  /** The resolved PAT — kept alongside cloneUrl so error-path redaction works
+  /** The resolved token — kept alongside cloneUrl so error-path redaction works
    * even when no GITHUB_TOKEN env var is set (DB-only token configuration). */
   token: string;
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
-  const [repo, ghConfig] = await Promise.all([
-    prisma.repository.findUniqueOrThrow({
-      include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
-      where: { id: request.repoId },
-    }),
-    resolveGitHubConfig(),
-  ]);
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const token = await requireGitHubToken(ghConfig);
-  const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
-    'https://',
-    `https://x-access-token:${token}@`
-  );
+  const repo = await prisma.repository.findUniqueOrThrow({
+    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
+    where: { id: request.repoId },
+  });
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl, token } = await getScmProvider(repoRef).cloneCredentials(repoRef);
   return {
-    cloneUrl,
+    cloneUrl: authedCloneUrl,
     defaultBranch: repo.defaultBranch,
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],

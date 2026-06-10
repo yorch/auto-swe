@@ -1,6 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
-import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type {
   CodeResult,
   CodeSecurityFinding,
@@ -16,8 +15,8 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -81,16 +80,13 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   const { mode, previousCodeResult } = input;
   const repo = await resolveSessionRepo(previousCodeResult);
 
-  const ghConfig = await resolveGitHubConfig();
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = await requireGitHubToken(ghConfig);
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
   const workspace = await createWorkspace(
-    repoUrl,
+    authedCloneUrl,
     previousCodeResult.branch,
     repo.defaultBranch,
-    githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
 
