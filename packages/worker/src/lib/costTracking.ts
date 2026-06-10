@@ -195,7 +195,12 @@ export async function recordLlmUsage(
       const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
       const newInput = workflow.tokensInputUsed + inputTokens;
       const newOutput = workflow.tokensOutputUsed + outputTokens;
-      const newCost = workflow.costUsdAccrued + callCost;
+      // ARCH-8: cost is a Float column accumulated incrementally; round each
+      // accumulation to micro-dollars so FP representation error can't drift
+      // across thousands of increments. (A Decimal column was considered and
+      // rejected: Prisma Decimal serializes as a string, silently changing
+      // the wire format of every endpoint that returns raw rows.)
+      const newCost = Math.round((workflow.costUsdAccrued + callCost) * 1e6) / 1e6;
 
       span.setAttributes({
         'llm.cost_pricing_known': known,
