@@ -36,7 +36,7 @@ interface PageProps {
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
 function getFailedStep(steps: WorkflowStepRecord[]): WorkflowStepRecord | null {
-  return steps.find((s) => s.status === 'FAILED' || s.status === 'TIMED_OUT') ?? null;
+  return steps.find((s) => s.status === 'FAILED') ?? null;
 }
 
 // ── Segmented console toggle (◧ Split / ≡ Stream) ─────────────────────────────
@@ -243,9 +243,9 @@ function StepSpine({
       {steps.map((s, i) => {
         const isSelected = selectedId === s.nodeId;
         const statusColor =
-          s.status === 'PASSED' || s.status === 'COMPLETED'
+          s.status === 'PASSED'
             ? 'var(--color-moss-400)'
-            : s.status === 'FAILED' || s.status === 'TIMED_OUT'
+            : s.status === 'FAILED'
               ? 'var(--color-brick-400)'
               : s.status === 'RUNNING'
                 ? 'var(--color-dust-400)'
@@ -349,7 +349,7 @@ function LayoutB({
         {/* Steps as narrative sections */}
         {run.steps.map((step: WorkflowStepRecord, i: number) => {
           const stepTraces = traces.filter((t) => activityToNodeId[t.nodeId] === step.nodeId);
-          const isFailedStep = step.status === 'FAILED' || step.status === 'TIMED_OUT';
+          const isFailedStep = step.status === 'FAILED';
 
           return (
             <div
@@ -409,7 +409,7 @@ function LayoutB({
                     : 'This step failed.'
                   : step.status === 'SKIPPED'
                     ? 'This step was skipped.'
-                    : step.status === 'PASSED' || step.status === 'COMPLETED'
+                    : step.status === 'PASSED'
                       ? 'Step completed successfully.'
                       : `Step is ${step.status.toLowerCase()}.`}
               </p>
@@ -480,7 +480,7 @@ function WaterfallBar({
 
   const leftPct = 0;
   const widthPct = Math.max(2, (stepDurationMs / totalMs) * 100);
-  const isFailed = step.status === 'FAILED' || step.status === 'TIMED_OUT';
+  const isFailed = step.status === 'FAILED';
   const isSkipped = step.status === 'SKIPPED';
 
   void runStartMs;
@@ -741,7 +741,7 @@ function LayoutC({
                   : stepStart + totalMs * 0.05;
                 const leftPct = (stepStart / totalMs) * 100;
                 const widthPct = Math.max(1, ((stepEnd - stepStart) / totalMs) * 100);
-                const isFailed = s.status === 'FAILED' || s.status === 'TIMED_OUT';
+                const isFailed = s.status === 'FAILED';
 
                 return (
                   <div

@@ -39,7 +39,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       : null;
 
   const totalTraces = run.traces?.length ?? 0;
-  const cost = (run as Record<string, unknown>).cost as number | undefined;
+  const cost = (run as unknown as Record<string, unknown>).cost as number | undefined;
 
   return (
     <aside
