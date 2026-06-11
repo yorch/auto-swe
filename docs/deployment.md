@@ -77,7 +77,7 @@ GITHUB_WEBHOOK_SECRET=<random>
 BETTER_AUTH_URL=https://api.example.com
 BETTER_AUTH_SECRET=<openssl rand -base64 32>
 
-# Legacy JWT (still used by the email+password path and CLI/API bearers)
+# JWT signing — used by the session-token bridge (browser bearer) and OAuth state tokens
 JWT_SECRET=<openssl rand -base64 48>
 # Or, for RS256:
 # JWT_PRIVATE_KEY_PATH=/etc/auto-swe/jwt-private.pem
@@ -174,14 +174,14 @@ Several categories of credentials that were previously env-only are now stored e
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — list that directory for the authoritative set (a dozen and growing). The two structural ones worth knowing:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly two migrations (pre-deployment consolidation):
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | All core tables (users, teams, repositories, work\_requests, active\_workflows, pull\_requests, context\_snapshots, agent\_lessons, workflow\_runs, workflow\_steps, workflow\_templates, …) |
-| `00000000000001_custom_constraints_and_indexes` | HNSW vector index on `agent_lessons.embedding` (separate because Prisma 7's schema DSL can't express HNSW directly) |
+| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 36 tables, enums, FKs, Prisma-expressible indexes) |
+| `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `agent_lessons.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config + implementer tool-config seeds |
 
-Later migrations add feature tables (agent traces, system config, lesson consolidation, HITL human steps, skills, GitHub App config, scanner patterns, user preferences, …); `prisma migrate deploy` applies whatever is pending.
+New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.
 
 ```bash
 # 1. Create the database with the pgvector extension
