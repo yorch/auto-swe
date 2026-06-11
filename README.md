@@ -112,10 +112,10 @@ Three equivalent entry points — pick the one that fits the workflow:
 
 1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, click **+ Submit work request** in the header (or in the onboarding panel if you have no runs yet). The repo dropdown, brief, and budget tier are all there; on submit it routes you to the new run.
 2. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
-3. **Raw HTTP** — useful for scripting / CI. Either a JWT (legacy `/auth/login`) or a PAT created in the UI works as the bearer:
+3. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:
 
    ```bash
-   TOKEN=<your-PAT-from-Settings → API tokens>   # or mint a JWT via /auth/login
+   TOKEN=<your-PAT-from-Settings → API tokens>
 
    curl -X POST http://localhost:8080/api/v1/work-requests \
      -H "Authorization: Bearer $TOKEN" \
