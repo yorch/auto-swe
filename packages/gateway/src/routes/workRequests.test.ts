@@ -64,8 +64,15 @@ describe('POST /api/v1/work-requests', () => {
     } as unknown as never);
     app.decorate('temporal', {
       cancelWorkflow: async () => {},
+      deleteWorkRequestSchedule: async () => {},
       getConsolidationScheduleStatus: async () => ({
         exists: false,
+        nextRunAt: null,
+        paused: false,
+      }),
+      getWorkRequestScheduleStatus: async () => ({
+        exists: false,
+        lastRunAt: null,
         nextRunAt: null,
         paused: false,
       }),
@@ -76,7 +83,9 @@ describe('POST /api/v1/work-requests', () => {
         startedWorkflowIds.push(id);
       },
       syncConsolidationSchedule: async () => {},
+      syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
+      triggerWorkRequestSchedule: async () => {},
     });
 
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });

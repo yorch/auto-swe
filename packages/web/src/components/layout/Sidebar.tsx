@@ -46,6 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/model-config', label: 'Model Config', roles: ['ADMIN'] },
       { href: '/admin/agents', label: 'Agents', roles: ['ADMIN'] },
       { href: '/admin/skills', label: 'Skills', roles: ['ADMIN'] },
+      { href: '/admin/schedules', label: 'Schedules', roles: ['ADMIN'] },
       { href: '/admin/lessons', label: 'Lessons', roles: ['ADMIN'] },
       { href: '/admin/integrations', label: 'Integrations', roles: ['ADMIN'] },
       { href: '/admin/security', label: 'Security Events', roles: ['ADMIN'] },

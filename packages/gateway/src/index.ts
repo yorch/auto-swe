@@ -24,6 +24,7 @@ import { meRoutes } from './routes/me.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
+import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
@@ -200,6 +201,7 @@ async function start() {
 
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+  await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });

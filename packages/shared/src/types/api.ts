@@ -522,3 +522,37 @@ export interface CreateEpicResponse {
   /** Dashboard path of the epic detail page (PROD-3). */
   detailPath: string;
 }
+
+// ── Scheduled work requests ──
+
+/** Live Temporal Schedule status for a scheduled work request. */
+export interface ScheduledWorkRequestScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+/** Shape returned by GET/POST/PATCH /api/v1/scheduled-work-requests. */
+export interface ScheduledWorkRequestSummary {
+  id: string;
+  name: string;
+  cronExpression: string;
+  description: string;
+  externalTicketPrefix: string;
+  /** Synthetic ticket ID all fires run under (`<PREFIX>-SCHED-<id8>`). */
+  externalTicketId: string;
+  budgetTier: string;
+  isActive: boolean;
+  repository: { id: string; organizationName: string; repoName: string };
+  /** Explicit template override; null → repo team default at save time. */
+  template: { id: string; name: string } | null;
+  templateVersion: number | null;
+  /** Standing WorkRequest that every fire's WorkflowRun links to. */
+  workRequestId: string | null;
+  createdBy: { id: string; email: string; name: string | null } | null;
+  lastFiredAt: string | null;
+  schedule: ScheduledWorkRequestScheduleStatus;
+  createdAt: string;
+  updatedAt: string;
+}
