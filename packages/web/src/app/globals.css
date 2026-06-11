@@ -6,74 +6,73 @@
 @source '../../src/components/**/*.{ts,tsx}';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Design tokens — "Workshop Telemetry"
-   Dark warm-ink surface · terracotta accent · editorial serif + plex + mono
+   Design tokens — "Flight Telemetry Console"
+   Near-black neutral charcoal · coral accent · Bodoni serif · IBM Plex Mono
    ──────────────────────────────────────────────────────────────────────── */
 @theme {
-  /* Ink — dark surface ramp (cool-blue undertone) */
-  --color-ink-950: #07090c;
-  --color-ink-900: #0b0e13;
-  --color-ink-800: #11151d;
-  --color-ink-700: #171c26;
-  --color-ink-600: #1f2530;
-  --color-ink-500: #2a323f;
-  --color-ink-400: #3d4757;
-  --color-ink-300: #555f72;
+  /* Ink / surface ramp — neutral charcoal, near-black */
+  --color-ink-950: #0c0e12; /* panel, deepest */
+  --color-ink-900: #0d0e10; /* bg-2, recessed rails, code blocks */
+  --color-ink-800: #131417; /* bg, page ground */
+  --color-ink-700: #0e1014; /* panel-2, slightly cooler than bg */
+  --color-ink-600: #1c1d20; /* surface, raised / selected rows */
+  --color-ink-500: #232427; /* surface-2 */
+  --color-ink-400: #2e3035; /* line-2, stronger borders */
+  --color-ink-300: #42454d; /* strong dividers */
 
-  /* Paper — warm cream text ramp (avoid pure white) */
-  --color-paper-50: #fefcf7;
-  --color-paper-100: #f8f3e8;
-  --color-paper-200: #f2ede2;
-  --color-paper-300: #d9d3c4;
-  --color-paper-400: #a8a395;
-  --color-paper-500: #7a766c;
-  --color-paper-600: #555148;
+  /* Text scale — cool neutral */
+  --color-paper-50: #e9eaee; /* primary ink */
+  --color-paper-100: #e9eaee;
+  --color-paper-200: #e9eaee; /* main body text */
+  --color-paper-300: #adafb6; /* secondary */
+  --color-paper-400: #adafb6; /* secondary / body */
+  --color-paper-500: #81848c; /* labels / muted */
+  --color-paper-600: #565960; /* faint / numerals / captions */
 
-  /* Ember — single dominant accent (terracotta / burnt sienna) */
-  --color-ember-50: #faeee5;
-  --color-ember-100: #f4d5bd;
-  --color-ember-200: #ecb993;
-  --color-ember-300: #e89968;
-  --color-ember-400: #e26b3c;
-  --color-ember-500: #c95a2c;
-  --color-ember-600: #a3461f;
-  --color-ember-700: #7a3416;
+  /* Accent — coral, single warm accent */
+  --color-ember-50: oklch(0.95 0.02 28); /* near-white tint */
+  --color-ember-100: oklch(0.87 0.07 28);
+  --color-ember-200: oklch(0.82 0.11 28);
+  --color-ember-300: oklch(0.77 0.155 28); /* accent-bright */
+  --color-ember-400: oklch(0.7 0.145 28); /* accent */
+  --color-ember-500: oklch(0.62 0.14 28);
+  --color-ember-600: oklch(0.52 0.12 28);
+  --color-ember-700: oklch(0.42 0.1 28);
 
-  /* Status palette — muted, dignified, never neon */
-  --color-moss-400: #7ea67a;
-  --color-moss-600: #4d6d4a;
-  --color-amber-400: #d4a547;
-  --color-amber-600: #946f25;
-  --color-brick-400: #c44a4a;
-  --color-brick-600: #803131;
-  --color-dust-400: #85a6c5;
-  --color-dust-600: #4d6c8a;
-  --color-violet-400: #9b8bc4;
-  --color-violet-600: #62528b;
+  /* Status — used for badges, graph nodes, timing bars */
+  --color-moss-400: oklch(0.72 0.1 150); /* passed / ok */
+  --color-moss-600: oklch(0.52 0.08 150);
+  --color-amber-400: oklch(0.78 0.11 80); /* events / suggested-fix hints */
+  --color-amber-600: oklch(0.58 0.09 80);
+  --color-brick-400: oklch(0.64 0.17 28); /* failed / timeout */
+  --color-brick-600: oklch(0.46 0.13 28);
+  --color-dust-400: oklch(0.66 0.11 235); /* running / LLM turn (blue) */
+  --color-dust-600: oklch(0.46 0.09 235);
+  --color-violet-400: oklch(0.66 0.1 290); /* in-review */
+  --color-violet-600: oklch(0.46 0.08 290);
 
-  /* Type stack — distinctive, free, characterful */
-  --font-display: 'Fraunces', ui-serif, Georgia, serif;
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  /* Type stack — three families only */
+  --font-display: 'Bodoni Moda', Georgia, serif;
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
 
-  /* Sharp by default — soft only where it earns it */
+  /* Border radius — tiny; nothing pill-shaped except status dots */
   --radius-none: 0;
   --radius-xs: 1px;
   --radius-sm: 2px;
   --radius-md: 3px;
-  --radius-lg: 6px;
+  --radius-lg: 4px;
   --radius-full: 9999px;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Legacy semantic aliases — keep old `var(--background)` etc. callsites
-   working until pages migrate. Lets the redesign cascade page-by-page.
+   Legacy semantic aliases — keep var(--background) etc. call sites working.
    ──────────────────────────────────────────────────────────────────────── */
 @layer base {
   :root {
-    --background: var(--color-ink-900);
+    --background: var(--color-ink-800);
     --foreground: var(--color-paper-200);
-    --muted: var(--color-ink-800);
+    --muted: var(--color-ink-700);
     --muted-foreground: var(--color-paper-400);
     --border: var(--color-ink-600);
     --border-strong: var(--color-ink-500);
@@ -88,39 +87,42 @@
   html,
   body {
     font-family: var(--font-sans);
-    font-feature-settings: 'ss01', 'ss02', 'cv02', 'cv11';
+    font-size: 14px;
     -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
     color: var(--color-paper-200);
-    background: var(--color-ink-900);
+    background: var(--color-ink-800);
     text-rendering: optimizeLegibility;
   }
 
-  /* Atmosphere: faint ember glow at top + dust noise overlay.
-     The SVG is inline base64 so there's no extra request. */
+  /* Atmosphere: faint accent glow at top. Film grain is a fixed overlay element
+     added in layout.tsx so it composites above all content. */
   body {
-    background-image:
-      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(226, 107, 60, 0.07), transparent 60%),
-      url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-    background-repeat: no-repeat, repeat;
-    background-attachment: fixed, fixed;
+    background-image: radial-gradient(
+      ellipse 80% 60% at 50% -10%,
+      oklch(0.7 0.145 28 / 0.07),
+      transparent 60%
+    );
+    background-repeat: no-repeat;
+    background-attachment: fixed;
   }
 
-  /* Headings inherit the display serif unless explicitly overridden */
+  /* Display serif for headlines only */
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
-    font-weight: 400;
-    letter-spacing: -0.015em;
+    font-weight: 500;
+    letter-spacing: -0.01em;
   }
 
-  /* Default selection in ember */
+  /* Selection uses accent-dim */
   ::selection {
     color: var(--color-ink-950);
-    background: var(--color-ember-400);
+    background: oklch(0.7 0.145 28 / 0.35);
   }
 
-  /* Form elements inherit dark surface defaults */
+  /* Form elements */
   input,
   select,
   textarea {
@@ -132,61 +134,83 @@
     color: var(--color-paper-500);
   }
 
-  /* Native select dropdowns: dark surface */
+  /* Native select dropdowns */
   select option {
     color: var(--color-paper-100);
-    background: var(--color-ink-800);
+    background: var(--color-ink-700);
   }
 
-  /* Custom scrollbars — thin, ink-tinted, ember on hover */
+  /* Custom scrollbars — 9px, hairline thumb, transparent track */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-ink-500);
-    border: 2px solid var(--color-ink-900);
+    background: var(--color-ink-400);
+    background-clip: padding-box;
+    border: 2px solid transparent;
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-ember-600);
+    background: var(--color-ink-300);
+    background-clip: padding-box;
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Utilities — tabular numerics, enter animations, status pulse
+   Utilities
    ──────────────────────────────────────────────────────────────────────── */
 @layer utilities {
-  .tabular {
-    font-feature-settings: 'tnum', 'cv02';
+  /* Signature label — used constantly for section headers and metadata labels */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--color-paper-500);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+  }
+
+  /* Tabular numerals — for all numbers in tables/rails */
+  .num {
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+
+  .tabular {
+    font-feature-settings: 'tnum';
+    font-variant-numeric: tabular-nums;
+  }
+
   .small-caps {
     font-variant-caps: all-small-caps;
     letter-spacing: 0.12em;
   }
+
   .display-italic {
     font-family: var(--font-display);
     font-style: italic;
-    font-feature-settings: 'ss01';
   }
+
+  /* Hairline rule using gradient fade */
   .ink-rule {
     background-image: linear-gradient(
       to right,
       transparent,
-      var(--color-ink-500) 18%,
-      var(--color-ink-500) 82%,
+      var(--color-ink-400) 18%,
+      var(--color-ink-400) 82%,
       transparent
     );
   }
 
+  /* ── Animations ── */
+
   @keyframes fade-up {
     from {
       opacity: 0;
-      transform: translateY(8px);
+      transform: translateY(4px);
     }
     to {
       opacity: 1;
@@ -194,23 +218,23 @@
     }
   }
   .fade-up {
-    animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fade-up 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-  /* Stagger helpers — combine with .fade-up */
+
   .stagger-1 {
-    animation-delay: 80ms;
+    animation-delay: 60ms;
   }
   .stagger-2 {
-    animation-delay: 160ms;
+    animation-delay: 120ms;
   }
   .stagger-3 {
-    animation-delay: 240ms;
+    animation-delay: 180ms;
   }
   .stagger-4 {
-    animation-delay: 320ms;
+    animation-delay: 240ms;
   }
   .stagger-5 {
-    animation-delay: 400ms;
+    animation-delay: 300ms;
   }
 
   @keyframes pulse-dot {
@@ -240,13 +264,73 @@
     transform-origin: top;
     animation: accent-slide 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
+
+  /* Brief accent-dim flash — spotlights a just-arrived row */
+  @keyframes hl {
+    0% {
+      background-color: oklch(0.7 0.145 28 / 0.14);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  .hl {
+    animation: hl 1.4s ease-out both;
+  }
+
+  /* Marching dashes — live DAG edges */
+  @keyframes march {
+    to {
+      stroke-dashoffset: -20;
+    }
+  }
+
+  /* Playhead / recording pulse */
+  @keyframes recording-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+  .recording-pulse {
+    animation: recording-pulse 1.4s ease-in-out infinite;
+  }
+
+  /* Red halo pulse for failed DAG node */
+  @keyframes halo-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 2px oklch(0.64 0.17 28 / 0.5);
+    }
+    50% {
+      box-shadow: 0 0 0 6px oklch(0.64 0.17 28 / 0.15);
+    }
+  }
+  .halo-pulse {
+    animation: halo-pulse 1.8s ease-in-out infinite;
+  }
+
+  /* Diagonal hatch fill for failed waterfall bars */
+  .hatch-fail {
+    background-color: oklch(0.64 0.17 28 / 0.15);
+    background-image: repeating-linear-gradient(
+      -45deg,
+      oklch(0.64 0.17 28 / 0.25) 0px,
+      oklch(0.64 0.17 28 / 0.25) 2px,
+      transparent 2px,
+      transparent 8px
+    );
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   React Flow theme overrides — dark surface, ember accents.
+   React Flow theme overrides — dark surface, coral accents.
    ──────────────────────────────────────────────────────────────────────── */
 .react-flow__controls {
-  background: var(--color-ink-800);
+  background: var(--color-ink-700);
   border: 1px solid var(--color-ink-500);
   border-radius: 2px;
   box-shadow: none;
@@ -254,14 +338,14 @@
 .react-flow__controls-button {
   width: 28px;
   height: 28px;
-  color: var(--color-paper-300);
-  background: var(--color-ink-800);
-  border-bottom: 1px solid var(--color-ink-600);
-  fill: var(--color-paper-300);
+  color: var(--color-paper-400);
+  background: var(--color-ink-700);
+  border-bottom: 1px solid var(--color-ink-500);
+  fill: var(--color-paper-400);
 }
 .react-flow__controls-button:hover {
   color: var(--color-ember-400);
-  background: var(--color-ink-700);
+  background: var(--color-ink-600);
   fill: var(--color-ember-400);
 }
 .react-flow__controls-button svg {
@@ -289,5 +373,5 @@
   stroke-width: 2.5 !important;
 }
 .react-flow__minimap-mask {
-  fill: rgba(7, 9, 12, 0.85);
+  fill: oklch(0.13 0.005 235 / 0.85);
 }
