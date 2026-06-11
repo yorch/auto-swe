@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-// Ensure CONFIG_ENCRYPTION_KEY is set before modelConfig.ts is imported —
+// Ensure CONFIG_ENCRYPTION_KEY is set before credentialService.ts is imported —
 // the module loads crypto lazily but tests are noisy when it isn't set.
 process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
-import { isSafeProbeUrl } from './modelConfig.js';
+import { isSafeProbeUrl } from '../lib/credentialService.js';
 
 /// SSRF guards on the `POST /credentials/:id/test` probe endpoint. The
 /// resolver narrows the URL to its hostname, strips IPv6 brackets, and

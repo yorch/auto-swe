@@ -1,10 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import {
+  checkTeamAccess,
+  clearSkillAssignments,
+  deleteToolConfig,
+  findToolConfig,
+  getAgentRolesOverview,
+  IMPLEMENTER_TOOL_KEYS,
+  listSkillAssignments,
+  replaceSkillAssignments,
+  SKILL_AGENT_ROLES,
+  SKILL_SCOPES,
+  setToolConfig,
+  validateScopeRefs,
+} from '../lib/skillAssignmentService.js';
+import {
+  createSkill,
+  getSkillEffectivenessReport,
+  updateSkill,
+} from '../lib/skillLibraryService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -38,27 +56,17 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   GET    /api/v1/teams/:teamId/agents/:role/tools      Get team-scoped tool config
  *   PUT    /api/v1/teams/:teamId/agents/:role/tools      Set team-scoped tool config
  *   DELETE /api/v1/teams/:teamId/agents/:role/tools      Delete team-scoped tool config
+ *
+ * Business logic (the partial-unique-index-safe write patterns, team access
+ * checks, skill content scanning) lives in `lib/skillAssignmentService.ts`
+ * and `lib/skillLibraryService.ts` — the admin and team-scoped plugins call
+ * the same service functions, parameterized by scope.
  */
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
-const TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
-const AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
-  'SECURITY_REVIEWER',
-  'DOMAIN_LOGIC_REVIEWER',
-  'PERFORMANCE_REVIEWER',
-  'DECOMPOSER',
-] as const;
-const SCOPE_VALUES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
-
 const SkillIdParams = z.object({ id: z.string().uuid() });
-const AgentRoleParams = z.object({ role: z.enum(AGENT_ROLES) });
+const AgentRoleParams = z.object({ role: z.enum(SKILL_AGENT_ROLES) });
 
 const CreateSkillSchema = z.object({
   description: z.string().max(1000).optional(),
@@ -85,7 +93,7 @@ const SCOPE_KEYS_ERROR =
 
 const SkillAssignmentBody = z
   .object({
-    scope: z.enum(SCOPE_VALUES),
+    scope: z.enum(SKILL_SCOPES),
     skillIds: z.array(z.string().uuid()).max(50),
     sortOrders: z.array(z.number().int().min(0)).optional(),
     teamId: z.string().uuid().optional(),
@@ -94,40 +102,38 @@ const SkillAssignmentBody = z
   .refine(scopeKeysValid, { message: SCOPE_KEYS_ERROR });
 
 const SkillAssignmentQuery = z.object({
-  scope: z.enum(SCOPE_VALUES).default('GLOBAL'),
+  scope: z.enum(SKILL_SCOPES).default('GLOBAL'),
   teamId: z.string().uuid().optional(),
   workflowTemplateId: z.string().uuid().optional(),
 });
 
 const ToolConfigBody = z
   .object({
-    enabledTools: z.array(z.enum(TOOL_KEYS)).min(1).max(4),
-    scope: z.enum(SCOPE_VALUES),
+    enabledTools: z.array(z.enum(IMPLEMENTER_TOOL_KEYS)).min(1).max(4),
+    scope: z.enum(SKILL_SCOPES),
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
   })
   .refine(scopeKeysValid, { message: SCOPE_KEYS_ERROR });
 
 const ToolConfigQuery = z.object({
-  scope: z.enum(SCOPE_VALUES).default('GLOBAL'),
+  scope: z.enum(SKILL_SCOPES).default('GLOBAL'),
   teamId: z.string().uuid().optional(),
   workflowTemplateId: z.string().uuid().optional(),
 });
 
-const TeamAgentParams = z.object({ role: z.enum(AGENT_ROLES), teamId: z.string().uuid() });
+const TeamAgentParams = z.object({ role: z.enum(SKILL_AGENT_ROLES), teamId: z.string().uuid() });
 
 // ── Skills CRUD routes ──────────────────────────────────────────────────────
 
 export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
   // GET /api/v1/admin/skills
   app.get(
     '/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { querystring: ListSkillsQuery },
-    },
+    { onRequest: adminOnly, schema: { querystring: ListSkillsQuery } },
     async () => {
       const skills = await fastify.prisma.skill.findMany({
         include: { _count: { select: { assignments: true } } },
@@ -138,118 +144,30 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   );
 
   // GET /api/v1/admin/skills/effectiveness — correlational report: run
-  // outcomes for runs where each skill was active (from the implementer's
-  // skills.loaded trace events) vs the all-runs baseline. EVOL-8: skillsActive
-  // was recorded everywhere but analyzed nowhere.
+  // outcomes for runs where each skill was active vs the all-runs baseline.
   app.get(
     '/skills/effectiveness',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: adminOnly,
       schema: {
         querystring: z.object({
           windowDays: z.coerce.number().int().min(1).max(365).default(30),
         }),
       },
     },
-    async (request) => {
-      const { windowDays } = request.query;
-      const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
-
-      const events = await fastify.prisma.agentTrace.findMany({
-        select: { outputJson: true, runId: true },
-        where: {
-          createdAt: { gte: since },
-          toolName: 'skills.loaded',
-          type: 'activity_event',
-        },
-      });
-
-      // Union of skills per run (retries emit the event once per attempt).
-      const skillsByRun = new Map<string, Set<string>>();
-      for (const ev of events) {
-        const names = (ev.outputJson as { skills?: unknown } | null)?.skills;
-        if (!Array.isArray(names)) {
-          continue;
-        }
-        const set = skillsByRun.get(ev.runId) ?? new Set<string>();
-        for (const n of names) {
-          if (typeof n === 'string') {
-            set.add(n);
-          }
-        }
-        skillsByRun.set(ev.runId, set);
-      }
-
-      const runs = await fastify.prisma.workflowRun.findMany({
-        select: { costUsdAccrued: true, id: true, status: true },
-        where: {
-          startedAt: { gte: since },
-          status: { in: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
-        },
-      });
-
-      const baseline = {
-        succeeded: runs.filter((r) => r.status === 'SUCCESS').length,
-        totalRuns: runs.length,
-      };
-
-      const perSkill = new Map<string, { runs: number; succeeded: number; totalCostUsd: number }>();
-      for (const run of runs) {
-        const skills = skillsByRun.get(run.id);
-        if (!skills) {
-          continue;
-        }
-        for (const name of skills) {
-          const agg = perSkill.get(name) ?? { runs: 0, succeeded: 0, totalCostUsd: 0 };
-          agg.runs += 1;
-          agg.succeeded += run.status === 'SUCCESS' ? 1 : 0;
-          agg.totalCostUsd += run.costUsdAccrued;
-          perSkill.set(name, agg);
-        }
-      }
-
-      return {
-        data: {
-          baselineSuccessRate:
-            baseline.totalRuns > 0 ? baseline.succeeded / baseline.totalRuns : null,
-          // Correlation, not causation: skills are assigned per scope, so
-          // skill presence correlates with team/template effects too.
-          caveat: 'correlational',
-          perSkill: [...perSkill.entries()]
-            .map(([name, agg]) => ({
-              avgCostUsd: agg.runs > 0 ? agg.totalCostUsd / agg.runs : null,
-              name,
-              runs: agg.runs,
-              successRate: agg.runs > 0 ? agg.succeeded / agg.runs : null,
-            }))
-            .sort((a, b) => b.runs - a.runs),
-          totalRuns: baseline.totalRuns,
-          windowDays,
-        },
-      };
-    }
+    async (request) => ({
+      data: await getSkillEffectivenessReport(fastify.prisma, request.query.windowDays),
+    })
   );
 
   // POST /api/v1/admin/skills
   app.post(
     '/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { body: CreateSkillSchema },
-    },
+    { onRequest: adminOnly, schema: { body: CreateSkillSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
-      const scanResult = await scanSkillContent(promptText);
-      const skill = await fastify.prisma.skill.create({
-        data: {
-          description,
-          isBuiltIn: false,
-          isVerified: false,
-          name,
-          promptText,
-        },
-      });
+      const { skill, scanWarnings } = await createSkill(fastify.prisma, request.body);
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
@@ -259,7 +177,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       });
       return reply.status(201).send({
         data: skill,
-        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+        ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
       });
     }
   );
@@ -267,10 +185,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // GET /api/v1/admin/skills/:id
   app.get(
     '/skills/:id',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { params: SkillIdParams },
-    },
+    { onRequest: adminOnly, schema: { params: SkillIdParams } },
     async (request, reply) => {
       const skill = await fastify.prisma.skill.findUnique({
         include: { _count: { select: { assignments: true } } },
@@ -286,10 +201,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // PUT /api/v1/admin/skills/:id
   app.put(
     '/skills/:id',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { body: UpdateSkillSchema, params: SkillIdParams },
-    },
+    { onRequest: adminOnly, schema: { body: UpdateSkillSchema, params: SkillIdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
@@ -299,32 +211,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
 
-      const { name, description, promptText, isActive } = request.body;
-
-      // Built-in skills: only name, description, and isActive may be updated.
-      // promptText is locked for built-ins to preserve the verified content guarantee.
-      // Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
-      // Reset isVerified only when promptText changes — name/description edits don't
-      // invalidate the content trust signal.
-      const updateData = existing.isBuiltIn
-        ? { description, isActive, name }
-        : {
-            description,
-            isActive,
-            name,
-            promptText,
-            ...(promptText !== undefined ? { isVerified: false } : {}),
-          };
-
-      const scanResult =
-        !existing.isBuiltIn && promptText
-          ? await scanSkillContent(promptText)
-          : { safe: true, warnings: [] };
-
-      const updated = await fastify.prisma.skill.update({
-        data: updateData,
-        where: { id: request.params.id },
-      });
+      const { updated, scanWarnings } = await updateSkill(fastify.prisma, existing, request.body);
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
@@ -345,7 +232,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       });
       return {
         data: updated,
-        ...(scanResult.warnings.length > 0 ? { scanWarnings: scanResult.warnings } : {}),
+        ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
       };
     }
   );
@@ -353,10 +240,7 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // DELETE /api/v1/admin/skills/:id
   app.delete(
     '/skills/:id',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { params: SkillIdParams },
-    },
+    { onRequest: adminOnly, schema: { params: SkillIdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
@@ -388,51 +272,22 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // ── Agent role overview ────────────────────────────────────────────────────
 
   // GET /api/v1/admin/agents — list all roles with their GLOBAL skill counts + tool configs
-  app.get('/agents', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const roles = AGENT_ROLES;
-
-    const [assignments, toolConfigs] = await Promise.all([
-      fastify.prisma.agentSkillAssignment.groupBy({
-        _count: { id: true },
-        by: ['agentRole'],
-        where: { scope: 'GLOBAL' },
-      }),
-      fastify.prisma.agentToolConfig.findMany({
-        where: { scope: 'GLOBAL' },
-      }),
-    ]);
-
-    const countByRole = Object.fromEntries(assignments.map((a) => [a.agentRole, a._count.id]));
-    const toolConfigByRole = Object.fromEntries(toolConfigs.map((tc) => [tc.agentRole, tc]));
-
-    return {
-      data: roles.map((role) => ({
-        globalSkillCount: countByRole[role] ?? 0,
-        role,
-        toolConfig: toolConfigByRole[role] ?? null,
-      })),
-    };
-  });
+  app.get('/agents', { onRequest: adminOnly }, async () => ({
+    data: await getAgentRolesOverview(fastify.prisma),
+  }));
 
   // GET /api/v1/admin/agents/:role/skills
   app.get(
     '/agents/:role/skills',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: adminOnly,
       schema: { params: AgentRoleParams, querystring: SkillAssignmentQuery },
     },
     async (request) => {
       const { role } = request.params;
-      const { scope, teamId, workflowTemplateId } = request.query;
-      const assignments = await fastify.prisma.agentSkillAssignment.findMany({
-        include: { skill: true },
-        orderBy: { sortOrder: 'asc' },
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
+      const assignments = await listSkillAssignments(fastify.prisma, {
+        agentRole: role,
+        ...request.query,
       });
       return { data: assignments };
     }
@@ -441,79 +296,28 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // PUT /api/v1/admin/agents/:role/skills — replace assignments for role+scope
   app.put(
     '/agents/:role/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { body: SkillAssignmentBody, params: AgentRoleParams },
-    },
+    { onRequest: adminOnly, schema: { body: SkillAssignmentBody, params: AgentRoleParams } },
     async (request, reply) => {
+      const actor = requireUser(request);
       const { role } = request.params;
       const { scope, skillIds, sortOrders, teamId, workflowTemplateId } = request.body;
-      requireUser(request);
 
       // Validate FK references before the transaction to surface a 400 instead
       // of a FK constraint violation (which would be an unhandled 500).
-      if (teamId) {
-        const teamExists = await fastify.prisma.team.findUnique({
-          select: { id: true },
-          where: { id: teamId },
-        });
-        if (!teamExists) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
-        }
-      }
-      if (workflowTemplateId) {
-        const tplExists = await fastify.prisma.workflowTemplate.findUnique({
-          select: { id: true },
-          where: { id: workflowTemplateId },
-        });
-        if (!tplExists) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'NOT_FOUND', message: 'Workflow template not found' } });
-        }
+      const refError = await validateScopeRefs(fastify.prisma, { teamId, workflowTemplateId });
+      if (refError) {
+        return reply.status(400).send({ error: { code: 'NOT_FOUND', message: refError } });
       }
 
-      await fastify.prisma.$transaction(async (tx) => {
-        // Delete existing assignments for this role+scope
-        await tx.agentSkillAssignment.deleteMany({
-          where: {
-            agentRole: role,
-            scope,
-            teamId: teamId ?? null,
-            workflowTemplateId: workflowTemplateId ?? null,
-          },
-        });
-
-        // Create new assignments
-        if (skillIds.length > 0) {
-          await tx.agentSkillAssignment.createMany({
-            data: skillIds.map((skillId, idx) => ({
-              agentRole: role,
-              scope,
-              skillId,
-              sortOrder: sortOrders?.[idx] ?? idx,
-              teamId: teamId ?? null,
-              workflowTemplateId: workflowTemplateId ?? null,
-            })),
-          });
-        }
-      });
-
-      const updated = await fastify.prisma.agentSkillAssignment.findMany({
-        include: { skill: true },
-        orderBy: { sortOrder: 'asc' },
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
-      });
+      const updated = await replaceSkillAssignments(
+        fastify.prisma,
+        { agentRole: role, scope, teamId, workflowTemplateId },
+        skillIds,
+        sortOrders
+      );
       await writeAuditLog(fastify, {
         action: 'UPDATE',
-        actor: requireUser(request),
+        actor,
         after: { agentRole: role, scope, skillIds, teamId, workflowTemplateId },
         entityId: randomUUID(),
         entityType: 'AgentSkillAssignment',
@@ -526,20 +330,18 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   app.delete(
     '/agents/:role/skills',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: adminOnly,
       schema: { params: AgentRoleParams, querystring: SkillAssignmentQuery },
     },
     async (request, reply) => {
       const actor = requireUser(request);
       const { role } = request.params;
       const { scope, teamId, workflowTemplateId } = request.query;
-      await fastify.prisma.agentSkillAssignment.deleteMany({
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
+      await clearSkillAssignments(fastify.prisma, {
+        agentRole: role,
+        scope,
+        teamId,
+        workflowTemplateId,
       });
       await writeAuditLog(fastify, {
         action: 'DELETE',
@@ -557,20 +359,11 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // GET /api/v1/admin/agents/:role/tools
   app.get(
     '/agents/:role/tools',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { params: AgentRoleParams, querystring: ToolConfigQuery },
-    },
+    { onRequest: adminOnly, schema: { params: AgentRoleParams, querystring: ToolConfigQuery } },
     async (request, reply) => {
-      const { role } = request.params;
-      const { scope, teamId, workflowTemplateId } = request.query;
-      const config = await fastify.prisma.agentToolConfig.findFirst({
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
+      const config = await findToolConfig(fastify.prisma, {
+        agentRole: request.params.role,
+        ...request.query,
       });
       if (!config) {
         return reply.status(404).send({
@@ -584,44 +377,17 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // PUT /api/v1/admin/agents/:role/tools — set tool config for role+scope
   app.put(
     '/agents/:role/tools',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { body: ToolConfigBody, params: AgentRoleParams },
-    },
+    { onRequest: adminOnly, schema: { body: ToolConfigBody, params: AgentRoleParams } },
     async (request) => {
       const actor = requireUser(request);
       const { role } = request.params;
       const { scope, enabledTools, teamId, workflowTemplateId } = request.body;
 
-      // deleteMany + create in a transaction (partial unique indexes prevent upsert on named constraint)
-      const [existing, config] = await fastify.prisma.$transaction(async (tx) => {
-        const prev = await tx.agentToolConfig.findFirst({
-          where: {
-            agentRole: role,
-            scope,
-            teamId: teamId ?? null,
-            workflowTemplateId: workflowTemplateId ?? null,
-          },
-        });
-        await tx.agentToolConfig.deleteMany({
-          where: {
-            agentRole: role,
-            scope,
-            teamId: teamId ?? null,
-            workflowTemplateId: workflowTemplateId ?? null,
-          },
-        });
-        const next = await tx.agentToolConfig.create({
-          data: {
-            agentRole: role,
-            enabledTools,
-            scope,
-            teamId: teamId ?? null,
-            workflowTemplateId: workflowTemplateId ?? null,
-          },
-        });
-        return [prev, next] as const;
-      });
+      const [existing, config] = await setToolConfig(
+        fastify.prisma,
+        { agentRole: role, scope, teamId, workflowTemplateId },
+        enabledTools
+      );
       await writeAuditLog(fastify, {
         action: existing ? 'UPDATE' : 'CREATE',
         actor,
@@ -637,29 +403,16 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // DELETE /api/v1/admin/agents/:role/tools — resets to inherit from parent scope
   app.delete(
     '/agents/:role/tools',
-    {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
-      schema: { params: AgentRoleParams, querystring: ToolConfigQuery },
-    },
+    { onRequest: adminOnly, schema: { params: AgentRoleParams, querystring: ToolConfigQuery } },
     async (request, reply) => {
       const actor = requireUser(request);
       const { role } = request.params;
       const { scope, teamId, workflowTemplateId } = request.query;
-      const existing = await fastify.prisma.agentToolConfig.findFirst({
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
-      });
-      await fastify.prisma.agentToolConfig.deleteMany({
-        where: {
-          agentRole: role,
-          scope,
-          teamId: teamId ?? null,
-          workflowTemplateId: workflowTemplateId ?? null,
-        },
+      const existing = await deleteToolConfig(fastify.prisma, {
+        agentRole: role,
+        scope,
+        teamId,
+        workflowTemplateId,
       });
       if (existing) {
         await writeAuditLog(fastify, {
@@ -687,30 +440,22 @@ const TeamIdParams = z.object({ teamId: z.string().uuid() });
 
 export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+  const engineer = requireAuth({ requiredRole: 'ENGINEER' });
 
   // GET /api/v1/teams/:teamId/skills — non-admin read-only skill library for team members.
   // Team owners (ENGINEER role) need to see all skills so they can assign them without
   // hitting the admin-only /api/v1/admin/skills endpoint.
   app.get(
     '/:teamId/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TeamIdParams },
-    },
+    { onRequest: engineer, schema: { params: TeamIdParams } },
     async (request, reply) => {
       const { teamId } = request.params;
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team member
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId);
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
       const skills = await fastify.prisma.skill.findMany({
@@ -730,39 +475,22 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // GET /api/v1/teams/:teamId/agents/:role/skills
   app.get(
     '/:teamId/agents/:role/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TeamAgentParams },
-    },
+    { onRequest: engineer, schema: { params: TeamAgentParams } },
     async (request, reply) => {
       const { teamId, role } = request.params;
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team member
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId);
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
       // Return the TEAM-scoped assignments; also include GLOBAL assignments
       // so the UI can show what the "inherit" baseline looks like.
       const [teamAssignments, globalAssignments] = await Promise.all([
-        fastify.prisma.agentSkillAssignment.findMany({
-          include: { skill: true },
-          orderBy: { sortOrder: 'asc' },
-          where: { agentRole: role, scope: 'TEAM', teamId },
-        }),
-        fastify.prisma.agentSkillAssignment.findMany({
-          include: { skill: true },
-          orderBy: { sortOrder: 'asc' },
-          where: { agentRole: role, scope: 'GLOBAL' },
-        }),
+        listSkillAssignments(fastify.prisma, { agentRole: role, scope: 'TEAM', teamId }),
+        listSkillAssignments(fastify.prisma, { agentRole: role, scope: 'GLOBAL' }),
       ]);
 
       return {
@@ -779,7 +507,7 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   app.put(
     '/:teamId/agents/:role/skills',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: engineer,
       schema: {
         body: z.object({
           skillIds: z.array(z.string().uuid()).max(50),
@@ -794,46 +522,19 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team ADMIN
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
-        if (membership.role !== 'ADMIN') {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team admin role required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId, {
+        requireTeamAdmin: true,
+      });
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
-      await fastify.prisma.$transaction(async (tx) => {
-        // Delete existing TEAM-scoped assignments
-        await tx.agentSkillAssignment.deleteMany({
-          where: { agentRole: role, scope: 'TEAM', teamId },
-        });
-
-        if (skillIds.length > 0) {
-          await tx.agentSkillAssignment.createMany({
-            data: skillIds.map((skillId, idx) => ({
-              agentRole: role,
-              scope: 'TEAM' as const,
-              skillId,
-              sortOrder: sortOrders?.[idx] ?? idx,
-              teamId,
-            })),
-          });
-        }
-      });
-
-      const updated = await fastify.prisma.agentSkillAssignment.findMany({
-        include: { skill: true },
-        orderBy: { sortOrder: 'asc' },
-        where: { agentRole: role, scope: 'TEAM', teamId },
-      });
+      const updated = await replaceSkillAssignments(
+        fastify.prisma,
+        { agentRole: role, scope: 'TEAM', teamId },
+        skillIds,
+        sortOrders
+      );
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
@@ -848,34 +549,20 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // DELETE /api/v1/teams/:teamId/agents/:role/skills — reset to global
   app.delete(
     '/:teamId/agents/:role/skills',
-    {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TeamAgentParams },
-    },
+    { onRequest: engineer, schema: { params: TeamAgentParams } },
     async (request, reply) => {
       const { teamId, role } = request.params;
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team ADMIN
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
-        if (membership.role !== 'ADMIN') {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team admin role required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId, {
+        requireTeamAdmin: true,
+      });
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
-      await fastify.prisma.agentSkillAssignment.deleteMany({
-        where: { agentRole: role, scope: 'TEAM', teamId },
-      });
+      await clearSkillAssignments(fastify.prisma, { agentRole: role, scope: 'TEAM', teamId });
       await writeAuditLog(fastify, {
         action: 'DELETE',
         actor: user,
@@ -892,33 +579,20 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // GET /api/v1/teams/:teamId/agents/:role/tools
   app.get(
     '/:teamId/agents/:role/tools',
-    {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TeamAgentParams },
-    },
+    { onRequest: engineer, schema: { params: TeamAgentParams } },
     async (request, reply) => {
       const { teamId, role } = request.params;
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team member
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId);
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
       const [teamConfig, globalConfig] = await Promise.all([
-        fastify.prisma.agentToolConfig.findFirst({
-          where: { agentRole: role, scope: 'TEAM', teamId },
-        }),
-        fastify.prisma.agentToolConfig.findFirst({
-          where: { agentRole: role, scope: 'GLOBAL' },
-        }),
+        findToolConfig(fastify.prisma, { agentRole: role, scope: 'TEAM', teamId }),
+        findToolConfig(fastify.prisma, { agentRole: role, scope: 'GLOBAL' }),
       ]);
 
       return {
@@ -935,10 +609,10 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   app.put(
     '/:teamId/agents/:role/tools',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: engineer,
       schema: {
         body: z.object({
-          enabledTools: z.array(z.enum(TOOL_KEYS)).min(1).max(4),
+          enabledTools: z.array(z.enum(IMPLEMENTER_TOOL_KEYS)).min(1).max(4),
         }),
         params: TeamAgentParams,
       },
@@ -949,39 +623,18 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team ADMIN
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
-        if (membership.role !== 'ADMIN') {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team admin role required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId, {
+        requireTeamAdmin: true,
+      });
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
-      const [existingTeamTool, config] = await fastify.prisma.$transaction(async (tx) => {
-        const prev = await tx.agentToolConfig.findFirst({
-          where: { agentRole: role, scope: 'TEAM', teamId },
-        });
-        await tx.agentToolConfig.deleteMany({
-          where: { agentRole: role, scope: 'TEAM', teamId },
-        });
-        const next = await tx.agentToolConfig.create({
-          data: {
-            agentRole: role,
-            enabledTools,
-            scope: 'TEAM',
-            teamId,
-          },
-        });
-        return [prev, next] as const;
-      });
+      const [existingTeamTool, config] = await setToolConfig(
+        fastify.prisma,
+        { agentRole: role, scope: 'TEAM', teamId },
+        enabledTools
+      );
       await writeAuditLog(fastify, {
         action: existingTeamTool ? 'UPDATE' : 'CREATE',
         actor: user,
@@ -997,36 +650,23 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
   // DELETE /api/v1/teams/:teamId/agents/:role/tools — reset to global
   app.delete(
     '/:teamId/agents/:role/tools',
-    {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: TeamAgentParams },
-    },
+    { onRequest: engineer, schema: { params: TeamAgentParams } },
     async (request, reply) => {
       const { teamId, role } = request.params;
       const user = requireUser(request);
 
       // Check access: platform ADMIN or team ADMIN
-      if (user.role !== 'ADMIN') {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId, userId: user.sub } },
-        });
-        if (!membership) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team membership required' },
-          });
-        }
-        if (membership.role !== 'ADMIN') {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Team admin role required' },
-          });
-        }
+      const access = await checkTeamAccess(fastify.prisma, user, teamId, {
+        requireTeamAdmin: true,
+      });
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
-      const existingTeamToolDel = await fastify.prisma.agentToolConfig.findFirst({
-        where: { agentRole: role, scope: 'TEAM', teamId },
-      });
-      await fastify.prisma.agentToolConfig.deleteMany({
-        where: { agentRole: role, scope: 'TEAM', teamId },
+      const existingTeamToolDel = await deleteToolConfig(fastify.prisma, {
+        agentRole: role,
+        scope: 'TEAM',
+        teamId,
       });
       if (existingTeamToolDel) {
         await writeAuditLog(fastify, {
