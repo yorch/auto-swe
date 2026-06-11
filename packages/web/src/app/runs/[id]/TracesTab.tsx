@@ -4,7 +4,7 @@ import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { useCallback, useMemo, useState } from 'react';
 import { formatDuration } from '@/lib/utils';
 
-// ── Trace helpers ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TOOL_LABELS: Record<string, string> = {
   bash: 'bash',
@@ -13,16 +13,15 @@ const TOOL_LABELS: Record<string, string> = {
   writeFile: 'write',
 };
 
-const TYPE_DOT: Record<string, string> = {
-  activity_event: 'bg-dust-400',
-  llm_response: 'bg-violet-400',
-  tool_call: 'bg-paper-500',
-};
-
-const TYPE_BADGE: Record<string, string> = {
-  activity_event: 'bg-dust-400/20 text-dust-400',
-  llm_response: 'bg-violet-400/20 text-violet-400',
-  tool_call: 'bg-ink-600 text-paper-400',
+// Type glyph — colored chip labelling the trace event kind
+const TYPE_GLYPH: Record<string, { label: string; color: string; bg: string }> = {
+  activity_event: {
+    bg: 'oklch(0.78 0.11 80 / 0.14)',
+    color: 'var(--color-amber-400)',
+    label: 'event',
+  },
+  llm_response: { bg: 'oklch(0.66 0.11 235 / 0.14)', color: 'var(--color-dust-400)', label: 'llm' },
+  tool_call: { bg: 'oklch(0.66 0 0 / 0.12)', color: 'var(--color-paper-500)', label: 'tool' },
 };
 
 function traceSummary(trace: AgentTraceRecord): { label: string; detail: string } {
@@ -50,7 +49,6 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
     return { detail, label: TOOL_LABELS[name] ?? name };
   }
 
-  // tool_call
   const label = TOOL_LABELS[name] ?? (name || 'call');
   if (!input) {
     return { detail: '', label };
@@ -80,20 +78,130 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   if (!trace.error && !text) {
     return null;
   }
+
   return (
-    <div>
+    <div className="mt-2 space-y-1.5">
       {trace.error && (
-        <div className="text-xs text-brick-400 bg-brick-400/10 border border-brick-400/40 rounded px-2 py-1 mb-1">
+        <div
+          className="text-brick-400 px-2 py-1.5"
+          style={{
+            background: 'oklch(0.64 0.17 28 / 0.09)',
+            border: '1px solid oklch(0.64 0.17 28 / 0.3)',
+            borderRadius: '2px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+          }}
+        >
           {trace.error}
         </div>
       )}
       {text && (
-        <pre className="text-[10px] leading-tight bg-ink-800 p-1.5 rounded overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
-          {text.slice(0, 2000)}
-          {text.length > 2000 ? '\n…' : ''}
+        <pre
+          className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+          style={{
+            background: 'var(--color-ink-900)',
+            border: '1px solid var(--color-ink-500)',
+            borderRadius: '2px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+            lineHeight: 1.5,
+          }}
+        >
+          {text.slice(0, 3000)}
+          {text.length > 3000 ? '\n…' : ''}
         </pre>
       )}
     </div>
+  );
+}
+
+// ── EventRow ──────────────────────────────────────────────────────────────────
+
+function EventRow({
+  trace,
+  isExpanded,
+  onToggle,
+}: {
+  trace: AgentTraceRecord;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const { label, detail } = traceSummary(trace);
+  const durationLabel = trace.durationMs != null ? formatDuration(trace.durationMs) : '';
+  const glyph = TYPE_GLYPH[trace.type] ?? TYPE_GLYPH.tool_call;
+  const hasError = Boolean(trace.error);
+
+  return (
+    <li>
+      <button
+        className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="flex items-center gap-2">
+          {/* Disclosure caret */}
+          <span
+            className="shrink-0 text-paper-600 w-3 text-center"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '8px' }}
+          >
+            {isExpanded ? '▼' : '▶'}
+          </span>
+
+          {/* Type glyph — .tg */}
+          <span
+            className="shrink-0 px-1 py-px"
+            style={{
+              background: glyph.bg,
+              borderRadius: '2px',
+              color: glyph.color,
+              fontFamily: 'var(--font-mono)',
+              fontSize: '8.5px',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+            }}
+          >
+            {glyph.label}
+          </span>
+
+          {/* Event name */}
+          <span
+            className={hasError ? 'text-brick-400' : 'text-paper-200'}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+          >
+            {label}
+          </span>
+
+          {/* Detail / model */}
+          {detail && (
+            <span
+              className="text-paper-500 truncate flex-1"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+            >
+              {detail}
+            </span>
+          )}
+
+          {/* Right: duration + error chip */}
+          <div className="flex items-center gap-2 ml-auto shrink-0">
+            {durationLabel && (
+              <span className="text-paper-600 num" style={{ fontSize: '10px' }}>
+                {durationLabel}
+              </span>
+            )}
+            {hasError && (
+              <span
+                className="text-brick-400"
+                style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.1em' }}
+              >
+                ERR
+              </span>
+            )}
+          </div>
+        </div>
+
+        {isExpanded && <TraceOutput trace={trace} />}
+      </button>
+    </li>
   );
 }
 
@@ -107,47 +215,20 @@ function TraceEventList({
   onToggle: (id: string) => void;
 }) {
   return (
-    <ol className="space-y-0.5">
-      {traces.map((t) => {
-        const { label, detail } = traceSummary(t);
-        const isExpanded = expandedId === t.id;
-        const durationLabel = t.durationMs != null ? formatDuration(t.durationMs) : '';
-        const badgeClass = TYPE_BADGE[t.type] ?? TYPE_BADGE.tool_call;
-        const dotClass = TYPE_DOT[t.type] ?? TYPE_DOT.tool_call;
-
-        return (
-          <li key={t.id}>
-            <button
-              className="w-full text-left rounded hover:bg-ink-700 px-2 py-1.5 transition-colors"
-              onClick={() => onToggle(t.id)}
-              type="button"
-            >
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dotClass}`} />
-                <span className={`text-[10px] px-1 rounded font-mono shrink-0 ${badgeClass}`}>
-                  {t.type === 'tool_call' ? 'tool' : t.type === 'llm_response' ? 'llm' : 'event'}
-                </span>
-                <span className="font-mono font-semibold shrink-0">{label}</span>
-                {detail && <span className="text-paper-400 truncate font-mono">{detail}</span>}
-                <span className="ml-auto text-paper-400 shrink-0 text-[10px]">{durationLabel}</span>
-                {t.error && (
-                  <span className="text-brick-400 shrink-0 text-[10px] font-mono">err</span>
-                )}
-              </div>
-              {isExpanded && (
-                <div className="mt-1.5">
-                  <TraceOutput trace={t} />
-                </div>
-              )}
-            </button>
-          </li>
-        );
-      })}
+    <ol>
+      {traces.map((t) => (
+        <EventRow
+          isExpanded={expandedId === t.id}
+          key={t.id}
+          onToggle={() => onToggle(t.id)}
+          trace={t}
+        />
+      ))}
     </ol>
   );
 }
 
-// ── Traces tab ────────────────────────────────────────────────────────────────
+// ── TracesTab ─────────────────────────────────────────────────────────────────
 
 interface TraceGroup {
   activityName: string;
@@ -200,7 +281,7 @@ export function TracesTab({
 
   if (traces.length === 0) {
     return (
-      <div className="py-12 text-center text-sm text-paper-400">
+      <div className="py-12 text-center text-paper-500 text-sm">
         No trace events recorded for this run.
       </div>
     );
@@ -209,15 +290,26 @@ export function TracesTab({
   return (
     <div>
       {!compact && filterNodeId && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-600 bg-ink-800/60 sticky top-0 z-10">
-          <span className="text-xs text-paper-400">
+        <div
+          className="flex items-center gap-2 px-4 py-2 border-b border-ink-600/50 sticky top-0 z-10"
+          style={{ background: 'var(--color-ink-900)' }}
+        >
+          <span className="text-paper-500 text-[11px]">
             Filtered to{' '}
-            <span className="font-mono text-paper-200 bg-ink-600 px-1.5 py-0.5 rounded">
+            <span
+              className="text-paper-300 px-1.5 py-0.5"
+              style={{
+                background: 'var(--color-ink-600)',
+                borderRadius: '2px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+              }}
+            >
               {filterNodeId}
             </span>
           </span>
           <button
-            className="text-xs text-ember-400 hover:underline"
+            className="text-ember-400 hover:text-ember-300 text-[11px] transition-colors"
             onClick={onClearFilter}
             type="button"
           >
@@ -227,11 +319,11 @@ export function TracesTab({
       )}
 
       {filtered.length === 0 ? (
-        <div className="py-12 text-center text-sm text-paper-400">
+        <div className="py-12 text-center text-paper-500 text-sm">
           No trace events for this node.{' '}
           {!compact && (
             <button
-              className="text-ember-400 hover:underline"
+              className="text-ember-400 hover:text-ember-300 transition-colors"
               onClick={onClearFilter}
               type="button"
             >
@@ -240,26 +332,44 @@ export function TracesTab({
           )}
         </div>
       ) : (
-        <div className="divide-y divide-ink-600/50">
+        <div className="divide-y divide-ink-600/30">
           {groups.map((group) => (
             <div key={`${group.activityName}-${group.attempt}`}>
+              {/* Group header */}
               <div
-                className={`flex items-center gap-2 px-4 py-2 bg-ink-800/40 sticky ${!compact && filterNodeId ? 'top-[33px]' : 'top-0'} z-[5]`}
+                className={`flex items-center gap-2 px-4 py-2 sticky ${
+                  !compact && filterNodeId ? 'top-[33px]' : 'top-0'
+                } z-[5]`}
+                style={{ background: 'var(--color-ink-800)' }}
               >
-                <span className="text-xs font-semibold text-paper-100 font-mono">
+                <span
+                  className="text-paper-200"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+                >
                   {group.dagNodeId ?? group.activityName}
                 </span>
                 {group.dagNodeId && group.dagNodeId !== group.activityName && (
-                  <span className="text-[10px] text-paper-400 font-mono">
+                  <span
+                    className="text-paper-600"
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+                  >
                     ({group.activityName})
                   </span>
                 )}
-                <span className="text-[10px] text-paper-400">attempt {group.attempt}</span>
-                <span className="text-[10px] text-paper-400 ml-auto">
+                <span
+                  className="text-paper-600"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+                >
+                  attempt {group.attempt}
+                </span>
+                <span
+                  className="text-paper-600 ml-auto"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+                >
                   {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              <div className="px-2 py-1">
+              <div className="py-0.5">
                 <TraceEventList
                   expandedId={expandedId}
                   onToggle={handleToggle}

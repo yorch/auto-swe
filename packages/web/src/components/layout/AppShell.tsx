@@ -6,6 +6,11 @@ import { TopBar } from '@/components/layout/TopBar';
 
 const CHROMELESS_ROUTES = ['/login'];
 
+// Run detail and template diff pages manage their own full-height layout.
+function isFullscreenRoute(pathname: string): boolean {
+  return /^\/runs\/[^/]+$/.test(pathname) || /^\/templates\/[^/]+\/diff/.test(pathname);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isChromeless = CHROMELESS_ROUTES.some(
@@ -16,14 +21,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  const fullscreen = isFullscreenRoute(pathname);
+
   return (
-    <div className="flex h-screen text-paper-200">
+    <div
+      className="h-screen overflow-hidden text-paper-200"
+      style={{ display: 'grid', gridTemplateColumns: '230px 1fr' }}
+    >
       <Sidebar />
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1280px] px-10 py-10">{children}</div>
-        </main>
+        {fullscreen ? (
+          <main className="flex-1 overflow-hidden">{children}</main>
+        ) : (
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-[1280px] px-10 py-10">{children}</div>
+          </main>
+        )}
       </div>
     </div>
   );

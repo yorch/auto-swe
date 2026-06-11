@@ -1,28 +1,23 @@
 import type { Metadata } from 'next';
-import { Fraunces, IBM_Plex_Sans, JetBrains_Mono } from 'next/font/google';
+import { Bodoni_Moda, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
 
-const fraunces = Fraunces({
-  axes: ['SOFT', 'WONK', 'opsz'],
+const bodoniModa = Bodoni_Moda({
+  axes: ['opsz'],
   display: 'swap',
+  style: ['normal', 'italic'],
   subsets: ['latin'],
-  variable: '--font-fraunces',
+  variable: '--font-bodoni',
+  weight: ['400', '500', '600', '700'],
 });
 
-const plex = IBM_Plex_Sans({
+const ibmPlexMono = IBM_Plex_Mono({
   display: 'swap',
   subsets: ['latin'],
-  variable: '--font-plex',
-  weight: ['300', '400', '500', '600'],
-});
-
-const jetbrains = JetBrains_Mono({
-  display: 'swap',
-  subsets: ['latin'],
-  variable: '--font-jetbrains',
+  variable: '--font-ibm-plex-mono',
   weight: ['400', '500', '600'],
 });
 
@@ -32,12 +27,6 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Server Component: process.env is read from the Node.js runtime at request
-  // time, not baked at build. Injecting here lets client-side config.ts pick up
-  // values set via docker -e / docker-compose environment: without a rebuild.
-  // Unicode-escape <, >, & so the JSON is safe inside a <script> tag even if
-  // an env var contained a literal </script> sequence (same technique Next.js
-  // uses for __NEXT_DATA__).
   const appConfig = JSON.stringify({
     apiUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080',
     temporalUiUrl:
@@ -49,12 +38,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     .replace(/&/g, '\\u0026');
 
   return (
-    <html className={`${fraunces.variable} ${plex.variable} ${jetbrains.variable}`} lang="en">
+    <html className={`${bodoniModa.variable} ${ibmPlexMono.variable}`} lang="en">
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: operator-controlled env vars only */}
         <script dangerouslySetInnerHTML={{ __html: `window.__APP_CONFIG__=${appConfig};` }} />
+        <style>{`
+          :root {
+            --font-display: var(--font-bodoni), 'Bodoni Moda', Georgia, serif;
+            --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
+          }
+        `}</style>
       </head>
       <body className="min-h-screen">
+        {/* Film grain overlay — fixed full-screen, above all content */}
+        <div
+          aria-hidden="true"
+          style={{
+            backgroundImage:
+              "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            backgroundRepeat: 'repeat',
+            inset: 0,
+            mixBlendMode: 'overlay',
+            opacity: 0.04,
+            pointerEvents: 'none',
+            position: 'fixed',
+            zIndex: 9999,
+          }}
+        />
         <Providers>
           <ErrorBoundary>
             <AppShell>{children}</AppShell>

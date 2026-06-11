@@ -6,16 +6,20 @@ export function StatusBadge({ status, showDot = true }: { status: string; showDo
 
   return (
     <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em]',
-        meta.classes
-      )}
+      className={cn('inline-flex items-center gap-1.5 border px-1.5 py-0.5', meta.classes)}
+      style={{
+        borderRadius: '2px',
+        fontFamily: 'var(--font-mono)',
+        fontSize: '9.5px',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+      }}
     >
       {showDot && (
         <span
           aria-hidden
           className={cn(
-            'inline-block h-1.5 w-1.5 rounded-full',
+            'inline-block h-[5px] w-[5px] rounded-full shrink-0',
             meta.dotClass,
             isLive && 'pulse-dot'
           )}

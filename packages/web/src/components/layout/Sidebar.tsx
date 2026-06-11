@@ -77,19 +77,50 @@ export function Sidebar() {
 
   let counter = 0;
 
+  const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
+
   return (
-    <aside className="flex w-64 flex-col border-r border-ink-600 bg-ink-950/60 backdrop-blur-sm">
-      {/* Wordmark */}
-      <div className="px-6 pt-7 pb-6">
-        <Link className="group block" href="/">
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-100">
+    <aside
+      className="flex flex-col border-r border-ink-600/60"
+      style={{ background: 'var(--color-ink-900)' }}
+    >
+      {/* Brand block */}
+      <div className="px-6 pt-7 pb-5">
+        <Link className="block" href="/">
+          <div className="flex items-baseline gap-1">
+            <span
+              className="text-[22px] leading-none tracking-tight text-paper-100"
+              style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}
+            >
               auto
             </span>
-            <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
+            <span
+              className="text-ember-400 text-[22px] leading-none"
+              style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}
+            >
+              ·
+            </span>
+            <span
+              className="text-ember-400 text-[22px] leading-none"
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontStyle: 'italic',
+                fontWeight: 500,
+              }}
+            >
+              swe
+            </span>
           </div>
-          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-            engineering · telemetry
+          <div
+            className="mt-1.5 text-paper-600"
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '9px',
+              letterSpacing: '0.28em',
+              textTransform: 'uppercase',
+            }}
+          >
+            ENGINEERING · TELEMETRY
           </div>
         </Link>
       </div>
@@ -97,7 +128,7 @@ export function Sidebar() {
       <div className="ink-rule mx-6 h-px" />
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 pt-6 pb-4">
+      <nav className="flex-1 overflow-y-auto px-3 pt-5 pb-4">
         {NAV_GROUPS.map((group) => {
           const visible = group.items.filter((item) =>
             item.roles.some((r) => (ROLE_HIERARCHY[r] ?? 0) <= userLevel)
@@ -108,7 +139,16 @@ export function Sidebar() {
 
           return (
             <div className="mb-6" key={group.label}>
-              <div className="px-3 pb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
+              {/* Group kicker */}
+              <div
+                className="px-3 pb-2 text-paper-600"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.22em',
+                  textTransform: 'uppercase',
+                }}
+              >
                 {group.label}
               </div>
               <ul className="space-y-px">
@@ -120,29 +160,50 @@ export function Sidebar() {
                     <li key={item.href}>
                       <Link
                         className={cn(
-                          'group/item relative flex items-center gap-3 px-3 py-2 text-sm transition-colors',
-                          active ? 'text-paper-50' : 'text-paper-400 hover:text-paper-100'
+                          'group/item relative flex items-center gap-3 rounded-sm px-3 py-1.5 transition-colors',
+                          active
+                            ? 'bg-ink-600/30 text-paper-100'
+                            : 'text-paper-500 hover:bg-ink-600/20 hover:text-paper-300'
                         )}
                         href={item.href}
                       >
-                        {/* Active accent rule (slides in on hover/active) */}
+                        {/* 2px accent bar on left edge */}
                         <span
                           className={cn(
-                            'absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-ember-400 transition-transform origin-top',
-                            active ? 'scale-y-100' : 'scale-y-0 group-hover/item:scale-y-100'
+                            'absolute left-0 top-1 bottom-1 w-0.5 origin-top transition-transform',
+                            active
+                              ? 'scale-y-100 bg-ember-400'
+                              : 'scale-y-0 bg-ember-400 group-hover/item:scale-y-75'
                           )}
                         />
-                        <span className="tabular w-5 font-mono text-[10px] text-paper-600">
+                        {/* 2-digit index */}
+                        <span
+                          className={cn(
+                            'w-5 shrink-0',
+                            active ? 'text-ember-400' : 'text-paper-600'
+                          )}
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+                        >
                           {n}
                         </span>
-                        <span className="flex-1 tracking-tight">{item.label}</span>
+                        {/* Label */}
+                        <span className="flex-1 text-[13px] tracking-tight">{item.label}</span>
+                        {/* Inbox count or active dot at far right */}
                         {item.href === '/inbox' && inboxCount > 0 ? (
-                          <span className="font-mono text-[9px] bg-ember-400 text-ink-950 px-1.5 rounded-full leading-5">
+                          <span
+                            className="bg-ember-400 text-ink-950 rounded-full leading-5 px-1.5"
+                            style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+                          >
                             {inboxCount}
                           </span>
-                        ) : (
-                          active && <span className="font-mono text-[10px] text-ember-400">●</span>
-                        )}
+                        ) : active ? (
+                          <span
+                            className="text-ember-400"
+                            style={{ fontFamily: 'var(--font-mono)', fontSize: '8px' }}
+                          >
+                            ●
+                          </span>
+                        ) : null}
                       </Link>
                     </li>
                   );
@@ -155,17 +216,29 @@ export function Sidebar() {
 
       <div className="ink-rule mx-6 h-px" />
 
-      {/* Footer: user */}
-      <div className="px-6 py-5">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          Session
+      {/* Footer: avatar + username + role tag */}
+      <div className="px-5 py-4 flex items-center gap-3">
+        {/* Round mono avatar */}
+        <span
+          className="flex items-center justify-center w-7 h-7 rounded-full bg-ink-500 text-paper-300 shrink-0 select-none"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500 }}
+        >
+          {avatarLetter}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="truncate text-paper-400 text-[12px]">{user?.email ?? 'guest'}</div>
         </div>
-        <div className="mt-1 flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm text-paper-200">{user?.email ?? 'guest'}</span>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-ember-400">
-            {user?.role ?? '—'}
-          </span>
-        </div>
+        <span
+          className="shrink-0 text-ember-400"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '9px',
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {user?.role ?? '—'}
+        </span>
       </div>
     </aside>
   );

@@ -1,6 +1,12 @@
 'use client';
 
-type RunDetailLayout = 'split' | 'inline';
+export type RunDetailLayout = 'A' | 'B' | 'C';
+
+const OPTIONS: { id: RunDetailLayout; label: string; title: string }[] = [
+  { id: 'A', label: 'A', title: 'Split Console' },
+  { id: 'B', label: 'B', title: 'Transcript' },
+  { id: 'C', label: 'C', title: 'Flight Recorder' },
+];
 
 interface LayoutToggleProps {
   value: RunDetailLayout;
@@ -9,38 +15,27 @@ interface LayoutToggleProps {
 
 export function LayoutToggle({ value, onChange }: LayoutToggleProps) {
   return (
-    <div className="flex items-center gap-px bg-ink-700 rounded p-0.5">
-      <button
-        aria-label="Split panel layout"
-        className={`p-1 rounded transition-colors ${
-          value === 'split' ? 'bg-ink-500 text-paper-100' : 'text-paper-400 hover:text-paper-200'
-        }`}
-        onClick={() => onChange('split')}
-        title="Split panel"
-        type="button"
-      >
-        {/* Two-column split icon */}
-        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 14 14" width="14">
-          <rect height="10" rx="1" stroke="currentColor" strokeWidth="1.2" width="5" x="1" y="2" />
-          <rect height="10" rx="1" stroke="currentColor" strokeWidth="1.2" width="5" x="8" y="2" />
-        </svg>
-      </button>
-      <button
-        aria-label="Inline list layout"
-        className={`p-1 rounded transition-colors ${
-          value === 'inline' ? 'bg-ink-500 text-paper-100' : 'text-paper-400 hover:text-paper-200'
-        }`}
-        onClick={() => onChange('inline')}
-        title="Inline list"
-        type="button"
-      >
-        {/* List with indent lines icon */}
-        <svg aria-hidden="true" fill="none" height="14" viewBox="0 0 14 14" width="14">
-          <line stroke="currentColor" strokeWidth="1.2" x1="2" x2="12" y1="4" y2="4" />
-          <line stroke="currentColor" strokeWidth="1.2" x1="2" x2="12" y1="7" y2="7" />
-          <line stroke="currentColor" strokeWidth="1.2" x1="4" x2="12" y1="10" y2="10" />
-        </svg>
-      </button>
+    <div className="flex items-center border border-ink-400" style={{ borderRadius: '2px' }}>
+      {OPTIONS.map((opt, i) => (
+        <button
+          aria-label={opt.title}
+          className="relative px-3 py-1 transition-colors"
+          key={opt.id}
+          onClick={() => onChange(opt.id)}
+          style={{
+            background: value === opt.id ? 'oklch(0.70 0.145 28 / 0.14)' : 'transparent',
+            borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
+            color: value === opt.id ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10.5px',
+            letterSpacing: '0.14em',
+          }}
+          title={opt.title}
+          type="button"
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -83,34 +83,34 @@ type StatusMeta = {
 };
 
 const MOSS: StatusMeta = {
-  classes: 'border-moss-600/40 bg-moss-600/10 text-moss-400',
+  classes: 'border-moss-600/50 bg-moss-600/10 text-moss-400',
   dotClass: 'bg-moss-400',
 };
 const EMBER_LIVE: StatusMeta = {
-  classes: 'border-ember-600/40 bg-ember-600/10 text-ember-400',
+  classes: 'border-ember-600/50 bg-ember-600/10 text-ember-400',
   dotClass: 'bg-ember-400',
   live: true,
 };
 const DUST_LIVE: StatusMeta = {
-  classes: 'border-dust-600/40 bg-dust-600/10 text-dust-400',
+  classes: 'border-dust-600/50 bg-dust-600/10 text-dust-400',
   dotClass: 'bg-dust-400',
   live: true,
 };
 const AMBER: StatusMeta = {
-  classes: 'border-amber-600/40 bg-amber-600/10 text-amber-400',
+  classes: 'border-amber-600/50 bg-amber-600/10 text-amber-400',
   dotClass: 'bg-amber-400',
 };
 const BRICK: StatusMeta = {
-  classes: 'border-brick-600/40 bg-brick-600/10 text-brick-400',
+  classes: 'border-brick-600/50 bg-brick-600/10 text-brick-400',
   dotClass: 'bg-brick-400',
 };
 const VIOLET: StatusMeta = {
-  classes: 'border-violet-600/40 bg-violet-600/10 text-violet-400',
+  classes: 'border-violet-600/50 bg-violet-600/10 text-violet-400',
   dotClass: 'bg-violet-400',
 };
 const NEUTRAL: StatusMeta = {
-  classes: 'border-ink-500 bg-ink-700/40 text-paper-400',
-  dotClass: 'bg-paper-500',
+  classes: 'border-ink-400/60 bg-ink-600/30 text-paper-500',
+  dotClass: 'bg-paper-600',
 };
 
 export const STATUS_META: Record<string, StatusMeta> = {

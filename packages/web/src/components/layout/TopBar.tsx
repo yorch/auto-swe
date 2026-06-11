@@ -22,27 +22,58 @@ export function TopBar() {
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
   const { data: inboxSteps } = useInbox();
   const inboxCount = (inboxSteps ?? []).length;
+  const isAdmin = user?.role === 'ADMIN';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-ink-600 bg-ink-950/40 px-8 backdrop-blur-sm">
-      <div className="flex items-center gap-5">
-        {/* Status indicator */}
+    <header
+      className="flex items-center justify-between border-b border-ink-600/60 px-6"
+      style={{ background: 'var(--color-ink-900)', height: '46px' }}
+    >
+      <div className="flex items-center gap-4">
+        {/* Online status */}
         <div className="flex items-center gap-2">
           <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          <span
+            className="text-paper-500"
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10.5px',
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+            }}
+          >
             online
           </span>
         </div>
 
-        <span className="h-4 w-px bg-ink-500" />
+        <span className="h-3.5 w-px bg-ink-500" />
 
-        {/* Team picker — styled as a terminal context */}
-        <label className="group relative flex items-center gap-2" htmlFor="topbar-team-select">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        {/* Team context selector */}
+        <label
+          className="relative flex items-center gap-1.5 cursor-pointer"
+          htmlFor="topbar-team-select"
+        >
+          <span
+            className="text-paper-500"
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10.5px',
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+            }}
+          >
             context
           </span>
-          <span className="font-mono text-xs text-paper-400">[</span>
-          <span className="flex items-center gap-1 font-mono text-xs text-paper-100">
+          <span
+            className="text-paper-500"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
+          >
+            [
+          </span>
+          <span
+            className="flex items-center gap-1 text-paper-300"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
+          >
             team:
             <span className="text-ember-400">{teamLabel}</span>
             <Select
@@ -61,18 +92,32 @@ export function TopBar() {
             </Select>
             <span className="text-paper-500">▾</span>
           </span>
-          <span className="font-mono text-xs text-paper-400">]</span>
+          <span
+            className="text-paper-500"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
+          >
+            ]
+          </span>
         </label>
 
         {inboxCount > 0 && (
           <>
-            <span className="h-4 w-px bg-ink-500" />
+            <span className="h-3.5 w-px bg-ink-500" />
             <Link
-              className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-300 transition-colors"
+              className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors"
               href="/inbox"
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10.5px',
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+              }}
             >
-              <span>inbox</span>
-              <span className="bg-amber-400 text-ink-950 text-[9px] px-1.5 rounded-full leading-5 font-bold">
+              inbox
+              <span
+                className="bg-amber-400 text-ink-950 rounded-full leading-5 px-1.5 font-bold"
+                style={{ fontSize: '9px' }}
+              >
                 {inboxCount}
               </span>
             </Link>
@@ -80,18 +125,37 @@ export function TopBar() {
         )}
       </div>
 
-      <div className="flex items-center gap-5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          {user?.role ?? 'guest'}
-        </span>
-        <span className="h-4 w-px bg-ink-500" />
+      <div className="flex items-center gap-4">
+        {isAdmin && (
+          <>
+            <Link
+              className="text-paper-500 hover:text-paper-300 transition-colors"
+              href="/admin/model-config"
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10.5px',
+                letterSpacing: '0.14em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Admin
+            </Link>
+            <span className="h-3.5 w-px bg-ink-500" />
+          </>
+        )}
         <button
-          className="group inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-paper-400 transition-colors hover:text-ember-400"
+          className="flex items-center gap-1 text-paper-500 hover:text-ember-400 transition-colors"
           onClick={handleLogout}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10.5px',
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+          }}
           type="button"
         >
-          <span>logout</span>
-          <span className="transition-transform group-hover:translate-x-0.5">↗</span>
+          Logout
+          <span className="text-xs">↗</span>
         </button>
       </div>
     </header>
