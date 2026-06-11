@@ -1,11 +1,59 @@
 import crypto from 'node:crypto';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import type { Prisma } from '@auto-swe/shared';
+import { resolveTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { fetchTicket } from '../lib/ticketTracker.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+
+/**
+ * Best-effort ticket enrichment (EVOL-5): when a tracker connector is
+ * configured, fetch the external ticket and seed `ContextSnapshot.rawTicketData`
+ * for the work request. The worker's `validateContext` activity later upserts
+ * the same row (unique on workRequestId) but only writes `successCriteria` on
+ * the update path, so the ticket payload survives.
+ *
+ * Never throws and never blocks submission — every failure is logged and
+ * swallowed.
+ */
+async function enrichWithTicketData(
+  fastify: FastifyInstance,
+  args: {
+    externalTicketId: string;
+    repo: { organizationName: string; repoName: string };
+    workRequestId: string;
+  }
+): Promise<void> {
+  try {
+    const tracker = await resolveTrackerConfig();
+    if (!tracker.provider) {
+      return;
+    }
+    const ticket = await fetchTicket(tracker, args.externalTicketId, {
+      defaultRepo: { owner: args.repo.organizationName, repo: args.repo.repoName },
+      log: fastify.log,
+    });
+    if (!ticket) {
+      return;
+    }
+    await fastify.prisma.contextSnapshot.upsert({
+      create: {
+        rawTicketData: ticket as unknown as Prisma.InputJsonValue,
+        workRequestId: args.workRequestId,
+      },
+      update: { rawTicketData: ticket as unknown as Prisma.InputJsonValue },
+      where: { workRequestId: args.workRequestId },
+    });
+  } catch (err) {
+    fastify.log.warn(
+      { err, ticketId: args.externalTicketId, workRequestId: args.workRequestId },
+      'Ticket tracker enrichment failed; continuing without rawTicketData'
+    );
+  }
+}
 
 /**
  * Deterministic 0–99 bucket for an A/B key. Uses sha1 mod 100 so the same
@@ -313,6 +361,16 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           temporalWorkflowId,
           workRequestId: workRequest.id,
         },
+      });
+
+      // Best-effort: seed the context snapshot with the external ticket's
+      // content when a tracker connector is configured. Failures are logged
+      // and never affect the 201. (The retry endpoint intentionally skips
+      // this — it reuses the original snapshot.)
+      await enrichWithTicketData(fastify, {
+        externalTicketId,
+        repo: { organizationName: repo.organizationName, repoName: repo.repoName },
+        workRequestId: workRequest.id,
       });
 
       return reply.status(201).send({

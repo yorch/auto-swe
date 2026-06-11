@@ -19,13 +19,16 @@ export type {
   ResolvedGoogleOAuthConfig,
   ResolvedSlackConfig,
   ResolvedStorageConfig,
+  ResolvedTrackerConfig,
   ResolvedWorkflowDefaults,
+  TrackerProvider,
 } from './lib/systemConfig.js';
 export {
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveSlackConfig,
   resolveStorageConfig,
+  resolveTrackerConfig,
   resolveWorkflowDefaults,
 } from './lib/systemConfig.js';
 export { generateBranchName, generateWorkflowId } from './lib/workflowId.js';

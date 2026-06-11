@@ -118,7 +118,8 @@ packages/
 | `src/routes/scannerPatterns.ts` | CRUD for `ScannerPattern` — `INJECTION`, `EXFILTRATION`, `SHELL_COMMAND`, `CODE_SECURITY`, `SENSITIVE_FILE` types; validates regex + safe flag subset (i,m,s,u,v); calls `invalidateScannerPatternCache()` on writes |
 | `src/routes/securityEvents.ts` | `GET /api/v1/admin/security-events` — queries `agent_traces` for security-relevant rows; derives `SecurityEventType` at read time using DB-level predicates; supports `limit`/`offset`/`runId`/`type` filters |
 | `src/routes/humanSteps.ts` | `GET /api/v1/inbox` + `GET /api/v1/inbox/:id` + `POST /api/v1/inbox/:id/respond` — HITL pending-step inbox and response endpoint (see [hitl-workflows.md](./hitl-workflows.md)) |
-| `src/routes/systemConfig.ts` | `/api/v1/admin` system-config CRUD — GitHub (incl. GitHub App), Slack, Storage, OAuth, and workflow-defaults singletons backing `/admin/integrations` and `/admin/workflow` |
+| `src/routes/systemConfig.ts` | `/api/v1/admin` system-config CRUD — GitHub (incl. GitHub App), Slack, Storage, Tracker, OAuth, and workflow-defaults singletons backing `/admin/integrations` and `/admin/workflow` |
+| `src/lib/ticketTracker.ts` | Read-only issue-tracker connectors (Jira REST v3 / Linear GraphQL / GitHub Issues) — `fetchTicket()` runs at work-request submit time and seeds `ContextSnapshot.rawTicketData`; 5 s timeout, never throws (best-effort enrichment) |
 | `src/routes/slack.ts` | `/api/v1/auth/slack` — OAuth connect + callback, `/auto-swe` slash command, signature-verified interactive webhooks |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — shared helper that writes `ConfigAuditLog` rows for all config mutations |
 
@@ -178,7 +179,7 @@ packages/
 | `src/app/settings/` | User settings — API tokens (create / list / revoke) |
 | `src/app/admin/security/` | Security events dashboard — type filter, per-type summary bar, expandable event rows, 30 s auto-refresh |
 | `src/app/admin/scanner/` | Scanner pattern admin — CRUD for all 5 `ScannerPatternType` values; regex validation; built-in vs custom badges |
-| `src/app/admin/integrations/` | System integrations — GitHub (PAT or GitHub App), Slack, Storage (S3/MinIO), OAuth tabs |
+| `src/app/admin/integrations/` | System integrations — GitHub (PAT or GitHub App), Slack, Storage (S3/MinIO), Tracker (Jira / Linear / GitHub Issues ticket connector), OAuth tabs |
 | `src/app/admin/workflow/` | Workflow defaults — branch prefix, PR title/body templates, default team slug, lesson consolidation schedule |
 | `src/app/admin/` | Admin pages — model config, integrations, workflow defaults, access tokens, sessions, shell audit, skills library, agent role config (skills + tool access), lessons observability, scanner patterns, security events |
 | `src/components/security/SecurityEventList.tsx` | `SecurityEventBadge`, `SecurityEventList` — expandable list with per-type formatted details (code findings, LLM warnings, content security lines, bash command); `classifyTraceAsSecurityEvent` — client-side classification for run-detail security panel |
@@ -481,6 +482,7 @@ erDiagram
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows — full agent observability |
 | Memory | `AgentLesson` | pgvector semantic memory (1536-dim HNSW index) |
 | Model config | `ModelRoleConfig`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys) |
+| System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `TrackerConfig` | Singleton (`id='default'`) integration config — encrypted secrets, env-var fallback; `TrackerConfig` drives the submit-time ticket fetch into `ContextSnapshot.rawTicketData` |
 | Agent config | `Skill`, `AgentSkillAssignment`, `AgentToolConfig` | Skills (prompt fragments) and tool access control — scoped at GLOBAL / TEAM / WORKFLOW_TEMPLATE |
 | Infrastructure | `Team`, `Repository` | Tenant isolation + repo registry |
 

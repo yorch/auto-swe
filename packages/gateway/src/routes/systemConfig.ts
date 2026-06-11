@@ -11,32 +11,37 @@ import {
   getGoogleOAuthConfig,
   getSlackConfig,
   getStorageConfig,
+  getTrackerConfig,
   listConfigAuditEntries,
   SYSTEM_CONFIG_IDS,
   testDecryptSecrets,
   testGitHubConnection,
   testSlackConnection,
   testStorageConnection,
+  testTrackerConnection,
   updateConsolidationConfig,
   updateGitHubConfig,
   updateGoogleOAuthConfig,
   updateSlackConfig,
   updateStorageConfig,
+  updateTrackerConfig,
   writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-/// Admin CRUD routes for the five singleton system-config tables:
+/// Admin CRUD routes for the singleton system-config tables:
 ///   GET/PUT /api/v1/admin/config/github
 ///   GET/PUT /api/v1/admin/config/slack
 ///   GET/PUT /api/v1/admin/config/storage
 ///   GET/PUT /api/v1/admin/config/workflow-defaults
 ///   GET/PUT /api/v1/admin/config/oauth/google
+///   GET/PUT /api/v1/admin/config/tracker
 ///
 /// Also:
 ///   POST /api/v1/admin/config/github/test   — live connection test
 ///   POST /api/v1/admin/config/slack/test    — live connection test
 ///   POST /api/v1/admin/config/storage/test  — connectivity test
+///   POST /api/v1/admin/config/tracker/test  — fetch a sample ticket
 ///   GET  /api/v1/admin/config/audit-log     — config change history
 ///
 /// All routes require platform ADMIN role.
@@ -110,6 +115,17 @@ const ConsolidationPutBody = z.object({
 const GoogleOAuthPutBody = z.object({
   clientId: z.string().max(200).nullable().optional(),
   clientSecret: z.string().min(1).max(500).optional(),
+});
+
+const TrackerPutBody = z.object({
+  apiToken: z.string().min(1).max(500).optional(),
+  baseUrl: z.string().url().max(500).nullable().optional(),
+  email: z.string().max(320).nullable().optional(),
+  provider: z.enum(['jira', 'linear', 'github']).nullable().optional(),
+});
+
+const TrackerTestBody = z.object({
+  ticketId: z.string().min(1).max(200),
 });
 
 // ─── route plugin ─────────────────────────────────────────────────────────────
@@ -255,6 +271,37 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       }
       return reply.send({ data: result.data });
     }
+  );
+
+  // ── Issue tracker ────────────────────────────────────────────────────────────
+
+  f.get('/config/tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getTrackerConfig(prisma))
+  );
+
+  f.put(
+    '/config/tracker',
+    { schema: { body: TrackerPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      const result = await updateTrackerConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          entityId: SYSTEM_CONFIG_IDS.tracker,
+          entityType: 'TrackerConfig',
+        });
+      }
+      return reply.send({ data: result.data });
+    }
+  );
+
+  f.post(
+    '/config/tracker/test',
+    { schema: { body: TrackerTestBody, response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testTrackerConnection(req.body.ticketId))
   );
 
   // ── Config audit log ─────────────────────────────────────────────────────────

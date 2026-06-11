@@ -859,6 +859,29 @@ model GoogleOAuthConfig {
   @@map("google_oauth_config")
 }
 
+/// Singleton issue-tracker connector config. One row (id = "default").
+/// `provider` is 'jira' | 'linear' | 'github' or NULL (= connector disabled).
+/// `baseUrl` is the Jira site URL or GitHub API base; Linear's endpoint is
+/// fixed. `email` is the Jira basic-auth user. The API token uses the same
+/// AES-256-GCM envelope as the other config secrets.
+model TrackerConfig {
+  id String @id @default("default")
+
+  provider String?
+  baseUrl  String? @map("base_url")
+  email    String?
+
+  apiTokenCiphertext Bytes?  @map("api_token_ciphertext")
+  apiTokenNonce      Bytes?  @map("api_token_nonce")
+  apiTokenAuthTag    Bytes?  @map("api_token_auth_tag")
+  apiTokenKeyVersion Int?    @map("api_token_key_version")
+  apiTokenLastFour   String? @map("api_token_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("tracker_config")
+}
+
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.
 /// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
 /// recorded). Written from the gateway routes that mutate these rows.

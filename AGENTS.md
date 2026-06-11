@@ -172,17 +172,18 @@ The project uses `@mastra/core@1.40.0` with the Vercel AI SDK for model binding:
 
 ### System Config (Integrations)
 
-GitHub, Slack, artifact storage, workflow defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var fallback for backwards compat. **Never read these from `process.env` directly in new code.**
+GitHub, Slack, artifact storage, issue-tracker connector, workflow defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var fallback for backwards compat. **Never read these from `process.env` directly in new code.**
 
 | Admin page | What it manages | Resolver |
 |---|---|---|
 | `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
 | `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
+| `/admin/integrations → Tracker` | issue-tracker connector (Jira / Linear / GitHub Issues): provider, base URL, API token, Jira email — a read-only fetch at work-request submit time populates `ContextSnapshot.rawTicketData`; failures never block submission | `resolveTrackerConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
 | `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` |
 
-All five tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
+All six tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
 
 **Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
 

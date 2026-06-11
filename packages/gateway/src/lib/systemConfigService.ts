@@ -4,13 +4,14 @@ import {
   resolveGitHubConfig,
   resolveSlackConfig,
   resolveStorageConfig,
+  resolveTrackerConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
- * Service for the five singleton system-config tables (GitHub, Slack,
- * Storage, WorkflowDefaults, GoogleOAuth). Each section follows the same
+ * Service for the singleton system-config tables (GitHub, Slack, Storage,
+ * WorkflowDefaults, GoogleOAuth, Tracker). Each section follows the same
  * pattern: a masked read view (`get*Config`), a partial update that seals
  * secrets into AES-GCM envelope columns (`update*Config`), and — where
  * meaningful — a live connection test. Secret fields are write-only:
@@ -20,7 +21,7 @@ import type { FastifyBaseLogger } from 'fastify';
  * stay thin and the logic is unit-testable.
  */
 
-// Fixed UUIDs for the five singleton system-config entities.
+// Fixed UUIDs for the singleton system-config entities.
 // Used as entityId in ConfigAuditLog (which requires a UUID PK) since the
 // config tables use the string 'default' as their PK.
 export const SYSTEM_CONFIG_IDS = {
@@ -28,6 +29,7 @@ export const SYSTEM_CONFIG_IDS = {
   googleOAuth: '00000000-0000-0000-0001-000000000005',
   slack: '00000000-0000-0000-0001-000000000002',
   storage: '00000000-0000-0000-0001-000000000003',
+  tracker: '00000000-0000-0000-0001-000000000006',
   workflowDefaults: '00000000-0000-0000-0001-000000000004',
 } as const;
 
@@ -642,6 +644,115 @@ export async function updateGoogleOAuthConfig(
     changedFields,
     data: { ...googleOAuthData(row), requiresRestart: true },
     existed: !!existing,
+  };
+}
+
+// ─── Issue tracker ────────────────────────────────────────────────────────────
+
+type TrackerConfigRow = NonNullable<
+  Awaited<ReturnType<PrismaClient['trackerConfig']['findUnique']>>
+>;
+
+export type TrackerConfigInput = {
+  apiToken?: string;
+  baseUrl?: string | null;
+  email?: string | null;
+  provider?: 'jira' | 'linear' | 'github' | null;
+};
+
+function trackerData(row: TrackerConfigRow | null) {
+  return {
+    apiToken: maskedSecret(row?.apiTokenLastFour),
+    baseUrl: row?.baseUrl ?? null,
+    email: row?.email ?? null,
+    provider: row?.provider ?? null,
+  };
+}
+
+export async function getTrackerConfig(prisma: PrismaClient) {
+  const row = await prisma.trackerConfig.findUnique({ where: { id: 'default' } });
+  return {
+    data: trackerData(row),
+    sources: {
+      apiToken: src(!!row?.apiTokenCiphertext, 'TRACKER_API_TOKEN'),
+      baseUrl: src(!!row?.baseUrl, 'TRACKER_BASE_URL'),
+      email: src(!!row?.email, 'TRACKER_EMAIL'),
+      provider: src(!!row?.provider, 'TRACKER_PROVIDER'),
+    },
+  };
+}
+
+export async function updateTrackerConfig(
+  prisma: PrismaClient,
+  body: TrackerConfigInput
+): Promise<ConfigUpdateResult> {
+  const { apiToken, baseUrl, email, provider } = body;
+
+  const existing = await prisma.trackerConfig.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  if (provider !== undefined) {
+    data.provider = provider;
+  }
+  if (baseUrl !== undefined) {
+    data.baseUrl = baseUrl;
+  }
+  if (email !== undefined) {
+    data.email = email;
+  }
+
+  sealInto(data, 'apiToken', apiToken);
+
+  const row = await prisma.trackerConfig.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  const changedFields = changedKeys([
+    ['provider', provider],
+    ['baseUrl', baseUrl],
+    ['email', email],
+    ['apiToken', apiToken],
+  ]);
+
+  return {
+    auditAfterJson: {
+      baseUrl: row.baseUrl,
+      changedFields,
+      email: row.email,
+      provider: row.provider,
+    },
+    changedFields,
+    data: trackerData(row),
+    existed: !!existing,
+  };
+}
+
+/// Live connection test: fetches a caller-supplied ticket ID through the
+/// configured connector and reports its title/status (or the failure).
+export async function testTrackerConnection(
+  ticketId: string
+): Promise<{ detail: string; ok: boolean }> {
+  const config = await resolveTrackerConfig();
+  if (!config.provider) {
+    return { detail: 'No tracker provider configured.', ok: false };
+  }
+  // Imported lazily so unit tests can mock the connector module.
+  const { fetchTicket } = await import('./ticketTracker.js');
+  const warnings: string[] = [];
+  const ticket = await fetchTicket(config, ticketId, {
+    log: { warn: (_obj, msg) => warnings.push(msg ?? 'unknown failure') },
+  });
+  if (!ticket) {
+    return {
+      detail: `Could not fetch ${ticketId} via ${config.provider}: ${warnings.at(-1) ?? 'fetch failed'}`,
+      ok: false,
+    };
+  }
+  return {
+    detail: `Fetched "${ticket.title}" (status: ${ticket.status}) from ${config.provider}.`,
+    ok: true,
   };
 }
 

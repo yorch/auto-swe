@@ -291,6 +291,47 @@ export async function resolveConsolidationConfig(
   };
 }
 
+// ─── Issue tracker ────────────────────────────────────────────────────────────
+
+export type TrackerProvider = 'jira' | 'linear' | 'github';
+
+export interface ResolvedTrackerConfig {
+  /// Which connector to use; null means the tracker integration is disabled.
+  provider: TrackerProvider | null;
+  /// Jira site URL (e.g. https://acme.atlassian.net) or GitHub API base
+  /// (defaults to https://api.github.com). Linear's endpoint is fixed.
+  baseUrl: string | null;
+  /// API token: Jira API token / Linear API key / GitHub token.
+  apiToken: string | null;
+  /// Jira basic-auth user (the Atlassian account email). Null for others.
+  email: string | null;
+}
+
+function asTrackerProvider(value: string | null | undefined): TrackerProvider | null {
+  return value === 'jira' || value === 'linear' || value === 'github' ? value : null;
+}
+
+export async function resolveTrackerConfig(_opts?: ResolveOpts): Promise<ResolvedTrackerConfig> {
+  const row = await (await db()).trackerConfig.findUnique({ where: { id: 'default' } });
+
+  const apiToken =
+    decryptOptional({
+      authTag: row?.apiTokenAuthTag ?? null,
+      ciphertext: row?.apiTokenCiphertext ?? null,
+      keyVersion: row?.apiTokenKeyVersion ?? null,
+      nonce: row?.apiTokenNonce ?? null,
+    }) ??
+    process.env.TRACKER_API_TOKEN ??
+    null;
+
+  return {
+    apiToken,
+    baseUrl: row?.baseUrl ?? process.env.TRACKER_BASE_URL ?? null,
+    email: row?.email ?? process.env.TRACKER_EMAIL ?? null,
+    provider: asTrackerProvider(row?.provider ?? process.env.TRACKER_PROVIDER),
+  };
+}
+
 // ─── Google OAuth ─────────────────────────────────────────────────────────────
 
 export interface ResolvedGoogleOAuthConfig {
