@@ -179,7 +179,11 @@ Two remediation rounds were applied on this branch. **Round 1** (first-wave, see
 | ARCH-4 | **Full auth consolidation** (user decision): legacy `/auth/login` + refresh-token families deleted; better-auth sessions + PATs only; CLI is PAT-only (**breaking** for password-based headless scripts) | `4aa625c` |
 | ARCH-8 | Cost accumulation rounded to micro-dollars (Decimal column rejected: wire-format break) | `855c0f6` |
 | EVOL-1 | `ScmProvider` seam extracted, GitHub as first implementation; webhook payload normalization split out | `f93dc61` |
-| EVOL-5, EVOL-7, ARCH-5, growth (Slack HITL buttons, scheduled runs) | In flight on this branch — see later commits | — |
+| ARCH-5 | Six gateway service modules extracted; admin + team route variants share scoped service functions (route files 1,141→696 / 1,050→688 / 857→307) | `c920cb7`-range |
+| EVOL-7 | `Repository.mcpServerRef` wired: MCP tools for the implementer (http(s)-only, audit-logged, tracer-recorded, AgentToolConfig-gated, failure-isolated) | see `feat(worker): MCP tool loading` |
+| Growth: Slack HITL buttons | Approval/decision steps resolve directly from Slack via Block Kit buttons sharing the inbox resolve core | see `feat: Slack-resolvable HITL approvals` |
+| Growth: scheduled runs | ScheduledWorkRequest + Temporal Schedules + /admin/schedules (cron-driven standing automation) | see `feat: scheduled / recurring work requests` |
+| EVOL-5 | Jira/Linear/GitHub-Issues connectors seed ContextSnapshot.rawTicketData at submit time; /admin/integrations → Tracker | see `feat: ticket-tracker connectors` |
 
 ### Accepted residuals (documented, not fixed)
 
