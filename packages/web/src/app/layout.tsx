@@ -11,7 +11,7 @@ const bodoniModa = Bodoni_Moda({
   style: ['normal', 'italic'],
   subsets: ['latin'],
   variable: '--font-bodoni',
-  weight: ['400', '500', '600', '700'],
+  weight: 'variable',
 });
 
 const ibmPlexMono = IBM_Plex_Mono({
