@@ -195,6 +195,6 @@ Two remediation rounds were applied on this branch. **Round 1** (first-wave, see
 ### Open questions for the team (updated)
 
 1. **Rotate secrets** if any deployment ran on the dev JWT/better-auth fallbacks before SEC-1 landed.
-2. **ARCH-4 is breaking:** headless scripts using `AUTO_SWE_USERNAME`/`AUTO_SWE_PASSWORD` must switch to PATs; announce before deploying.
+2. **ARCH-4:** CLI auth is PAT-only (`AUTO_SWE_TOKEN`); the username/password env vars were removed entirely — no deployments existed, so no migration window was needed.
 3. **GitHub Actions billing** still blocks CI on this repo (all runs fail with no runner assigned) — fix at Settings → Billing → Actions, then re-run checks.
 4. **EVOL-6 verification:** confirm on a real multi-check repo that the suite-level aggregation resumes workflows at the right time.
