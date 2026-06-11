@@ -16,11 +16,10 @@
  * `Workspace.execCapture` so callers can reuse the same downstream handling.
  */
 
-import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promises as dnsPromises } from 'node:dns';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import { type CapturedResult, EXEC_OPTS, parseSpawnSyncResult } from './execUtils.js';
+import { type CapturedResult, execShellAsync, spawnCaptureAsync } from './execUtils.js';
 
 export type EphemeralRunResult = CapturedResult;
 
@@ -146,19 +145,16 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
   }
 
   try {
-    return parseSpawnSyncResult(
-      spawnSync('docker', args, {
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: timeoutMs,
-      })
-    );
+    return await spawnCaptureAsync('docker', args, {
+      heartbeatLabel: 'shell-step: command running',
+      timeoutMs,
+    });
   } finally {
     // Defensive cleanup — docker run --rm already removes the container on
     // exit, but if the host process was killed mid-spawn the container may
     // linger. `docker rm -f` is a no-op when the container is already gone.
     try {
-      execSync(`docker rm -f ${containerName}`, EXEC_OPTS);
+      await execShellAsync(`docker rm -f ${containerName}`);
     } catch {
       /* already removed */
     }

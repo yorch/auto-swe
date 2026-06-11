@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type {
   CodeResult,
   CodeSecurityFinding,
@@ -19,9 +19,9 @@ import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
@@ -49,21 +49,17 @@ export async function executeImplementation(
     where: { id: request.repoId },
   });
 
-  const [ghConfig, workflowDefaults] = await Promise.all([
-    resolveGitHubConfig(),
-    resolveWorkflowDefaults(),
-  ]);
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
+  const workflowDefaults = await resolveWorkflowDefaults();
   const featureBranch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
-  const githubToken = await requireGitHubToken(ghConfig);
 
-  const workspace = createWorkspace(
-    repoUrl,
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
+
+  const workspace = await createWorkspace(
+    authedCloneUrl,
     branch,
     repo.defaultBranch,
-    githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
 
@@ -73,7 +69,7 @@ export async function executeImplementation(
     heartbeat('workspace provisioned');
 
     // Detect test framework
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
     // Load tool config and skills for this role at the current scope
@@ -199,7 +195,7 @@ export async function executeImplementation(
       // Run tests
       const testStart = Date.now();
       try {
-        const testOutput = workspace.exec(testCommand);
+        const testOutput = await workspace.exec(testCommand);
         testResult = parseTestOutput(testOutput, Date.now() - testStart);
         tracer.addActivityEvent({
           durationMs: Date.now() - testStart,
@@ -237,13 +233,13 @@ export async function executeImplementation(
     const commitSummary = subtask
       ? `auto: ${subtask.id} — ${subtask.title} (${request.externalTicketId})`
       : `auto: implement ${request.externalTicketId}`;
-    workspace.exec('git add -A');
-    workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
-    workspace.exec(`git push origin ${shellQuote(branch)}`);
+    await workspace.exec('git add -A');
+    await workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
+    await workspace.exec(`git push origin ${shellQuote(branch)}`);
 
     // Collect results
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
+    const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);
+    const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -284,10 +280,11 @@ export async function executeImplementation(
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
       implementationNotes: `Completed in ${testResult.passed ? '≤5' : '5 (max)'} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      repoId: request.repoId,
       testResults: testResult,
     };
   } finally {
     await persistActivityTrace(tracer, 'implementer');
-    workspace.destroy();
+    await workspace.destroy();
   }
 }

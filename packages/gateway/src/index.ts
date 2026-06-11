@@ -3,6 +3,8 @@ import { initTelemetry } from './lib/telemetry.js';
 // Initialize OTel BEFORE Fastify creation so auto-instrumentation can patch
 const otel = initTelemetry('auto-swe-gateway');
 
+import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
+import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -11,28 +13,10 @@ import Fastify, { type FastifyError } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
-import authPlugin, { invalidateSessionCache } from './plugins/auth.js';
-
-/** Extract the better-auth session token from a cookie header string. */
-function extractSessionCookie(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) {
-    return null;
-  }
-  const idx = cookieHeader.indexOf('better-auth.session_token=');
-  if (idx === -1) {
-    return null;
-  }
-  const start = idx + 'better-auth.session_token='.length;
-  const end = cookieHeader.indexOf(';', start);
-  return decodeURIComponent(cookieHeader.slice(start, end === -1 ? undefined : end));
-}
-
-import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
-import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
+import authPlugin, { extractSessionCookieValue, invalidateSessionCache } from './plugins/auth.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
-import { authRoutes } from './routes/auth.js';
 import { epicRoutes } from './routes/epics.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
@@ -40,6 +24,7 @@ import { meRoutes } from './routes/me.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
+import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
@@ -95,14 +80,16 @@ async function start() {
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
 
-  // Global error handler
+  // Global error handler. 4xx messages are intentional (validation, auth);
+  // 5xx messages can leak internals (DB constraint text, library errors), so
+  // log the detail server-side and return a generic message.
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error(error);
     const statusCode = error.statusCode ?? 500;
     return reply.status(statusCode).send({
       error: {
         code: error.code ?? 'INTERNAL_ERROR',
-        message: error.message,
+        message: statusCode >= 500 ? 'Internal server error' : error.message,
       },
     });
   });
@@ -128,7 +115,7 @@ async function start() {
         // Snapshot the session-cookie value BEFORE better-auth runs — on a
         // successful /sign-out it'll clear the cookie in the response, and
         // we want to invalidate our in-memory cache for that token regardless.
-        const sessionCookieBefore = extractSessionCookie(request.headers.cookie);
+        const sessionCookieBefore = extractSessionCookieValue(request.headers);
         const req = new Request(url.toString(), {
           ...(request.body ? { body: JSON.stringify(request.body) } : {}),
           headers,
@@ -208,13 +195,13 @@ async function start() {
   });
 
   // ── Public routes (no auth) ──
-  await app.register(authRoutes, { prefix: '/api/v1/auth' });
 
   // ── Personal access tokens (auth required, but self-service for engineers+) ──
   await app.register(tokenRoutes, { prefix: '/api/v1/auth/tokens' });
 
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+  await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
@@ -235,6 +222,29 @@ async function start() {
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
+
+  // Graceful shutdown: stop accepting connections, drain in-flight requests
+  // (app.close() also runs plugin onClose hooks — prisma disconnect lives in
+  // the prisma plugin), then flush OTel. Without this, Docker/Watchtower
+  // restarts dropped in-flight requests and lost final spans.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    app.log.info({ signal }, 'shutting down gracefully');
+    try {
+      await app.close();
+      await otel.shutdown();
+      process.exit(0);
+    } catch (err) {
+      app.log.error({ err }, 'graceful shutdown failed');
+      process.exit(1);
+    }
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   const port = Number(process.env.PORT ?? 8080);
   await app.listen({ host: '0.0.0.0', port });

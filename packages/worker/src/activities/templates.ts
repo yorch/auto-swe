@@ -104,6 +104,7 @@ export async function finalizeWorkflowRun(
   // Read the workRequest → activeWorkflows join once, sum, then write it back.
   const run = await prisma.workflowRun.findUnique({
     select: {
+      workflowId: true,
       workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
     },
     where: { id: runId },
@@ -122,6 +123,19 @@ export async function finalizeWorkflowRun(
     },
     where: { id: runId },
   });
+
+  // Write the terminal status back to the ActiveWorkflow row. Templates only
+  // advance currentStatus through happy-path states, so without this a
+  // failed/timed-out/cancelled run leaves its row "active" forever and the
+  // dashboard KPIs drift. SUCCESS maps to COMPLETED (a no-op on specs that
+  // already set it); SKIPPED has no ActiveWorkflow equivalent and is left as-is.
+  const terminalStatus = status === 'SUCCESS' ? 'COMPLETED' : status === 'SKIPPED' ? null : status;
+  if (terminalStatus && run?.workflowId) {
+    await prisma.activeWorkflow.updateMany({
+      data: { currentStatus: terminalStatus },
+      where: { temporalWorkflowId: run.workflowId },
+    });
+  }
 
   // Team must have opted in via `Team.slackNotifySuccess`; otherwise no-op.
   await notifySlackRunComplete({ runId, status });

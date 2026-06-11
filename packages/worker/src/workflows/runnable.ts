@@ -99,10 +99,9 @@ const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveM
   startToCloseTimeout: '30m',
 });
 
-// Phase 6: user-authored shell steps. `runShellStep` shells out synchronously
-// via `spawnSync`, so it can't emit heartbeats while the user command runs.
-// We rely on `startToCloseTimeout` (the activity's built-in wall-clock cap is
-// `timeoutMs`, set on the shell node) and skip heartbeat enforcement.
+// Phase 6: user-authored shell steps. `runShellStep` runs the command via
+// async spawn with heartbeat pumping; `startToCloseTimeout` still caps the
+// wall clock (the activity's own cap is `timeoutMs`, set on the shell node).
 const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellStep'>>({
   retry: {
     backoffCoefficient: 2,

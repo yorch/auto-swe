@@ -3,6 +3,12 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveTrackerConfig: vi.fn(async () => ({
+    apiToken: null,
+    baseUrl: null,
+    email: null,
+    provider: null,
+  })),
   resolveWorkflowDefaults: vi.fn(async () => ({
     branchPrefix: 'auto',
     defaultTeamSlug: 'default',
@@ -11,10 +17,23 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+vi.mock('../lib/ticketTracker.js', () => ({
+  fetchTicket: vi.fn(async () => null),
+}));
+
+import { resolveTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { fetchTicket } from '../lib/ticketTracker.js';
 import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
+
+const resolveTrackerConfigMock = vi.mocked(resolveTrackerConfig);
+const fetchTicketMock = vi.mocked(fetchTicket);
 
 describe('POST /api/v1/work-requests', () => {
   const app = Fastify();
+  // Per-test control over allocateWorkflowId's view of prior executions.
+  let existingWorkflows: Array<{ currentStatus: string; temporalWorkflowId: string }> = [];
+  const startedWorkflowIds: string[] = [];
+  const snapshotUpserts: Record<string, unknown>[] = [];
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -37,6 +56,13 @@ describe('POST /api/v1/work-requests', () => {
           id: 'wf-1',
           ...args.data,
         }),
+        findMany: async () => existingWorkflows,
+      },
+      contextSnapshot: {
+        upsert: async (args: Record<string, unknown>) => {
+          snapshotUpserts.push(args);
+          return { id: 'cs-1' };
+        },
       },
       repository: {
         findUnique: async () => ({
@@ -60,17 +86,28 @@ describe('POST /api/v1/work-requests', () => {
     } as unknown as never);
     app.decorate('temporal', {
       cancelWorkflow: async () => {},
+      deleteWorkRequestSchedule: async () => {},
       getConsolidationScheduleStatus: async () => ({
         exists: false,
+        nextRunAt: null,
+        paused: false,
+      }),
+      getWorkRequestScheduleStatus: async () => ({
+        exists: false,
+        lastRunAt: null,
         nextRunAt: null,
         paused: false,
       }),
       signalWorkflow: async () => {},
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
-      startRunnableWorkflow: async () => {},
+      startRunnableWorkflow: async (id: string) => {
+        startedWorkflowIds.push(id);
+      },
       syncConsolidationSchedule: async () => {},
+      syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
+      triggerWorkRequestSchedule: async () => {},
     });
 
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
@@ -103,6 +140,7 @@ describe('POST /api/v1/work-requests', () => {
   });
 
   it('creates a work request', async () => {
+    existingWorkflows = [];
     const res = await app.inject({
       headers: { authorization: 'Bearer test-token' },
       method: 'POST',
@@ -116,6 +154,170 @@ describe('POST /api/v1/work-requests', () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+  });
+
+  it('returns 409 when an execution for the ticket is still running', async () => {
+    existingWorkflows = [
+      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1' },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+  });
+
+  it('allocates an -rN workflow ID when re-submitting a finished ticket', async () => {
+    existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-1' }];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1-r2');
+  });
+
+  it('enriches the context snapshot when a tracker is configured and the fetch succeeds', async () => {
+    existingWorkflows = [];
+    snapshotUpserts.length = 0;
+    resolveTrackerConfigMock.mockResolvedValueOnce({
+      apiToken: 'tok',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'bot@acme.com',
+      provider: 'jira',
+    });
+    fetchTicketMock.mockResolvedValueOnce({
+      description: 'Full ticket body',
+      labels: ['backend'],
+      raw: { key: 'JIRA-2' },
+      status: 'To Do',
+      title: 'Add health endpoint',
+      url: 'https://acme.atlassian.net/browse/JIRA-2',
+    });
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-2',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(snapshotUpserts).toHaveLength(1);
+    const upsert = snapshotUpserts[0] as {
+      create: { rawTicketData: { title: string }; workRequestId: string };
+      where: { workRequestId: string };
+    };
+    expect(upsert.create.rawTicketData.title).toBe('Add health endpoint');
+    expect(upsert.where.workRequestId).toBe(JSON.parse(res.payload).data.workRequestId);
+    // The repo the request targets is passed as the bare-number fallback for GitHub IDs.
+    expect(fetchTicketMock.mock.calls[0]?.[2]?.defaultRepo).toEqual({
+      owner: 'org',
+      repo: 'test',
+    });
+  });
+
+  it('still returns 201 and writes no snapshot when the tracker fetch fails', async () => {
+    existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2' }];
+    snapshotUpserts.length = 0;
+    resolveTrackerConfigMock.mockResolvedValueOnce({
+      apiToken: 'tok',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'bot@acme.com',
+      provider: 'jira',
+    });
+    fetchTicketMock.mockResolvedValueOnce(null); // 404 / timeout / network error
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-2',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(snapshotUpserts).toHaveLength(0);
+  });
+
+  it('still returns 201 when the tracker enrichment throws unexpectedly', async () => {
+    existingWorkflows = [
+      { currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2' },
+      { currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2-r2' },
+    ];
+    snapshotUpserts.length = 0;
+    resolveTrackerConfigMock.mockRejectedValueOnce(new Error('db unreachable'));
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-2',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(snapshotUpserts).toHaveLength(0);
+  });
+
+  it('skips the tracker fetch entirely when no provider is configured', async () => {
+    existingWorkflows = [];
+    snapshotUpserts.length = 0;
+    fetchTicketMock.mockClear();
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-3',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(fetchTicketMock).not.toHaveBeenCalled();
+    expect(snapshotUpserts).toHaveLength(0);
+  });
+
+  it('ignores prefix-similar workflow IDs from other tickets when allocating', async () => {
+    // 'eng-org-test-JIRA-1-restore' belongs to ticket 'JIRA-1-restore', not a re-run.
+    existingWorkflows = [
+      { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'eng-org-test-JIRA-1-restore' },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
   });
 });
 

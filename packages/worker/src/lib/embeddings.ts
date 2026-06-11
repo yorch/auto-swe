@@ -17,6 +17,9 @@ type EmbeddingModel = ReturnType<ReturnType<typeof createOpenAI>['embedding']>;
 interface CachedEmbeddingModel {
   cacheKey: string;
   provider: string;
+  /** Full `<provider>/<model>` spec — recorded on agent_lessons rows so
+   *  vectors from different embedding spaces are never compared. */
+  spec: string;
   model: EmbeddingModel;
 }
 
@@ -36,6 +39,7 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
       cacheKey,
       model: createOpenAI({ apiKey, baseURL: apiBase }).embedding(modelId),
       provider,
+      spec,
     };
     return cachedModel;
   }
@@ -50,6 +54,7 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
       modelId
     ),
     provider,
+    spec,
   };
   return cachedModel;
 }
@@ -69,7 +74,21 @@ export function _resetEmbeddingClientForTests(): void {
  * storage is fixed-width).
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const { provider, model } = await buildEmbeddingModel();
+  const { embedding } = await generateEmbeddingWithSpec(text);
+  return embedding;
+}
+
+/**
+ * Like `generateEmbedding`, but also returns the `<provider>/<model>` spec the
+ * vector was produced with. Writers persist the spec on agent_lessons so
+ * retrieval/consolidation can avoid comparing vectors across embedding spaces
+ * after a model switch (EVOL-4): old lessons silently degrade retrieval
+ * otherwise.
+ */
+export async function generateEmbeddingWithSpec(
+  text: string
+): Promise<{ embedding: number[]; spec: string }> {
+  const { provider, model, spec } = await buildEmbeddingModel();
   // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
   // from its native 3072 down to the 1536 required by the pgvector column.
   // Other providers don't accept this key, so it's only sent for OpenAI.
@@ -86,5 +105,14 @@ export async function generateEmbedding(text: string): Promise<number[]> {
         `Either pick a model that produces ${REQUIRED_DIMENSIONS}-dim vectors, or run a schema migration to update the column width.`
     );
   }
-  return embedding;
+  return { embedding, spec };
+}
+
+/**
+ * Current embedding spec without generating a vector — used by retrieval
+ * queries to scope similarity search to vectors from the same space.
+ */
+export async function currentEmbeddingSpec(): Promise<string> {
+  const { spec } = await buildEmbeddingModel();
+  return spec;
 }

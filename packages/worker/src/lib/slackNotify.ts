@@ -2,10 +2,11 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
- * Slack notifications. Three surfaces:
+ * Slack notifications. Four surfaces:
  *   - {@link notifySlackStepFailure} — per-step failure (phase 7)
  *   - {@link notifySlackPrReady}     — PR opened / ready for review (phase 7)
  *   - {@link notifySlackRunComplete} — terminal-run summary (phase 8, opt-in)
+ *   - {@link notifySlackHumanStep}   — HITL step pending, with inbox link
  *
  * Channel resolution is shared via {@link resolveSlackChannel}: prefer the
  * originating `WorkRequest.slackChannelId` (thread back to source); fall back
@@ -112,11 +113,15 @@ async function postToSlack(
   channel: string,
   threadTs: string | null,
   text: string,
-  logLabel: string
+  logLabel: string,
+  blocks?: unknown[]
 ): Promise<void> {
   const body: Record<string, unknown> = { channel, text };
   if (threadTs) {
     body.thread_ts = threadTs;
+  }
+  if (blocks && blocks.length > 0) {
+    body.blocks = blocks;
   }
 
   // AbortController guards against a hung connection holding up the activity.
@@ -244,6 +249,174 @@ export async function notifySlackPrReady(input: {
     }
     const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
     await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ── HITL Block Kit buttons ──────────────────────────────────────────────────
+//
+// Slack hard limits that shape buildHumanStepBlocks:
+//   - button `text` ≤ 75 chars        → option labels truncated to 72 + '…'
+//   - button `value` ≤ 2000 chars     → buttons whose value JSON would exceed
+//     the cap are skipped (we never truncate the value itself — a truncated
+//     option value would resolve the step with the WRONG payload)
+//   - actions block ≤ 25 elements     → decision options capped well below
+const SLACK_BUTTON_LABEL_MAX = 72;
+const SLACK_BUTTON_VALUE_MAX = 2000;
+const MAX_DECISION_OPTION_BUTTONS = 20;
+
+/**
+ * Gateway-side dispatch matches `action_id === 'hitl_resolve'` or the
+ * `hitl_resolve:` prefix. The suffix exists only because Slack requires
+ * action_ids to be unique within a block (two bare `hitl_resolve` buttons in
+ * one actions block are rejected with `invalid_blocks`).
+ */
+export const HITL_RESOLVE_ACTION_ID = 'hitl_resolve';
+
+interface SlackButton {
+  type: 'button';
+  action_id: string;
+  text: { type: 'plain_text'; text: string; emoji?: boolean };
+  value?: string;
+  url?: string;
+  style?: 'primary' | 'danger';
+}
+
+function hitlButton(
+  idSuffix: string,
+  label: string,
+  payload: { stepId: string; action: string; value?: unknown },
+  style?: 'primary' | 'danger'
+): SlackButton | null {
+  const value = JSON.stringify(payload);
+  if (value.length > SLACK_BUTTON_VALUE_MAX) {
+    return null;
+  }
+  const button: SlackButton = {
+    action_id: `${HITL_RESOLVE_ACTION_ID}:${idSuffix}`,
+    text: { text: truncate(label, SLACK_BUTTON_LABEL_MAX), type: 'plain_text' },
+    type: 'button',
+    value,
+  };
+  if (style) {
+    button.style = style;
+  }
+  return button;
+}
+
+/**
+ * Build the Block Kit blocks for a pending human step.
+ *
+ * Resolve buttons are attached only for kinds with enumerable actions:
+ *   - APPROVAL → Approve / Reject
+ *   - DECISION → one button per option (`action: 'select'`, value = option value)
+ * INPUT and REVIEW need free-form payloads, so they stay link-only.
+ * The "Open inbox" link button is always present. `stepId` is required for
+ * resolve buttons — without it (e.g. the DB row couldn't be identified) the
+ * message degrades to link-only.
+ */
+export function buildHumanStepBlocks(input: {
+  kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+  text: string;
+  inboxUrl: string;
+  stepId?: string | undefined;
+  options?: Array<{ label: string; value: string }> | undefined;
+}): unknown[] {
+  const elements: SlackButton[] = [];
+
+  if (input.stepId) {
+    const stepId = input.stepId;
+    if (input.kind === 'APPROVAL') {
+      const approve = hitlButton('approve', 'Approve', { action: 'approve', stepId }, 'primary');
+      const reject = hitlButton('reject', 'Reject', { action: 'reject', stepId }, 'danger');
+      if (approve) {
+        elements.push(approve);
+      }
+      if (reject) {
+        elements.push(reject);
+      }
+    } else if (input.kind === 'DECISION') {
+      const options = (input.options ?? []).slice(0, MAX_DECISION_OPTION_BUTTONS);
+      for (const [i, option] of options.entries()) {
+        const button = hitlButton(`select:${i}`, option.label, {
+          action: 'select',
+          stepId,
+          value: option.value,
+        });
+        if (button) {
+          elements.push(button);
+        }
+      }
+    }
+  }
+
+  elements.push({
+    action_id: 'open_inbox',
+    text: { text: 'Open inbox', type: 'plain_text' },
+    type: 'button',
+    url: input.inboxUrl,
+  });
+
+  return [
+    { text: { text: input.text, type: 'mrkdwn' }, type: 'section' },
+    { elements, type: 'actions' },
+  ];
+}
+
+/**
+ * HITL "human step pending" notification. Fires when a workflow reaches an
+ * approval/decision/input/review node so the team sees the pending step without
+ * watching the inbox. No opt-in needed — mirrors the step-failure surface
+ * (origin thread preferred, team channel fallback). Best-effort; silently
+ * no-ops on any error.
+ *
+ * When `stepId` is provided, approval/decision steps get interactive Block Kit
+ * buttons (`action_id` prefix `hitl_resolve`) that resolve the step directly
+ * from Slack via the gateway's interactivity endpoint.
+ */
+export async function notifySlackHumanStep(input: {
+  runId: string;
+  kind: 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+  title: string;
+  description?: string | undefined;
+  stepId?: string | undefined;
+  options?: Array<{ label: string; value: string }> | undefined;
+}): Promise<void> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    return;
+  }
+
+  try {
+    const resolved = await resolveSlackChannel(input.runId, false);
+    if (!resolved) {
+      return;
+    }
+    const kindLabel: Record<string, string> = {
+      APPROVAL: 'Approval required',
+      DECISION: 'Decision required',
+      INPUT: 'Input required',
+      REVIEW: 'Review required',
+    };
+    const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
+    const inboxUrl = `${process.env.WEB_URL ?? 'http://localhost:3000'}/inbox`;
+    const text = `:hourglass_flowing_sand: *[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
+    const blocks = buildHumanStepBlocks({
+      inboxUrl,
+      kind: input.kind,
+      options: input.options,
+      stepId: input.stepId,
+      text,
+    });
+    await postToSlack(
+      token,
+      resolved.channel,
+      resolved.threadTs,
+      text,
+      'slackNotify (human-step)',
+      blocks
+    );
   } catch {
     /* best-effort */
   }

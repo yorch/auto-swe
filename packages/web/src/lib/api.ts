@@ -20,8 +20,8 @@ export class ApiClient {
     this.tokenGeneration++;
     if (typeof window !== 'undefined') {
       localStorage.setItem(COOKIE_ACCESS_TOKEN, token);
-      // biome-ignore lint/suspicious/noDocumentCookie: keeps the middleware-visible cookie in sync with the rotated JWT
       const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      // biome-ignore lint/suspicious/noDocumentCookie: keeps the middleware-visible cookie in sync with the rotated JWT
       document.cookie = `${COOKIE_ACCESS_TOKEN}=${token}; path=/; max-age=3600; SameSite=Lax${secure}`;
     }
   }
@@ -132,7 +132,10 @@ export class ApiClient {
   private async performRefresh(): Promise<boolean> {
     const generation = this.tokenGeneration;
     try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      // ARCH-4: the legacy /auth/refresh rotation endpoint is gone. A fresh
+      // bearer is minted from the live better-auth session via the bridge;
+      // with no session this fails and the caller falls through to login.
+      const response = await fetch(`${API_BASE}/api/v1/auth/session-token`, {
         credentials: 'include',
         method: 'POST',
       });

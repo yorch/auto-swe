@@ -1,3 +1,13 @@
+# Production overlay — always composed on top of docker-compose.infra.yml:
+#   docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml up -d
+#
+# SECURITY (SEC-4): this overlay refuses to start on the dev-default
+# credentials baked into docker-compose.infra.yml. POSTGRES_PASSWORD,
+# MINIO_ROOT_USER, and MINIO_ROOT_PASSWORD are mandatory here (`:?`); the same
+# variables feed the postgres/temporal/minio services in the infra file, so
+# setting them in `.env` secures the whole stack. Set DATABASE_URL_OVERRIDE to
+# use an external Postgres instead (POSTGRES_PASSWORD is then not required by
+# the gateway/worker, but still set it if the bundled postgres service runs).
 services:
   gateway:
     image: ${APP_IMAGE_GATEWAY:-ghcr.io/yorch/auto-swe/gateway:main}
@@ -9,7 +19,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}}
+      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       PORT: "8080"
     depends_on:
@@ -26,12 +36,15 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}}
+      DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
       ARTIFACT_S3_FORCE_PATH_STYLE: ${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # No minioadmin fallback in production — these also configure the MinIO
+      # server itself in docker-compose.infra.yml, so requiring them here
+      # guarantees the object store never runs on default credentials.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production — do not use the minioadmin default}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production — do not use the minioadmin default}
     group_add:
       - "${DOCKER_GID:-999}"
     volumes:

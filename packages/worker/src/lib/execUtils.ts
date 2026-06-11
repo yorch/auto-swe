@@ -10,12 +10,134 @@
  */
 
 import type { ExecSyncOptions, SpawnSyncReturns } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { heartbeat } from '@temporalio/activity';
 
 export const EXEC_OPTS: ExecSyncOptions = {
   encoding: 'utf-8' as BufferEncoding,
   maxBuffer: 10 * 1024 * 1024,
   timeout: 120_000,
 };
+
+const execAsyncRaw = promisify(exec);
+
+/** How often to pump a Temporal heartbeat while a child process runs. */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * Pump Temporal heartbeats while awaiting a child process. Long-running
+ * commands (test suites, builds) used to run through execSync, which blocked
+ * the worker event loop and starved heartbeats for every concurrent activity.
+ * heartbeat() throws outside an activity context (e.g. unit tests) — swallow.
+ */
+export async function withHeartbeat<T>(label: string, work: Promise<T>): Promise<T> {
+  const timer = setInterval(() => {
+    try {
+      heartbeat(label);
+    } catch {
+      /* not in an activity context */
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  // Don't let the pump keep the process alive.
+  timer.unref?.();
+  try {
+    return await work;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+/**
+ * Async drop-in for `execSync(command, EXEC_OPTS)`: resolves with stdout,
+ * rejects on non-zero exit with an error carrying `.stdout`/`.stderr`
+ * (same shape execSync errors have, so `getExecErrorStdout` keeps working).
+ * Heartbeats are pumped while the command runs.
+ */
+export async function execShellAsync(
+  command: string,
+  options?: { timeoutMs?: number; heartbeatLabel?: string }
+): Promise<string> {
+  const { stdout } = await withHeartbeat(
+    options?.heartbeatLabel ?? 'exec',
+    execAsyncRaw(command, {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: options?.timeoutMs ?? 120_000,
+    })
+  );
+  return stdout;
+}
+
+/**
+ * Async equivalent of `spawnSync(file, args, …)` + `parseSpawnSyncResult`:
+ * captures stdout/stderr/exitCode without throwing on non-zero exits, kills
+ * the child on timeout (exitCode 124, signal SIGTERM), and reports spawn
+ * failures as exitCode 127. Heartbeats are pumped while the command runs.
+ */
+export function spawnCaptureAsync(
+  file: string,
+  args: string[],
+  options?: { timeoutMs?: number; maxBuffer?: number; heartbeatLabel?: string }
+): Promise<CapturedResult> {
+  const timeoutMs = options?.timeoutMs ?? 600_000;
+  const maxBuffer = options?.maxBuffer ?? 10 * 1024 * 1024;
+
+  const work = new Promise<CapturedResult>((resolve) => {
+    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    const settle = (result: CapturedResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(killTimer);
+      resolve(result);
+    };
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+    killTimer.unref?.();
+
+    const cap = (current: string, chunk: Buffer): string =>
+      current.length >= maxBuffer ? current : current + chunk.toString('utf-8');
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout = cap(stdout, chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = cap(stderr, chunk);
+    });
+    // 'close' is not guaranteed after a spawn failure — settle on 'error' directly.
+    child.on('error', (err) => {
+      settle({
+        exitCode: 127,
+        signal: 'SPAWN_ERROR',
+        stderr: `${stderr}\n${err.name}: ${err.message}`.trim(),
+        stdout,
+      });
+    });
+    child.on('close', (code, signal) => {
+      if (timedOut) {
+        settle({ exitCode: 124, signal: signal ?? 'SIGTERM', stderr, stdout });
+        return;
+      }
+      settle({
+        exitCode: code ?? 0,
+        stderr,
+        stdout,
+        ...(signal ? { signal } : {}),
+      });
+    });
+  });
+
+  return withHeartbeat(options?.heartbeatLabel ?? 'exec', work);
+}
 
 export interface CapturedResult {
   exitCode: number;

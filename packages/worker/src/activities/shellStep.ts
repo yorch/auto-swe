@@ -20,18 +20,17 @@
  * both quality gates and shell steps.
  */
 
-import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
-import { EXEC_OPTS } from '../lib/execUtils.js';
-import { requireGitHubToken } from '../lib/githubAuth.js';
+import { execShellAsync } from '../lib/execUtils.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import { shellQuote } from './workspace.js';
@@ -82,15 +81,15 @@ function redactToken(s: unknown, token?: string | null): string {
   return s.split(token).join('***');
 }
 
-function runDocker(args: string[], tokenForRedact?: string | null): string {
-  // execSync prefers a string command, so we shell-quote each arg before
-  // joining. The inputs to this helper are either hard-coded literals or
-  // identifiers that have already been validated upstream (volume names,
-  // images checked against DOCKER_IMAGE_REF_RE, branch names quoted by the
-  // caller) — never raw user input from a spec.
+async function runDocker(args: string[], tokenForRedact?: string | null): Promise<string> {
+  // We shell-quote each arg before joining into a single shell command. The
+  // inputs to this helper are either hard-coded literals or identifiers that
+  // have already been validated upstream (volume names, images checked
+  // against DOCKER_IMAGE_REF_RE, branch names quoted by the caller) — never
+  // raw user input from a spec.
   const quoted = args.map(shellQuote).join(' ');
   try {
-    return execSync(`docker ${quoted}`, EXEC_OPTS) as string;
+    return await execShellAsync(`docker ${quoted}`, { heartbeatLabel: 'shell-step: docker' });
   } catch (err) {
     if (err instanceof Error) {
       err.message = redactToken(err.message, tokenForRedact);
@@ -106,41 +105,35 @@ function runDocker(args: string[], tokenForRedact?: string | null): string {
   }
 }
 
-function safeRunDocker(args: string[]): void {
+async function safeRunDocker(args: string[]): Promise<void> {
   try {
-    runDocker(args);
+    await runDocker(args);
   } catch {
     /* best-effort */
   }
 }
 
 interface RepoMeta {
+  /** Credential-embedded clone URL from ScmProvider.cloneCredentials. */
   cloneUrl: string;
   defaultBranch: string;
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
-  /** The resolved PAT — kept alongside cloneUrl so error-path redaction works
+  /** The resolved token — kept alongside cloneUrl so error-path redaction works
    * even when no GITHUB_TOKEN env var is set (DB-only token configuration). */
   token: string;
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
-  const [repo, ghConfig] = await Promise.all([
-    prisma.repository.findUniqueOrThrow({
-      include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
-      where: { id: request.repoId },
-    }),
-    resolveGitHubConfig(),
-  ]);
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const token = await requireGitHubToken(ghConfig);
-  const cloneUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`.replace(
-    'https://',
-    `https://x-access-token:${token}@`
-  );
+  const repo = await prisma.repository.findUniqueOrThrow({
+    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
+    where: { id: request.repoId },
+  });
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl, token } = await getScmProvider(repoRef).cloneCredentials(repoRef);
   return {
-    cloneUrl,
+    cloneUrl: authedCloneUrl,
     defaultBranch: repo.defaultBranch,
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
@@ -156,8 +149,8 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  * failures are surfaced unchanged so they're not masked by a confusing
  * default-branch retry. Caller owns volume lifecycle.
  */
-function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): void {
-  const tryClone = (refspec: string): string =>
+async function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): Promise<void> {
+  const tryClone = (refspec: string): Promise<string> =>
     runDocker(
       [
         'run',
@@ -173,12 +166,12 @@ function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): vo
       meta.token
     );
   try {
-    tryClone(branch);
+    await tryClone(branch);
   } catch (err) {
     if (!isBranchNotFoundError(err)) {
       throw err;
     }
-    tryClone(meta.defaultBranch);
+    await tryClone(meta.defaultBranch);
   }
 }
 
@@ -210,11 +203,11 @@ interface FinalizeResult {
  * back to origin on the same branch. Returns the auto-commit SHA + the list
  * of changed files. Skips silently when no changes are present.
  */
-function finalizeWorkspaceVolume(
+async function finalizeWorkspaceVolume(
   volumeName: string,
   branch: string,
   commandSummary: string
-): FinalizeResult {
+): Promise<FinalizeResult> {
   const script = [
     'set -e',
     'cd /workspace/repo',
@@ -228,7 +221,7 @@ function finalizeWorkspaceVolume(
     'git rev-parse HEAD',
     'git diff --name-only HEAD~1 HEAD',
   ].join('\n');
-  const out = runDocker([
+  const out = await runDocker([
     'run',
     '--rm',
     '-v',
@@ -284,10 +277,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
-  runDocker(['volume', 'create', volumeName]);
+  await runDocker(['volume', 'create', volumeName]);
   try {
     heartbeat('shell-step: cloning branch into workspace volume');
-    cloneIntoVolume(volumeName, meta, branch);
+    await cloneIntoVolume(volumeName, meta, branch);
 
     heartbeat('shell-step: running command');
     const effectiveEgressAllowlist = meta.teamEgressAllowlist;
@@ -319,7 +312,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     if (passed) {
       heartbeat('shell-step: finalizing workspace');
       try {
-        finalize = finalizeWorkspaceVolume(volumeName, branch, input.command.slice(0, 80));
+        finalize = await finalizeWorkspaceVolume(volumeName, branch, input.command.slice(0, 80));
       } catch (err) {
         // A push failure shouldn't mask a successful command run, but the
         // caller needs to know changes weren't persisted. Surface the
@@ -370,6 +363,6 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
     };
   } finally {
-    safeRunDocker(['volume', 'rm', '-f', volumeName]);
+    await safeRunDocker(['volume', 'rm', '-f', volumeName]);
   }
 }

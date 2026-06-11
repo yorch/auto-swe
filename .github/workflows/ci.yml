@@ -43,8 +43,59 @@ jobs:
       - name: Lint
         run: yarn lint
 
-      - name: Test
-        run: yarn test
+      - name: Test (with coverage report)
+        run: yarn test --coverage
 
       - name: Build
         run: yarn build
+
+  # Real-database job: applies every migration to a fresh Postgres+pgvector
+  # and runs the seed. The unit-test job deliberately uses an unreachable
+  # DATABASE_URL (all Prisma access is mocked), so without this nothing in CI
+  # ever validated the migrations or the seed against an actual schema.
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      SEED_ADMIN_PASSWORD: ci-only-not-a-real-deployment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.node-version'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      - name: Apply all migrations to a fresh database
+        run: yarn db:migrate
+
+      - name: Seed (admin user, default team, sample repo, templates, skills)
+        run: |
+          export CONFIG_ENCRYPTION_KEY=$(openssl rand -base64 32)
+          yarn workspace @auto-swe/shared prisma db seed
+
+      - name: Re-apply migrations (idempotency check)
+        run: yarn db:migrate

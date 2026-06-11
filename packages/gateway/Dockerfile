@@ -98,6 +98,10 @@ COPY package.json ./
 COPY packages/gateway/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
+# Treat the image as production: the auth secret guards refuse the in-source
+# dev fallbacks unless NODE_ENV is explicitly development/test.
+ENV NODE_ENV=production
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

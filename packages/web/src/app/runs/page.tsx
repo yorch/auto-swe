@@ -112,7 +112,9 @@ export default function WorkflowRunsPage() {
                 <td className="px-4 py-3 text-paper-400 truncate max-w-md">
                   {r.workRequest?.description ?? '—'}
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-paper-400">v{r.templateVersion}</td>
+                <td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  {r.templateName ?? '—'} v{r.templateVersion}
+                </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={r.status} />
                 </td>

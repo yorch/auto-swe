@@ -8,7 +8,35 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
-const RunDetailQuery = z.object({ includeTraces: z.coerce.boolean().optional().default(false) });
+const RunDetailQuery = z.object({
+  /** Skip server-side trace payload trimming (forensic deep-dive only). */
+  fullTraces: z.coerce.boolean().optional().default(false),
+  includeTraces: z.coerce.boolean().optional().default(false),
+});
+
+/** Max chars per string field in trace payloads returned by the polled run view. */
+const TRACE_FIELD_CAP = 4_000;
+
+/**
+ * Trim large string fields out of trace payloads. LLM-response rows carry the
+ * full system prompt + user message (often tens of KB including diffs) which
+ * the run page polls every few seconds but never renders beyond a 2 000-char
+ * preview. `?fullTraces=true` bypasses the trim for forensic use.
+ */
+function trimTraceJson(value: unknown): unknown {
+  if (typeof value === 'string' && value.length > TRACE_FIELD_CAP) {
+    return `${value.slice(0, TRACE_FIELD_CAP)}…[truncated ${value.length - TRACE_FIELD_CAP} chars — refetch with ?fullTraces=true]`;
+  }
+  if (Array.isArray(value)) {
+    return value.map(trimTraceJson);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, trimTraceJson(v)])
+    );
+  }
+  return value;
+}
 const ListRunsQuery = RunListPaginationQuery.extend({
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
@@ -58,6 +86,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
+            template: { select: { name: true } },
             workRequest: {
               select: { description: true, externalTicketId: true, id: true },
             },
@@ -121,7 +150,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { includeTraces } = request.query;
+      const { fullTraces, includeTraces } = request.query;
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
@@ -172,9 +201,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             durationMs: t.durationMs,
             error: t.error,
             id: t.id,
-            inputJson: t.inputJson,
+            inputJson: fullTraces ? t.inputJson : trimTraceJson(t.inputJson),
             nodeId: t.nodeId,
-            outputJson: t.outputJson,
+            outputJson: fullTraces ? t.outputJson : trimTraceJson(t.outputJson),
             seq: t.seq,
             toolName: t.toolName,
             type: t.type,

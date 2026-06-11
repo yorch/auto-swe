@@ -1,8 +1,22 @@
-import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import {
+  createCredential,
+  redactCredential,
+  testStoredCredential,
+  updateCredential,
+} from '../lib/credentialService.js';
+import {
+  getEffectiveModelConfig,
+  MODEL_AGENT_ROLES,
+  MODEL_CONFIG_SCOPES,
+  type ModelRoleConfigUpsertInput,
+  seedDefaultModelConfigs,
+  upsertEmbeddingConfig,
+  upsertModelRoleConfig,
+} from '../lib/modelConfigService.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -15,21 +29,12 @@ import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
  *
  * Team-scoped variants of these routes live in `teams.ts` (consistent with
  * how `shellImageAllowlist` is wired). All routes here require platform
- * ADMIN role.
+ * ADMIN role. Business logic lives in `lib/modelConfigService.ts` and
+ * `lib/credentialService.ts` — the admin and team-scoped plugins below call
+ * the same service functions, parameterized by scope.
  */
 
 // ── Validation schemas ──
-
-const AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
-] as const;
-const ROLE_VALUES = AGENT_ROLES;
-const SCOPE_VALUES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 
 const ModelSpecSchema = z
   .string()
@@ -41,8 +46,8 @@ const UpsertModelRoleConfigSchema = z
   .object({
     credentialId: z.string().uuid().nullable().optional(),
     modelSpec: ModelSpecSchema,
-    role: z.enum(ROLE_VALUES),
-    scope: z.enum(SCOPE_VALUES),
+    role: z.enum(MODEL_AGENT_ROLES),
+    scope: z.enum(MODEL_CONFIG_SCOPES),
     systemPrompt: z.string().max(50_000).nullable().optional(),
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
@@ -58,15 +63,17 @@ const UpsertModelRoleConfigSchema = z
     }
   );
 
+const ProviderSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, 'provider must be lowercase-kebab-case');
+
 const CredentialCreateSchema = z
   .object({
     apiBase: z.string().url().max(500).optional(),
     apiKey: z.string().min(1).max(10_000),
-    provider: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[a-z0-9][a-z0-9-]*$/, 'provider must be lowercase-kebab-case'),
+    provider: ProviderSchema,
     scope: z.enum(['GLOBAL', 'TEAM']),
     teamId: z.string().uuid().optional(),
   })
@@ -80,13 +87,13 @@ const CredentialUpdateSchema = z.object({
 });
 
 const ListConfigQuery = z.object({
-  scope: z.enum(SCOPE_VALUES).optional(),
+  scope: z.enum(MODEL_CONFIG_SCOPES).optional(),
   teamId: z.string().uuid().optional(),
   workflowTemplateId: z.string().uuid().optional(),
 });
 
 const EffectiveQuery = z.object({
-  role: z.enum(ROLE_VALUES),
+  role: z.enum(MODEL_AGENT_ROLES),
   teamId: z.string().uuid().optional(),
   workflowTemplateId: z.string().uuid().optional(),
 });
@@ -99,288 +106,98 @@ const AuditQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
-/// Prisma's known unique-constraint error code. Used to detect lost-race
-/// writes when two admins edit the same row simultaneously — partial unique
-/// indexes from the Phase-1 migration enforce one row per (role,scope,key).
-const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
+const EMBEDDING_CONFIG_SENTINEL_UUID = '00000000-0000-4000-a000-000000000001';
 
-function isUniqueConstraintError(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { code?: string }).code === UNIQUE_CONSTRAINT_VIOLATION
-  );
-}
+// ── Shared route helpers (used by both admin and team-scoped plugins) ──
 
-// ── Helpers ──
-
-/// Strips the encrypted bytes from a credential row before returning it.
-/// Plaintext API keys never leave the gateway.
-function redactCredential(row: {
-  id: string;
-  provider: string;
-  scope: 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
-  teamId: string | null;
-  apiBase: string | null;
-  lastFour: string;
-  keyVersion: number;
-  createdById: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
-  return {
-    apiBase: row.apiBase,
-    createdAt: row.createdAt,
-    createdById: row.createdById,
-    id: row.id,
-    keyVersion: row.keyVersion,
-    lastFour: row.lastFour,
-    maskedKey: `****${row.lastFour}`,
-    provider: row.provider,
-    scope: row.scope,
-    teamId: row.teamId,
-    updatedAt: row.updatedAt,
-  };
-}
-
-const PROBE_TIMEOUT_MS = 5_000;
-
-/// Detects IPv4-mapped IPv6 addresses and returns the embedded IPv4 in
-/// dotted-quad. Accepts both human-friendly (`::ffff:127.0.0.1`) and the
-/// Node-normalised hex form (`::ffff:7f00:1`). Returns null for anything
-/// else so the caller can fall through to its normal IPv6 checks.
-function extractIpv4FromMapped(host: string): string | null {
-  const m1 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
-  if (m1) {
-    return m1[1];
-  }
-  const m2 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (m2) {
-    const hi = Number.parseInt(m2[1], 16);
-    const lo = Number.parseInt(m2[2], 16);
-    if (Number.isFinite(hi) && Number.isFinite(lo)) {
-      return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-    }
-  }
-  return null;
-}
-
-/// Rejects URLs that would let the gateway be used as an SSRF proxy: anything
-/// that isn't https://, anything resolving to a loopback / link-local / RFC1918
-/// host. We resolve at hostname-text level only (no DNS lookup) — the goal is
-/// blocking the obvious accidents, not stopping a determined attacker who can
-/// register a public hostname pointing at internal IPs. (For that we'd need
-/// per-environment outbound-network policy at the OS/container level.)
-/// Exported only so unit tests can exercise the SSRF guard without spinning
-/// up the whole Fastify app. Internal API — not stable.
-export function isSafeProbeUrl(
-  apiBase: string
-): { ok: true; url: URL } | { ok: false; reason: string } {
-  let url: URL;
-  try {
-    url = new URL(apiBase);
-  } catch {
-    return { ok: false, reason: 'invalid URL' };
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    return { ok: false, reason: `protocol '${url.protocol}' not allowed` };
-  }
-  const rawHost = url.hostname.toLowerCase();
-  // Node's URL parser keeps surrounding brackets on IPv6 hostnames
-  // (e.g. `http://[::1]/` → hostname='[::1]'). Strip them so the string
-  // / regex checks below match the bare address — otherwise `host === '::1'`
-  // never triggers and an SSRF probe slips through to IPv6 loopback.
-  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
-
-  // Loopback / link-local / unspecified / IPv6 ::1 — text-level checks.
-  if (
-    host === 'localhost' ||
-    host === '0.0.0.0' ||
-    host === '::' ||
-    host === '::1' ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal')
-  ) {
-    return { ok: false, reason: `host '${host}' is internal` };
-  }
-
-  // IPv4-mapped IPv6: Node renders '::ffff:127.0.0.1' canonically as
-  // '::ffff:7f00:1'. Pull the embedded IPv4 in either form so it gets
-  // routed through the same private-network checks as a bare IPv4.
-  const ipv4FromMapped = extractIpv4FromMapped(host);
-  const effective = ipv4FromMapped ?? host;
-
-  // RFC 1918 IPv4 + link-local + AWS metadata + IPv6 ULA + IPv6 link-local.
-  if (
-    /^127\./.test(effective) ||
-    /^10\./.test(effective) ||
-    /^192\.168\./.test(effective) ||
-    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(effective) ||
-    /^169\.254\./.test(effective) ||
-    /^fc[0-9a-f]{2}:/.test(effective) ||
-    /^fe[89ab][0-9a-f]:/.test(effective)
-  ) {
-    return { ok: false, reason: `host '${host}' is on a private network` };
-  }
-  return { ok: true, url };
-}
-
-/// Issues a minimal HTTP probe against the configured provider to verify the
-/// credential works. Returns `{ ok, status, error? }`. Best-effort — not all
-/// providers expose a cheap "list models" endpoint, so failures here are not
-/// authoritative.
-async function probeCredential(args: {
-  provider: string;
-  apiKey: string;
-  apiBase?: string | null;
-}): Promise<{ ok: boolean; status?: number; error?: string }> {
-  const { provider, apiKey, apiBase } = args;
-  const signal = AbortSignal.timeout(PROBE_TIMEOUT_MS);
-  try {
-    if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/models', {
-        headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey },
-        signal,
-      });
-      return { ok: res.ok, status: res.status };
-    }
-    if (provider === 'openai') {
-      const res = await fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal,
-      });
-      return { ok: res.ok, status: res.status };
-    }
-    if (provider === 'google') {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
-        { signal }
-      );
-      return { ok: res.ok, status: res.status };
-    }
-    // OpenAI-compatible: probe `<base>/models`. SSRF guards run here.
-    if (!apiBase) {
-      return { error: 'apiBase required to probe OpenAI-compatible providers', ok: false };
-    }
-    const safety = isSafeProbeUrl(apiBase);
-    if (!safety.ok) {
-      return { error: `apiBase rejected: ${safety.reason}`, ok: false };
-    }
-    const base = safety.url.toString().replace(/\/+$/, '');
-    const res = await fetch(`${base}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal,
-    });
-    return { ok: res.ok, status: res.status };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err), ok: false };
-  }
-}
-
-// ── Shared upsert helpers (used by both admin and team-scoped routes) ──
-
-type ModelRoleConfigUpsertInput = {
-  role: (typeof ROLE_VALUES)[number];
-  scope: (typeof SCOPE_VALUES)[number];
-  teamId: string | null;
-  workflowTemplateId: string | null;
-  modelSpec: string;
-  credentialId: string | null;
-  systemPrompt: string | null;
-};
-
-/// findFirst → create-or-update, with one P2002 retry to handle the rare case
-/// where two admins (or admin + team owner) write the same scope key at once.
-/// The unique constraint in the migration prevents duplicate rows; this just
-/// gracefully recovers from the race instead of surfacing a 500.
-async function upsertModelRoleConfig(
+/// Upserts via the service, writes the audit entry, and replies 201 on create
+/// / 200 on update — the shared tail of both PUT model-config routes.
+async function upsertModelRoleConfigAndAudit(
   fastify: FastifyInstance,
   actor: JwtPayload,
   reply: FastifyReply,
   input: ModelRoleConfigUpsertInput
 ): Promise<unknown> {
-  const existing = await fastify.prisma.modelRoleConfig.findFirst({
-    where: {
-      role: input.role,
-      scope: input.scope,
-      teamId: input.teamId,
-      workflowTemplateId: input.workflowTemplateId,
-    },
+  const result = await upsertModelRoleConfig(fastify.prisma, input);
+  await writeAuditLog(fastify, {
+    action: result.action,
+    actor,
+    after: result.row,
+    before: result.before,
+    entityId: result.row.id,
+    entityType: 'ModelRoleConfig',
   });
-  if (existing) {
-    const updated = await fastify.prisma.modelRoleConfig.update({
-      data: {
-        credentialId: input.credentialId,
-        modelSpec: input.modelSpec,
-        systemPrompt: input.systemPrompt,
-      },
-      where: { id: existing.id },
-    });
-    await writeAuditLog(fastify, {
-      action: 'UPDATE',
-      actor,
-      after: updated,
-      before: existing,
-      entityId: updated.id,
-      entityType: 'ModelRoleConfig',
-    });
-    return { data: updated };
+  if (result.action === 'CREATE') {
+    return reply.status(201).send({ data: result.row });
   }
-  try {
-    const created = await fastify.prisma.modelRoleConfig.create({
-      data: {
-        createdById: actor.sub,
-        credentialId: input.credentialId,
-        modelSpec: input.modelSpec,
-        role: input.role,
-        scope: input.scope,
-        systemPrompt: input.systemPrompt,
-        teamId: input.teamId,
-        workflowTemplateId: input.workflowTemplateId,
-      },
+  return { data: result.row };
+}
+
+/// Creates a credential via the service, mapping conflicts to 409 with
+/// caller-supplied messages, and audit-logs + 201s the redacted row.
+async function createCredentialAndAudit(
+  fastify: FastifyInstance,
+  actor: JwtPayload,
+  reply: FastifyReply,
+  input: Parameters<typeof createCredential>[1],
+  messages: { conflict: (existingId: string) => string; conflictRace: string }
+): Promise<unknown> {
+  const result = await createCredential(fastify.prisma, input);
+  if (result.outcome === 'conflict') {
+    return reply.status(409).send({
+      error: { code: 'CREDENTIAL_EXISTS', message: messages.conflict(result.existingId) },
     });
-    await writeAuditLog(fastify, {
-      action: 'CREATE',
-      actor,
-      after: created,
-      entityId: created.id,
-      entityType: 'ModelRoleConfig',
-    });
-    return reply.status(201).send({ data: created });
-  } catch (err) {
-    if (!isUniqueConstraintError(err)) {
-      throw err;
-    }
-    // Lost the create race — the row now exists. Update it.
-    const row = await fastify.prisma.modelRoleConfig.findFirst({
-      where: {
-        role: input.role,
-        scope: input.scope,
-        teamId: input.teamId,
-        workflowTemplateId: input.workflowTemplateId,
-      },
-    });
-    if (!row) {
-      throw err; // race recovery failed — surface the original
-    }
-    const updated = await fastify.prisma.modelRoleConfig.update({
-      data: {
-        credentialId: input.credentialId,
-        modelSpec: input.modelSpec,
-        systemPrompt: input.systemPrompt,
-      },
-      where: { id: row.id },
-    });
-    await writeAuditLog(fastify, {
-      action: 'UPDATE',
-      actor,
-      after: updated,
-      before: row,
-      entityId: updated.id,
-      entityType: 'ModelRoleConfig',
-    });
-    return { data: updated };
   }
+  if (result.outcome === 'conflict_race') {
+    return reply.status(409).send({
+      error: { code: 'CREDENTIAL_EXISTS', message: messages.conflictRace },
+    });
+  }
+  await writeAuditLog(fastify, {
+    action: 'CREATE',
+    actor,
+    after: redactCredential(result.credential),
+    entityId: result.credential.id,
+    entityType: 'ProviderCredential',
+  });
+  return reply.status(201).send({ data: redactCredential(result.credential) });
+}
+
+/// Applies a credential update via the service and audit-logs it. Existence /
+/// ownership checks are done by the caller before invoking this.
+async function updateCredentialAndAudit(
+  fastify: FastifyInstance,
+  actor: JwtPayload,
+  existing: Parameters<typeof redactCredential>[0],
+  body: { apiBase?: string | null; apiKey?: string }
+): Promise<unknown> {
+  const updated = await updateCredential(fastify.prisma, existing.id, body);
+  await writeAuditLog(fastify, {
+    action: 'UPDATE',
+    actor,
+    after: redactCredential(updated),
+    before: redactCredential(existing),
+    entityId: updated.id,
+    entityType: 'ProviderCredential',
+  });
+  return { data: redactCredential(updated) };
+}
+
+/// Deletes a credential row and audit-logs it (shared by admin + team routes).
+async function deleteCredentialAndAudit(
+  fastify: FastifyInstance,
+  actor: JwtPayload,
+  existing: Parameters<typeof redactCredential>[0]
+): Promise<unknown> {
+  await fastify.prisma.providerCredential.delete({ where: { id: existing.id } });
+  await writeAuditLog(fastify, {
+    action: 'DELETE',
+    actor,
+    before: redactCredential(existing),
+    entityId: existing.id,
+    entityType: 'ProviderCredential',
+  });
+  return { data: { deleted: true, id: existing.id } };
 }
 
 // ── Routes ──
@@ -436,7 +253,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      return upsertModelRoleConfig(fastify, actor, reply, {
+      return upsertModelRoleConfigAndAudit(fastify, actor, reply, {
+        actorId: actor.sub,
         credentialId: credentialId ?? null,
         modelSpec,
         role,
@@ -488,35 +306,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/model-config/effective',
     { onRequest: adminOnly, schema: { querystring: EffectiveQuery } },
-    async (request) => {
-      const { role, teamId, workflowTemplateId } = request.query;
-      if (workflowTemplateId) {
-        const row = await fastify.prisma.modelRoleConfig.findFirst({
-          include: { credential: { select: { id: true, lastFour: true, provider: true } } },
-          where: { role, scope: 'WORKFLOW_TEMPLATE', workflowTemplateId },
-        });
-        if (row) {
-          return { data: { row, scope: 'WORKFLOW_TEMPLATE' } };
-        }
-      }
-      if (teamId) {
-        const row = await fastify.prisma.modelRoleConfig.findFirst({
-          include: { credential: { select: { id: true, lastFour: true, provider: true } } },
-          where: { role, scope: 'TEAM', teamId },
-        });
-        if (row) {
-          return { data: { row, scope: 'TEAM' } };
-        }
-      }
-      const row = await fastify.prisma.modelRoleConfig.findFirst({
-        include: { credential: { select: { id: true, lastFour: true, provider: true } } },
-        where: { role, scope: 'GLOBAL' },
-      });
-      if (row) {
-        return { data: { row, scope: 'GLOBAL' } };
-      }
-      return { data: { row: null, scope: null } };
-    }
+    async (request) => ({ data: await getEffectiveModelConfig(fastify.prisma, request.query) })
   );
 
   // ── Provider credentials ───────────────────────────────────────────────
@@ -534,56 +324,17 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { provider, scope, teamId, apiBase, apiKey } = request.body;
-
-      const existing = await fastify.prisma.providerCredential.findFirst({
-        where: { provider, scope, teamId: scope === 'TEAM' ? teamId : null },
-      });
-      if (existing) {
-        return reply.status(409).send({
-          error: {
-            code: 'CREDENTIAL_EXISTS',
-            message: `Credential for provider '${provider}' at scope '${scope}' already exists. Use PUT /credentials/${existing.id} to update.`,
-          },
-        });
-      }
-
-      const sealed = encryptSecret(apiKey);
-      try {
-        const created = await fastify.prisma.providerCredential.create({
-          data: {
-            apiBase: apiBase ?? null,
-            apiKeyAuthTag: sealed.authTag,
-            apiKeyCiphertext: sealed.ciphertext,
-            apiKeyNonce: sealed.nonce,
-            createdById: actor.sub,
-            keyVersion: sealed.keyVersion,
-            lastFour: sealed.lastFour,
-            provider,
-            scope,
-            teamId: scope === 'TEAM' ? teamId : null,
-          },
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor,
-          after: redactCredential(created),
-          entityId: created.id,
-          entityType: 'ProviderCredential',
-        });
-        return reply.status(201).send({ data: redactCredential(created) });
-      } catch (err) {
-        if (isUniqueConstraintError(err)) {
-          // Lost race with a concurrent POST — surface as 409, same as the
-          // pre-flight check would have.
-          return reply.status(409).send({
-            error: {
-              code: 'CREDENTIAL_EXISTS',
-              message: `Credential for '${provider}' already exists at this scope (concurrent insert).`,
-            },
-          });
+      return createCredentialAndAudit(
+        fastify,
+        actor,
+        reply,
+        { actorId: actor.sub, apiBase, apiKey, provider, scope, teamId },
+        {
+          conflict: (existingId) =>
+            `Credential for provider '${provider}' at scope '${scope}' already exists. Use PUT /credentials/${existingId} to update.`,
+          conflictRace: `Credential for '${provider}' already exists at this scope (concurrent insert).`,
         }
-        throw err;
-      }
+      );
     }
   );
 
@@ -603,34 +354,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'NOT_FOUND', message: 'Credential not found' },
         });
       }
-
-      const { apiBase, apiKey } = request.body;
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic update shape
-      const data: Record<string, any> = {};
-      if (apiBase !== undefined) {
-        data.apiBase = apiBase;
-      }
-      if (apiKey) {
-        const sealed = encryptSecret(apiKey);
-        data.apiKeyCiphertext = sealed.ciphertext;
-        data.apiKeyNonce = sealed.nonce;
-        data.apiKeyAuthTag = sealed.authTag;
-        data.keyVersion = sealed.keyVersion;
-        data.lastFour = sealed.lastFour;
-      }
-      const updated = await fastify.prisma.providerCredential.update({
-        data,
-        where: { id: existing.id },
-      });
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor,
-        after: redactCredential(updated),
-        before: redactCredential(existing),
-        entityId: updated.id,
-        entityType: 'ProviderCredential',
-      });
-      return { data: redactCredential(updated) };
+      return updateCredentialAndAudit(fastify, actor, existing, request.body);
     }
   );
 
@@ -647,15 +371,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'NOT_FOUND', message: 'Credential not found' },
         });
       }
-      await fastify.prisma.providerCredential.delete({ where: { id: existing.id } });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor,
-        before: redactCredential(existing),
-        entityId: existing.id,
-        entityType: 'ProviderCredential',
-      });
-      return { data: { deleted: true, id: existing.id } };
+      return deleteCredentialAndAudit(fastify, actor, existing);
     }
   );
 
@@ -674,21 +390,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found' } });
       }
-      // Import the decrypt helper lazily — keeps the cold path off the
-      // critical request path for routes that don't need it.
-      const { decryptSecret } = await import('@auto-swe/shared/lib/crypto');
-      const apiKey = decryptSecret({
-        authTag: cred.apiKeyAuthTag,
-        ciphertext: cred.apiKeyCiphertext,
-        keyVersion: cred.keyVersion,
-        nonce: cred.apiKeyNonce,
-      });
-      const probe = await probeCredential({
-        apiBase: cred.apiBase,
-        apiKey,
-        provider: cred.provider,
-      });
-      return { data: probe };
+      return { data: await testStoredCredential(cred) };
     }
   );
 
@@ -765,18 +467,10 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const existing = await fastify.prisma.embeddingConfig.findUnique({
-        where: { id: 'default' },
-      });
-      const updated = await fastify.prisma.embeddingConfig.upsert({
-        create: {
-          credentialId: credentialId ?? null,
-          id: 'default',
-          modelSpec,
-          updatedById: actor.sub,
-        },
-        update: { credentialId: credentialId ?? null, modelSpec, updatedById: actor.sub },
-        where: { id: 'default' },
+      const { existing, updated } = await upsertEmbeddingConfig(fastify.prisma, {
+        actorId: actor.sub,
+        credentialId: credentialId ?? null,
+        modelSpec,
       });
       await writeAuditLog(fastify, {
         action: existing ? 'UPDATE' : 'CREATE',
@@ -794,103 +488,36 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  /// One-click admin bootstrap: inserts a GLOBAL ModelRoleConfig row for each
-  /// of the 6 roles using the baked-in defaults, plus the EmbeddingConfig
-  /// singleton if missing. Idempotent — skips roles that already have a
-  /// GLOBAL row. Does NOT seed credentials; those must be added separately
-  /// because they require a real API key from the operator.
+  /// One-click admin bootstrap: seeds GLOBAL ModelRoleConfig rows + the
+  /// EmbeddingConfig singleton from the baked-in defaults. Idempotent.
   app.post('/defaults', { onRequest: adminOnly }, async (request) => {
     const actor = requireUser(request);
-    const defaults = {
-      COMMIT_TO_MEMORY: 'anthropic/claude-opus-4-7',
-      IMPLEMENTER: 'anthropic/claude-opus-4-7',
-      PLANNER: 'anthropic/claude-sonnet-4-6',
-      REVIEWER: 'anthropic/claude-opus-4-7',
-      SECURITY_REVIEW: 'anthropic/claude-sonnet-4-6',
-      VALIDATE_CONTEXT: 'anthropic/claude-sonnet-4-6',
-    } as const;
-
-    let rolesSeeded = 0;
-    for (const [role, spec] of Object.entries(defaults)) {
-      const existing = await fastify.prisma.modelRoleConfig.findFirst({
-        where: { role: role as keyof typeof defaults, scope: 'GLOBAL' },
+    const data = await seedDefaultModelConfigs(fastify.prisma, actor.sub, async (created) => {
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor,
+        after: created,
+        entityId: created.id,
+        entityType: 'ModelRoleConfig',
       });
-      if (existing) {
-        continue;
-      }
-      // Two admins double-clicking the button race on the count-then-create;
-      // the partial unique index on (role) WHERE scope='GLOBAL' makes the
-      // second insert fail. Swallow it — the first writer wins.
-      try {
-        const created = await fastify.prisma.modelRoleConfig.create({
-          data: {
-            createdById: actor.sub,
-            modelSpec: spec,
-            role: role as keyof typeof defaults,
-            scope: 'GLOBAL',
-          },
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor,
-          after: created,
-          entityId: created.id,
-          entityType: 'ModelRoleConfig',
-        });
-        rolesSeeded += 1;
-      } catch (err) {
-        if (!isUniqueConstraintError(err)) {
-          throw err;
-        }
-      }
-    }
-
-    let embeddingSeeded = false;
-    const existingEmbedding = await fastify.prisma.embeddingConfig.findUnique({
-      where: { id: 'default' },
     });
-    if (!existingEmbedding) {
-      try {
-        await fastify.prisma.embeddingConfig.create({
-          data: {
-            id: 'default',
-            modelSpec: 'openai/text-embedding-3-large',
-            updatedById: actor.sub,
-          },
-        });
-        embeddingSeeded = true;
-      } catch (err) {
-        // Same race — id='default' is the singleton primary key, so a
-        // concurrent insert produces P2002. Treat as "already seeded".
-        if (!isUniqueConstraintError(err)) {
-          throw err;
-        }
-      }
-    }
-
-    return { data: { embeddingSeeded, rolesSeeded } };
+    return { data };
   });
 };
-
-const EMBEDDING_CONFIG_SENTINEL_UUID = '00000000-0000-4000-a000-000000000001';
 
 // ── Team-scoped route helpers (exported for `teams.ts` to mount) ───────────
 
 const TeamModelConfigUpsert = z.object({
   credentialId: z.string().uuid().nullable().optional(),
   modelSpec: ModelSpecSchema,
-  role: z.enum(ROLE_VALUES),
+  role: z.enum(MODEL_AGENT_ROLES),
   systemPrompt: z.string().max(50_000).nullable().optional(),
 });
 
 const TeamCredentialCreate = z.object({
   apiBase: z.string().url().max(500).optional(),
   apiKey: z.string().min(1).max(10_000),
-  provider: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9][a-z0-9-]*$/, 'provider must be lowercase-kebab-case'),
+  provider: ProviderSchema,
 });
 
 const TeamRoleParams = z.object({ configId: z.string().uuid(), id: z.string().uuid() });
@@ -943,7 +570,8 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       }
-      return upsertModelRoleConfig(fastify, actor, reply, {
+      return upsertModelRoleConfigAndAudit(fastify, actor, reply, {
+        actorId: actor.sub,
         credentialId: credentialId ?? null,
         modelSpec,
         role,
@@ -1019,52 +647,16 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply): Promise<unknown> => {
       const actor = requireUser(request);
       const { provider, apiBase, apiKey } = request.body;
-      const existing = await fastify.prisma.providerCredential.findFirst({
-        where: { provider, scope: 'TEAM', teamId: request.params.id },
-      });
-      if (existing) {
-        return reply.status(409).send({
-          error: {
-            code: 'CREDENTIAL_EXISTS',
-            message: `Credential for '${provider}' already exists for this team`,
-          },
-        });
-      }
-      const sealed = encryptSecret(apiKey);
-      try {
-        const created = await fastify.prisma.providerCredential.create({
-          data: {
-            apiBase: apiBase ?? null,
-            apiKeyAuthTag: sealed.authTag,
-            apiKeyCiphertext: sealed.ciphertext,
-            apiKeyNonce: sealed.nonce,
-            createdById: actor.sub,
-            keyVersion: sealed.keyVersion,
-            lastFour: sealed.lastFour,
-            provider,
-            scope: 'TEAM',
-            teamId: request.params.id,
-          },
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor,
-          after: redactCredential(created),
-          entityId: created.id,
-          entityType: 'ProviderCredential',
-        });
-        return reply.status(201).send({ data: redactCredential(created) });
-      } catch (err) {
-        if (isUniqueConstraintError(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'CREDENTIAL_EXISTS',
-              message: `Credential for '${provider}' already exists for this team (concurrent insert).`,
-            },
-          });
+      return createCredentialAndAudit(
+        fastify,
+        actor,
+        reply,
+        { actorId: actor.sub, apiBase, apiKey, provider, scope: 'TEAM', teamId: request.params.id },
+        {
+          conflict: () => `Credential for '${provider}' already exists for this team`,
+          conflictRace: `Credential for '${provider}' already exists for this team (concurrent insert).`,
         }
-        throw err;
-      }
+      );
     }
   );
 
@@ -1081,33 +673,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
       }
-      const { apiBase, apiKey } = request.body;
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic update shape
-      const data: Record<string, any> = {};
-      if (apiBase !== undefined) {
-        data.apiBase = apiBase;
-      }
-      if (apiKey) {
-        const sealed = encryptSecret(apiKey);
-        data.apiKeyCiphertext = sealed.ciphertext;
-        data.apiKeyNonce = sealed.nonce;
-        data.apiKeyAuthTag = sealed.authTag;
-        data.keyVersion = sealed.keyVersion;
-        data.lastFour = sealed.lastFour;
-      }
-      const updated = await fastify.prisma.providerCredential.update({
-        data,
-        where: { id: existing.id },
-      });
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor,
-        after: redactCredential(updated),
-        before: redactCredential(existing),
-        entityId: updated.id,
-        entityType: 'ProviderCredential',
-      });
-      return { data: redactCredential(updated) };
+      return updateCredentialAndAudit(fastify, actor, existing, request.body);
     }
   );
 
@@ -1124,18 +690,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
       }
-      await fastify.prisma.providerCredential.delete({ where: { id: existing.id } });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor,
-        before: redactCredential(existing),
-        entityId: existing.id,
-        entityType: 'ProviderCredential',
-      });
-      return { data: { deleted: true, id: existing.id } };
+      return deleteCredentialAndAudit(fastify, actor, existing);
     }
   );
 };
-
-// Silence unused-export warnings — these are imported by gateway/src/index.ts.
-export type { FastifyReply };

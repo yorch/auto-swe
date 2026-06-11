@@ -1,204 +1,45 @@
-import { prisma } from '@auto-swe/shared/db';
-import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
-import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
+import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
-import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
-import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorStdout } from '../lib/errors.js';
-import { GitHubTokenMissingError, resolveGitHubToken } from '../lib/githubAuth.js';
-import { resolveSystemPrompt } from '../lib/models.js';
-import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
-import { createWorkspace, shellQuote } from './workspace.js';
+import { getScmProvider } from '../lib/scm/index.js';
+import { runImplementerFixSession } from './implementerSession.js';
 
 /**
- * Fetches CI logs from the provided URL.
- * Truncates to last 50KB to fit in LLM context.
+ * Fetches CI logs from the provided URL. Provider-specific URL/auth handling
+ * (and truncation to the last 50KB to fit in LLM context) lives in the
+ * ScmProvider implementation.
  */
 export async function fetchCILogs(logsUrl?: string): Promise<string> {
   if (!logsUrl) {
     return 'No logs URL provided by CI webhook';
   }
-
-  const ghConfig = await resolveGitHubConfig();
-  let githubToken: string | null = null;
-  try {
-    githubToken = await resolveGitHubToken(ghConfig);
-  } catch (err) {
-    if (!(err instanceof GitHubTokenMissingError)) {
-      // Real auth error (e.g. malformed App credentials) — surface it so the
-      // operator knows why the log fetch failed rather than seeing a 401.
-      return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
-    }
-    // No token configured at all: proceed unauthenticated for public repos.
-  }
-  const response = await fetch(logsUrl, {
-    headers: {
-      Accept: 'application/vnd.github.v3+json',
-      ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
-    },
-  });
-
-  if (!response.ok) {
-    return `Failed to fetch CI logs (HTTP ${response.status}): ${await response.text().catch(() => 'no body')}`;
-  }
-
-  const fullLog = await response.text();
-  // Truncate to last 50KB to fit in LLM context
-  return fullLog.slice(-50_000);
+  return getScmProvider().fetchCiLogs(logsUrl);
 }
 
 /**
  * Re-provisions a workspace on the existing branch and runs the implementer
- * agent in CI fix mode with the failure logs injected.
+ * agent in CI fix mode with the failure logs injected. Thin wrapper around
+ * the shared fix session (workspace lifecycle, tracing, and security scans
+ * live there so all fix paths behave identically).
  */
 export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
   systemPromptOverride?: string
 ): Promise<CodeResult> {
-  const workflow = await prisma.activeWorkflow.findFirst({
-    include: { repository: true },
-    where: { assignedBranch: previousCodeResult.branch },
-  });
-
-  if (!workflow?.repository) {
-    throw new Error(`No workflow found for branch ${previousCodeResult.branch}`);
-  }
-
-  const repo = workflow.repository;
-  const ghConfig = await resolveGitHubConfig();
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = await resolveGitHubToken(ghConfig);
-
-  // Provision workspace and checkout the existing branch
-  const workspace = createWorkspace(
-    repoUrl,
-    previousCodeResult.branch,
-    repo.defaultBranch,
-    githubToken,
-    repo.executorImage ?? 'node:24-alpine'
-  );
-
-  const tracer = new AgentTracer();
-
-  try {
-    heartbeat('CI fix workspace provisioned');
-
-    // Detect test framework
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson);
-
-    const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      tracer,
-      toolConfig,
-      skills
-    );
-
-    const systemPrompt = await resolveSystemPrompt(
-      'implementer',
-      CI_FIX_SYSTEM_PROMPT,
-      systemPromptOverride
-    );
-
-    // Run the agent in CI fix mode
-    const ciSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
-    const ciUserMessage = JSON.stringify({
+  return runImplementerFixSession({
+    commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
+    defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
+    mode: 'CI_FIX',
+    notes: (testResult) =>
+      `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+    previousCodeResult,
+    systemPromptOverride,
+    usageEventName: 'llm.ci_fix',
+    userPayload: {
       ciLogs: failureContext,
-      mode: 'CI_FIX',
-      previousDiff: previousCodeResult.diff.slice(-20_000),
       previousTestResults: previousCodeResult.testResults,
-    });
-    const agentStart = Date.now();
-    const ciFix = await agent.generate(
-      [
-        { content: ciSystemPrompt, role: 'system' },
-        { content: ciUserMessage, role: 'user' },
-      ],
-      { toolChoice: 'auto' }
-    );
-
-    heartbeat('CI fix agent completed');
-
-    if (ciFix.usage) {
-      await recordLlmUsage(currentWorkflowId(), 'implementer', ciFix.usage, 'llm.ci_fix');
-    }
-
-    if (ciFix.text) {
-      tracer.addLlmResponse({
-        durationMs: Date.now() - agentStart,
-        inputJson: { systemPrompt: ciSystemPrompt, userMessage: ciUserMessage },
-        outputJson: { text: ciFix.text },
-        role: 'implementer',
-      });
-    }
-
-    // Run tests locally after fix
-    let testResult: TestRunResult;
-    const testStart = Date.now();
-    try {
-      const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - testStart);
-    } catch (err: unknown) {
-      testResult = {
-        duration_ms: 0,
-        failing: 1,
-        passed: false,
-        passing: 0,
-        stdout: getExecErrorStdout(err),
-        total: 0,
-      };
-    }
-    tracer.addActivityEvent({
-      durationMs: Date.now() - testStart,
-      name: 'tdd.test_run',
-      outputJson: {
-        failing: testResult.failing,
-        passed: testResult.passed,
-        passing: testResult.passing,
-        total: testResult.total,
-      },
-    });
-
-    // Commit and push the fix (skip if agent made no changes to avoid empty CI cycles)
-    workspace.exec('git add -A');
-    workspace.exec(
-      `git diff --cached --quiet || git commit -m ${shellQuote(`auto: fix CI for ${previousCodeResult.branch}`)}`
-    );
-    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
-
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
-
-    tracer.addActivityEvent({
-      name: 'git.commit_push',
-      outputJson: { branch: previousCodeResult.branch, headSha },
-    });
-
-    return {
-      branch: previousCodeResult.branch,
-      diff,
-      filesChanged: parseDiffToFileChanges(diff),
-      headSha,
-      implementationNotes: `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
-      testResults: testResult,
-    };
-  } finally {
-    const done = persistActivityTrace(tracer, 'implementer');
-    workspace.destroy();
-    await done;
-  }
+    },
+  });
 }
 
 /**
@@ -213,137 +54,18 @@ export async function executeReviewFixImplementation(
   previousCodeResult: CodeResult,
   systemPromptOverride?: string
 ): Promise<CodeResult> {
-  const workflow = await prisma.activeWorkflow.findFirst({
-    include: { repository: true },
-    where: { assignedBranch: previousCodeResult.branch },
-  });
-
-  if (!workflow?.repository) {
-    throw new Error(`No workflow found for branch ${previousCodeResult.branch}`);
-  }
-
-  const repo = workflow.repository;
-  const ghConfig = await resolveGitHubConfig();
-  const githubUrl = repo.githubUrl ?? ghConfig.baseUrl;
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = await resolveGitHubToken(ghConfig);
-
-  const workspace = createWorkspace(
-    repoUrl,
-    previousCodeResult.branch,
-    repo.defaultBranch,
-    githubToken,
-    repo.executorImage ?? 'node:24-alpine'
-  );
-
-  const reviewTracer = new AgentTracer();
-
-  try {
-    heartbeat('review fix workspace provisioned');
-
-    const packageJson = workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson);
-
-    const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      reviewTracer,
-      toolConfig,
-      skills
-    );
-
-    const reviewSystemPrompt = await resolveSystemPrompt(
-      'implementer',
-      REVIEW_FIX_SYSTEM_PROMPT,
-      systemPromptOverride
-    );
-
-    const reviewSystemPromptFull = reviewSystemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
-    const reviewUserMessage = JSON.stringify({
-      mode: 'REVIEW_FIX',
-      previousDiff: previousCodeResult.diff.slice(-20_000),
+  return runImplementerFixSession({
+    commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,
+    defaultSystemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
+    mode: 'REVIEW_FIX',
+    notes: (testResult) =>
+      `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+    previousCodeResult,
+    systemPromptOverride,
+    usageEventName: 'llm.review_fix',
+    userPayload: {
       previousTestResults: previousCodeResult.testResults,
       reviewFindings: rejectionSummary,
-    });
-    const agentStart = Date.now();
-    const reviewFix = await agent.generate(
-      [
-        { content: reviewSystemPromptFull, role: 'system' },
-        { content: reviewUserMessage, role: 'user' },
-      ],
-      { toolChoice: 'auto' }
-    );
-
-    heartbeat('review fix agent completed');
-
-    if (reviewFix.usage) {
-      await recordLlmUsage(currentWorkflowId(), 'implementer', reviewFix.usage, 'llm.review_fix');
-    }
-
-    if (reviewFix.text) {
-      reviewTracer.addLlmResponse({
-        durationMs: Date.now() - agentStart,
-        inputJson: { systemPrompt: reviewSystemPromptFull, userMessage: reviewUserMessage },
-        outputJson: { text: reviewFix.text },
-        role: 'implementer',
-      });
-    }
-
-    let testResult: TestRunResult;
-    const testStart = Date.now();
-    try {
-      const testOutput = workspace.exec(testCommand);
-      testResult = parseTestOutput(testOutput, Date.now() - testStart);
-    } catch (err: unknown) {
-      testResult = {
-        duration_ms: 0,
-        failing: 1,
-        passed: false,
-        passing: 0,
-        stdout: getExecErrorStdout(err),
-        total: 0,
-      };
-    }
-    reviewTracer.addActivityEvent({
-      durationMs: Date.now() - testStart,
-      name: 'tdd.test_run',
-      outputJson: {
-        failing: testResult.failing,
-        passed: testResult.passed,
-        passing: testResult.passing,
-        total: testResult.total,
-      },
-    });
-
-    workspace.exec('git add -A');
-    workspace.exec(
-      `git diff --cached --quiet || git commit -m ${shellQuote(`auto: address review findings for ${previousCodeResult.branch}`)}`
-    );
-    workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
-
-    const diff = workspace.exec(`git diff origin/${repo.defaultBranch}`);
-    const headSha = workspace.exec('git rev-parse HEAD').trim();
-
-    reviewTracer.addActivityEvent({
-      name: 'git.commit_push',
-      outputJson: { branch: previousCodeResult.branch, headSha },
-    });
-
-    return {
-      branch: previousCodeResult.branch,
-      diff,
-      filesChanged: parseDiffToFileChanges(diff),
-      headSha,
-      implementationNotes: `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
-      testResults: testResult,
-    };
-  } finally {
-    const done = persistActivityTrace(reviewTracer, 'implementer');
-    workspace.destroy();
-    await done;
-  }
+    },
+  });
 }

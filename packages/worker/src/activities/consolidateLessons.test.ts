@@ -7,7 +7,14 @@ vi.mock('@auto-swe/shared/db', () => ({
     agentSkillAssignment: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
-vi.mock('../lib/embeddings.js', () => ({ generateEmbedding: vi.fn() }));
+vi.mock('../lib/embeddings.js', () => ({
+  currentEmbeddingSpec: vi.fn(async () => 'openai/text-embedding-3-large'),
+  generateEmbedding: vi.fn(),
+  generateEmbeddingWithSpec: vi.fn(async () => ({
+    embedding: [],
+    spec: 'openai/text-embedding-3-large',
+  })),
+}));
 vi.mock('../lib/models.js', () => ({ getModel: vi.fn() }));
 vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
@@ -206,7 +213,8 @@ describe('consolidateLessons', () => {
 
     await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1', similarityThreshold: 0.99 });
 
-    // 6th positional arg to the INSERT is failureType (index 5)
-    expect(capturedInsertArgs?.[5]).toBeNull();
+    // 7th positional arg to the INSERT is failureType (index 6) — index 5 is
+    // the embedding_model spec added by EVOL-4.
+    expect(capturedInsertArgs?.[6]).toBeNull();
   });
 });

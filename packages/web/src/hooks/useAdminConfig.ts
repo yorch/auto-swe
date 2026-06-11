@@ -229,6 +229,46 @@ export function useUpdateGoogleOAuthConfig() {
   });
 }
 
+// ── Issue tracker config ──
+
+export type TrackerProvider = 'jira' | 'linear' | 'github';
+
+export interface TrackerConfig {
+  provider: TrackerProvider | null;
+  baseUrl: string | null;
+  email: string | null;
+  apiToken: MaskedField | null;
+}
+
+export interface TrackerConfigInput {
+  provider?: TrackerProvider | null;
+  baseUrl?: string | null;
+  email?: string | null;
+  apiToken?: string;
+}
+
+export function useTrackerConfig() {
+  return useQuery({
+    queryFn: () => api.get<ConfigResponse<TrackerConfig>>('/api/v1/admin/config/tracker'),
+    queryKey: ['admin-config-tracker'],
+  });
+}
+
+export function useUpdateTrackerConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TrackerConfigInput) =>
+      api.put<{ data: TrackerConfig }>('/api/v1/admin/config/tracker', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-tracker'] }),
+  });
+}
+
+export function testTrackerConnection(ticketId: string) {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/tracker/test', {
+    ticketId,
+  });
+}
+
 // ── Consolidation schedule config ──
 
 export interface ConsolidationScheduleStatus {

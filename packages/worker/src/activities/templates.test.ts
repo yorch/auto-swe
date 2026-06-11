@@ -18,6 +18,9 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    activeWorkflow: {
+      updateMany: vi.fn(),
+    },
     repository: {
       findUniqueOrThrow: vi.fn(),
     },
@@ -181,6 +184,42 @@ describe('finalizeWorkflowRun', () => {
     const data = args.data as Record<string, unknown>;
     expect(data.costUsdAccrued).toBe(0);
     findRun.mockReset();
+  });
+
+  it('writes the terminal status back to the ActiveWorkflow row', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
+    findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-1', workRequest: null } as never);
+    updateRun.mockResolvedValue({} as never);
+    updateActive.mockResolvedValue({ count: 1 } as never);
+
+    await finalizeWorkflowRun('run-3', 'FAILED');
+    expect(updateActive).toHaveBeenCalledWith({
+      data: { currentStatus: 'FAILED' },
+      where: { temporalWorkflowId: 'eng-acme-repo-T-1' },
+    });
+
+    await finalizeWorkflowRun('run-3', 'SUCCESS');
+    expect(updateActive).toHaveBeenLastCalledWith({
+      data: { currentStatus: 'COMPLETED' },
+      where: { temporalWorkflowId: 'eng-acme-repo-T-1' },
+    });
+
+    findRun.mockReset();
+    updateActive.mockReset();
+  });
+
+  it('leaves the ActiveWorkflow row untouched for SKIPPED runs', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
+    findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-2', workRequest: null } as never);
+    updateRun.mockResolvedValue({} as never);
+
+    await finalizeWorkflowRun('run-4', 'SKIPPED');
+    expect(updateActive).not.toHaveBeenCalled();
+
+    findRun.mockReset();
+    updateActive.mockReset();
   });
 });
 

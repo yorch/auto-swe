@@ -23,7 +23,7 @@ CLI / API
    ▼
 Fastify Gateway ──────────────────▶ Temporal Server
    │                                      │
-   │  PostgreSQL 17 + pgvector            │ Task Queue
+   │  PostgreSQL 18 + pgvector            │ Task Queue
    │  (state, memory, tokens)             ▼
    │                               Temporal Worker
    │                                 │
@@ -57,13 +57,13 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 | ------------------- | ---------------------------------------------------------- |
 | HTTP API            | Fastify 5.8 + Zod 4 validation                             |
 | Orchestration       | Temporal 1.31 (server + admin-tools + ui) + @temporalio/* SDK 1.17 |
-| Agents              | Mastra 1.32 + Vercel AI SDK 6 (default `claude-opus-4-7`)  |
-| Database            | PostgreSQL 17 + pgvector (Prisma 7.8)                      |
+| Agents              | Mastra 1.40 + Vercel AI SDK 6 (default `claude-opus-4-7`)  |
+| Database            | PostgreSQL 18 + pgvector (Prisma 7.8)                      |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
 | Workspace isolation | Docker-in-Docker                                           |
 | Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.8.1`)   |
 | Web dashboard       | Next.js 16 + React 19 + Tailwind CSS 4 + TanStack Query 5  |
-| Language            | TypeScript 6 (strict mode, Yarn 4.14 monorepo)             |
+| Language            | TypeScript 6 (strict mode, Yarn 4.16 monorepo)             |
 | Tests / Lint+Format | Vitest 4 / Biome 2.4                                       |
 
 ## Prerequisites
@@ -86,7 +86,7 @@ cp .env.example .env
 # dashboard at /admin/model-config after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
 
-# 3. Start infrastructure (Postgres, Temporal)
+# 3. Start infrastructure (Postgres, Temporal, MinIO)
 yarn docker:infra:up
 
 # 4. Set up the database
@@ -112,10 +112,10 @@ Three equivalent entry points — pick the one that fits the workflow:
 
 1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, click **+ Submit work request** in the header (or in the onboarding panel if you have no runs yet). The repo dropdown, brief, and budget tier are all there; on submit it routes you to the new run.
 2. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
-3. **Raw HTTP** — useful for scripting / CI. Either a JWT (legacy `/auth/login`) or a PAT created in the UI works as the bearer:
+3. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:
 
    ```bash
-   TOKEN=<your-PAT-from-Settings → API tokens>   # or mint a JWT via /auth/login
+   TOKEN=<your-PAT-from-Settings → API tokens>
 
    curl -X POST http://localhost:8080/api/v1/work-requests \
      -H "Authorization: Bearer $TOKEN" \
@@ -159,8 +159,8 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `DATABASE_URL`              | Yes       | PostgreSQL connection string                                                                   |
 | `TEMPORAL_ADDRESS`          | Yes       | Temporal server address (default: `localhost:7233`)                                            |
 | `CONFIG_ENCRYPTION_KEY`     | Yes       | AES-256-GCM key (base64-encoded 32 bytes) for encrypting `provider_credentials.api_key_ciphertext`. Generate with `openssl rand -base64 32`. |
-| `GITHUB_TOKEN`              | Yes       | GitHub PAT with `repo` scope                                                                   |
-| `GITHUB_WEBHOOK_SECRET`     | Yes       | Secret for verifying GitHub webhook signatures                                                 |
+| `GITHUB_TOKEN`              | Bootstrap⁵ | GitHub PAT with `repo` scope — env var is a bootstrap fallback; the DB value set at `/admin/integrations → GitHub` takes precedence |
+| `GITHUB_WEBHOOK_SECRET`     | Bootstrap⁵ | Secret for verifying GitHub webhook signatures — same DB-primary rule as `GITHUB_TOKEN`        |
 | `JWT_SECRET`                | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
 | `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
 | `JWT_PUBLIC_KEY_PATH`       | Optional¹ | Path to RSA public key. Required when using RS256                                              |
@@ -196,6 +196,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 ² Required when running the gateway in production — better-auth refuses to start with the dev defaults.
 ³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
 ⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
+⁵ GitHub credentials are DB-primary: configure them at `/admin/integrations → GitHub` after first boot (`resolveGitHubConfig()` falls back to the env vars only when no DB row exists). One of the two must be configured somewhere for the worker/webhooks to function; GitHub App auth is also available (see [`docs/github-app-setup.md`](./docs/github-app-setup.md)).
 
 Provider API keys (Anthropic, OpenAI, Google, OpenAI-compatible) and per-role model selection are NOT env vars — they live in the database and are managed at `/admin/model-config`. See [`docs/model-configuration.md`](./docs/model-configuration.md) for the bootstrap flow and day-2 operations.
 
@@ -214,7 +215,7 @@ yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode
 yarn dev:worker          # Worker in watch mode
 yarn dev:web             # Next.js dashboard (port 3000)
-yarn docker:infra:up     # Start infra services (postgres + temporal). Observability (Grafana/OTel) starts with yarn docker:app:up.
+yarn docker:infra:up     # Start infra services (postgres + temporal + minio). Observability (Grafana/OTel) starts with yarn docker:app:up.
 yarn docker:infra:down   # Stop infra services
 yarn docker:app:up           # Start everything (infra + app)
 yarn docker:app:down         # Stop everything
@@ -242,6 +243,6 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 | Docker-in-Docker (not K8s)    | No cluster required; same isolation, zero extra infra                           |
 | Temporal.io for orchestration | Durable execution — workflows survive crashes and wait days for human signals   |
 | Human-governed merges         | The system never auto-merges; all PRs require explicit human review             |
-| Single GitHub PAT             | JIT-scoped tokens require a GitHub App (future work)                            |
+| PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |
 | pgvector for agent memory     | Semantic similarity search surfaces relevant past lessons into agent context    |
 | Mastra + Vercel AI SDK        | Mastra uses AI SDK under the hood; direct `@ai-sdk/anthropic` import is simpler |

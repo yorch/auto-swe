@@ -18,18 +18,15 @@ built package so `auto-swe` is on your `PATH`.
 
 Resolved per process (never cached to disk), in order:
 
-1. `AUTO_SWE_TOKEN` — a raw JWT **or** a `ats_*` personal access token (the
-   gateway accepts both). PATs are recommended for CI: they outlive the JWT's
-   1-hour TTL. Mint one in the dashboard at **Settings → API tokens**, or with
-   `auto-swe tokens create <name>`.
-2. `AUTO_SWE_USERNAME` + `AUTO_SWE_PASSWORD` — falls back to `POST /auth/login`.
+`AUTO_SWE_TOKEN` — an `ats_*` personal access token (a short-lived JWT from
+the session-token bridge also works). PATs are the intended path: mint one in
+the dashboard at **Settings → API tokens**, or with
+`auto-swe tokens create <name>`.
 
 | Variable             | Default                 | Purpose                                  |
 | -------------------- | ----------------------- | ---------------------------------------- |
 | `AUTO_SWE_API_URL`   | `http://localhost:8080` | Base URL of the gateway                  |
-| `AUTO_SWE_TOKEN`     | —                       | Bearer token (JWT or `ats_*` PAT)        |
-| `AUTO_SWE_USERNAME`  | —                       | Email for the login fallback             |
-| `AUTO_SWE_PASSWORD`  | —                       | Password for the login fallback          |
+| `AUTO_SWE_TOKEN`     | —                       | Bearer token (`ats_*` PAT or JWT)        |
 
 ## Commands
 

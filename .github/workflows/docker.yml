@@ -36,6 +36,43 @@ jobs:
           ]}' | tr -d '\n')
           echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
 
+  # Gate publishing on the same checks CI runs: without this, a commit that
+  # fails tests still produces :main images, which the Watchtower-based prod
+  # stack auto-deploys.
+  checks:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://ci:ci@invalid.local:5432/ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.node-version'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      - name: Type check
+        run: yarn typecheck
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Test
+        run: yarn test
+
+      - name: Audit dependencies (advisory)
+        run: yarn npm audit --severity high || true
+
   build:
     needs: setup
     if: github.event_name == 'pull_request'
@@ -66,7 +103,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
   publish:
-    needs: setup
+    needs: [setup, checks]
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))

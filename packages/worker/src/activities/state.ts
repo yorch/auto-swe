@@ -1,6 +1,6 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
+import { notifySlackHumanStep } from '../lib/slackNotify.js';
 
 /**
  * Upsert the workflow's current status. Workflows that lack a pre-existing
@@ -62,11 +62,11 @@ export interface CreateHumanStepInput {
   }>;
 }
 
-const SLACK_POST_TIMEOUT_MS = 2_000;
-
 /**
- * Create a WorkflowHumanStep record in the DB and send a best-effort Slack notification.
- * Called by the Temporal-backed dispatcher when a HITL node is reached.
+ * Create a WorkflowHumanStep record in the DB and send a best-effort Slack
+ * notification via {@link notifySlackHumanStep} (origin thread preferred,
+ * team channel fallback, inbox link). Called by the Temporal-backed dispatcher
+ * when a HITL node is reached.
  */
 export async function createHumanStep(input: CreateHumanStepInput): Promise<void> {
   // Idempotency guard: the DB has a partial unique index on (run_id, node_id) WHERE
@@ -75,8 +75,9 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   // is still sent even when the DB write was already done by an earlier attempt.
   // Note: we intentionally do NOT return early on P2002 — the Slack notification must
   // reach the user even when the DB create was skipped.
+  let stepId: string | undefined;
   try {
-    await prisma.workflowHumanStep.create({
+    const created = await prisma.workflowHumanStep.create({
       data: {
         context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
         description: input.description,
@@ -89,77 +90,32 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
         title: input.title,
       },
     });
+    stepId = created.id;
   } catch (err) {
     // Unique constraint violation — another Temporal attempt already created the PENDING row.
     // Fall through to attempt the Slack notification.
     if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
       throw err;
     }
-  }
-
-  // Best-effort Slack notification — resolve channel from the run's team.
-  try {
-    const slackConfig = await resolveSlackConfig();
-    if (!slackConfig.botToken) {
-      return;
-    }
-
-    // Find the team's Slack notify channel via the run → workRequest → activeWorkflows → team.
-    const run = await prisma.workflowRun.findUnique({
-      include: {
-        workRequest: {
-          include: {
-            activeWorkflows: {
-              include: { repository: { select: { teamId: true } } },
-              take: 1,
-            },
-          },
-        },
-      },
-      where: { id: input.runId },
+    // Recover the existing row's id so the Slack message still carries
+    // resolve buttons. Best-effort — a miss just degrades to link-only.
+    const existing = await prisma.workflowHumanStep.findFirst({
+      select: { id: true },
+      where: { nodeId: input.nodeId, runId: input.runId, status: 'PENDING' },
     });
-
-    const teamId = run?.workRequest?.activeWorkflows[0]?.repository?.teamId ?? null;
-    const team = teamId
-      ? await prisma.team.findUnique({
-          select: { slackNotifyChannel: true },
-          where: { id: teamId },
-        })
-      : null;
-    const channel = team?.slackNotifyChannel ?? null;
-    if (!channel) {
-      return;
-    }
-
-    const kindLabel: Record<string, string> = {
-      APPROVAL: 'Approval required',
-      DECISION: 'Decision required',
-      INPUT: 'Input required',
-      REVIEW: 'Review required',
-    };
-
-    const ticket = run?.workRequest?.externalTicketId;
-    const ticketPrefix = ticket ? `*[${ticket}]* ` : '';
-    const descriptionLine = input.description ? `\n${input.description}` : '';
-    const inboxUrl = `${process.env.WEB_URL ?? 'http://localhost:3000'}/inbox`;
-    const text = `${ticketPrefix}*${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
-    try {
-      await fetch('https://slack.com/api/chat.postMessage', {
-        body: JSON.stringify({ channel, text }),
-        headers: {
-          Authorization: `Bearer ${slackConfig.botToken}`,
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-        method: 'POST',
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    // Slack failure must not fail the activity
+    stepId = existing?.id;
   }
+
+  // Best-effort Slack notification. notifySlackHumanStep owns the channel
+  // resolution (origin thread → team channel), the token check, the timeout,
+  // and the catch — a Slack failure must not fail the activity. `stepId` and
+  // `options` let it attach Block Kit resolve buttons (approval/decision).
+  await notifySlackHumanStep({
+    description: input.description,
+    kind: input.kind,
+    options: input.options,
+    runId: input.runId,
+    stepId,
+    title: input.title,
+  });
 }

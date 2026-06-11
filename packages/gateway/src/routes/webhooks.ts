@@ -21,6 +21,82 @@ const CheckRunWebhookSchema = z.object({
   repository: z.object({ full_name: z.string() }),
 });
 
+// ── GitHub payload → domain-event normalization ──
+//
+// The route handlers below operate on these provider-agnostic events; only
+// the normalize functions know GitHub's payload shapes. A future GitLab
+// webhook route maps its own payloads to the same event types and reuses the
+// downstream DB-update + Temporal-signal logic unchanged.
+
+/** A PR-merge domain event extracted from a provider webhook payload. */
+export type PullRequestMergedEvent =
+  /** Payload didn't match the expected shape at all. */
+  | { type: 'unrecognized' }
+  /** Valid payload but not a merged-PR event (e.g. opened, closed-unmerged). */
+  | { type: 'ignored' }
+  | { type: 'merged'; prNumber: number; org: string; repoName: string };
+
+/** A CI check-completion domain event extracted from a provider webhook payload. */
+export type CheckRunCompletedEvent =
+  | { type: 'unrecognized' }
+  /** Valid payload but not a completed check run. */
+  | { type: 'ignored' }
+  | {
+      type: 'completed';
+      org: string;
+      repoName: string;
+      headSha: string;
+      conclusion: string;
+      logsUrl: string;
+    };
+
+/** Pure mapping from a GitHub `pull_request` webhook body to a domain event. */
+export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestMergedEvent {
+  const parsed = PullRequestWebhookSchema.safeParse(body);
+  if (!parsed.success) {
+    return { type: 'unrecognized' };
+  }
+  const payload = parsed.data;
+
+  // Only handle merged pull_request events
+  if (payload.action !== 'closed' || !payload.pull_request.merged) {
+    return { type: 'ignored' };
+  }
+
+  const [org, repoName] = payload.repository.full_name.split('/');
+  return {
+    org,
+    prNumber: payload.pull_request.number,
+    repoName,
+    type: 'merged',
+  };
+}
+
+/** Pure mapping from a GitHub `check_run` webhook body to a domain event. */
+export function normalizeGitHubCheckRunEvent(body: unknown): CheckRunCompletedEvent {
+  const parsed = CheckRunWebhookSchema.safeParse(body);
+  if (!parsed.success) {
+    return { type: 'unrecognized' };
+  }
+  const payload = parsed.data;
+
+  // Handle check_run completed events
+  const checkRun = payload.check_run;
+  if (!checkRun || payload.action !== 'completed') {
+    return { type: 'ignored' };
+  }
+
+  const [org, repoName] = payload.repository.full_name.split('/');
+  return {
+    conclusion: checkRun.conclusion,
+    headSha: checkRun.head_sha,
+    logsUrl: checkRun.html_url,
+    org,
+    repoName,
+    type: 'completed',
+  };
+}
+
 async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
   reply: FastifyReply
@@ -50,6 +126,69 @@ async function verifyWebhookOrReject(
   return true;
 }
 
+/** Conclusions that don't fail a check suite. */
+const NON_FAILING_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+interface AggregatedChecks {
+  /** True when every check run on the SHA has completed. */
+  complete: boolean;
+  /** True when no completed run has a failing conclusion. */
+  passed: boolean;
+  /** html_url of the first failing run, for the CI-fix loop's log fetch. */
+  failingLogsUrl?: string;
+}
+
+/**
+ * Aggregate all check runs for a commit. A PR typically has several check
+ * runs (lint, test, build, third-party apps); signaling the workflow on the
+ * first completed run would resume it on a partial result. Returns null when
+ * aggregation is unavailable (no PAT configured, API error) — callers fall
+ * back to legacy per-run signaling rather than stranding the workflow.
+ */
+async function aggregateCheckRuns(
+  apiUrl: string,
+  token: string | null,
+  org: string,
+  repoName: string,
+  headSha: string
+): Promise<AggregatedChecks | null> {
+  if (!token) {
+    return null;
+  }
+  try {
+    const res = await fetch(
+      `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=100`,
+      {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    if (!res.ok) {
+      return null;
+    }
+    const body = (await res.json()) as {
+      check_runs?: Array<{ status: string; conclusion: string | null; html_url: string }>;
+    };
+    const runs = body.check_runs ?? [];
+    if (runs.length === 0) {
+      return null;
+    }
+    const complete = runs.every((r) => r.status === 'completed');
+    const failing = runs.find(
+      (r) => r.status === 'completed' && !NON_FAILING_CONCLUSIONS.has(r.conclusion ?? '')
+    );
+    return {
+      complete,
+      passed: !failing,
+      ...(failing ? { failingLogsUrl: failing.html_url } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/webhooks/git
   fastify.post(
@@ -62,20 +201,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const parsed = PullRequestWebhookSchema.safeParse(request.body);
-      if (!parsed.success) {
+      const event = normalizeGitHubPullRequestEvent(request.body);
+      if (event.type === 'unrecognized') {
         return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
       }
-      const payload = parsed.data;
-
-      // Only handle merged pull_request events
-      if (payload.action !== 'closed' || !payload.pull_request.merged) {
+      if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
 
-      const prNumber = payload.pull_request.number;
-      const repoFullName = payload.repository.full_name;
-      const [org, repoName] = repoFullName.split('/');
+      const { org, prNumber, repoName } = event;
 
       // Find the tracked PR (include Slack context for the merge notification)
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
@@ -145,23 +279,16 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const parsed = CheckRunWebhookSchema.safeParse(request.body);
-      if (!parsed.success) {
+      const event = normalizeGitHubCheckRunEvent(request.body);
+      if (event.type === 'unrecognized') {
         return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
       }
-      const payload = parsed.data;
-
-      // Handle check_run completed events
-      const checkRun = payload.check_run;
-      if (!checkRun || payload.action !== 'completed') {
+      if (event.type === 'ignored') {
         return { data: { ignored: true } };
       }
 
-      const repoFullName = payload.repository.full_name;
-      const [org, repoName] = repoFullName.split('/');
-      const headSha = checkRun.head_sha;
-      const conclusion = checkRun.conclusion;
-      const logsUrl = checkRun.html_url;
+      const { conclusion, headSha, org, repoName } = event;
+      let logsUrl = event.logsUrl;
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
@@ -177,8 +304,33 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true, reason: 'No tracked PR for this commit' } };
       }
 
+      // A failing run decides the outcome on its own — signal immediately so
+      // the CI-fix loop gets the failing logs without waiting for the rest.
+      let passed = conclusion === 'success';
+      if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
+        // A passing run says nothing about the other checks on the SHA.
+        // Aggregate and only signal once everything has completed.
+        const { apiUrl, token } = await resolveGitHubConfig();
+        const aggregated = await aggregateCheckRuns(apiUrl, token ?? null, org, repoName, headSha);
+        if (aggregated) {
+          if (!aggregated.complete) {
+            return {
+              data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
+            };
+          }
+          passed = aggregated.passed;
+          if (!passed && aggregated.failingLogsUrl) {
+            logsUrl = aggregated.failingLogsUrl;
+          }
+        } else {
+          request.log.warn(
+            { headSha, repoFullName: `${org}/${repoName}` },
+            'check-run aggregation unavailable (no PAT or API error); signaling per run'
+          );
+        }
+      }
+
       // Batch-update CI status in a single transaction to avoid N+1 queries
-      const passed = conclusion === 'success';
       await fastify.prisma.$transaction(
         pullRequests.map((pr: (typeof pullRequests)[number]) =>
           fastify.prisma.pullRequest.update({

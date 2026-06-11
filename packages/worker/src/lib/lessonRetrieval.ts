@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { LessonSummary } from '@auto-swe/shared/types/workflow';
-import { generateEmbedding } from './embeddings.js';
+import { generateEmbeddingWithSpec } from './embeddings.js';
 
 interface RetrievedLesson {
   id: string;
@@ -22,7 +22,8 @@ export async function retrieveSimilarLessons(
   limit: number = 5,
   similarityThreshold: number = 0.7
 ): Promise<LessonSummary[]> {
-  const queryEmbedding = await generateEmbedding(queryText);
+  const { embedding: queryEmbedding, spec: embeddingSpec } =
+    await generateEmbeddingWithSpec(queryText);
 
   // pgvector cosine distance: 1 - cosine_similarity
   // Lower distance = higher similarity
@@ -37,13 +38,15 @@ export async function retrieveSimilarLessons(
     WHERE repo_id = $2::uuid
       AND embedding IS NOT NULL
       AND consolidated_at IS NULL
+      AND (embedding_model IS NULL OR embedding_model = $5)
       AND 1 - (embedding <=> $1::vector) >= $3
     ORDER BY embedding <=> $1::vector ASC
     LIMIT $4`,
     JSON.stringify(queryEmbedding),
     repoId,
     similarityThreshold,
-    limit
+    limit,
+    embeddingSpec
   );
 
   return lessons.map((l) => ({

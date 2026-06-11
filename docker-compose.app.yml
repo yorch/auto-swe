@@ -3,6 +3,12 @@
 # Always overlay both files: `docker compose -f docker-compose.app.yml -f docker-compose.infra.yml ...`
 # Use the `yarn docker:app:up` / `docker:app:down` / `docker:app:logs` / `docker:app:build` scripts for the
 # full stack, or `yarn docker:infra:up` for infra only.
+#
+# SECURITY (SEC-4): this file is the LOCAL DEV overlay (builds images from
+# source) and intentionally keeps the dev-default credential fallbacks
+# (POSTGRES_PASSWORD=password, MINIO_ROOT_USER/PASSWORD=minioadmin) so
+# `yarn docker:app:up` works out of the box. The production path is
+# docker-compose.prod.yml, which makes those variables mandatory via `:?`.
 services:
   gateway:
     build:
@@ -20,7 +26,10 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+      # No insecure fallbacks: the gateway image runs with NODE_ENV=production
+      # and refuses the in-source dev secrets, so require real values here.
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required — set a strong random value in .env}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required — set a random value of at least 32 chars in .env}
       - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
       - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}

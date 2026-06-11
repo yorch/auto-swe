@@ -87,6 +87,8 @@ COPY --from=prod-deps /app/packages/worker/node_modules ./packages/worker/node_m
 # Root package.json (for workspace symlink resolution)
 COPY package.json ./
 
+ENV NODE_ENV=production
+
 RUN chown -R node:node /app
 USER node
 CMD ["node", "packages/worker/dist/index.js"]

@@ -124,7 +124,7 @@ The only LLM-related env var is `CONFIG_ENCRYPTION_KEY` — required for the gat
 
 `CONFIG_CACHE_TTL_MS` (optional, default 30000) tunes the resolver cache.
 
-There are no env vars for model selection, provider API keys, or embedding settings — all of those live in the DB. If you're upgrading from a previous version that read `*_MODEL` / `ANTHROPIC_API_KEY` / etc., the migration in `20260522000000_embedding_config` seeds the EmbeddingConfig with the historical default, but model role configs and credentials need to be re-created in the dashboard (or kept from the prior Phase-2 seed if you migrated through it).
+There are no env vars for model selection, provider API keys, or embedding settings — all of those live in the DB. If you're upgrading from a previous version that read `*_MODEL` / `ANTHROPIC_API_KEY` / etc., nothing is migrated automatically (the original embedding-config migration was squashed into the consolidated init migration): re-create the model role configs via the "Seed Anthropic defaults" button (which also creates the `EmbeddingConfig` singleton with the historical `openai/text-embedding-3-large` default) and re-enter provider credentials in the dashboard.
 
 ---
 

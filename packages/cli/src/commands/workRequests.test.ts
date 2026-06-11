@@ -84,8 +84,9 @@ describe('runWorkRequestsCommand', () => {
       data: [{ id: 'repo-1', isActive: true, organizationName: 'org', repoName: 'repo' }],
     });
     const teamsPayload = JSON.stringify({ data: [] });
+    // Real POST /api/v1/work-requests response shape (201).
     const wrPayload = JSON.stringify({
-      data: { description: 'foo', externalTicketId: 'T-1', id: 'wr-1', status: 'PENDING' },
+      data: { workflowIds: ['wf-1'], workRequestId: 'wr-1' },
     });
     const calls: string[] = [];
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -107,6 +108,8 @@ describe('runWorkRequestsCommand', () => {
     const out = stdoutWrites.join('');
     expect(out).toContain('Work request submitted');
     expect(out).toContain('wr-1');
+    expect(out).toContain('wf-1');
+    expect(out).not.toContain('undefined');
     expect(calls.some((u) => u.includes('/work-requests'))).toBe(true);
   });
 });

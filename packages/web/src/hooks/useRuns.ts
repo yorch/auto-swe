@@ -79,6 +79,20 @@ export function useAllWorkflowRuns(
   });
 }
 
+export function useRunsForWorkRequest(workRequestId?: string) {
+  return useQuery({
+    enabled: !!workRequestId,
+    queryFn: () =>
+      api
+        .get<{ data: WorkflowRunSummary[] }>(
+          `/api/v1/workflow-runs?workRequestId=${workRequestId}&limit=20&offset=0`
+        )
+        .then((r) => r.data),
+    queryKey: ['workflow-runs', 'by-work-request', workRequestId],
+    refetchInterval: 10_000,
+  });
+}
+
 export function useCancelWorkflowRun(runId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -86,6 +100,18 @@ export function useCancelWorkflowRun(runId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
+    },
+  });
+}
+
+export function useRetryWorkRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (workRequestId: string) =>
+      api.post<CreateWorkRequestResponse>(`/api/v1/work-requests/${workRequestId}/retry`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflows'] });
+      qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
   });
 }

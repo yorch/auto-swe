@@ -13,9 +13,10 @@ CREATE INDEX IF NOT EXISTS "idx_agent_lessons_embedding" ON "agent_lessons"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
 
--- Partial unique indexes for `ConfigScope` cascade (Prisma DSL can't express
--- WHERE clauses on unique indexes, so they live here). At most one row per
--- (role, scope-key) — NULLs are ignored on the inactive scope's discriminator.
+-- ── Scope-cascade integrity (model config + credentials) ────────────────────
+-- Partial unique indexes for the ConfigScope cascade (Prisma DSL can't express
+-- WHERE clauses on unique indexes). At most one row per (role, scope-key) —
+-- NULLs are ignored on the inactive scope's discriminator.
 CREATE UNIQUE INDEX "model_role_configs_global_unique"
     ON "model_role_configs" ("role")
     WHERE "scope" = 'GLOBAL';
@@ -29,7 +30,6 @@ CREATE UNIQUE INDEX "model_role_configs_template_unique"
     WHERE "scope" = 'WORKFLOW_TEMPLATE';
 
 -- Provider credentials are only GLOBAL or TEAM (no template scope by design).
--- A check constraint enforces this so a bad insert from raw SQL still fails.
 ALTER TABLE "provider_credentials"
     ADD CONSTRAINT "provider_credentials_scope_check"
     CHECK ("scope" IN ('GLOBAL', 'TEAM'));
@@ -43,8 +43,7 @@ CREATE UNIQUE INDEX "provider_credentials_team_unique"
     WHERE "scope" = 'TEAM';
 
 -- Scope-discriminator integrity: enforce that the right keys are populated
--- (or null) for each scope. Belt-and-suspenders alongside the partial
--- unique indexes above.
+-- (or null) for each scope.
 ALTER TABLE "model_role_configs"
     ADD CONSTRAINT "model_role_configs_scope_keys_check"
     CHECK (
@@ -60,29 +59,109 @@ ALTER TABLE "provider_credentials"
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
 
--- Singleton enforcement: the `id` column must always be the literal 'default'.
--- The Prisma model uses `@default("default")` so writes through the client
--- always produce the right value; this check is belt-and-suspenders against
--- raw SQL inserts.
-ALTER TABLE "embedding_configs"
-    ADD CONSTRAINT "embedding_configs_singleton_check"
-    CHECK ("id" = 'default');
+-- ── Scope-cascade integrity (skills + tool configs) ─────────────────────────
+ALTER TABLE "agent_skill_assignments"
+    ADD CONSTRAINT "agent_skill_assignments_scope_keys_check"
+    CHECK (
+        ("scope" = 'GLOBAL'            AND "team_id" IS NULL     AND "workflow_template_id" IS NULL)
+        OR ("scope" = 'TEAM'           AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
+        OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL  AND "workflow_template_id" IS NOT NULL)
+    );
 
--- Seed the default row for existing deployments so they keep working
--- immediately after the Phase-6 cutover (worker now reads this row instead
--- of the EMBEDDING_MODEL env var). New deployments will override via the
--- dashboard before bringing up the worker.
+CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_global_uidx"
+    ON "agent_skill_assignments" ("agent_role", "skill_id")
+    WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_team_uidx"
+    ON "agent_skill_assignments" ("agent_role", "skill_id", "team_id")
+    WHERE "scope" = 'TEAM';
+
+CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_template_uidx"
+    ON "agent_skill_assignments" ("agent_role", "skill_id", "workflow_template_id")
+    WHERE "scope" = 'WORKFLOW_TEMPLATE';
+
+ALTER TABLE "agent_tool_configs"
+    ADD CONSTRAINT "agent_tool_configs_scope_keys_check"
+    CHECK (
+        ("scope" = 'GLOBAL'            AND "team_id" IS NULL     AND "workflow_template_id" IS NULL)
+        OR ("scope" = 'TEAM'           AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
+        OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL  AND "workflow_template_id" IS NOT NULL)
+    );
+
+ALTER TABLE "agent_tool_configs"
+    ADD CONSTRAINT "agent_tool_configs_tools_nonempty_check"
+    CHECK (cardinality("enabled_tools") >= 1);
+
+CREATE UNIQUE INDEX "agent_tool_configs_role_global_uidx"
+    ON "agent_tool_configs" ("agent_role")
+    WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "agent_tool_configs_role_team_uidx"
+    ON "agent_tool_configs" ("agent_role", "team_id")
+    WHERE "scope" = 'TEAM';
+
+CREATE UNIQUE INDEX "agent_tool_configs_role_template_uidx"
+    ON "agent_tool_configs" ("agent_role", "workflow_template_id")
+    WHERE "scope" = 'WORKFLOW_TEMPLATE';
+
+-- ── HITL idempotency ─────────────────────────────────────────────────────────
+-- Prevents duplicate PENDING rows for the same (run_id, node_id) pair while
+-- allowing multiple historical resolved/cancelled rows (retry loops).
+CREATE UNIQUE INDEX workflow_human_steps_pending_unique
+  ON workflow_human_steps (run_id, node_id)
+  WHERE status = 'PENDING';
+
+-- ── Singleton system-config tables ───────────────────────────────────────────
+-- The `id` column must always be the literal 'default'. The Prisma models use
+-- `@default("default")` so client writes always produce the right value; these
+-- checks are belt-and-suspenders against raw SQL inserts.
+ALTER TABLE "github_config"
+    ADD CONSTRAINT "github_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "slack_config"
+    ADD CONSTRAINT "slack_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "storage_config"
+    ADD CONSTRAINT "storage_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "storage_config"
+    ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
+ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
+ALTER TABLE "google_oauth_config"
+    ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "embedding_configs"
+    ADD CONSTRAINT "embedding_configs_singleton_check" CHECK ("id" = 'default');
+ALTER TABLE "tracker_config"
+    ADD CONSTRAINT "tracker_config_singleton" CHECK ("id" = 'default');
+ALTER TABLE "tracker_config"
+    ADD CONSTRAINT "tracker_config_provider_check"
+    CHECK ("provider" IS NULL OR "provider" IN ('jira', 'linear', 'github'));
+
+-- ── Seeds ────────────────────────────────────────────────────────────────────
+-- Default embedding config so the worker can resolve a spec before the admin
+-- visits the dashboard. Overridable via /admin/model-config.
 INSERT INTO "embedding_configs" ("id", "model_spec")
 VALUES ('default', 'openai/text-embedding-3-large')
 ON CONFLICT ("id") DO NOTHING;
 
--- Preserve NOT NULL on String[] columns that the pre-consolidation migrations
--- added explicitly. Prisma 7's generator emits these columns as nullable at
--- the DB level even though the Prisma client treats `String[]` as
--- always-non-null at the TypeScript level — so reinstate the DB-level
--- constraint here to match the pre-consolidation behavior.
+-- Default GLOBAL tool config for IMPLEMENTER (all 4 workspace tools).
+-- syncBuiltins() at gateway startup maintains this too; the seed keeps a
+-- fresh DB correct even before the gateway's first boot.
+INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools")
+VALUES ('IMPLEMENTER', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
+ON CONFLICT DO NOTHING;
+
+-- ── NOT NULL on array columns ────────────────────────────────────────────────
+-- Prisma 7's generator emits `String[]` columns as nullable at the DB level
+-- even though the client treats them as always-non-null — reinstate the
+-- DB-level constraint to match the hand-written pre-consolidation DDL.
 ALTER TABLE "teams"
   ALTER COLUMN "egress_allowlist" SET NOT NULL;
 
 ALTER TABLE "workflow_shell_audit"
   ALTER COLUMN "egress_allowlist_snapshot" SET NOT NULL;
+
+ALTER TABLE "agent_lessons"
+  ALTER COLUMN "skills_active" SET NOT NULL;
+
+ALTER TABLE "agent_tool_configs"
+  ALTER COLUMN "enabled_tools" SET DEFAULT '{}',
+  ALTER COLUMN "enabled_tools" SET NOT NULL;

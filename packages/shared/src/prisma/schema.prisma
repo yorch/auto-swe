@@ -98,14 +98,16 @@ model ActiveWorkflow {
   pullRequests       PullRequest[]
   agentLessons       AgentLesson[]
 
+  @@index([workRequestId])
+  @@index([repoId, assignedBranch])
   @@map("active_workflows")
 }
 
 // HNSW index on `embedding` is defined in raw SQL inside
-// migrations/20260510000001_pgvector_hnsw_index/migration.sql. Prisma's schema
-// DSL cannot model pgvector index types, so `prisma migrate dev` will report
-// drift here. Use `yarn db:migrate` (= migrate deploy) for routine application;
-// run `yarn db:migrate:dev` only when authoring a new migration.
+// migrations/00000000000001_custom_constraints_and_indexes/migration.sql.
+// Prisma's schema DSL cannot model pgvector index types, so `prisma migrate dev`
+// will report drift here. Use `yarn db:migrate` (= migrate deploy) for routine
+// application; run `yarn db:migrate:dev` only when authoring a new migration.
 model AgentLesson {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId      String?         @map("workflow_id") @db.Uuid
@@ -115,6 +117,10 @@ model AgentLesson {
   rationale       String
   lessonSummary   String          @map("lesson_summary")
   embedding       Unsupported("vector(1536)")?
+  /// `<provider>/<model>` spec the embedding was generated with. Null on rows
+  /// written before tracking existed — those are assumed to share the space
+  /// of whatever model was configured at the time (single-model deployments).
+  embeddingModel  String?         @map("embedding_model")
   failureType     String?         @map("failure_type")
   metadata        Json?
   skillsActive    String[]        @default([]) @map("skills_active")
@@ -123,6 +129,7 @@ model AgentLesson {
   // Active lessons always have consolidatedAt = null.
   consolidatedAt  DateTime?       @map("consolidated_at") @db.Timestamptz
 
+  @@index([repoId, consolidatedAt])
   @@map("agent_lessons")
 }
 
@@ -152,21 +159,6 @@ model PullRequest {
   @@index([workflowId])
   @@index([repoId])
   @@map("pull_requests")
-}
-
-model RefreshToken {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId         String    @map("user_id") @db.Uuid
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash      String    @unique @map("token_hash")
-  family         String    @default(dbgenerated("gen_random_uuid()"))
-  expiresAt      DateTime  @map("expires_at") @db.Timestamptz
-  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-
-  @@index([userId])
-  @@index([family])
-  @@map("refresh_tokens")
 }
 
 /// Phase-8 long-lived API token for CI / CLI use. The plaintext token is
@@ -215,6 +207,7 @@ model Repository {
   activeWorkflows  ActiveWorkflow[]
   pullRequests     PullRequest[]
   agentLessons     AgentLesson[]
+  scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([organizationName, repoName])
   @@map("repositories")
@@ -290,13 +283,14 @@ model User {
   updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   preferences    Json           @default("{}") @map("preferences")
 
-  refreshTokens         RefreshToken[]
   memberships           TeamMembership[]
   accessTokens          PersonalAccessToken[]
   /// Better-auth relations.
   accounts              Account[]
   sessions              Session[]
   humanStepsResolved    WorkflowHumanStep[]
+  workRequests          WorkRequest[]
+  scheduledWorkRequests ScheduledWorkRequest[]
 
   @@map("users")
 }
@@ -374,13 +368,63 @@ model WorkRequest {
   /// WorkflowRun at start so live edits to templates don't affect in-flight runs.
   templateId         String?          @map("template_id") @db.Uuid
   templateVersion    Int?             @map("template_version")
+  /// Who submitted the request (audit). Null for pre-existing rows and
+  /// webhook-originated requests without a platform user.
+  requestedById      String?          @map("requested_by_id") @db.Uuid
+  requestedBy        User?            @relation(fields: [requestedById], references: [id], onDelete: SetNull)
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
   contextSnapshot    ContextSnapshot?
   activeWorkflows    ActiveWorkflow[]
   workflowRuns       WorkflowRun[]
+  scheduledWorkRequests ScheduledWorkRequest[]
 
   @@map("work_requests")
+}
+
+/// A standing automation: a Temporal Schedule that fires RunnableWorkflow on a
+/// cron cadence against one repo (e.g. run the dependency-update template weekly).
+///
+/// Design notes (scheduled runs vs. interactive work requests):
+/// - One Temporal Schedule exists per row (`auto-swe-scheduled-wr-<id>`). Its
+///   action starts RunnableWorkflow with workflowId `sched-<id>`; Temporal
+///   appends the per-fire scheduled timestamp, so each fire gets a unique
+///   workflow ID and therefore a fresh WorkflowRun row.
+/// - Schedule action args are static, so per-fire WorkRequest rows cannot be
+///   created. Instead `workRequestId` points at one standing WorkRequest
+///   created when the schedule is saved; every fire's WorkflowRun links to it.
+/// - `templateId`/`templateVersion` null means "use the repo team's default
+///   template". Resolution happens when the schedule is saved or updated
+///   (snapshot semantics, same as work requests) — NOT at fire time.
+model ScheduledWorkRequest {
+  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String
+  /// 5-field cron expression (validated conservatively at the API layer).
+  cronExpression       String            @map("cron_expression")
+  repoId               String            @map("repo_id") @db.Uuid
+  repository           Repository        @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  /// Explicit template override; null → repo team default resolved at save time.
+  templateId           String?           @map("template_id") @db.Uuid
+  template             WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateVersion      Int?              @map("template_version")
+  description          String
+  /// Ticket-ID prefix for fires, e.g. 'DEPS' → synthetic ticket `DEPS-sched-<id8>`.
+  externalTicketPrefix String            @map("external_ticket_prefix")
+  budgetTier           String            @default("STANDARD") @map("budget_tier")
+  isActive             Boolean           @default(true) @map("is_active")
+  createdById          String?           @map("created_by_id") @db.Uuid
+  createdBy            User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
+  workRequestId        String?           @map("work_request_id") @db.Uuid
+  workRequest          WorkRequest?      @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  /// Best-effort bookkeeping — authoritative fire history lives in Temporal.
+  lastFiredAt          DateTime?         @map("last_fired_at") @db.Timestamptz
+  nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([repoId])
+  @@map("scheduled_work_requests")
 }
 
 /// Large step outputs (diffs, logs, scan artifacts) are kept out of the
@@ -541,6 +585,7 @@ model WorkflowTemplate {
   modelRoleConfigs      ModelRoleConfig[]
   agentSkillAssignments AgentSkillAssignment[]
   agentToolConfigs      AgentToolConfig[]
+  scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -812,6 +857,29 @@ model GoogleOAuthConfig {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("google_oauth_config")
+}
+
+/// Singleton issue-tracker connector config. One row (id = "default").
+/// `provider` is 'jira' | 'linear' | 'github' or NULL (= connector disabled).
+/// `baseUrl` is the Jira site URL or GitHub API base; Linear's endpoint is
+/// fixed. `email` is the Jira basic-auth user. The API token uses the same
+/// AES-256-GCM envelope as the other config secrets.
+model TrackerConfig {
+  id String @id @default("default")
+
+  provider String?
+  baseUrl  String? @map("base_url")
+  email    String?
+
+  apiTokenCiphertext Bytes?  @map("api_token_ciphertext")
+  apiTokenNonce      Bytes?  @map("api_token_nonce")
+  apiTokenAuthTag    Bytes?  @map("api_token_auth_tag")
+  apiTokenKeyVersion Int?    @map("api_token_key_version")
+  apiTokenLastFour   String? @map("api_token_last_four")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("tracker_config")
 }
 
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.

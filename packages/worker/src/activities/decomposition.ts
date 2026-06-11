@@ -29,7 +29,8 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getExecErrorOutput, requireEnv } from '../lib/errors.js';
+import { getExecErrorOutput } from '../lib/errors.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -122,14 +123,14 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
       heartbeat(`mergeBranches: merging ${source}`);
       const message = `${messagePrefix}: merge ${source} into ${targetBranch}`;
       try {
-        workspace.exec(
+        await workspace.exec(
           `git merge --no-ff --no-edit -m ${shellQuote(message)} origin/${shellQuote(source)}`
         );
         merged.push(source);
         log.push(`merged ${source}`);
       } catch (err: unknown) {
         const output = getExecErrorOutput(err, 4000);
-        tryMergeAbort(workspace);
+        await tryMergeAbort(workspace);
         conflicts.push({ branch: source, output });
         log.push(`CONFLICT merging ${source}:\n${output.slice(-2000)}`);
         unmerged.push(...sourceBranches.slice(idx));
@@ -139,7 +140,7 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
 
     const passed = conflicts.length === 0;
     const headSha =
-      passed && merged.length > 0 ? pushAndCapture(workspace, targetBranch, log) : undefined;
+      passed && merged.length > 0 ? await pushAndCapture(workspace, targetBranch, log) : undefined;
 
     const artifact = await putArtifact({
       body: log.join('\n'),
@@ -162,7 +163,7 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
       unmergedBranches: unmerged,
     };
   } finally {
-    workspace.destroy(); // mergeBranches does not use an agent tracer
+    await workspace.destroy(); // mergeBranches does not use an agent tracer
   }
 }
 
@@ -253,7 +254,7 @@ export async function resolveMergeConflict(
 
     const passed = conflicts.length === 0;
     const headSha =
-      passed && merged.length > 0 ? pushAndCapture(workspace, targetBranch, log) : undefined;
+      passed && merged.length > 0 ? await pushAndCapture(workspace, targetBranch, log) : undefined;
 
     const artifact = await putArtifact({
       body: log.join('\n'),
@@ -296,7 +297,7 @@ export async function resolveMergeConflict(
     };
   } finally {
     const done = persistActivityTrace(tracer, 'implementer');
-    workspace.destroy();
+    await workspace.destroy();
     await done;
   }
 }
@@ -314,15 +315,13 @@ async function provisionMergeWorkspace(
   label: string
 ): Promise<{ workspace: Workspace; log: string[] }> {
   const repo = await prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } });
-  const githubUrl = repo.githubUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
-  const repoUrl = `${githubUrl}/${repo.organizationName}/${repo.repoName}.git`;
-  const githubToken = requireEnv('GITHUB_TOKEN');
+  const repoRef = toRepoRef(repo);
+  const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
-  const workspace = createWorkspace(
-    repoUrl,
+  const workspace = await createWorkspace(
+    authedCloneUrl,
     targetBranch,
     repo.defaultBranch,
-    githubToken,
     repo.executorImage ?? 'node:24-alpine'
   );
   heartbeat(`${label}: workspace provisioned`);
@@ -331,13 +330,13 @@ async function provisionMergeWorkspace(
   const refs = [targetBranch, ...sourceBranches];
   const refList = refs.map((r) => shellQuote(r)).join(' ');
   try {
-    workspace.exec(`git fetch origin ${refList}`);
+    await workspace.exec(`git fetch origin ${refList}`);
     log.push(`fetched ${refs.join(', ')}`);
   } catch {
     log.push('batched fetch failed; retrying per-ref');
     for (const r of refs) {
       try {
-        workspace.exec(`git fetch origin ${shellQuote(r)}`);
+        await workspace.exec(`git fetch origin ${shellQuote(r)}`);
         log.push(`fetched ${r}`);
       } catch {
         log.push(`fetch ${r} failed (branch may not exist remotely)`);
@@ -346,7 +345,7 @@ async function provisionMergeWorkspace(
   }
 
   try {
-    workspace.exec(`git reset --hard origin/${shellQuote(targetBranch)}`);
+    await workspace.exec(`git reset --hard origin/${shellQuote(targetBranch)}`);
     log.push(`reset to origin/${targetBranch}`);
   } catch {
     log.push(`origin/${targetBranch} not found; starting from defaultBranch`);
@@ -355,9 +354,13 @@ async function provisionMergeWorkspace(
   return { log, workspace };
 }
 
-function pushAndCapture(workspace: Workspace, targetBranch: string, log: string[]): string {
-  workspace.exec(`git push origin ${shellQuote(targetBranch)}`);
-  const headSha = workspace.exec('git rev-parse HEAD').trim();
+async function pushAndCapture(
+  workspace: Workspace,
+  targetBranch: string,
+  log: string[]
+): Promise<string> {
+  await workspace.exec(`git push origin ${shellQuote(targetBranch)}`);
+  const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
   log.push(`pushed ${targetBranch} (head ${headSha})`);
   return headSha;
 }
@@ -376,7 +379,7 @@ async function mergeOneWithResolver(
   const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
 
   try {
-    workspace.exec(
+    await workspace.exec(
       `git merge --no-ff --no-edit -m ${shellQuote(commitMessage)} origin/${shellQuote(source)}`
     );
     opts.log.push(`merged ${source} cleanly`);
@@ -388,11 +391,11 @@ async function mergeOneWithResolver(
   }
 
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
-    const conflictedFiles = listConflictedFiles(workspace);
+    const conflictedFiles = await listConflictedFiles(workspace);
     if (conflictedFiles.length === 0) {
       // Merge threw without leaving unmerged stages — non-conflict failure
       // (dirty tree, lock, etc.). Abort + surface so the run doesn't loop.
-      tryMergeAbort(workspace);
+      await tryMergeAbort(workspace);
       return { output: 'merge failed without conflicted files', passed: false };
     }
 
@@ -420,7 +423,7 @@ async function mergeOneWithResolver(
         {
           content: JSON.stringify({
             attempt,
-            conflictedFiles: readConflictPayloads(workspace, conflictedFiles),
+            conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
             sourceBranch: source,
             targetBranch,
           }),
@@ -439,11 +442,11 @@ async function mergeOneWithResolver(
       );
     }
 
-    const remaining = listConflictedFiles(workspace);
-    if (remaining.length === 0 && !hasConflictMarkers(workspace)) {
-      workspace.exec('git add -A');
+    const remaining = await listConflictedFiles(workspace);
+    if (remaining.length === 0 && !(await hasConflictMarkers(workspace))) {
+      await workspace.exec('git add -A');
       try {
-        workspace.exec(`git commit -m ${shellQuote(commitMessage)}`);
+        await workspace.exec(`git commit -m ${shellQuote(commitMessage)}`);
         opts.log.push(`resolved ${source} on attempt ${attempt}`);
         return { output: '', passed: true };
       } catch (commitErr) {
@@ -460,29 +463,29 @@ async function mergeOneWithResolver(
     }
   }
 
-  tryMergeAbort(workspace);
+  await tryMergeAbort(workspace);
   return {
     output: `resolver exhausted ${opts.maxAttempts} attempt(s) on ${source}; conflicts remain`,
     passed: false,
   };
 }
 
-function listConflictedFiles(workspace: Workspace): string[] {
-  const raw = workspace.exec('git diff --name-only --diff-filter=U || true');
+async function listConflictedFiles(workspace: Workspace): Promise<string[]> {
+  const raw = await workspace.exec('git diff --name-only --diff-filter=U || true');
   return raw
     .split('\n')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
 
-function readConflictPayloads(
+async function readConflictPayloads(
   workspace: Workspace,
   files: string[]
-): Array<{ path: string; content: string }> {
+): Promise<Array<{ path: string; content: string }>> {
   const out: Array<{ path: string; content: string }> = [];
   for (const file of files) {
     try {
-      const content = workspace.exec(`cat ${shellQuote(file)}`);
+      const content = await workspace.exec(`cat ${shellQuote(file)}`);
       // Truncated per file — the agent can pull more via readFile if needed.
       out.push({ content: content.slice(0, 8000), path: file });
     } catch {
@@ -492,18 +495,18 @@ function readConflictPayloads(
   return out;
 }
 
-function hasConflictMarkers(workspace: Workspace): boolean {
+async function hasConflictMarkers(workspace: Workspace): Promise<boolean> {
   try {
-    workspace.exec('git diff --check');
+    await workspace.exec('git diff --check');
     return false;
   } catch {
     return true;
   }
 }
 
-function tryMergeAbort(workspace: Workspace): void {
+async function tryMergeAbort(workspace: Workspace): Promise<void> {
   try {
-    workspace.exec('git merge --abort');
+    await workspace.exec('git merge --abort');
   } catch {
     /* already clean */
   }

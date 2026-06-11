@@ -10,7 +10,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { generateEmbedding } from '../lib/embeddings.js';
+import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
@@ -94,6 +94,10 @@ export async function consolidateLessons(
 
   // Fetch all active lessons with their raw embeddings.
   // Prisma cannot model vector columns, so we use raw SQL.
+  // Scope to vectors from the current embedding space (null = legacy rows
+  // assumed to share it) — cosine similarity across different embedding
+  // models is meaningless and would merge unrelated lessons.
+  const embeddingSpec = await currentEmbeddingSpec();
   const rows = await prisma.$queryRawUnsafe<RawLesson[]>(
     `SELECT
        id,
@@ -104,8 +108,10 @@ export async function consolidateLessons(
      FROM agent_lessons
      WHERE repo_id = $1::uuid
        AND consolidated_at IS NULL
+       AND (embedding_model IS NULL OR embedding_model = $2)
      ORDER BY created_at DESC`,
-    repoId
+    repoId,
+    embeddingSpec
   );
 
   if (rows.length < minClusterSize) {
@@ -218,7 +224,7 @@ export async function consolidateLessons(
         // Generate embeddings before opening the transaction to avoid holding a
         // DB connection open during an external HTTP round-trip.
         const newEmbeddings = await Promise.all(
-          lessons.map((l) => generateEmbedding(l.lessonSummary))
+          lessons.map((l) => generateEmbeddingWithSpec(l.lessonSummary))
         );
 
         await prisma.$transaction(async (tx) => {
@@ -226,13 +232,14 @@ export async function consolidateLessons(
             const lesson = lessons[i];
             await tx.$executeRawUnsafe(
               `INSERT INTO agent_lessons
-               (id, repo_id, rationale, lesson_summary, embedding, failure_type, metadata, created_at)
+               (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, created_at)
              VALUES
-               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6::jsonb, now())`,
+               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb, now())`,
               repoId,
               lesson.rationale,
               lesson.lessonSummary,
-              JSON.stringify(newEmbeddings[i]),
+              JSON.stringify(newEmbeddings[i]?.embedding),
+              newEmbeddings[i]?.spec ?? null,
               lesson.failureType ?? sharedFailureType,
               JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
             );
