@@ -16,7 +16,8 @@
 
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine, auth, data model, infra   |
+| `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
+| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (11 node types), runtime security scanners, budget tiers, auth, data model, infra   |
 | `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
 | `docs/deployment.md`             | Living     | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
 | `docs/model-configuration.md`    | Living     | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
