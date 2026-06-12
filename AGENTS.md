@@ -33,7 +33,7 @@
 | `docs/configurable-workflows.md`  | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale              |
 | `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
 | `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
-| `docs/data-and-infra.md`          | Schema section outdated (actual: 20+ models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
+| `docs/data-and-infra.md`          | Schema section outdated (actual: 36 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
 | `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
 | `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
 
