@@ -14,7 +14,7 @@
 
 | Planned Feature                                                     | Status | Notes                                                             |
 | ------------------------------------------------------------------- | ------ | ----------------------------------------------------------------- |
-| PostgreSQL 17 + pgvector database with Prisma schema                | Done   |                                                                   |
+| PostgreSQL 17 + pgvector database with Prisma schema                | Done   | Shipped on PostgreSQL 18 (`pgvector/pgvector:pg18`)               |
 | Team + TeamMembership tables (schema only, no enforcement)          | Done   |                                                                   |
 | Temporal server + single worker process                             | Done   |                                                                   |
 | `EngineeringWorkflow` (child workflow)                              | Done   | Full loop: Implement → Review → PR → CI → Merge → Memory. **Superseded** by `RunnableWorkflow` + the seeded `default-engineering@v1` spec (PR #13); the hardcoded class no longer exists. |

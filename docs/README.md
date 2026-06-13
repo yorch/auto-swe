@@ -6,7 +6,8 @@
 
 | Doc | Status | Purpose |
 |-----|--------|---------|
-| **[architecture.md](./architecture.md)** | **Current** | System context, package map with file references, request lifecycle, workflow engine, auth, data model, infra diagrams |
+| **[product-overview.md](./product-overview.md)** | **Current** | Product thesis, target users, business value, capability map, primary use cases, differentiators, non-goals, maturity — start here for the "why" and "what" |
+| **[architecture.md](./architecture.md)** | **Current** | System context, package map with file references, request lifecycle, workflow engine (11 node types), runtime security scanners, budget tiers, auth, data model, infra diagrams |
 | **[agents.md](./agents.md)** | **Current** | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
 | [deployment.md](./deployment.md) | **Living** | End-to-end "clone → deployed" runbook |
 | [model-configuration.md](./model-configuration.md) | **Living** | DB-backed LLM model + provider credential config |
@@ -32,7 +33,7 @@ Preserved for design rationale; the code is the authoritative reference where th
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- |
 | [configurable-workflows.md](./configurable-workflows.md)   | Workflow engine roadmap + architecture decisions log                            | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale |
 | [mvp-architecture.md](./mvp-architecture.md)               | Phase 1 MVP architecture & component design                                    | `EngineeringWorkflow` deleted (PR #13); replaced by `RunnableWorkflow` + seeded spec |
-| [data-and-infra.md](./data-and-infra.md)                   | Prisma schema, embedding pipeline, executor images, security                   | Schema section outdated — actual schema is `packages/shared/src/prisma/schema.prisma` (20+ models); §3.1–3.2 DinD description is accurate |
+| [data-and-infra.md](./data-and-infra.md)                   | Prisma schema, embedding pipeline, executor images, security                   | Schema section outdated — actual schema is `packages/shared/src/prisma/schema.prisma` (36 models); §3.1–3.2 DinD description is accurate |
 | [gateway-and-auth.md](./gateway-and-auth.md)               | Full Gateway API spec, JWT/RBAC, Slack OAuth                                   | RS256 framing; HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
 | [workflow-and-activities.md](./workflow-and-activities.md) | Temporal workflow, agent data flow, review network, CI loop, memory commit     | K8s workspace references; `EngineeringWorkflow` pseudocode replaced by `RunnableWorkflow` |
 | [wireframes.md](./wireframes.md)                           | Web dashboard wireframes (ASCII) for every page                                | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4 |

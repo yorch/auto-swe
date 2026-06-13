@@ -331,6 +331,8 @@ flowchart TD
 
 ### Node types in a WorkflowSpec
 
+The spec supports **11 node types**. The seven core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
+
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step` (name), `inputs`, `next`, `onFail`, `config` |
@@ -340,6 +342,12 @@ flowchart TD
 | `terminate` | End the run with a specific status | `status`, `result` |
 | `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
 | `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus`, `onFail` |
+| `humanApproval` | Pause for a binary approve/reject before continuing | `timeout`, `onTimeout`, `contentFrom`, `storeAs` |
+| `humanDecision` | Pause for a 2–10 option branch selection | `options`, `timeout`, `onTimeout` |
+| `humanInput` | Pause for a structured typed-field form, written back into context | `fields`, `timeout`, `onTimeout`, `storeAs` |
+| `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `timeout`, `onTimeout`, `storeAs` |
+
+All four HITL nodes are handled internally by the interpreter (`runHumanNode`): they create a `WorkflowHumanStep` row, optionally send a Slack notification, then park on a Temporal signal `hitl_<nodeId>` until the inbox/Slack response arrives or the timeout routes to `onTimeout`. See [hitl-workflows.md](./hitl-workflows.md).
 
 ### Dispatcher interface (`interpreter.ts`)
 
@@ -349,10 +357,12 @@ interface Dispatcher {
   dispatchShell?({ nodeId, node, inputs, ctx, cancellation? })       → Promise<unknown>
   waitSignal(name, timeout)                                          → Promise<unknown | undefined>
   recordStep({ nodeId, status, inputs?, outputs?, error?, attempt? }) → Promise<void>
+  notifyHumanStep?({ ... })                                          → Promise<void>   // HITL: create inbox row + notify
+  resolveHumanStep?({ nodeId, status })                             → Promise<void>   // HITL: mark inbox row resolved
 }
 ```
 
-`RunnableWorkflow` implements this by wrapping each activity proxy call. Fan-out, set, cond, signal, and terminate nodes are handled internally by the interpreter — only `step` and `shell` go through the dispatcher. `dispatchShell` is optional; dispatchers that omit it throw on shell nodes. The interpreter has no Temporal imports and runs in tests with a mock dispatcher.
+`RunnableWorkflow` implements this by wrapping each activity proxy call. Set, cond, signal, terminate, fan-out, and the four HITL nodes are handled internally by the interpreter — only `step` and `shell` cross the dispatcher's activity boundary. `dispatchShell` is optional (dispatchers that omit it throw on shell nodes); `notifyHumanStep` / `resolveHumanStep` are optional and only exercised by HITL nodes. The interpreter has no Temporal imports and runs in tests with a mock dispatcher.
 
 ### 3-level scope cascade
 
@@ -554,9 +564,38 @@ Files:
 - `packages/gateway/src/lib/telemetry.ts` — OTel SDK init for the gateway
 - `packages/worker/src/lib/costTracking.ts` — `recordLlmUsage`, `MODEL_PRICES`
 
+### Budget tiers
+
+Every run carries a `budgetTier` (set at submission, default `STANDARD`). `recordLlmUsage` accrues `tokensInputUsed` / `tokensOutputUsed` / `costUsdAccrued` on the `ActiveWorkflow` row before checking the limit (so the UI shows real overage), and throws a non-retryable `BUDGET_EXCEEDED` `ApplicationFailure` when cumulative tokens exceed the tier cap.
+
+| Tier | Input token cap | Output token cap |
+|---|---|---|
+| `STANDARD` | 2,000,000 | 500,000 |
+| `LARGE` | 8,000,000 | 2,000,000 |
+| `EPIC` | 20,000,000 | 5,000,000 |
+
+Unknown model specs emit `llm.cost_pricing_known=false` and accrue zero cost rather than breaking the run.
+
 ---
 
-## 9. Key Design Decisions
+## 9. Runtime Security Scanners
+
+Six independent scanners run during agent execution, at distinct stages, each advisory or blocking. Five are backed by DB regex patterns (`ScannerPattern`, 60 s TTL cache via `makePatternLoader`); the pre-write content scanner uses static OWASP-aligned rules. Built-in patterns total **51** (13 `INJECTION`, 11 `EXFILTRATION`, 11 `SHELL_COMMAND`, 10 `CODE_SECURITY`, 6 `SENSITIVE_FILE`), synced by `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
+
+| Scanner | Stage | Behavior | Source |
+|---|---|---|---|
+| **Sensitive file** | Pre-write of every `writeFile` | **Hard-block** | `SENSITIVE_FILE` patterns (`.env`, PEM/key, SSH keys, credential JSON) — `sensitiveFileScanner.ts` |
+| **Pre-write content** | Pre-write of every `writeFile` | **Soft-block** (CRITICAL = hard-block) | Static rules in `preWriteSecurityCheck.ts` (hardcoded secrets, SQLi, command injection, weak crypto, CORS `*`) |
+| **Shell command** | Pre-exec of every `bash` call | **Soft-block** (returns error string to agent for self-correction) | `SHELL_COMMAND` patterns — `shellCommandScanner.ts` |
+| **Code security** | Post-commit diff scan | **Advisory** (findings flow to the security reviewer via `CodeResult.codeSecurityFindings`) | `CODE_SECURITY` patterns — `codeSecurityScanner.ts` |
+| **Skill content** | Skill save + LLM output per TDD iteration | **Advisory** (non-blocking; DB failure cannot abort the run) | `INJECTION` + `EXFILTRATION` patterns — `skillScanner.ts` |
+| **LLM output** | Post-generate per TDD iteration | **Advisory** (named `activity_event`) | `scanSkillContent` (`INJECTION` / `EXFILTRATION`) |
+
+Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows. The `GET /api/v1/admin/security-events` endpoint derives `SecurityEventType` from these at read time. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel). Shell nodes additionally run in locked-down ephemeral containers (`--rm --read-only`, `--cap-drop=ALL`, `--pids-limit`, image allowlist, DNS-based egress allowlist).
+
+---
+
+## 10. Key Design Decisions
 
 | Decision | Rationale | Where |
 |----------|-----------|-------|
