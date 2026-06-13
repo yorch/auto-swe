@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Packs &amp; Roles</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .pack-card { display: flex; flex-direction: column; }
+  .pack-ic { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; }
+  .contrib { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .contrib .c { font-size: 12px; color: var(--tx-2); padding: 7px 10px; background: var(--bg); border: 1px solid var(--border-soft); border-radius: 8px; }
+  .detail { display: grid; grid-template-columns: 1.4fr 1fr; gap: 22px; }
+  @media (max-width: 900px){ .detail{ grid-template-columns: 1fr; } }
+  .reg-row { display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--border-soft); }
+  .reg-row .k { font-family: var(--mono); font-size: 12.5px; color: var(--tx); min-width: 150px; }
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="wrap nav-inner">
+  <a class="brand" href="index.html">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h7M4 12h16M13 17h7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="7" r="2.4" fill="#fff"/><circle cx="7" cy="17" r="2.4" fill="#fff"/></svg></span>
+    Conductor <span class="tag">platform preview</span>
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Overview</a>
+    <a href="canvas.html">Canvas</a>
+    <a href="packs.html" class="active">Packs &amp; Roles</a>
+    <a href="connections.html">Connections</a>
+  </div>
+</div></nav>
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="crumb">Admin / <b>Packs</b></div>
+    <div class="between">
+      <div>
+        <h1>Packs &amp; roles</h1>
+        <p>A pack bundles everything a domain needs — templates, steps, roles, skills, scanners, connection types, and memory scopes — into one versioned, installable manifest.</p>
+      </div>
+      <button class="btn primary">+ Install pack</button>
+    </div>
+  </div>
+
+  <div data-tabs>
+    <div class="tabs">
+      <div class="tab active" data-tab="installed">Installed</div>
+      <div class="tab" data-tab="browse">Browse registry</div>
+      <div class="tab" data-tab="roles">Roles &amp; models</div>
+    </div>
+
+    <!-- INSTALLED -->
+    <div class="tabpane active" data-pane="installed">
+      <div class="detail">
+        <!-- SWE detail -->
+        <div class="card">
+          <div class="row" style="gap:14px;">
+            <span class="pack-ic" style="background:linear-gradient(135deg,var(--blue),var(--violet));"><svg viewBox="0 0 24 24" width="22" height="22" fill="none"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" stroke="#fff" stroke-width="1.7"/><path d="M8 10l-2 2 2 2M16 10l2 2-2 2" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+            <div style="flex:1;">
+              <div class="between"><div style="font-weight:700;font-size:18px;">Software Engineering</div><span class="pill green"><span class="dot"></span>active · v1.0</span></div>
+              <div class="note">pack-swe · first-party · by Conductor</div>
+            </div>
+          </div>
+          <p class="muted" style="margin-top:14px;">Autonomous coding: plan → implement (TDD) → multi-agent review → quality gates → PR, with CI self-healing and semantic memory. The flagship pack — and the reference implementation for building your own.</p>
+
+          <div class="divider"></div>
+          <div style="font-weight:650;margin-bottom:6px;">What this pack registers</div>
+          <div class="reg-row"><span class="k">stepDefinitions</span><span class="muted">18 — implement, runReviewNetwork, gates, planDecomposition, …</span></div>
+          <div class="reg-row"><span class="k">roles</span><span class="muted">10 — implementer, reviewer, planner, + 3 sub-reviewers …</span></div>
+          <div class="reg-row"><span class="k">skills</span><span class="muted">24 built-in (verified)</span></div>
+          <div class="reg-row"><span class="k">scannerPatterns</span><span class="muted">51 — injection / exfil / shell / code / file</span></div>
+          <div class="reg-row"><span class="k">connectionTypes</span><span class="muted">git_repo</span></div>
+          <div class="reg-row"><span class="k">triggers</span><span class="muted">GitHub webhook · Jira/Linear ticket fetch</span></div>
+          <div class="reg-row"><span class="k">templates</span><span class="muted">standard run · epic decomposition · CI self-heal</span></div>
+          <div class="reg-row" style="border-bottom:none;"><span class="k">memoryScopes</span><span class="muted">swe</span></div>
+
+          <div class="row" style="gap:8px;margin-top:18px;">
+            <button class="btn sm">Configure</button>
+            <button class="btn sm ghost">View manifest</button>
+            <button class="btn sm ghost">Version history</button>
+          </div>
+        </div>
+
+        <!-- side -->
+        <div class="stack" style="gap:18px;">
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:10px;">Install footprint</div>
+            <div class="stack" style="gap:10px;">
+              <div class="between"><span class="muted">Scope</span><span class="pill"><span class="dot"></span>GLOBAL</span></div>
+              <div class="between"><span class="muted">Installed by</span><span class="muted">admin@acme</span></div>
+              <div class="between"><span class="muted">Seeded rows</span><span class="muted">+103 (idempotent)</span></div>
+              <div class="between"><span class="muted">Required roles met</span><span class="pill green"><span class="dot"></span>10 / 10</span></div>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(124,108,255,0.35);background:linear-gradient(180deg,rgba(124,108,255,0.08),var(--bg-2));">
+            <div style="font-weight:650;">Build your own pack</div>
+            <p class="note" style="margin-top:8px;">Scaffold a manifest with the authoring SDK and register custom steps, roles &amp; templates.</p>
+            <div class="schema" style="margin-top:12px;">$ conductor pack init my-pack
+$ conductor pack publish</div>
+            <span class="pill pink" style="margin-top:12px;"><span class="dot"></span>SDK · P4/P5</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BROWSE -->
+    <div class="tabpane" data-pane="browse">
+      <div class="grid g3">
+        <div class="card pack-card hover">
+          <div class="row between"><span class="pack-ic" style="background:rgba(52,216,192,0.16);color:var(--teal);font-size:20px;">📊</span><span class="pill"><span class="dot"></span>available</span></div>
+          <h3 style="margin-top:14px;">Data Ops</h3>
+          <p class="note" style="margin-top:6px;">ETL &amp; data-quality agents — profile, transform, validate against contracts, open a data PR.</p>
+          <div class="contrib"><span class="c">7 steps</span><span class="c">4 roles</span><span class="c">db connection</span><span class="c">2 templates</span></div>
+          <button class="btn sm" style="margin-top:16px;">Install</button>
+        </div>
+        <div class="card pack-card hover">
+          <div class="row between"><span class="pack-ic" style="background:rgba(255,111,174,0.16);color:var(--pink);font-size:20px;">🛡</span><span class="pill"><span class="dot"></span>available</span></div>
+          <h3 style="margin-top:14px;">Security Posture</h3>
+          <p class="note" style="margin-top:6px;">Continuous triage of findings → reproduce → propose patch → human approval gate.</p>
+          <div class="contrib"><span class="c">6 steps</span><span class="c">3 roles</span><span class="c">scanner conn</span><span class="c">1 template</span></div>
+          <button class="btn sm" style="margin-top:16px;">Install</button>
+        </div>
+        <div class="card pack-card hover">
+          <div class="row between"><span class="pack-ic" style="background:rgba(246,181,69,0.16);color:var(--amber);font-size:20px;">🎧</span><span class="pill"><span class="dot"></span>available</span></div>
+          <h3 style="margin-top:14px;">Support Triage</h3>
+          <p class="note" style="margin-top:6px;">Classify tickets, draft replies, escalate via HITL, write resolutions to memory.</p>
+          <div class="contrib"><span class="c">5 steps</span><span class="c">3 roles</span><span class="c">http connection</span><span class="c">2 templates</span></div>
+          <button class="btn sm" style="margin-top:16px;">Install</button>
+        </div>
+        <div class="card pack-card hover">
+          <div class="row between"><span class="pack-ic" style="background:rgba(77,141,255,0.16);color:var(--blue);font-size:20px;">📈</span><span class="pill"><span class="dot"></span>available</span></div>
+          <h3 style="margin-top:14px;">RevOps</h3>
+          <p class="note" style="margin-top:6px;">Enrich accounts, draft outreach, route approvals, sync back to CRM on a schedule.</p>
+          <div class="contrib"><span class="c">6 steps</span><span class="c">2 roles</span><span class="c">crm connection</span><span class="c">3 templates</span></div>
+          <button class="btn sm" style="margin-top:16px;">Install</button>
+        </div>
+        <div class="card pack-card hover" style="border-style:dashed;">
+          <div class="row between"><span class="pack-ic" style="background:rgba(138,147,171,0.16);color:#aab2c6;font-size:20px;">＋</span><span class="pill pink"><span class="dot"></span>SDK</span></div>
+          <h3 style="margin-top:14px;">Your pack here</h3>
+          <p class="note" style="margin-top:6px;">Author a private or third-party pack with the SDK and publish it to your org registry.</p>
+          <div class="contrib"><span class="c">custom steps</span><span class="c">custom roles</span><span class="c">any connection</span><span class="c">templates</span></div>
+          <button class="btn sm ghost" style="margin-top:16px;">Read SDK docs →</button>
+        </div>
+      </div>
+      <p class="note center" style="margin-top:22px;">Browse packs are illustrative of the model — only <b style="color:var(--tx-2);">pack-swe</b> is built today.</p>
+    </div>
+
+    <!-- ROLES -->
+    <div class="tabpane" data-pane="roles">
+      <div class="between" style="margin-bottom:18px;">
+        <p class="muted" style="max-width:680px;">Roles are <b style="color:var(--tx);">fully dynamic</b> — an opaque string key resolving to an <span class="code">AgentSpec</span> via the model cascade. No hardcoded enum. Packs declare their roles &amp; default models; <span class="code">assertConfigReady</span> validates the union of installed-pack + active-template roles.</p>
+        <button class="btn primary">+ Define role</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table>
+          <thead><tr><th>Role key</th><th>Pack</th><th>Model spec</th><th>Scope</th><th>Skills</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td><strong>implementer</strong></td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>GLOBAL</td><td>16</td><td><span class="pill green"><span class="dot"></span>ready</span></td></tr>
+            <tr><td><strong>reviewer</strong></td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>GLOBAL</td><td>5</td><td><span class="pill green"><span class="dot"></span>ready</span></td></tr>
+            <tr><td><strong>planner</strong></td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td class="mono" style="color:var(--teal);">anthropic/claude-sonnet-4-6</td><td>GLOBAL</td><td>2</td><td><span class="pill green"><span class="dot"></span>ready</span></td></tr>
+            <tr><td><strong>securityReviewer</strong></td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td class="dim mono">inherits reviewer</td><td>—</td><td>1</td><td><span class="pill"><span class="dot"></span>sub-role</span></td></tr>
+            <tr><td><strong>validate_context</strong></td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td class="mono" style="color:var(--teal);">anthropic/claude-sonnet-4-6</td><td>TEAM · payments</td><td>1</td><td><span class="pill green"><span class="dot"></span>override</span></td></tr>
+            <tr><td><strong>triage</strong></td><td><span class="pill amber"><span class="dot"></span>support</span></td><td class="dim mono">—</td><td>—</td><td>—</td><td><span class="pill amber"><span class="dot"></span>needs model</span></td></tr>
+            <tr><td><strong>changelog_writer</strong></td><td><span class="pill"><span class="dot"></span>custom</span></td><td class="mono" style="color:var(--teal);">google/gemini-2.5-flash</td><td>GLOBAL</td><td>0</td><td><span class="pill green"><span class="dot"></span>ready</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="row" style="gap:10px;margin-top:16px;">
+        <button class="btn sm">Seed pack-swe defaults</button>
+        <span class="note">One click seeds every GLOBAL <span class="code">ModelRoleConfig</span> row a pack declares.</span>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Conductor — platform pivot mocks</span>
+    <span class="pill"><span class="dot"></span>vision pitch fidelity</span>
+    <span style="margin-left:auto;" class="dim">Mapped to <span class="code">docs/platform-pivot.md</span> · P0/P1</span>
+  </footer>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

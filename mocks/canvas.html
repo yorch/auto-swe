@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Workflow Canvas</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .editor { display: grid; grid-template-columns: 218px 1fr 348px; gap: 0; height: calc(100vh - 62px); }
+  .palette, .inspector { overflow-y: auto; }
+  .palette { border-right: 1px solid var(--border-soft); padding: 18px 14px; background: var(--bg-2); }
+  .inspector { border-left: 1px solid var(--border-soft); padding: 20px; background: var(--bg-2); }
+  .board-wrap { position: relative; overflow: auto; background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0) 0 0 / 26px 26px,
+      var(--bg); }
+  .board-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px;
+      padding: 12px 18px; background: rgba(10,12,18,0.7); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border-soft); }
+  .board { position: relative; width: 980px; height: 440px; margin: 26px auto 60px; }
+
+  .pal-group { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tx-3); margin: 16px 6px 8px; }
+  .pal-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; border: 1px solid transparent; cursor: grab; font-size: 13px; color: var(--tx-2); }
+  .pal-item:hover { background: var(--panel-2); border-color: var(--border); color: var(--tx); }
+  .pal-item .ic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; flex: 0 0 auto; }
+  .pal-item.coming { opacity: 0.6; }
+  .pal-item.coming::after { content: 'P4'; margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--pink); border: 1px solid rgba(255,111,174,0.4); border-radius: 5px; padding: 1px 5px; }
+
+  .gnode { position: absolute; width: 150px; border-radius: 11px; background: linear-gradient(180deg, var(--panel-2), var(--panel));
+      border: 1px solid var(--border); padding: 10px 11px; cursor: pointer; transition: all 0.15s; z-index: 2; }
+  .gnode:hover { border-color: #33405e; transform: translateY(-1px); }
+  .gnode.selected { box-shadow: var(--glow); border-color: var(--violet); }
+  .gnode .gn-head { display: flex; align-items: center; gap: 8px; }
+  .gnode .gn-ic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; flex: 0 0 auto; }
+  .gnode .gn-kind { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tx-3); }
+  .gnode .gn-title { font-size: 13px; font-weight: 600; color: var(--tx); margin-top: 7px; line-height: 1.25; }
+  .gnode .gn-sub { font-size: 11px; color: var(--tx-3); margin-top: 3px; }
+  .gnode.dashed { border-style: dashed; opacity: 0.82; }
+
+  .inspect-pane { display: none; }
+  .inspect-pane.active { display: block; animation: fade 0.2s ease; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tx-3); margin-bottom: 7px; }
+  .input, .select, .ta { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; color: var(--tx); font-family: var(--sans); font-size: 13px; padding: 9px 11px; }
+  .ta { font-family: var(--mono); font-size: 12px; line-height: 1.5; resize: vertical; color: var(--tx-2); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 9px; border-radius: 7px; background: var(--panel-3); border: 1px solid var(--border); color: var(--tx-2); }
+  .chip.on { background: rgba(124,108,255,0.14); border-color: rgba(124,108,255,0.45); color: var(--violet-soft); }
+  .toggle { width: 34px; height: 19px; border-radius: 999px; background: var(--panel-3); position: relative; border: 1px solid var(--border); flex: 0 0 auto; }
+  .toggle.on { background: rgba(52,216,192,0.3); border-color: var(--teal); }
+  .toggle::after { content: ''; position: absolute; top: 1px; left: 1px; width: 15px; height: 15px; border-radius: 50%; background: var(--tx-2); transition: all 0.15s; }
+  .toggle.on::after { left: 15px; background: var(--teal); }
+  .schema { font-family: var(--mono); font-size: 11.5px; background: var(--bg); border: 1px solid var(--border-soft); border-radius: 9px; padding: 11px; color: var(--tx-2); white-space: pre; overflow-x: auto; }
+  .ins-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="wrap nav-inner">
+  <a class="brand" href="index.html">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h7M4 12h16M13 17h7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="7" r="2.4" fill="#fff"/><circle cx="7" cy="17" r="2.4" fill="#fff"/></svg></span>
+    Conductor <span class="tag">platform preview</span>
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Overview</a>
+    <a href="canvas.html" class="active">Canvas</a>
+    <a href="packs.html">Packs &amp; Roles</a>
+    <a href="connections.html">Connections</a>
+  </div>
+</div></nav>
+
+<div class="editor" data-canvas>
+
+  <!-- PALETTE -->
+  <aside class="palette">
+    <div class="pal-group">Inputs &amp; triggers</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(79,208,227,0.16);color:var(--cyan);">▶</span> Run input</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(79,208,227,0.16);color:var(--cyan);">⏱</span> Schedule trigger</div>
+
+    <div class="pal-group">Agents · Tier 1</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span> Agent step</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">⛓</span> Fan-out agents</div>
+
+    <div class="pal-group">Tools · Tier 2</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(52,216,192,0.16);color:var(--teal);">◇</span> MCP tool call</div>
+
+    <div class="pal-group">Gates</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(246,181,69,0.16);color:var(--amber);">✓</span> Quality gate</div>
+
+    <div class="pal-group">Logic</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(77,141,255,0.16);color:var(--blue);">⌥</span> Condition</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(77,141,255,0.16);color:var(--blue);">=</span> Set context</div>
+
+    <div class="pal-group">Shell · Tier 3</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(138,147,171,0.18);color:#aab2c6;">$</span> Container step</div>
+
+    <div class="pal-group">Human-in-the-loop</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(70,210,138,0.16);color:var(--green);">⌘</span> Review &amp; edit</div>
+    <div class="pal-item"><span class="ic" style="background:rgba(70,210,138,0.16);color:var(--green);">⌘</span> Approval gate</div>
+
+    <div class="pal-group">Plugins · Tier 4</div>
+    <div class="pal-item coming"><span class="ic" style="background:rgba(255,111,174,0.16);color:var(--pink);">⬢</span> Coded step</div>
+  </aside>
+
+  <!-- BOARD -->
+  <main class="board-wrap">
+    <div class="board-toolbar">
+      <span class="pill violet"><span class="dot"></span>pack-swe · standard run</span>
+      <span class="pill">v7 · draft</span>
+      <span class="dim" style="font-size:12.5px;margin-left:8px;">Drag from the palette · click a node to edit</span>
+      <div class="row" style="margin-left:auto;gap:8px;">
+        <button class="btn sm ghost">Validate</button>
+        <button class="btn sm primary">Save version</button>
+      </div>
+    </div>
+
+    <div class="board">
+      <!-- edges -->
+      <svg width="980" height="440" style="position:absolute;inset:0;z-index:1;pointer-events:none;overflow:visible;">
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#42507a"/></marker>
+          <marker id="arrv" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7c6cff"/></marker>
+        </defs>
+        <g fill="none" stroke="#2b3650" stroke-width="2" marker-end="url(#arr)">
+          <path d="M174,239 C200,239 182,139 208,139"/>
+          <path d="M174,239 C200,239 182,329 208,329"/>
+          <path d="M358,139 C375,139 375,234 392,234" stroke="#3a3a6a"/>
+          <path d="M358,329 C375,329 375,234 392,234" stroke="#3a3a6a"/>
+        </g>
+        <g fill="none" stroke="#4a3f8a" stroke-width="2.4" marker-end="url(#arrv)">
+          <path d="M542,234 C559,234 559,124 576,124"/>
+          <path d="M542,234 L576,234"/>
+          <path d="M542,234 C559,234 559,344 576,344"/>
+        </g>
+        <g fill="none" stroke="#2b3650" stroke-width="2" marker-end="url(#arr)">
+          <path d="M726,124 C743,124 743,179 760,179"/>
+          <path d="M726,234 C743,234 743,179 760,179"/>
+          <path d="M726,344 C743,344 743,329 760,329"/>
+          <path d="M835,208 L835,300" stroke-dasharray="5 4"/>
+        </g>
+      </svg>
+
+      <!-- nodes -->
+      <div class="gnode" data-node="input" style="left:24px;top:210px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(79,208,227,0.16);color:var(--cyan);">▶</span><span class="gn-kind">input</span></div>
+        <div class="gn-title">Run input</div><div class="gn-sub">ticket · repo · budget</div>
+      </div>
+      <div class="gnode" data-node="fetch" style="left:208px;top:110px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(52,216,192,0.16);color:var(--teal);">◇</span><span class="gn-kind">mcp</span></div>
+        <div class="gn-title">Jira · fetch ticket</div><div class="gn-sub">getIssue → context</div>
+      </div>
+      <div class="gnode" data-node="validate" style="left:208px;top:300px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span><span class="gn-kind">agent</span></div>
+        <div class="gn-title">Validate context</div><div class="gn-sub">role · validate_context</div>
+      </div>
+      <div class="gnode selected" data-node="impl" style="left:392px;top:205px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span><span class="gn-kind">agent</span></div>
+        <div class="gn-title">Implement (TDD)</div><div class="gn-sub">role · implementer</div>
+      </div>
+      <div class="gnode" data-node="tests" style="left:576px;top:95px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(246,181,69,0.16);color:var(--amber);">✓</span><span class="gn-kind">gate</span></div>
+        <div class="gn-title">Tests gate</div><div class="gn-sub">onFail · retry(2)</div>
+      </div>
+      <div class="gnode" data-node="review" style="left:576px;top:205px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">⛓</span><span class="gn-kind">fan-out</span></div>
+        <div class="gn-title">Review network</div><div class="gn-sub">3 reviewers · parallel</div>
+      </div>
+      <div class="gnode" data-node="build" style="left:576px;top:315px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(138,147,171,0.18);color:#aab2c6;">$</span><span class="gn-kind">shell</span></div>
+        <div class="gn-title">Build (container)</div><div class="gn-sub">node:24 · net=none</div>
+      </div>
+      <div class="gnode" data-node="human" style="left:760px;top:150px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(70,210,138,0.16);color:var(--green);">⌘</span><span class="gn-kind">human review</span></div>
+        <div class="gn-title">Approve PR</div><div class="gn-sub">pauses · audited</div>
+      </div>
+      <div class="gnode dashed" data-node="deploy" style="left:760px;top:300px;">
+        <div class="gn-head"><span class="gn-ic" style="background:rgba(255,111,174,0.16);color:var(--pink);">⬢</span><span class="gn-kind">plugin · P4</span></div>
+        <div class="gn-title">Deploy</div><div class="gn-sub">container contract</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- INSPECTOR -->
+  <aside class="inspector">
+    <!-- IMPL (agent) -->
+    <div class="inspect-pane active" data-inspect="impl">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span>
+        <div><div style="font-weight:650;">Agent step</div><div class="note mono">node: implement</div></div></div>
+
+      <div class="field"><label>Resolve agent from</label>
+        <div class="row" style="gap:6px;">
+          <span class="chip on">Named role</span><span class="chip">Inline spec</span>
+        </div>
+      </div>
+      <div class="field"><label>Role</label>
+        <select class="select"><option>implementer</option><option>reviewer</option><option>planner</option><option>+ define new role…</option></select>
+        <p class="note" style="margin-top:6px;">Resolves via cascade: <span class="code">template → team → global</span></p>
+      </div>
+      <div class="field"><label>Model spec</label>
+        <input class="input mono" value="anthropic/claude-opus-4-7" /></div>
+      <div class="field"><label>System prompt</label>
+        <textarea class="ta" rows="3">You are a senior engineer. Implement the change test-first, smallest diff that satisfies the success criteria…</textarea></div>
+      <div class="field"><label>Skills <span class="dim">(L1 menu · progressive disclosure)</span></label>
+        <div class="wrap-gap"><span class="chip on">scope-conservatism</span><span class="chip on">test-first</span><span class="chip on">shell-safety</span><span class="chip">+ add</span></div></div>
+      <div class="field"><label>Tools</label>
+        <div class="stack" style="gap:8px;">
+          <div class="between"><span class="chip">readFile</span><span class="toggle on"></span></div>
+          <div class="between"><span class="chip">writeFile</span><span class="toggle on"></span></div>
+          <div class="between"><span class="chip">bash</span><span class="toggle on"></span></div>
+          <div class="between"><span class="chip" style="border-color:rgba(52,216,192,0.45);color:var(--teal);">mcp · github</span><span class="toggle on"></span></div>
+        </div></div>
+      <div class="field"><label>Output schema</label>
+        <div class="schema">{
+  diffArtifactId: string,
+  filesChanged: number,
+  summary: string
+}</div></div>
+      <div class="field"><label>Memory scope</label>
+        <input class="input mono" value="swe" /></div>
+    </div>
+
+    <!-- FETCH (mcp) -->
+    <div class="inspect-pane" data-inspect="fetch">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(52,216,192,0.16);color:var(--teal);">◇</span>
+        <div><div style="font-weight:650;">MCP tool call</div><div class="note mono">node: fetch-ticket</div></div></div>
+      <div class="field"><label>Connection</label><select class="select"><option>jira · mcp (acme)</option><option>+ new mcp connection…</option></select></div>
+      <div class="field"><label>Tool</label><select class="select"><option>getIssue</option><option>searchIssues</option><option>addComment</option></select></div>
+      <div class="field"><label>Arguments</label><div class="schema">{ "issueKey": "{{ input.ticketId }}" }</div></div>
+      <div class="field"><label>Output binding</label><input class="input mono" value="context.ticket" /></div>
+      <p class="note">Tier 2 — any MCP server becomes a node. No code.</p>
+    </div>
+
+    <!-- VALIDATE (agent compact) -->
+    <div class="inspect-pane" data-inspect="validate">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span>
+        <div><div style="font-weight:650;">Agent step</div><div class="note mono">node: validate-context</div></div></div>
+      <div class="field"><label>Role</label><select class="select"><option>validate_context</option></select></div>
+      <div class="field"><label>Model spec</label><input class="input mono" value="anthropic/claude-sonnet-4-6" /></div>
+      <div class="field"><label>Output schema</label><div class="schema">{ ready: boolean, gaps: string[] }</div></div>
+    </div>
+
+    <!-- TESTS (gate) -->
+    <div class="inspect-pane" data-inspect="tests">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(246,181,69,0.16);color:var(--amber);">✓</span>
+        <div><div style="font-weight:650;">Quality gate</div><div class="note mono">node: tests</div></div></div>
+      <div class="field"><label>Command</label><input class="input mono" value="yarn test" /></div>
+      <div class="field"><label>On fail</label><select class="select"><option>retry(2) → gate-fix agent</option><option>block</option><option>warn</option></select></div>
+      <div class="field"><label>Source</label><p class="note">step config → connection.gateCommands → built-in default</p></div>
+    </div>
+
+    <!-- REVIEW (fanout) -->
+    <div class="inspect-pane" data-inspect="review">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(124,108,255,0.16);color:var(--violet-soft);">⛓</span>
+        <div><div style="font-weight:650;">Fan-out agents</div><div class="note mono">node: review-network</div></div></div>
+      <div class="field"><label>Branches</label><div class="wrap-gap"><span class="chip on">security</span><span class="chip on">domain-logic</span><span class="chip on">performance</span></div></div>
+      <div class="field"><label>Concurrency</label><input class="input mono" value="4" /></div>
+      <div class="field"><label>Join</label><p class="note">Sealed child contexts → declared exports merge back at join.</p></div>
+    </div>
+
+    <!-- BUILD (shell) -->
+    <div class="inspect-pane" data-inspect="build">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(138,147,171,0.18);color:#aab2c6;">$</span>
+        <div><div style="font-weight:650;">Container step</div><div class="note mono">node: build</div></div></div>
+      <div class="field"><label>Image</label><input class="input mono" value="node:24-alpine" /></div>
+      <div class="field"><label>Command</label><input class="input mono" value="yarn build" /></div>
+      <div class="field"><label>Network</label><select class="select"><option>none</option><option>egress (allowlist)</option></select></div>
+      <p class="note">Tier 3 — ephemeral, read-only FS, cap-drop ALL.</p>
+    </div>
+
+    <!-- HUMAN -->
+    <div class="inspect-pane" data-inspect="human">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(70,210,138,0.16);color:var(--green);">⌘</span>
+        <div><div style="font-weight:650;">Human review</div><div class="note mono">node: approve-pr</div></div></div>
+      <div class="field"><label>Assignees</label><div class="wrap-gap"><span class="chip">team: payments</span><span class="chip">role: owner</span></div></div>
+      <div class="field"><label>Surfaced in</label><div class="wrap-gap"><span class="chip on">Inbox</span><span class="chip on">Slack</span></div></div>
+      <div class="field"><label>SLA / timeout</label><input class="input mono" value="72h → escalate" /></div>
+      <p class="note">Workflow durably pauses — Temporal resumes on signal.</p>
+    </div>
+
+    <!-- DEPLOY (plugin) -->
+    <div class="inspect-pane" data-inspect="deploy">
+      <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(255,111,174,0.16);color:var(--pink);">⬢</span>
+        <div><div style="font-weight:650;">Plugin step <span class="pill pink" style="margin-left:6px;"><span class="dot"></span>P4</span></div><div class="note mono">node: deploy</div></div></div>
+      <div class="field"><label>Plugin</label><input class="input mono" value="acme/deployer@1.2" /></div>
+      <div class="field"><label>Contract image</label><input class="input mono" value="ghcr.io/acme/deployer:1.2" /></div>
+      <div class="field"><label>Input schema</label><div class="schema">{ artifactId, env: "staging"|"prod" }</div></div>
+      <p class="note">Tier 4 — coded step runs as a container with a JSON I/O contract. Untrusted code never enters the worker process. <b style="color:var(--pink);">Deferred.</b></p>
+    </div>
+
+    <div class="input" id="ins-foot" style="margin-top:8px;background:transparent;border:none;padding:0;">
+      <button class="btn sm ghost" style="width:100%;color:#ff8a8a;border-color:rgba(255,80,80,0.3);">Delete node</button>
+    </div>
+  </aside>
+
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
