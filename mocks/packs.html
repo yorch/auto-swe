@@ -16,23 +16,12 @@
   .reg-row .k { font-family: var(--mono); font-size: 12.5px; color: var(--tx); min-width: 150px; }
 </style>
 </head>
-<body>
-
-<nav class="nav"><div class="wrap nav-inner">
-  <a class="brand" href="index.html">
-    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h7M4 12h16M13 17h7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="7" r="2.4" fill="#fff"/><circle cx="7" cy="17" r="2.4" fill="#fff"/></svg></span>
-    Conductor <span class="tag">platform preview</span>
-  </a>
-  <div class="nav-links">
-    <a href="index.html">Overview</a>
-    <a href="canvas.html">Canvas</a>
-    <a href="packs.html" class="active">Packs &amp; Roles</a>
-    <a href="connections.html">Connections</a>
-  </div>
-</div></nav>
-
-<div class="wrap">
-  <div class="page-head">
+<body data-page="packs">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Packs &amp; Roles</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm ghost">Manifest docs</button></div></div>
+    <div class="content">
+  <div class="page-head" style="padding-top:6px;">
     <div class="crumb">Admin / <b>Packs</b></div>
     <div class="between">
       <div>
@@ -178,6 +167,8 @@ $ conductor pack publish</div>
     <span class="pill"><span class="dot"></span>vision pitch fidelity</span>
     <span style="margin-left:auto;" class="dim">Mapped to <span class="code">docs/platform-pivot.md</span> · P0/P1</span>
   </footer>
+    </div>
+  </main>
 </div>
 
 <script src="assets/app.js"></script>

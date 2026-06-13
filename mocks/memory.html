@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Memory</title>
+<link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="memory">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Semantic memory</h2><span class="pill teal" style="margin-left:6px;"><span class="dot"></span>pgvector · 1536-dim</span></div>
+    <div class="content">
+
+      <p class="muted" style="max-width:760px;margin-bottom:18px;">Lessons are stored as scoped, tagged <span class="code">MemoryItem</span>s with embeddings. Agents retrieve relevant memory by similarity at run time — so the system compounds: each run makes the next one smarter. <span class="dim">Scope + tags are generic; SWE writes scope <span class="code">swe</span> tagged by repo &amp; failure type.</span></p>
+
+      <!-- search -->
+      <div class="card" style="margin-bottom:18px;">
+        <div class="row" style="gap:10px;">
+          <input class="input" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--tx);border-radius:10px;padding:11px 14px;font-size:14px;" value="how to handle idempotency on payment endpoints" />
+          <button class="btn primary">Search</button>
+        </div>
+        <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <span class="note">filters:</span>
+          <span class="pill teal"><span class="dot"></span>scope: swe</span>
+          <span class="pill"><span class="dot"></span>repo: payments-api</span>
+          <span class="pill"><span class="dot"></span>tag: failureType=*</span>
+          <span class="pill"><span class="dot"></span>+ add filter</span>
+        </div>
+      </div>
+
+      <!-- results -->
+      <div class="stack" style="gap:12px;">
+        <div class="card">
+          <div class="between"><div class="row" style="gap:8px;"><span class="pill teal"><span class="dot"></span>0.94 match</span><span class="pill"><span class="dot"></span>scope: swe</span></div><span class="note mono">2026-05-30</span></div>
+          <p style="margin-top:10px;color:var(--tx);">Payment endpoints must be replay-safe: check an idempotency key before mutating, and return the cached response on replay rather than a 409. Tests should cover concurrent duplicate requests.</p>
+          <div class="row" style="gap:6px;margin-top:10px;"><span class="pill blue"><span class="dot"></span>repo: payments-api</span><span class="pill amber"><span class="dot"></span>failureType: double_charge</span><span class="note">used in 6 runs</span></div>
+        </div>
+        <div class="card">
+          <div class="between"><div class="row" style="gap:8px;"><span class="pill teal"><span class="dot"></span>0.81 match</span><span class="pill"><span class="dot"></span>scope: swe</span></div><span class="note mono">2026-05-12</span></div>
+          <p style="margin-top:10px;color:var(--tx);">The refunds gateway client retries on 5xx; wrap mutations so retries don't duplicate side effects. Prefer storing the external txn id keyed by request.</p>
+          <div class="row" style="gap:6px;margin-top:10px;"><span class="pill blue"><span class="dot"></span>repo: payments-api</span><span class="pill"><span class="dot"></span>tag: gateway</span><span class="note">used in 3 runs</span></div>
+        </div>
+        <div class="card">
+          <div class="between"><div class="row" style="gap:8px;"><span class="pill teal"><span class="dot"></span>0.66 match</span><span class="pill green"><span class="dot"></span>scope: data-ops</span></div><span class="note mono">2026-06-02</span></div>
+          <p style="margin-top:10px;color:var(--tx);">Idempotent upserts into analytics tables: dedupe on (event_id) — a unique index plus ON CONFLICT DO NOTHING avoids double counting on replays.</p>
+          <div class="row" style="gap:6px;margin-top:10px;"><span class="pill green"><span class="dot"></span>connection: analytics-pg</span><span class="note">cross-pack memory</span></div>
+        </div>
+      </div>
+
+      <div class="grid g3" style="margin-top:22px;">
+        <div class="card kpi"><div class="lab">Memory items</div><div class="val" style="font-size:24px;">2,418</div><div class="note">across 3 scopes</div></div>
+        <div class="card kpi"><div class="lab">Retrieval hit rate</div><div class="val" style="font-size:24px;">73%</div><div class="note">runs that used a lesson</div></div>
+        <div class="card kpi"><div class="lab">Consolidation</div><div class="val" style="font-size:24px;">weekly</div><div class="note">Mon 09:00 · scheduled</div></div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

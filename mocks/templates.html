@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Templates</title>
+<link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="templates">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Templates</h2><div class="row" style="margin-left:auto;gap:8px;"><a class="btn sm" href="canvas.html">Open in canvas</a><button class="btn sm primary">+ New template</button></div></div>
+    <div class="content">
+
+      <div class="grid" style="grid-template-columns:300px 1fr;gap:18px;align-items:start;">
+        <!-- list -->
+        <div class="card" style="padding:8px;">
+          <div class="side-group" style="padding:8px 10px 4px;">pack-swe</div>
+          <div class="side-link active" style="border-radius:9px;border-left:none;box-shadow:inset 3px 0 0 var(--violet);">Standard run <span class="badge">v7</span></div>
+          <div class="side-link" style="border-radius:9px;border-left:none;">Epic decomposition</div>
+          <div class="side-link" style="border-radius:9px;border-left:none;">CI self-heal</div>
+          <div class="side-group" style="padding:12px 10px 4px;">pack-data-ops</div>
+          <div class="side-link" style="border-radius:9px;border-left:none;">Contract check</div>
+          <div class="side-group" style="padding:12px 10px 4px;">pack-support</div>
+          <div class="side-link" style="border-radius:9px;border-left:none;">Ticket triage</div>
+        </div>
+
+        <!-- detail -->
+        <div class="stack" style="gap:18px;">
+          <div class="card">
+            <div class="between">
+              <div><h3 style="font-size:19px;">Standard run</h3><p class="note" style="margin-top:4px;">pack-swe · plan → implement → review → gates → PR</p></div>
+              <div class="row" style="gap:8px;"><span class="pill violet"><span class="dot"></span>A/B active</span><a class="btn sm" href="canvas.html">Edit</a></div>
+            </div>
+            <div class="grid g4" style="margin-top:18px;">
+              <div><div class="note">Nodes</div><div style="font-weight:650;">12</div></div>
+              <div><div class="note">Input fields</div><div style="font-weight:650;">4</div></div>
+              <div><div class="note">Runs (30d)</div><div style="font-weight:650;">154</div></div>
+              <div><div class="note">Success</div><div style="font-weight:650;color:var(--green);">91.4%</div></div>
+            </div>
+          </div>
+
+          <div class="grid g2" style="gap:18px;align-items:start;">
+            <!-- versions -->
+            <div class="card" style="padding:0;overflow:hidden;">
+              <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>Version history</strong></div>
+              <div style="padding:6px 0;">
+                <div class="between" style="padding:11px 16px;"><div><div style="font-weight:600;">v7 <span class="pill green" style="margin-left:4px;"><span class="dot"></span>live · 50%</span></div><div class="note">tuned review network · 3d ago</div></div><span class="note mono">diff →</span></div>
+                <div class="between" style="padding:11px 16px;border-top:1px solid var(--border-soft);"><div><div style="font-weight:600;">v6 <span class="pill" style="margin-left:4px;"><span class="dot"></span>baseline · 50%</span></div><div class="note">added build gate · 2w ago</div></div><span class="note mono">diff →</span></div>
+                <div class="between" style="padding:11px 16px;border-top:1px solid var(--border-soft);"><div><div style="font-weight:600;">v5</div><div class="note">fan-out concurrency=4 · 1mo ago</div></div><span class="note mono">restore</span></div>
+              </div>
+            </div>
+
+            <!-- experiment config -->
+            <div class="card">
+              <strong>A/B experiment</strong>
+              <div class="field" style="margin-top:14px;"><div class="note" style="margin-bottom:6px;">Challenger version</div><select class="select" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--tx);border-radius:9px;padding:9px 11px;"><option>v7</option><option>v5</option></select></div>
+              <div class="field" style="margin-top:12px;"><div class="between" style="margin-bottom:6px;"><span class="note">Traffic split</span><span class="note">50%</span></div><div class="bar"><span style="width:50%"></span></div></div>
+              <p class="note" style="margin-top:10px;">Routing is deterministic per ticket (salted by template) — re-runs stay on the same arm.</p>
+            </div>
+          </div>
+
+          <!-- diff -->
+          <div class="card">
+            <div class="between" style="margin-bottom:12px;"><strong>v6 → v7 diff</strong><span class="note">spec changes</span></div>
+            <div class="diff">
+              <div class="ln ctx">  review-network:</div>
+              <div class="ln del">-   concurrency: 2</div>
+              <div class="ln add">+   concurrency: 4</div>
+              <div class="ln add">+   reviewers: [security, domain-logic, performance]</div>
+              <div class="ln ctx">  tests-gate:</div>
+              <div class="ln del">-   onFail: block</div>
+              <div class="ln add">+   onFail: retry(2)  # → gate-fix agent</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

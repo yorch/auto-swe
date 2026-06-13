@@ -6,7 +6,7 @@
 <title>Conductor — Workflow Canvas</title>
 <link rel="stylesheet" href="assets/app.css" />
 <style>
-  .editor { display: grid; grid-template-columns: 218px 1fr 348px; gap: 0; height: calc(100vh - 62px); }
+  .editor { display: grid; grid-template-columns: 210px 1fr 340px; gap: 0; height: 100vh; min-width: 0; }
   .palette, .inspector { overflow-y: auto; }
   .palette { border-right: 1px solid var(--border-soft); padding: 18px 14px; background: var(--bg-2); }
   .inspector { border-left: 1px solid var(--border-soft); padding: 20px; background: var(--bg-2); }
@@ -51,21 +51,8 @@
   .ins-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
 </style>
 </head>
-<body>
-
-<nav class="nav"><div class="wrap nav-inner">
-  <a class="brand" href="index.html">
-    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h7M4 12h16M13 17h7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="7" r="2.4" fill="#fff"/><circle cx="7" cy="17" r="2.4" fill="#fff"/></svg></span>
-    Conductor <span class="tag">platform preview</span>
-  </a>
-  <div class="nav-links">
-    <a href="index.html">Overview</a>
-    <a href="canvas.html" class="active">Canvas</a>
-    <a href="packs.html">Packs &amp; Roles</a>
-    <a href="connections.html">Connections</a>
-  </div>
-</div></nav>
-
+<body data-page="canvas">
+<div class="app">
 <div class="editor" data-canvas>
 
   <!-- PALETTE -->
@@ -289,6 +276,7 @@
     </div>
   </aside>
 
+</div>
 </div>
 
 <script src="assets/app.js"></script>

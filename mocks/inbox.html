@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Inbox (HITL)</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .inbox { display: grid; grid-template-columns: 320px 1fr; gap: 0; border: 1px solid var(--border-soft); border-radius: 14px; overflow: hidden; }
+  .ibitem { padding: 14px 16px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+  .ibitem:hover { background: var(--panel); }
+  .ibitem.active { background: var(--panel); box-shadow: inset 3px 0 0 var(--violet); }
+  .ibtype { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .detail-pane { padding: 24px; background: var(--bg-2); }
+  .opt { display:flex; align-items:center; gap:12px; padding:13px 15px; border:1px solid var(--border); border-radius:11px; cursor:pointer; }
+  .opt:hover { border-color:#33405e; background: var(--panel); }
+  .opt.sel { border-color: var(--violet); background: rgba(124,108,255,0.08); }
+</style>
+</head>
+<body data-page="inbox">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Inbox</h2><span class="pill amber" style="margin-left:6px;"><span class="dot"></span>4 pending</span><div class="row" style="margin-left:auto;"><span class="note">human-in-the-loop · the governance layer</span></div></div>
+    <div class="content">
+
+      <div class="inbox">
+        <!-- list -->
+        <div style="background:var(--bg);">
+          <div class="ibitem active">
+            <div class="between"><span class="ibtype" style="color:var(--green);">✓ Review &amp; edit</span><span class="st waiting"><span class="d"></span>2h</span></div>
+            <div style="font-weight:600;margin-top:6px;">Approve PR · JIRA-1839</div>
+            <div class="note">web · idempotent refunds</div>
+          </div>
+          <div class="ibitem">
+            <div class="between"><span class="ibtype" style="color:var(--cyan);">⌥ Decision</span><span class="st waiting"><span class="d"></span>35m</span></div>
+            <div style="font-weight:600;margin-top:6px;">Rollout strategy · LIN-204</div>
+            <div class="note">epic · choose merge order</div>
+          </div>
+          <div class="ibitem">
+            <div class="between"><span class="ibtype" style="color:var(--amber);">⌘ Approval</span><span class="st waiting"><span class="d"></span>1h</span></div>
+            <div style="font-weight:600;margin-top:6px;">Deploy to staging · JIRA-1828</div>
+            <div class="note">plugin step · gated</div>
+          </div>
+          <div class="ibitem">
+            <div class="between"><span class="ibtype" style="color:var(--blue);">⌑ Input</span><span class="st waiting"><span class="d"></span>4h</span></div>
+            <div style="font-weight:600;margin-top:6px;">Missing API base URL</div>
+            <div class="note">data-ops · DAT-88</div>
+          </div>
+        </div>
+
+        <!-- detail -->
+        <div class="detail-pane">
+          <div class="between" style="margin-bottom:6px;"><span class="ibtype" style="color:var(--green);">✓ Review &amp; edit</span><a class="note" href="run.html" style="color:var(--violet-soft);">Open run →</a></div>
+          <h2 style="font-size:22px;">Approve pull request</h2>
+          <p class="muted" style="margin-top:8px;">Run <b style="color:var(--tx);">JIRA-1839</b> · acme/web · paused at <span class="code">humanReview</span> for 2h. The workflow is durably suspended — Temporal resumes on your signal.</p>
+
+          <div class="divider"></div>
+          <div style="font-weight:650;margin-bottom:10px;">Proposed PR description <span class="dim">(editable)</span></div>
+          <div class="card" style="background:var(--bg);">
+            <textarea style="width:100%;background:transparent;border:none;color:var(--tx-2);font-family:var(--sans);font-size:13.5px;resize:vertical;" rows="5">## Add idempotency keys to refunds
+
+Replays of the refund endpoint now return the cached response instead of double-charging. Adds 6 tests covering replay, concurrency, and key absence.
+
+Closes JIRA-1839.</textarea>
+          </div>
+
+          <div class="grid g3" style="margin:18px 0;">
+            <div class="card kpi"><div class="lab">Files changed</div><div class="val" style="font-size:22px;">7</div></div>
+            <div class="card kpi"><div class="lab">Review network</div><div class="val" style="font-size:22px;color:var(--green);">clean</div></div>
+            <div class="card kpi"><div class="lab">Cost</div><div class="val" style="font-size:22px;">$0.41</div></div>
+          </div>
+
+          <div style="font-weight:650;margin-bottom:10px;">Decision</div>
+          <div class="grid g3" style="gap:10px;">
+            <div class="opt sel"><span class="st done"><span class="d"></span></span><div><div style="font-weight:600;">Approve &amp; open PR</div><div class="note">resume workflow</div></div></div>
+            <div class="opt"><span class="st waiting"><span class="d"></span></span><div><div style="font-weight:600;">Request changes</div><div class="note">send back to agent</div></div></div>
+            <div class="opt"><span class="st failed"><span class="d"></span></span><div><div style="font-weight:600;">Reject</div><div class="note">terminate run</div></div></div>
+          </div>
+          <div class="row" style="margin-top:18px;gap:8px;">
+            <button class="btn primary">Submit decision →</button>
+            <span class="note">also surfaced in Slack · either resolves it</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
