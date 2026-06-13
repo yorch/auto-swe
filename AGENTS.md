@@ -16,6 +16,7 @@
 
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `docs/platform-pivot.md`         | Proposed   | RFC + roadmap for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes a first-party pack). Pack model, four-tier extension model, dynamic roles + `AgentSpec`, generic Connection/input/trigger/memory; phases P0–P3 (committed) + P4–P5 (deferred, spec'd) |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
 | `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (11 node types), runtime security scanners, budget tiers, auth, data model, infra   |
 | `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
