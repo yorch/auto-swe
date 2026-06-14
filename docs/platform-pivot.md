@@ -11,6 +11,10 @@ when starting a follow-up PR.
 >
 > **This is rev. 2** — it supersedes the original pack-centric framing. See
 > [Design evolution](#design-evolution) for the rationale trail.
+>
+> 📊 **Diagrams:** see [platform-pivot-diagrams.md](./platform-pivot-diagrams.md) for high-level
+> flow + architecture diagrams (engine/content split, cascade, run lifecycle, agent snapshot,
+> review-network composition, Connections, roadmap, coherence).
 
 ---
 
