@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Agents</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .casc { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .casc .lvl { border:1px solid var(--border-soft); border-radius:10px; padding:12px; background:var(--bg); position:relative; }
+  .casc .lvl.win { border-color:rgba(70,210,138,0.5); }
+  .casc .arrow { position:absolute; right:-9px; top:50%; transform:translateY(-50%); color:var(--tx-3); z-index:2; }
+  .usedby { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid var(--border-soft); border-radius:9px; }
+  .field label { display:block; font-size:11px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--tx-3); margin-bottom:7px; }
+  .input, .select, .ta { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:9px; color:var(--tx); font-family:var(--sans); font-size:13px; padding:9px 11px; }
+  .ta { font-family:var(--mono); font-size:12px; resize:vertical; color:var(--tx-2); }
+</style>
+</head>
+<body data-page="agents">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Agents</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm ghost">Seed SWE starter</button><button class="btn sm primary">+ New agent</button></div></div>
+    <div class="content">
+
+      <div class="page-head" style="padding-top:6px;">
+        <div class="crumb">Libraries / <b>Agents</b></div>
+        <h1>Agent library</h1>
+        <p>An <b style="color:var(--tx);">Agent</b> is a reusable, versioned definition — model, prompt, skills, tools, output schema. Reference it from any number of workflows; customize per team or template with overrides, without forking. <span class="dim">(Formerly "roles".)</span></p>
+      </div>
+
+      <!-- library table -->
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:22px;">
+        <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>All agents</strong><span class="pill"><span class="dot"></span>9</span></div>
+        <table>
+          <thead><tr><th>Agent</th><th>Model spec</th><th>Skills</th><th>Tools</th><th>Used in</th><th>Scope</th><th>Origin</th><th>Ver</th></tr></thead>
+          <tbody>
+            <tr style="background:rgba(124,108,255,0.06);"><td><strong>code-reviewer</strong><div class="note">multi-pass code review</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>5</td><td>readFile · mcp</td><td>6 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td class="mono">v3</td></tr>
+            <tr><td><strong>implementer</strong><div class="note">TDD code implementation</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>16</td><td>read · write · bash · mcp</td><td>4 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td class="mono">v5</td></tr>
+            <tr><td><strong>planner</strong><div class="note">epic decomposition</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-sonnet-4-6</td><td>2</td><td>—</td><td>2 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td class="mono">v2</td></tr>
+            <tr><td><strong>security-reviewer</strong><div class="note">review-network sub-agent</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>1</td><td>readFile</td><td>3 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td class="mono">v1</td></tr>
+            <tr><td><strong>context-validator</strong><div class="note">checks success criteria</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-sonnet-4-6</td><td>1</td><td>—</td><td>3 workflows</td><td>TEAM · payments</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td class="mono">v2*</td></tr>
+            <tr><td><strong>triage-agent</strong><div class="note">classify support tickets</div></td><td class="mono dim">— needs model</td><td>2</td><td>mcp</td><td>1 workflow</td><td>TEAM · support</td><td><span class="pill"><span class="dot"></span>user</span></td><td class="mono">v1</td></tr>
+            <tr><td><strong>changelog-writer</strong><div class="note">drafts release notes</div></td><td class="mono" style="color:var(--teal);">google/gemini-2.5-flash</td><td>0</td><td>readFile</td><td>2 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>user</span></td><td class="mono">v4</td></tr>
+            <tr><td><strong>data-contract-checker</strong><div class="note">validates schemas</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-sonnet-4-6</td><td>1</td><td>bash · mcp</td><td>1 workflow</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>user</span></td><td class="mono">v1</td></tr>
+            <tr><td><strong>researcher</strong><div class="note">fan-out web research</div></td><td class="mono" style="color:var(--teal);">anthropic/claude-opus-4-7</td><td>3</td><td>mcp</td><td>2 workflows</td><td>GLOBAL</td><td><span class="pill"><span class="dot"></span>user</span></td><td class="mono">v2</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- selected agent detail -->
+      <div class="between" style="margin-bottom:12px;"><h3 style="font-size:18px;">code-reviewer <span class="pill violet" style="margin-left:6px;"><span class="dot"></span>v3 · selected</span></h3><div class="row" style="gap:8px;"><button class="btn sm ghost">History</button><button class="btn sm ghost">Duplicate</button><button class="btn sm primary">Edit</button></div></div>
+
+      <div class="grid" style="grid-template-columns:1.4fr 1fr;gap:18px;align-items:start;">
+        <!-- definition -->
+        <div class="card">
+          <div class="field" style="margin-bottom:15px;"><label>System prompt</label>
+            <textarea class="ta" rows="3">You are a meticulous senior reviewer. Examine the diff for correctness, security, and API-contract regressions. Be specific; cite file and line.</textarea></div>
+          <div class="grid g2" style="gap:14px;">
+            <div class="field" style="margin:0;"><label>Skills</label><div class="wrap-gap"><span class="chip on" style="font-size:11.5px;padding:4px 9px;border-radius:7px;background:rgba(124,108,255,0.14);border:1px solid rgba(124,108,255,0.45);color:var(--violet-soft);">security-aware</span><span class="chip on" style="font-size:11.5px;padding:4px 9px;border-radius:7px;background:rgba(124,108,255,0.14);border:1px solid rgba(124,108,255,0.45);color:var(--violet-soft);">api-contracts</span><span class="chip on" style="font-size:11.5px;padding:4px 9px;border-radius:7px;background:rgba(124,108,255,0.14);border:1px solid rgba(124,108,255,0.45);color:var(--violet-soft);">migration-safety</span><span class="note">+2</span></div></div>
+            <div class="field" style="margin:0;"><label>Tools</label><div class="wrap-gap"><span class="pill"><span class="dot"></span>readFile</span><span class="pill teal"><span class="dot"></span>mcp · github</span></div></div>
+          </div>
+          <div class="divider"></div>
+          <div class="field" style="margin:0;"><label>Output schema</label>
+            <div class="schema" style="font-family:var(--mono);font-size:11.5px;background:var(--bg);border:1px solid var(--border-soft);border-radius:9px;padding:11px;color:var(--tx-2);white-space:pre;">{ findings: { severity, file, line, note }[], approved: boolean }</div></div>
+        </div>
+
+        <!-- model cascade + usage + version -->
+        <div class="stack" style="gap:18px;">
+          <div class="card">
+            <div class="between" style="margin-bottom:12px;"><strong>Model binding</strong><span class="pill violet"><span class="dot"></span>override cascade</span></div>
+            <div class="casc">
+              <div class="lvl"><div class="note" style="font-size:10px;">GLOBAL</div><div class="mono" style="font-size:11px;margin-top:4px;color:var(--tx-2);">opus-4-7</div><span class="arrow">→</span></div>
+              <div class="lvl win"><div class="note" style="font-size:10px;color:var(--green);">TEAM · payments</div><div class="mono" style="font-size:11px;margin-top:4px;color:var(--teal);">sonnet-4-6</div><span class="arrow">→</span></div>
+              <div class="lvl"><div class="note" style="font-size:10px;">TEMPLATE</div><div class="mono dim" style="font-size:11px;margin-top:4px;">(none)</div></div>
+            </div>
+            <p class="note" style="margin-top:12px;">Payments team reuses this Agent with a cheaper model — <b style="color:var(--tx-2);">no fork</b>. Effective: <span class="code">sonnet-4-6</span>.</p>
+          </div>
+
+          <div class="card">
+            <div class="between" style="margin-bottom:12px;"><strong>Used in</strong><span class="pill"><span class="dot"></span>6 workflows</span></div>
+            <div class="stack" style="gap:8px;">
+              <a href="templates.html" class="usedby"><span class="pill blue"><span class="dot"></span>swe</span><span style="font-weight:600;font-size:13px;">Standard run</span><span class="note" style="margin-left:auto;">review-network</span></a>
+              <a href="templates.html" class="usedby"><span class="pill blue"><span class="dot"></span>swe</span><span style="font-weight:600;font-size:13px;">Epic decomposition</span><span class="note" style="margin-left:auto;">per-subtask</span></a>
+              <a href="templates.html" class="usedby"><span class="pill pink"><span class="dot"></span>sec</span><span style="font-weight:600;font-size:13px;">Security remediation</span><span class="note" style="margin-left:auto;">patch review</span></a>
+            </div>
+            <p class="note" style="margin-top:10px;">Edit once → every referencing workflow updates (per its pin/float).</p>
+          </div>
+
+          <div class="card">
+            <div class="between"><strong>Versioning &amp; safety</strong></div>
+            <div class="stack" style="gap:9px;margin-top:12px;">
+              <div class="between"><span class="muted">Current</span><span class="pill"><span class="dot"></span>v3</span></div>
+              <div class="between"><span class="muted">Referencing pins</span><span class="note">4 float · 2 pinned @v2</span></div>
+              <div class="between"><span class="muted">Prompt scan</span><span class="pill green"><span class="dot"></span>verified</span></div>
+            </div>
+            <p class="note" style="margin-top:10px;">Editing the prompt re-runs the injection/exfil scanner and resets verification.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

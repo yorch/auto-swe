@@ -44,12 +44,12 @@
           <div class="between" style="padding:16px 18px;border-bottom:1px solid var(--border);"><strong>All connections</strong><span class="pill"><span class="dot"></span>6</span></div>
           <table>
             <tbody>
-              <tr><td style="width:46px;"><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/payments-api</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">pack-swe</td></tr>
-              <tr><td><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/web</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">pack-swe</td></tr>
+              <tr><td style="width:46px;"><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/payments-api</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/web</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">core</td></tr>
               <tr><td><span class="conn-ic" style="background:rgba(52,216,192,0.16);">◇</span></td><td><strong>jira-acme</strong><div class="note mono">https://acme.atlassian.net/mcp</div></td><td><span class="pill teal"><span class="dot"></span>mcp</span></td><td class="note">core</td></tr>
               <tr><td><span class="conn-ic" style="background:rgba(52,216,192,0.16);">◇</span></td><td><strong>github-tools</strong><div class="note mono">mcp · 14 tools</div></td><td><span class="pill teal"><span class="dot"></span>mcp</span></td><td class="note">core</td></tr>
-              <tr><td><span class="conn-ic" style="background:rgba(70,210,138,0.16);">🛢</span></td><td><strong>analytics-pg</strong><div class="note mono">postgres · read-only</div></td><td><span class="pill green"><span class="dot"></span>database</span></td><td class="note">pack-data-ops</td></tr>
-              <tr><td><span class="conn-ic" style="background:rgba(246,181,69,0.16);">🌐</span></td><td><strong>zendesk</strong><div class="note mono">http_api</div></td><td><span class="pill amber"><span class="dot"></span>http_api</span></td><td class="note">pack-support</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(70,210,138,0.16);">🛢</span></td><td><strong>analytics-pg</strong><div class="note mono">postgres · read-only</div></td><td><span class="pill green"><span class="dot"></span>database</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(246,181,69,0.16);">🌐</span></td><td><strong>zendesk</strong><div class="note mono">http_api</div></td><td><span class="pill amber"><span class="dot"></span>http_api</span></td><td class="note">core</td></tr>
             </tbody>
           </table>
         </div>
@@ -57,17 +57,17 @@
         <!-- new connection -->
         <div class="card">
           <strong>New connection</strong>
-          <p class="note" style="margin-top:6px;margin-bottom:16px;">The config form is contributed by the connection type's pack.</p>
+          <p class="note" style="margin-top:6px;margin-bottom:16px;">The config form is defined by the connection type (a core integration).</p>
           <div class="field"><label>Type</label>
             <div class="seg" style="flex-wrap:wrap;">
               <button class="on">git_repo</button><button>mcp</button><button>database</button><button>http_api</button>
             </div>
-            <div class="hint">git_repo · provided by <span class="code">pack-swe</span></div>
+            <div class="hint">git_repo · <span class="code">core integration</span></div>
           </div>
           <div class="field"><label>Name</label><input class="input" value="acme/payments-api" /></div>
           <div class="field"><label>Clone URL</label><input class="input mono" value="git@github.com:acme/payments-api.git" /></div>
           <div class="field"><label>Default branch</label><input class="input mono" value="main" /></div>
-          <div class="field"><label>Gate commands <span class="dim">(pack-specific)</span></label><textarea class="ta" rows="3">test: yarn test
+          <div class="field"><label>Gate commands <span class="dim">(git_repo)</span></label><textarea class="ta" rows="3">test: yarn test
 lint: yarn lint
 build: yarn build</textarea></div>
           <div class="field"><label>Credential</label><select class="select"><option>github-app · acme (encrypted)</option><option>+ add credential…</option></select></div>
@@ -82,7 +82,7 @@ build: yarn build</textarea></div>
       <div class="grid g2" style="gap:24px;align-items:start;">
         <div class="card">
           <div class="field"><label>Template</label>
-            <select class="select"><option>SWE · Standard run (pack-swe · v7)</option><option>SWE · Epic decomposition</option><option>Support · Ticket triage</option></select>
+            <select class="select"><option>SWE · Standard run (swe-starter · v7)</option><option>SWE · Epic decomposition</option><option>Support · Ticket triage</option></select>
             <div class="hint">The form below is rendered from this template's <span class="code">inputSchema</span>.</div>
           </div>
 
@@ -121,7 +121,7 @@ build: yarn build</textarea></div>
     <!-- TRIGGERS -->
     <div class="tabpane" data-pane="triggers">
       <div class="between" style="margin-bottom:18px;">
-        <p class="muted" style="max-width:660px;">Triggers map an inbound payload to a template's input schema and start a run. Core ships manual/API + schedule; packs ship event adapters.</p>
+        <p class="muted" style="max-width:660px;">Triggers map an inbound payload to a template's input schema and start a run. Core ships manual/API + schedule + webhook receivers; mappings are config.</p>
         <button class="btn primary">+ Add trigger</button>
       </div>
       <div class="stack" style="gap:12px;">
@@ -134,13 +134,13 @@ build: yarn build</textarea></div>
         <div class="trig">
           <span class="conn-ic" style="background:rgba(255,111,174,0.16);color:var(--pink);">⚡</span>
           <div style="flex:1;"><strong>GitHub webhook</strong><div class="note">issue.labeled → <span class="mono">SWE standard run</span> · maps payload → inputSchema</div></div>
-          <span class="pill blue"><span class="dot"></span>pack-swe</span>
+          <span class="pill blue"><span class="dot"></span>swe</span>
           <span class="pill green"><span class="dot"></span>on</span>
         </div>
         <div class="trig">
           <span class="conn-ic" style="background:rgba(52,216,192,0.16);color:var(--teal);">◇</span>
           <div style="flex:1;"><strong>Jira ticket fetch</strong><div class="note">on submit → read-only fetch enriches <span class="mono">context.ticket</span></div></div>
-          <span class="pill blue"><span class="dot"></span>pack-swe</span>
+          <span class="pill blue"><span class="dot"></span>swe</span>
           <span class="pill green"><span class="dot"></span>on</span>
         </div>
         <div class="trig">
@@ -151,7 +151,7 @@ build: yarn build</textarea></div>
         </div>
         <div class="trig" style="border-style:dashed;opacity:0.8;">
           <span class="conn-ic" style="background:rgba(138,147,171,0.16);color:#aab2c6;">＋</span>
-          <div style="flex:1;"><strong>Custom event adapter</strong><div class="note">any pack can register a trigger that maps its events → a template input</div></div>
+          <div style="flex:1;"><strong>Custom event adapter</strong><div class="note">map any connector's events → a template input (config, no code)</div></div>
           <span class="pill pink"><span class="dot"></span>SDK</span>
         </div>
       </div>

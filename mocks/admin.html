@@ -34,7 +34,7 @@
             <div class="intg"><span class="ic" style="background:rgba(52,216,192,0.16);">🗄</span><div style="flex:1;"><strong>Artifact storage</strong><div class="note">S3 · auto-swe-artifacts</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
             <div class="intg"><span class="ic" style="background:rgba(77,141,255,0.16);">🎫</span><div style="flex:1;"><strong>Issue tracker</strong><div class="note">Jira · acme.atlassian.net</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
             <div class="intg"><span class="ic" style="background:rgba(246,181,69,0.16);">🔑</span><div style="flex:1;"><strong>OAuth</strong><div class="note">Google · sign-in</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
-            <div class="intg" style="border-style:dashed;"><span class="ic" style="background:rgba(138,147,171,0.16);">＋</span><div style="flex:1;"><strong>Add integration</strong><div class="note">configured per pack</div></div></div>
+            <div class="intg" style="border-style:dashed;"><span class="ic" style="background:rgba(138,147,171,0.16);">＋</span><div style="flex:1;"><strong>Add integration</strong><div class="note">shared connector</div></div></div>
           </div>
           <p class="note" style="margin-top:14px;">All credentials are AES-256-GCM encrypted at rest · resolved DB-first with env fallback.</p>
         </div>
@@ -44,7 +44,7 @@
           <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
             <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>Provider credentials</strong><button class="btn sm primary">+ Add credential</button></div>
             <table>
-              <thead><tr><th>Provider</th><th>API base</th><th>Used by roles</th><th>Status</th></tr></thead>
+              <thead><tr><th>Provider</th><th>API base</th><th>Used by agents</th><th>Status</th></tr></thead>
               <tbody>
                 <tr><td><strong>anthropic</strong></td><td class="note">default</td><td>implementer, reviewer, planner…</td><td><span class="pill green"><span class="dot"></span>valid</span></td></tr>
                 <tr><td><strong>openai</strong></td><td class="note">default</td><td>embeddings</td><td><span class="pill green"><span class="dot"></span>valid</span></td></tr>
@@ -58,7 +58,7 @@
             <div class="row" style="gap:8px;margin-top:14px;font-family:var(--mono);font-size:12.5px;">
               <span class="code">WORKFLOW_TEMPLATE</span><span class="dim">→</span><span class="code">TEAM</span><span class="dim">→</span><span class="code">GLOBAL</span>
             </div>
-            <p class="note" style="margin-top:12px;">Embeddings: <span class="code">openai/text-embedding-3-large</span> · 1536-dim · singleton. Per-role models live under <a href="packs.html" style="color:var(--violet-soft);">Packs &amp; Roles →</a></p>
+            <p class="note" style="margin-top:12px;">Embeddings: <span class="code">openai/text-embedding-3-large</span> · 1536-dim · singleton. Per-agent models live under <a href="agents.html" style="color:var(--violet-soft);">Agents →</a></p>
           </div>
         </div>
 

@@ -89,7 +89,7 @@
   <!-- BOARD -->
   <main class="board-wrap">
     <div class="board-toolbar">
-      <span class="pill violet"><span class="dot"></span>pack-swe · standard run</span>
+      <span class="pill violet"><span class="dot"></span>standard run · swe-starter</span>
       <span class="pill">v7 · draft</span>
       <span class="dim" style="font-size:12.5px;margin-left:8px;">Drag from the palette · click a node to edit</span>
       <div class="row" style="margin-left:auto;gap:8px;">
@@ -173,12 +173,12 @@
 
       <div class="field"><label>Resolve agent from</label>
         <div class="row" style="gap:6px;">
-          <span class="chip on">Named role</span><span class="chip">Inline spec</span>
+          <span class="chip on">Library Agent</span><span class="chip">Inline</span>
         </div>
       </div>
-      <div class="field"><label>Role</label>
-        <select class="select"><option>implementer</option><option>reviewer</option><option>planner</option><option>+ define new role…</option></select>
-        <p class="note" style="margin-top:6px;">Resolves via cascade: <span class="code">template → team → global</span></p>
+      <div class="field"><label>Agent</label>
+        <select class="select"><option>implementer</option><option>code-reviewer</option><option>planner</option><option>+ new Agent…</option></select>
+        <p class="note" style="margin-top:6px;">Model resolves via cascade: <span class="code">global → team → template</span></p>
       </div>
       <div class="field"><label>Model spec</label>
         <input class="input mono" value="anthropic/claude-opus-4-7" /></div>
@@ -218,7 +218,7 @@
     <div class="inspect-pane" data-inspect="validate">
       <div class="ins-head"><span class="gn-ic" style="width:30px;height:30px;background:rgba(124,108,255,0.16);color:var(--violet-soft);">✦</span>
         <div><div style="font-weight:650;">Agent step</div><div class="note mono">node: validate-context</div></div></div>
-      <div class="field"><label>Role</label><select class="select"><option>validate_context</option></select></div>
+      <div class="field"><label>Agent</label><select class="select"><option>context-validator</option></select></div>
       <div class="field"><label>Model spec</label><input class="input mono" value="anthropic/claude-sonnet-4-6" /></div>
       <div class="field"><label>Output schema</label><div class="schema">{ ready: boolean, gaps: string[] }</div></div>
     </div>

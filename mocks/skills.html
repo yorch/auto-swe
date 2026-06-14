@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Skills</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .ta { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:9px; color:var(--tx-2); font-family:var(--mono); font-size:12px; line-height:1.5; resize:vertical; padding:11px; }
+</style>
+</head>
+<body data-page="skills">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Skills</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm primary">+ New skill</button></div></div>
+    <div class="content">
+
+      <div class="page-head" style="padding-top:6px;">
+        <div class="crumb">Libraries / <b>Skills</b></div>
+        <h1>Skill library</h1>
+        <p>A <b style="color:var(--tx);">Skill</b> is a named, reusable prompt fragment injected into an Agent's reasoning. Compose them onto any Agent. Custom skills are scanned for injection/exfiltration on save.</p>
+      </div>
+
+      <div class="grid" style="grid-template-columns:1.3fr 1fr;gap:18px;align-items:start;">
+        <!-- list -->
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>All skills</strong><span class="pill"><span class="dot"></span>27</span></div>
+          <table>
+            <thead><tr><th>Skill</th><th>Used by</th><th>Origin</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr style="background:rgba(124,108,255,0.06);"><td><strong>test-first</strong><div class="note">write failing tests before code</div></td><td>2 agents</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>scope-conservatism</strong><div class="note">smallest diff that satisfies</div></td><td>1 agent</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>security-aware</strong><div class="note">flag injection / secrets</div></td><td>3 agents</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>api-contracts</strong><div class="note">guard breaking changes</div></td><td>1 agent</td><td><span class="pill"><span class="dot"></span>swe-starter</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>shell-safety</strong><div class="note">avoid dangerous commands</div></td><td>2 agents</td><td><span class="pill"><span class="dot"></span>core default</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>cite-sources</strong><div class="note">attribute every claim</div></td><td>1 agent</td><td><span class="pill"><span class="dot"></span>user</span></td><td><span class="pill green"><span class="dot"></span>verified</span></td></tr>
+              <tr><td><strong>brand-voice</strong><div class="note">customer-facing tone</div></td><td>1 agent</td><td><span class="pill"><span class="dot"></span>user</span></td><td><span class="pill amber"><span class="dot"></span>unverified</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- detail -->
+        <div class="stack" style="gap:18px;">
+          <div class="card">
+            <div class="between" style="margin-bottom:12px;"><strong>test-first</strong><span class="pill green"><span class="dot"></span>verified</span></div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--tx-3);margin-bottom:7px;">Prompt text</div>
+            <textarea class="ta" rows="5">Before writing implementation code, write a failing test that captures the desired behavior. Run it to confirm it fails for the right reason, then implement the minimal change to make it pass. Never delete a test to make the suite green.</textarea>
+            <div class="row" style="gap:8px;margin-top:12px;"><button class="btn sm ghost">Cancel</button><button class="btn sm primary">Save</button><span class="note">saving re-runs the scanner</span></div>
+          </div>
+          <div class="card">
+            <div class="between" style="margin-bottom:10px;"><strong>Assigned to agents</strong><span class="pill"><span class="dot"></span>2</span></div>
+            <div class="stack" style="gap:8px;">
+              <a href="agents.html" class="usedby" style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-soft);border-radius:9px;"><span class="pill violet"><span class="dot"></span>agent</span><span style="font-weight:600;font-size:13px;">implementer</span></a>
+              <a href="agents.html" class="usedby" style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-soft);border-radius:9px;"><span class="pill violet"><span class="dot"></span>agent</span><span style="font-weight:600;font-size:13px;">data-contract-checker</span></a>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(124,108,255,0.3);background:linear-gradient(180deg,rgba(124,108,255,0.06),var(--bg-2));">
+            <div style="font-weight:650;">Progressive disclosure</div>
+            <p class="note" style="margin-top:8px;">Agents see a compact skill <b style="color:var(--tx-2);">menu</b> and load full prompt text on demand via the <span class="code">loadSkill</span> tool — so big skill libraries don't bloat the system prompt.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

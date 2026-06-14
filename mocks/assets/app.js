@@ -6,7 +6,8 @@ const ICONS = {
   inbox: 'M3 13l2-7h14l2 7M3 13v6h18v-6M3 13h5l1 2h6l1-2h5',
   templates: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5',
   canvas: 'M4 7h7M4 12h16M13 17h7',
-  packs: 'M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM4 7.5l8 4.5 8-4.5M12 12v9',
+  agents: 'M12 3a3.5 3.5 0 013.5 3.5V8a3.5 3.5 0 01-7 0V6.5A3.5 3.5 0 0112 3zM5 21v-1a7 7 0 0114 0v1',
+  skills: 'M12 3l2.4 4.9 5.4.8-3.9 3.8.9 5.3L12 15.3 7.2 17.8l.9-5.3L4.2 8.7l5.4-.8z',
   connections: 'M9 15l6-6M10 6l1-1a4 4 0 016 6l-1 1M14 18l-1 1a4 4 0 01-6-6l1-1',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   memory: 'M12 3c4 0 8 1.3 8 3v12c0 1.7-4 3-8 3s-8-1.3-8-3V6c0-1.7 4-3 8-3zM4 6c0 1.7 4 3 8 3s8-1.3 8-3M4 12c0 1.7 4 3 8 3s8-1.3 8-3',
@@ -23,7 +24,10 @@ const NAV = [
   ['Build', [
     ['templates', 'Templates', 'templates.html'],
     ['canvas', 'Canvas', 'canvas.html'],
-    ['packs', 'Packs', 'packs.html'],
+  ]],
+  ['Libraries', [
+    ['agents', 'Agents', 'agents.html'],
+    ['skills', 'Skills', 'skills.html'],
     ['connections', 'Connections', 'connections.html'],
   ]],
   ['Insights', [

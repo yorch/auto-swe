@@ -15,14 +15,15 @@ injected by `assets/app.js`) covering every major feature.
 
 | File | Surface | RFC mapping |
 |---|---|---|
-| `index.html` | Narrative overview — thesis, moat, four-tier extension model, pack model, capability gallery, roadmap | whole RFC |
+| `index.html` | Narrative overview — thesis, moat, four-tier extension model, reusable libraries, capability gallery, roadmap | whole RFC |
 | `dashboard.html` | Operational home — KPIs, active/recent runs, needs-attention queue, budget, surfaces | — |
-| `runs.html` | Runs list across all packs, with filters | — |
+| `runs.html` | Runs list across every workflow, with filters | — |
 | `run.html` | Run viewer — live execution graph, agent traces, timeline, security, diff, cost | P1–P2 |
 | `inbox.html` | HITL inbox — approval / decision / input / review gates | governance |
 | `templates.html` | Templates list, version history, v→v diff, A/B experiment config | — |
-| `canvas.html` | Workflow editor — `agent` / `mcp` / `plugin` node palette + `AgentSpec` inspector | P1–P2 |
-| `packs.html` | Pack install/browse/detail + dynamic roles & models | P0–P1 |
+| `canvas.html` | Workflow editor — `agent` / `mcp` / plugin node palette + `AgentSpec` inspector | P1–P2 |
+| `agents.html` | **Agent library** — reusable Agents, override cascade, versioning (the rev. 2 centerpiece) | P0–P1 |
+| `skills.html` | Skill library — reusable prompt fragments + scanner status | P0–P1 |
 | `connections.html` | Typed Connections (replaces Repositories), inputSchema-driven run submit, triggers | P3 |
 | `analytics.html` | Success / latency / $-per-run, per-step failure, A/B winner + significance | — |
 | `memory.html` | Semantic memory browser — scoped/tagged pgvector lessons + search | P3 |
@@ -46,5 +47,6 @@ node render.mjs   # update the CHROME path in render.mjs to your local chrome
 
 ## Status
 
-Illustrative only — `pack-swe` is the only pack that exists today; other packs,
-plugins (Tier 4), and the SDK are shown to convey the model, not as shipped features.
+Illustrative only — SWE (`swe-starter`) is the only seeded use case today. Other use
+cases, coded plugins (Tier 4), and the distribution layer are shown to convey the model
+(rev. 2, libraries-first), not as shipped features.

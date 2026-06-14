@@ -17,7 +17,7 @@
   <div class="nav-links">
     <a href="index.html" class="active">Overview</a>
     <a href="canvas.html">Canvas</a>
-    <a href="packs.html">Packs</a>
+    <a href="agents.html">Agents</a>
     <a href="connections.html">Connections</a>
     <a href="dashboard.html" style="color:var(--violet-soft);">Open app →</a>
   </div>
@@ -33,11 +33,11 @@
     Conductor runs your agent workflows as versioned, JSON-defined DAGs on a Temporal-backed
     engine — with human-in-the-loop gates, a multi-agent review network, layered security
     scanning, semantic memory, and per-run cost control. Software engineering is just the
-    first <b style="color:var(--tx);">pack</b>.
+    first <b style="color:var(--tx);">use case</b>.
   </p>
   <div class="row" style="margin-top:30px;gap:12px;">
     <a class="btn primary" href="canvas.html">Explore the canvas →</a>
-    <a class="btn ghost" href="packs.html">See the pack model</a>
+    <a class="btn ghost" href="agents.html">See the libraries</a>
   </div>
 
   <!-- moat strip -->
@@ -57,8 +57,8 @@
       <h2 style="font-size:30px;">The engine was always the product.</h2>
       <p class="muted" style="margin-top:16px;">
         auto-swe already runs every job as a configurable, versioned DAG. The pivot makes that
-        engine first-class and ships every domain as an installable <b style="color:var(--tx);">pack</b> —
-        a bundle of templates, steps, agent roles, skills, scanners, connection types, and memory schema.
+        engine first-class and turns every domain into <b style="color:var(--tx);">reusable library content</b> —
+        Agents, Templates, Skills &amp; Connections composed into workflows. SWE is just the first set seeded in.
       </p>
       <p class="muted" style="margin-top:14px;">
         The crowded part — "compose agent steps" — isn't the moat. The moat is everything around
@@ -70,7 +70,7 @@
       <div class="between" style="margin-bottom:16px;"><div class="mono dim" style="font-size:11px;">BEFORE → AFTER</div></div>
       <div class="stack" style="gap:12px;">
         <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Hardcoded SWE workflow</span><span class="pill">core engine</span></div>
-        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Fixed 6 agent roles</span><span class="pill violet"><span class="dot"></span>dynamic roles</span></div>
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Fixed 6 agent roles</span><span class="pill violet"><span class="dot"></span>Agent library</span></div>
         <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Repositories</span><span class="pill teal"><span class="dot"></span>typed Connections</span></div>
         <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Ticket work-requests</span><span class="pill blue"><span class="dot"></span>schema'd run inputs</span></div>
         <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">SWE lessons</span><span class="pill green"><span class="dot"></span>scoped memory</span></div>
@@ -114,38 +114,33 @@
   </div>
 </section>
 
-<!-- PACK MODEL -->
+<!-- LIBRARIES -->
 <section class="section wrap">
-  <div class="eyebrow">The pack model</div>
+  <div class="eyebrow">Reusable libraries</div>
   <div class="grid g2" style="gap:40px;align-items:center;">
-    <div class="card" style="padding:28px;">
-      <div class="row" style="gap:10px;margin-bottom:18px;">
-        <span class="logo" style="width:30px;height:30px;background:linear-gradient(135deg,var(--blue),var(--violet));border-radius:8px;display:grid;place-items:center;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" stroke="#fff" stroke-width="1.8"/></svg></span>
-        <div><div style="font-weight:650;">pack-swe</div><div class="note">v1 · first-party · installed</div></div>
-        <span class="pill green" style="margin-left:auto;"><span class="dot"></span>active</span>
-      </div>
-      <div class="grid g2" style="gap:10px;">
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">🧩 18 step definitions</div>
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">👤 10 agent roles</div>
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">📚 24 skills</div>
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">🛡 51 scanner patterns</div>
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">🔌 git_repo connection</div>
-        <div class="note" style="padding:9px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-soft);">⚡ 3 templates</div>
-      </div>
-    </div>
     <div>
-      <h2 style="font-size:30px;">One bundle. Everything a domain needs.</h2>
+      <h2 style="font-size:30px;">Compose, don't fork.</h2>
       <p class="muted" style="margin-top:16px;">
-        A pack declares its <b style="color:var(--tx);">templates, step definitions, roles, skills,
-        scanner patterns, connection types, triggers, and memory scopes</b> in a single versioned
-        manifest. Installing a pack registers its steps into the engine and seeds its config —
-        idempotently.
+        Everything reusable lives in versioned libraries — <b style="color:var(--tx);">Agents,
+        Templates, Skills, Connections</b>. Reference an Agent from any number of workflows;
+        customize per team or template with <b style="color:var(--tx);">overrides</b>, never copies.
       </p>
       <p class="muted" style="margin-top:14px;">
-        SWE is extracted into <span class="code">pack-swe</span> first (P0, zero behavior change),
-        which forces a clean platform/app boundary before the engine refactor begins.
+        The engine owns the <b style="color:var(--tx);">mechanisms</b> (review network, fan-out,
+        scanning, memory); the libraries hold the <b style="color:var(--tx);">content</b>. SWE is
+        just the first set seeded in — no privileged status, fully editable.
       </p>
-      <a class="btn" href="packs.html" style="margin-top:18px;">Browse packs →</a>
+      <a class="btn" href="agents.html" style="margin-top:18px;">Open the Agent library →</a>
+    </div>
+    <div class="card" style="padding:24px;">
+      <div class="mono dim" style="font-size:11px;margin-bottom:14px;">THE REUSE STACK</div>
+      <div class="stack" style="gap:10px;">
+        <a href="templates.html" class="between" style="padding:12px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span style="font-weight:650;">Workflows</span><span class="note">compose →</span><span class="pill blue"><span class="dot"></span>Agents</span></a>
+        <a href="agents.html" class="between" style="padding:12px 14px;border:1px solid rgba(124,108,255,0.4);border-radius:10px;background:rgba(124,108,255,0.06);"><span style="font-weight:650;">Agents</span><span class="note">compose →</span><span class="row" style="gap:6px;"><span class="pill violet"><span class="dot"></span>Skills</span><span class="pill teal"><span class="dot"></span>Tools</span></span></a>
+        <a href="connections.html" class="between" style="padding:12px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span style="font-weight:650;">Connections</span><span class="note">bind →</span><span class="pill"><span class="dot"></span>external systems</span></a>
+      </div>
+      <div class="divider"></div>
+      <div class="between"><span class="note">Override cascade</span><span class="mono" style="font-size:11px;color:var(--tx-2);">GLOBAL → TEAM → TEMPLATE</span></div>
     </div>
   </div>
 </section>
@@ -161,7 +156,7 @@
       <a href="inbox.html" class="card hover"><div class="row between"><strong>HITL inbox</strong><span class="pill green"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Approval, decision, input &amp; review gates that durably pause any workflow.</p></a>
       <a href="analytics.html" class="card hover"><div class="row between"><strong>Analytics &amp; A/B</strong><span class="pill"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Success, latency, $/run, per-step failure, and significance-tested experiments.</p></a>
       <a href="memory.html" class="card hover"><div class="row between"><strong>Semantic memory</strong><span class="pill teal"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Scoped, tagged pgvector lessons retrieved at run time — the system compounds.</p></a>
-      <a href="security.html" class="card hover"><div class="row between"><strong>Security scanners</strong><span class="pill pink"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Six runtime scanners — injection, exfil, shell, file, code &amp; output — across all packs.</p></a>
+      <a href="security.html" class="card hover"><div class="row between"><strong>Security scanners</strong><span class="pill pink"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Six runtime scanners — injection, exfil, shell, file, code &amp; output — across every workflow.</p></a>
     </div>
     <p class="note center" style="margin-top:24px;">Plus the CI self-healing loop, Slack <span class="code">/auto-swe</span>, and the <span class="code">conductor</span> CLI — all driving the same engine.</p>
   </div>
@@ -173,11 +168,11 @@
   <h2 style="font-size:30px;">Build P0–P3. Spec P4–P5.</h2>
   <p class="muted" style="margin-top:12px;max-width:680px;">Each phase ships value and de-risks the next. P0–P3 is a credible standalone platform; the deferred phases are designed in now so they're purely additive.</p>
   <div class="grid g3" style="margin-top:30px;">
-    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P0</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Extract SWE → pack</h3><p class="note" style="margin-top:6px;">Pack manifest + register() + pack columns. No behavior change.</p></div>
-    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P1</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Registry + dynamic roles</h3><p class="note" style="margin-top:6px;">Delete role enum, AgentSpec resolver, registry dispatch.</p></div>
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P0</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">De-domainify engine</h3><p class="note" style="margin-top:6px;">Delete role enum, registry dispatch, SWE → seed data. No behavior change.</p></div>
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P1</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Agent library</h3><p class="note" style="margin-top:6px;">First-class Agents, reference + override cascade, versioning.</p></div>
     <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P2</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Agent node + MCP</h3><p class="note" style="margin-top:6px;">The no/low-code extension tiers.</p></div>
     <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P3</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Connections + triggers</h3><p class="note" style="margin-top:6px;">Generic input/trigger/memory. SWE specializes.</p></div>
-    <div class="card" style="border-style:dashed;opacity:0.78;"><div class="row between"><span class="mono dim" style="font-weight:700;">P4</span><span class="pill pink"><span class="dot"></span>deferred</span></div><h3 style="margin-top:12px;font-size:16px;">Plugin SDK + registry</h3><p class="note" style="margin-top:6px;">Container-contract coded steps, install, RBAC.</p></div>
+    <div class="card" style="border-style:dashed;opacity:0.78;"><div class="row between"><span class="mono dim" style="font-weight:700;">P4</span><span class="pill pink"><span class="dot"></span>deferred</span></div><h3 style="margin-top:12px;font-size:16px;">Distribution layer</h3><p class="note" style="margin-top:6px;">Export/import bundles, marketplace, coded capability (SDK).</p></div>
     <div class="card" style="border-style:dashed;opacity:0.78;"><div class="row between"><span class="mono dim" style="font-weight:700;">P5</span><span class="pill pink"><span class="dot"></span>deferred</span></div><h3 style="margin-top:12px;font-size:16px;">UX layering + multi-org</h3><p class="note" style="margin-top:6px;">Palette polish, SDK, true multi-tenancy.</p></div>
   </div>
 </section>
