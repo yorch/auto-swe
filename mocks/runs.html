@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Runs</title>
+<link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="runs">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Runs</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm primary">+ Start run</button></div></div>
+    <div class="content">
+
+      <div class="row" style="gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+        <span class="pill violet"><span class="dot"></span>All</span>
+        <span class="pill"><span class="dot"></span>Running · 4</span>
+        <span class="pill"><span class="dot"></span>Waiting · 3</span>
+        <span class="pill"><span class="dot"></span>Done · 128</span>
+        <span class="pill"><span class="dot"></span>Failed · 11</span>
+        <input class="pill" style="margin-left:auto;background:var(--bg);border:1px solid var(--border);color:var(--tx);padding:7px 12px;font-family:var(--mono);" placeholder="search ticket / connection…" />
+      </div>
+
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table>
+          <thead><tr><th>Run</th><th>Template</th><th>Origin</th><th>Trigger</th><th>Stage</th><th>Cost</th><th>Duration</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr style="cursor:pointer;" onclick="location.href='run.html'"><td><strong>JIRA-1842</strong><div class="note">payments-api</div></td><td>Standard run</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>webhook</td><td>Review network</td><td class="mono">$0.62</td><td>9m</td><td><span class="st running"><span class="d"></span>running</span></td></tr>
+            <tr><td><strong>JIRA-1839</strong><div class="note">web</div></td><td>Standard run</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>manual</td><td>Human approval</td><td class="mono">$0.41</td><td>23m</td><td><span class="st waiting"><span class="d"></span>waiting</span></td></tr>
+            <tr><td><strong>LIN-204</strong><div class="note">payments-api</div></td><td>Epic decomposition</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>Slack</td><td>Fan-out 3/5</td><td class="mono">$2.18</td><td>41m</td><td><span class="st running"><span class="d"></span>running</span></td></tr>
+            <tr><td><strong>JIRA-1835</strong><div class="note">web</div></td><td>CI self-heal</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>CI event</td><td>CI fix · 2</td><td class="mono">$0.88</td><td>15m</td><td><span class="st running"><span class="d"></span>running</span></td></tr>
+            <tr><td><strong>JIRA-1828</strong><div class="note">payments-api</div></td><td>Standard run</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>webhook</td><td>PR merged</td><td class="mono">$0.55</td><td>12m</td><td><span class="st done"><span class="d"></span>done</span></td></tr>
+            <tr><td><strong>JIRA-1827</strong><div class="note">web</div></td><td>Standard run</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>manual</td><td>Gate: tests</td><td class="mono">$0.73</td><td>19m</td><td><span class="st failed"><span class="d"></span>failed</span></td></tr>
+            <tr><td><strong>DAT-91</strong><div class="note">analytics-pg</div></td><td>Contract check</td><td><span class="pill green"><span class="dot"></span>data-ops</span></td><td>schedule</td><td>Validate</td><td class="mono">$0.12</td><td>4m</td><td><span class="st done"><span class="d"></span>done</span></td></tr>
+            <tr><td><strong>JIRA-1820</strong><div class="note">payments-api</div></td><td>Standard run</td><td><span class="pill blue"><span class="dot"></span>swe</span></td><td>webhook</td><td>PR merged</td><td class="mono">$0.49</td><td>11m</td><td><span class="st done"><span class="d"></span>done</span></td></tr>
+            <tr><td><strong>SUP-553</strong><div class="note">zendesk</div></td><td>Ticket triage</td><td><span class="pill amber"><span class="dot"></span>support</span></td><td>webhook</td><td>Draft reply</td><td class="mono">$0.06</td><td>2m</td><td><span class="st done"><span class="d"></span>done</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:14px;">Showing 9 of 154 · <span class="dim">every workflow runs through one execution model, whatever its origin.</span></p>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

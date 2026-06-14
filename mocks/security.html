@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Security</title>
+<link rel="stylesheet" href="assets/app.css" />
+</head>
+<body data-page="security">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Security</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm ghost">Scanner patterns</button></div></div>
+    <div class="content">
+
+      <p class="muted" style="max-width:760px;margin-bottom:18px;">Six runtime scanners inspect every agent turn — advisory or blocking — across every workflow. Patterns are DB-backed core defaults, admin-extensible.</p>
+
+      <div class="grid g3" style="margin-bottom:18px;">
+        <div class="card kpi"><div class="lab">Events (30d)</div><div class="val">342</div><div class="delta">288 advisory · 54 blocks</div></div>
+        <div class="card kpi"><div class="lab">Hard blocks</div><div class="val" style="color:#ff8a8a;">19</div><div class="delta">sensitive-file writes</div></div>
+        <div class="card kpi"><div class="lab">Patterns</div><div class="val">51</div><div class="delta">built-in + 7 custom</div></div>
+      </div>
+
+      <!-- scanners -->
+      <div class="card" style="margin-bottom:18px;padding:0;overflow:hidden;">
+        <div class="between" style="padding:15px 18px;border-bottom:1px solid var(--border);"><strong>Scanners</strong><span class="note">stage · type</span></div>
+        <table>
+          <thead><tr><th>Scanner</th><th>Stage</th><th>Type</th><th>Events (30d)</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Skill content</strong></td><td>save + per-iteration</td><td><span class="pill"><span class="dot"></span>advisory</span></td><td>22</td></tr>
+            <tr><td><strong>Shell command</strong></td><td>pre-exec</td><td><span class="pill amber"><span class="dot"></span>soft-block</span></td><td>35</td></tr>
+            <tr><td><strong>Sensitive file</strong></td><td>pre-write</td><td><span class="pill pink"><span class="dot"></span>hard-block</span></td><td>19</td></tr>
+            <tr><td><strong>Pre-write content</strong></td><td>pre-write</td><td><span class="pill amber"><span class="dot"></span>soft-block</span></td><td>14</td></tr>
+            <tr><td><strong>Code security</strong></td><td>post-commit</td><td><span class="pill"><span class="dot"></span>advisory</span></td><td>196</td></tr>
+            <tr><td><strong>LLM output</strong></td><td>post-generate</td><td><span class="pill"><span class="dot"></span>advisory</span></td><td>56</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- event feed -->
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div class="between" style="padding:15px 18px;border-bottom:1px solid var(--border);"><strong>Recent events</strong><a class="note" href="runs.html" style="color:var(--violet-soft);">Filter by run →</a></div>
+        <table>
+          <thead><tr><th>Time</th><th>Scanner</th><th>Run</th><th>Detail</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td class="mono note">14:06</td><td>Shell command</td><td><a href="run.html" style="color:var(--violet-soft);">JIRA-1835</a></td><td class="mono" style="color:#ff9a9a;">curl … | sh</td><td><span class="pill amber"><span class="dot"></span>soft-block</span></td></tr>
+            <tr><td class="mono note">14:04</td><td>Sensitive file</td><td><a href="run.html" style="color:var(--violet-soft);">JIRA-1842</a></td><td class="mono">write .env</td><td><span class="pill pink"><span class="dot"></span>hard-block</span></td></tr>
+            <tr><td class="mono note">13:58</td><td>Code security</td><td>JIRA-1828</td><td>hardcoded token (test fixture)</td><td><span class="pill"><span class="dot"></span>advisory</span></td></tr>
+            <tr><td class="mono note">13:41</td><td>LLM output</td><td>LIN-204</td><td>prompt-injection phrase in tool output</td><td><span class="pill"><span class="dot"></span>advisory</span></td></tr>
+            <tr><td class="mono note">13:22</td><td>Skill content</td><td>—</td><td>custom skill saved · exfil pattern</td><td><span class="pill"><span class="dot"></span>warned</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="note" style="margin-top:14px;">Blocks are returned to the agent as errors so it can self-correct; advisory events are recorded for audit. Pattern cache: 60s TTL.</p>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

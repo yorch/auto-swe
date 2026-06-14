@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Admin</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .field { margin-bottom: 15px; }
+  .field label { display:block; font-size:11.5px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--tx-3); margin-bottom:7px; }
+  .input, .select { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:9px; color:var(--tx); font-family:var(--sans); font-size:13.5px; padding:10px 12px; }
+  .intg { display:flex; align-items:center; gap:14px; padding:15px; border:1px solid var(--border-soft); border-radius:12px; }
+  .intg .ic { width:40px; height:40px; border-radius:10px; display:grid; place-items:center; font-size:18px; flex:0 0 auto; }
+</style>
+</head>
+<body data-page="admin">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Admin</h2><span class="pill" style="margin-left:6px;"><span class="dot"></span>platform admin</span></div>
+    <div class="content">
+
+      <div data-tabs>
+        <div class="tabs">
+          <div class="tab active" data-tab="intg">Integrations</div>
+          <div class="tab" data-tab="models">Models &amp; credentials</div>
+          <div class="tab" data-tab="teams">Teams &amp; budget</div>
+        </div>
+
+        <!-- INTEGRATIONS -->
+        <div class="tabpane active" data-pane="intg">
+          <div class="grid g2" style="gap:14px;">
+            <div class="intg"><span class="ic" style="background:rgba(255,255,255,0.06);">🐙</span><div style="flex:1;"><strong>GitHub</strong><div class="note">App · acme · install #4821</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
+            <div class="intg"><span class="ic" style="background:rgba(74,21,75,0.4);">💬</span><div style="flex:1;"><strong>Slack</strong><div class="note">/auto-swe · 1 workspace</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
+            <div class="intg"><span class="ic" style="background:rgba(52,216,192,0.16);">🗄</span><div style="flex:1;"><strong>Artifact storage</strong><div class="note">S3 · auto-swe-artifacts</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
+            <div class="intg"><span class="ic" style="background:rgba(77,141,255,0.16);">🎫</span><div style="flex:1;"><strong>Issue tracker</strong><div class="note">Jira · acme.atlassian.net</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
+            <div class="intg"><span class="ic" style="background:rgba(246,181,69,0.16);">🔑</span><div style="flex:1;"><strong>OAuth</strong><div class="note">Google · sign-in</div></div><span class="pill green"><span class="dot"></span>connected</span></div>
+            <div class="intg" style="border-style:dashed;"><span class="ic" style="background:rgba(138,147,171,0.16);">＋</span><div style="flex:1;"><strong>Add integration</strong><div class="note">shared connector</div></div></div>
+          </div>
+          <p class="note" style="margin-top:14px;">All credentials are AES-256-GCM encrypted at rest · resolved DB-first with env fallback.</p>
+        </div>
+
+        <!-- MODELS -->
+        <div class="tabpane" data-pane="models">
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
+            <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>Provider credentials</strong><button class="btn sm primary">+ Add credential</button></div>
+            <table>
+              <thead><tr><th>Provider</th><th>API base</th><th>Used by agents</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td><strong>anthropic</strong></td><td class="note">default</td><td>implementer, reviewer, planner…</td><td><span class="pill green"><span class="dot"></span>valid</span></td></tr>
+                <tr><td><strong>openai</strong></td><td class="note">default</td><td>embeddings</td><td><span class="pill green"><span class="dot"></span>valid</span></td></tr>
+                <tr><td><strong>google</strong></td><td class="note">default</td><td>changelog_writer</td><td><span class="pill green"><span class="dot"></span>valid</span></td></tr>
+                <tr><td><strong>openrouter</strong></td><td class="mono note">openrouter.ai/api/v1</td><td>—</td><td><span class="pill"><span class="dot"></span>unused</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="row" style="gap:10px;"><span class="pill violet"><span class="dot"></span>scope cascade</span><span class="note">resolved at call time</span></div>
+            <div class="row" style="gap:8px;margin-top:14px;font-family:var(--mono);font-size:12.5px;">
+              <span class="code">WORKFLOW_TEMPLATE</span><span class="dim">→</span><span class="code">TEAM</span><span class="dim">→</span><span class="code">GLOBAL</span>
+            </div>
+            <p class="note" style="margin-top:12px;">Embeddings: <span class="code">openai/text-embedding-3-large</span> · 1536-dim · singleton. Per-agent models live under <a href="agents.html" style="color:var(--violet-soft);">Agents →</a></p>
+          </div>
+        </div>
+
+        <!-- TEAMS -->
+        <div class="tabpane" data-pane="teams">
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div class="between" style="padding:14px 16px;border-bottom:1px solid var(--border);"><strong>Teams</strong><button class="btn sm primary">+ New team</button></div>
+            <table>
+              <thead><tr><th>Team</th><th>Members</th><th>Spend (30d)</th><th>Budget cap</th><th></th></tr></thead>
+              <tbody>
+                <tr><td><strong>payments</strong></td><td>6</td><td class="mono">$1,284</td><td style="width:30%"><div class="bar"><span style="width:64%"></span></div></td><td class="note">$2,000</td></tr>
+                <tr><td><strong>platform-eng</strong></td><td>9</td><td class="mono">$842</td><td><div class="bar"><span style="width:42%"></span></div></td><td class="note">$2,000</td></tr>
+                <tr><td><strong>support</strong></td><td>4</td><td class="mono">$96</td><td><div class="bar"><span style="width:10%;background:var(--green);"></span></div></td><td class="note">$1,000</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note" style="margin-top:14px;">RBAC: platform ADMIN · team OWNER / MEMBER · PATs for CLI/CI. Per-team overrides for models, skills, tools, and shell-image allowlists.</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

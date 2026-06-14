@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Durable Agent Workflow Platform</title>
+<link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav"><div class="wrap nav-inner">
+  <a class="brand" href="index.html">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h7M4 12h16M13 17h7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="7" r="2.4" fill="#fff"/><circle cx="7" cy="17" r="2.4" fill="#fff"/></svg></span>
+    Conductor <span class="tag">platform preview</span>
+  </a>
+  <div class="nav-links">
+    <a href="index.html" class="active">Overview</a>
+    <a href="canvas.html">Canvas</a>
+    <a href="agents.html">Agents</a>
+    <a href="connections.html">Connections</a>
+    <a href="dashboard.html" style="color:var(--violet-soft);">Open app →</a>
+  </div>
+</div></nav>
+
+<!-- HERO -->
+<header class="section wrap" style="padding-top:72px;padding-bottom:40px;">
+  <div class="pill violet" style="margin-bottom:22px;"><span class="dot"></span> The platform pivot · RFC P0–P3</div>
+  <h1 style="font-size:54px;max-width:880px;letter-spacing:-0.035em;line-height:1.05;">
+    Durable, governed orchestration for <span style="background:linear-gradient(120deg,var(--violet-soft),var(--teal));-webkit-background-clip:text;background-clip:text;color:transparent;">multi-agent workflows</span>.
+  </h1>
+  <p class="muted" style="font-size:18.5px;max-width:680px;margin-top:22px;">
+    Conductor runs your agent workflows as versioned, JSON-defined DAGs on a Temporal-backed
+    engine — with human-in-the-loop gates, a multi-agent review network, layered security
+    scanning, semantic memory, and per-run cost control. Software engineering is just the
+    first <b style="color:var(--tx);">use case</b>.
+  </p>
+  <div class="row" style="margin-top:30px;gap:12px;">
+    <a class="btn primary" href="canvas.html">Explore the canvas →</a>
+    <a class="btn ghost" href="agents.html">See the libraries</a>
+  </div>
+
+  <!-- moat strip -->
+  <div class="grid g4" style="margin-top:56px;">
+    <div class="card"><div class="mono dim" style="font-size:12px;">DURABLE</div><div style="font-weight:650;margin-top:8px;">Survives anything</div><p class="note" style="margin-top:6px;">Temporal replay — crashes, restarts, and week-long human waits resume exactly where they paused.</p></div>
+    <div class="card"><div class="mono dim" style="font-size:12px;">GOVERNED</div><div style="font-weight:650;margin-top:8px;">Human-in-the-loop</div><p class="note" style="margin-top:6px;">Approval, decision, input &amp; review gates pause any DAG for a human, with full audit.</p></div>
+    <div class="card"><div class="mono dim" style="font-size:12px;">SECURED</div><div style="font-weight:650;margin-top:8px;">6 runtime scanners</div><p class="note" style="margin-top:6px;">Injection, exfiltration, shell, sensitive-file, code &amp; output scanning on every agent turn.</p></div>
+    <div class="card"><div class="mono dim" style="font-size:12px;">MEASURED</div><div style="font-weight:650;margin-top:8px;">Cost &amp; memory</div><p class="note" style="margin-top:6px;">Per-run $ budgets with hard caps, plus pgvector semantic memory that compounds over time.</p></div>
+  </div>
+</header>
+
+<!-- THE SHIFT -->
+<section class="section wrap">
+  <div class="eyebrow">The shift</div>
+  <div class="grid g2" style="align-items:center;gap:40px;">
+    <div>
+      <h2 style="font-size:30px;">The engine was always the product.</h2>
+      <p class="muted" style="margin-top:16px;">
+        auto-swe already runs every job as a configurable, versioned DAG. The pivot makes that
+        engine first-class and turns every domain into <b style="color:var(--tx);">reusable library content</b> —
+        Agents, Templates, Skills &amp; Connections composed into workflows. SWE is just the first set seeded in.
+      </p>
+      <p class="muted" style="margin-top:14px;">
+        The crowded part — "compose agent steps" — isn't the moat. The moat is everything around
+        it: durability, governance, security, memory, and cost. SWE becomes the flagship proof,
+        not the ceiling.
+      </p>
+    </div>
+    <div class="card" style="padding:26px;">
+      <div class="between" style="margin-bottom:16px;"><div class="mono dim" style="font-size:11px;">BEFORE → AFTER</div></div>
+      <div class="stack" style="gap:12px;">
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Hardcoded SWE workflow</span><span class="pill">core engine</span></div>
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Fixed 6 agent roles</span><span class="pill violet"><span class="dot"></span>Agent library</span></div>
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Repositories</span><span class="pill teal"><span class="dot"></span>typed Connections</span></div>
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">Ticket work-requests</span><span class="pill blue"><span class="dot"></span>schema'd run inputs</span></div>
+        <div class="between" style="padding:10px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span class="muted">SWE lessons</span><span class="pill green"><span class="dot"></span>scoped memory</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOUR TIER EXTENSION MODEL -->
+<section class="section" style="background:linear-gradient(180deg,transparent,rgba(124,108,255,0.04),transparent);">
+  <div class="wrap">
+    <div class="eyebrow">Extend at any altitude</div>
+    <h2 style="font-size:30px;max-width:620px;">Four ways to add capability — from zero-code to full SDK.</h2>
+    <div class="grid g4" style="margin-top:34px;">
+      <div class="card hover">
+        <span class="tier-badge" style="background:rgba(124,108,255,0.16);color:var(--violet-soft);">TIER 1</span>
+        <h3 style="margin-top:14px;font-size:18px;">Declarative agent step</h3>
+        <p class="note" style="margin-top:8px;">Drop an <span class="code">agent</span> node on the canvas. Pick a model, prompt, skills, tools &amp; I/O schema. No code.</p>
+        <div class="pill green" style="margin-top:14px;"><span class="dot"></span>No-code · P2</div>
+      </div>
+      <div class="card hover">
+        <span class="tier-badge" style="background:rgba(52,216,192,0.16);color:var(--teal);">TIER 2</span>
+        <h3 style="margin-top:14px;font-size:18px;">MCP tools</h3>
+        <p class="note" style="margin-top:8px;">Bring any MCP server as agent tools — or call a single MCP tool as its own workflow node.</p>
+        <div class="pill green" style="margin-top:14px;"><span class="dot"></span>Low-code · P2</div>
+      </div>
+      <div class="card hover">
+        <span class="tier-badge" style="background:rgba(138,147,171,0.18);color:#aab2c6;">TIER 3</span>
+        <h3 style="margin-top:14px;font-size:18px;">Shell / container step</h3>
+        <p class="note" style="margin-top:8px;">Arbitrary sandboxed compute in an ephemeral container — locked-down network &amp; filesystem.</p>
+        <div class="pill blue" style="margin-top:14px;"><span class="dot"></span>Shipped</div>
+      </div>
+      <div class="card hover" style="border-style:dashed;">
+        <span class="tier-badge" style="background:rgba(255,111,174,0.16);color:var(--pink);">TIER 4</span>
+        <h3 style="margin-top:14px;font-size:18px;">Plugin SDK</h3>
+        <p class="note" style="margin-top:8px;">Coded steps via a container I/O contract + manifest. Untrusted code, never in-process.</p>
+        <div class="pill pink" style="margin-top:14px;"><span class="dot"></span>Deferred · P4</div>
+      </div>
+    </div>
+    <p class="note center" style="margin-top:24px;">Three authoring surfaces over one execution model — <b style="color:var(--tx-2);">visual canvas</b> · <b style="color:var(--tx-2);">declarative JSON + CLI</b> · <b style="color:var(--tx-2);">authoring SDK</b>.</p>
+  </div>
+</section>
+
+<!-- LIBRARIES -->
+<section class="section wrap">
+  <div class="eyebrow">Reusable libraries</div>
+  <div class="grid g2" style="gap:40px;align-items:center;">
+    <div>
+      <h2 style="font-size:30px;">Compose, don't fork.</h2>
+      <p class="muted" style="margin-top:16px;">
+        Everything reusable lives in versioned libraries — <b style="color:var(--tx);">Agents,
+        Templates, Skills, Connections</b>. Reference an Agent from any number of workflows;
+        customize per team or template with <b style="color:var(--tx);">overrides</b>, never copies.
+      </p>
+      <p class="muted" style="margin-top:14px;">
+        The engine owns the <b style="color:var(--tx);">mechanisms</b> (review network, fan-out,
+        scanning, memory); the libraries hold the <b style="color:var(--tx);">content</b>. SWE is
+        just the first set seeded in — no privileged status, fully editable.
+      </p>
+      <a class="btn" href="agents.html" style="margin-top:18px;">Open the Agent library →</a>
+    </div>
+    <div class="card" style="padding:24px;">
+      <div class="mono dim" style="font-size:11px;margin-bottom:14px;">THE REUSE STACK</div>
+      <div class="stack" style="gap:10px;">
+        <a href="templates.html" class="between" style="padding:12px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span style="font-weight:650;">Workflows</span><span class="note">compose →</span><span class="pill blue"><span class="dot"></span>Agents</span></a>
+        <a href="agents.html" class="between" style="padding:12px 14px;border:1px solid rgba(124,108,255,0.4);border-radius:10px;background:rgba(124,108,255,0.06);"><span style="font-weight:650;">Agents</span><span class="note">compose →</span><span class="row" style="gap:6px;"><span class="pill violet"><span class="dot"></span>Skills</span><span class="pill teal"><span class="dot"></span>Tools</span></span></a>
+        <a href="connections.html" class="between" style="padding:12px 14px;border:1px solid var(--border-soft);border-radius:10px;"><span style="font-weight:650;">Connections</span><span class="note">bind →</span><span class="pill"><span class="dot"></span>external systems</span></a>
+      </div>
+      <div class="divider"></div>
+      <div class="between"><span class="note">Override cascade</span><span class="mono" style="font-size:11px;color:var(--tx-2);">GLOBAL → TEAM → TEMPLATE</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- CAPABILITY GALLERY -->
+<section class="section" style="background:linear-gradient(180deg,transparent,rgba(52,216,192,0.04),transparent);">
+  <div class="wrap">
+    <div class="eyebrow">See it in the product</div>
+    <h2 style="font-size:30px;max-width:640px;">Every major capability, one execution model.</h2>
+    <div class="grid g3" style="margin-top:34px;">
+      <a href="dashboard.html" class="card hover"><div class="row between"><strong>Operational dashboard</strong><span class="pill"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Live runs, success rate, spend vs budget, and a needs-attention queue.</p></a>
+      <a href="run.html" class="card hover"><div class="row between"><strong>Run viewer</strong><span class="pill"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Live execution graph, agent traces, security events, diff &amp; cost — per attempt.</p></a>
+      <a href="inbox.html" class="card hover"><div class="row between"><strong>HITL inbox</strong><span class="pill green"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Approval, decision, input &amp; review gates that durably pause any workflow.</p></a>
+      <a href="analytics.html" class="card hover"><div class="row between"><strong>Analytics &amp; A/B</strong><span class="pill"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Success, latency, $/run, per-step failure, and significance-tested experiments.</p></a>
+      <a href="memory.html" class="card hover"><div class="row between"><strong>Semantic memory</strong><span class="pill teal"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Scoped, tagged pgvector lessons retrieved at run time — the system compounds.</p></a>
+      <a href="security.html" class="card hover"><div class="row between"><strong>Security scanners</strong><span class="pill pink"><span class="dot"></span>→</span></div><p class="note" style="margin-top:8px;">Six runtime scanners — injection, exfil, shell, file, code &amp; output — across every workflow.</p></a>
+    </div>
+    <p class="note center" style="margin-top:24px;">Plus the CI self-healing loop, Slack <span class="code">/auto-swe</span>, and the <span class="code">conductor</span> CLI — all driving the same engine.</p>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section class="section wrap">
+  <div class="eyebrow">Sequenced delivery</div>
+  <h2 style="font-size:30px;">Build P0–P3. Spec P4–P5.</h2>
+  <p class="muted" style="margin-top:12px;max-width:680px;">Each phase ships value and de-risks the next. P0–P3 is a credible standalone platform; the deferred phases are designed in now so they're purely additive.</p>
+  <div class="grid g3" style="margin-top:30px;">
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P0</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">De-domainify engine</h3><p class="note" style="margin-top:6px;">Delete role enum, registry dispatch, SWE → seed data. No behavior change.</p></div>
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P1</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Agent library</h3><p class="note" style="margin-top:6px;">First-class Agents, reference + override cascade, versioning.</p></div>
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P2</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Agent node + MCP</h3><p class="note" style="margin-top:6px;">The no/low-code extension tiers.</p></div>
+    <div class="card"><div class="row between"><span class="mono" style="color:var(--violet-soft);font-weight:700;">P3</span><span class="pill"><span class="dot"></span>planned</span></div><h3 style="margin-top:12px;font-size:16px;">Connections + triggers</h3><p class="note" style="margin-top:6px;">Generic input/trigger/memory. SWE specializes.</p></div>
+    <div class="card" style="border-style:dashed;opacity:0.78;"><div class="row between"><span class="mono dim" style="font-weight:700;">P4</span><span class="pill pink"><span class="dot"></span>deferred</span></div><h3 style="margin-top:12px;font-size:16px;">Distribution layer</h3><p class="note" style="margin-top:6px;">Export/import bundles, marketplace, coded capability (SDK).</p></div>
+    <div class="card" style="border-style:dashed;opacity:0.78;"><div class="row between"><span class="mono dim" style="font-weight:700;">P5</span><span class="pill pink"><span class="dot"></span>deferred</span></div><h3 style="margin-top:12px;font-size:16px;">UX layering + multi-org</h3><p class="note" style="margin-top:6px;">Palette polish, SDK, true multi-tenancy.</p></div>
+  </div>
+</section>
+
+<footer class="foot wrap">
+  <span>Conductor — platform pivot mocks</span>
+  <span class="pill"><span class="dot"></span>vision pitch fidelity</span>
+  <span class="pill violet"><span class="dot"></span>working name · placeholder</span>
+  <span style="margin-left:auto;" class="dim">Mapped to <span class="code">docs/platform-pivot.md</span></span>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

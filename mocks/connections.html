@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Connections, Inputs &amp; Triggers</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .field { margin-bottom: 16px; }
+  .field label { display:block; font-size:11.5px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--tx-3); margin-bottom:7px; }
+  .field .hint { font-size:11.5px; color:var(--tx-3); margin-top:6px; }
+  .input, .select, .ta { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:9px; color:var(--tx); font-family:var(--sans); font-size:13.5px; padding:10px 12px; }
+  .ta { font-family:var(--mono); font-size:12px; resize:vertical; }
+  .conn-ic { width:38px; height:38px; border-radius:10px; display:grid; place-items:center; font-size:17px; flex:0 0 auto; }
+  .seg { display:inline-flex; background:var(--bg); border:1px solid var(--border); border-radius:9px; padding:3px; gap:3px; }
+  .seg button { border:none; background:transparent; color:var(--tx-3); font-family:var(--sans); font-size:12.5px; font-weight:600; padding:6px 12px; border-radius:7px; cursor:pointer; }
+  .seg button.on { background:var(--panel-3); color:var(--tx); }
+  .from-schema { border:1px dashed rgba(124,108,255,0.4); border-radius:10px; padding:14px; background:rgba(124,108,255,0.05); }
+  .trig { display:flex; align-items:center; gap:14px; padding:16px; border:1px solid var(--border-soft); border-radius:12px; }
+</style>
+</head>
+<body data-page="connections">
+<div class="app">
+  <main class="main">
+    <div class="topbar"><h2>Connections</h2><div class="row" style="margin-left:auto;gap:8px;"><button class="btn sm primary">+ New connection</button></div></div>
+    <div class="content">
+  <div class="page-head" style="padding-top:6px;">
+    <div class="crumb">Workspace / <b>Connections</b></div>
+    <h1>Connections, inputs &amp; triggers</h1>
+    <p>Connections are typed bindings to external systems — the generic replacement for Repositories. Runs start from a schema-driven input, fired manually, by webhook, or on a schedule.</p>
+  </div>
+
+  <div data-tabs>
+    <div class="tabs">
+      <div class="tab active" data-tab="conns">Connections</div>
+      <div class="tab" data-tab="run">Start a run</div>
+      <div class="tab" data-tab="triggers">Triggers</div>
+    </div>
+
+    <!-- CONNECTIONS -->
+    <div class="tabpane active" data-pane="conns">
+      <div class="grid g2" style="align-items:start;gap:24px;">
+        <div class="card" style="padding:0;overflow:hidden;">
+          <div class="between" style="padding:16px 18px;border-bottom:1px solid var(--border);"><strong>All connections</strong><span class="pill"><span class="dot"></span>6</span></div>
+          <table>
+            <tbody>
+              <tr><td style="width:46px;"><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/payments-api</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(77,141,255,0.16);">🗂</span></td><td><strong>acme/web</strong><div class="note mono">git_repo</div></td><td><span class="pill blue"><span class="dot"></span>git_repo</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(52,216,192,0.16);">◇</span></td><td><strong>jira-acme</strong><div class="note mono">https://acme.atlassian.net/mcp</div></td><td><span class="pill teal"><span class="dot"></span>mcp</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(52,216,192,0.16);">◇</span></td><td><strong>github-tools</strong><div class="note mono">mcp · 14 tools</div></td><td><span class="pill teal"><span class="dot"></span>mcp</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(70,210,138,0.16);">🛢</span></td><td><strong>analytics-pg</strong><div class="note mono">postgres · read-only</div></td><td><span class="pill green"><span class="dot"></span>database</span></td><td class="note">core</td></tr>
+              <tr><td><span class="conn-ic" style="background:rgba(246,181,69,0.16);">🌐</span></td><td><strong>zendesk</strong><div class="note mono">http_api</div></td><td><span class="pill amber"><span class="dot"></span>http_api</span></td><td class="note">core</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- new connection -->
+        <div class="card">
+          <strong>New connection</strong>
+          <p class="note" style="margin-top:6px;margin-bottom:16px;">The config form is defined by the connection type (a core integration).</p>
+          <div class="field"><label>Type</label>
+            <div class="seg" style="flex-wrap:wrap;">
+              <button class="on">git_repo</button><button>mcp</button><button>database</button><button>http_api</button>
+            </div>
+            <div class="hint">git_repo · <span class="code">core integration</span></div>
+          </div>
+          <div class="field"><label>Name</label><input class="input" value="acme/payments-api" /></div>
+          <div class="field"><label>Clone URL</label><input class="input mono" value="git@github.com:acme/payments-api.git" /></div>
+          <div class="field"><label>Default branch</label><input class="input mono" value="main" /></div>
+          <div class="field"><label>Gate commands <span class="dim">(git_repo)</span></label><textarea class="ta" rows="3">test: yarn test
+lint: yarn lint
+build: yarn build</textarea></div>
+          <div class="field"><label>Credential</label><select class="select"><option>github-app · acme (encrypted)</option><option>+ add credential…</option></select></div>
+          <div class="field"><label>MCP server <span class="dim">(optional · links an mcp connection)</span></label><select class="select"><option>github-tools</option><option>none</option></select></div>
+          <button class="btn primary" style="width:100%;margin-top:4px;">Create connection</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- START A RUN -->
+    <div class="tabpane" data-pane="run">
+      <div class="grid g2" style="gap:24px;align-items:start;">
+        <div class="card">
+          <div class="field"><label>Template</label>
+            <select class="select"><option>SWE · Standard run (swe-starter · v7)</option><option>SWE · Epic decomposition</option><option>Support · Ticket triage</option></select>
+            <div class="hint">The form below is rendered from this template's <span class="code">inputSchema</span>.</div>
+          </div>
+
+          <div class="from-schema">
+            <div class="row" style="gap:8px;margin-bottom:14px;"><span class="pill violet"><span class="dot"></span>inputSchema-driven</span><span class="note">fields come from the template, not hardcoded</span></div>
+
+            <div class="field"><label>ticketId <span class="dim mono">string · required</span></label><input class="input" value="JIRA-1842" /></div>
+            <div class="field"><label>connection <span class="dim mono">ref&lt;git_repo&gt; · required</span></label><select class="select"><option>acme/payments-api</option><option>acme/web</option></select></div>
+            <div class="field"><label>description <span class="dim mono">string</span></label><textarea class="ta" rows="3" style="font-family:var(--sans);">Add idempotency keys to the refunds endpoint.</textarea></div>
+            <div class="field"><label>budget <span class="dim mono">enum</span></label>
+              <div class="seg"><button>standard</button><button class="on">large</button><button>epic</button></div>
+            </div>
+          </div>
+
+          <button class="btn primary" style="width:100%;margin-top:18px;">Start run →</button>
+        </div>
+
+        <div class="stack" style="gap:18px;">
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:10px;">Why this matters</div>
+            <p class="muted">A non-SWE template declares different fields — a data-ops run might ask for a <span class="code">dataset</span> + <span class="code">contract</span>; support asks for a <span class="code">ticketUrl</span>. One submit surface, infinite shapes.</p>
+          </div>
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:10px;">Resolved at submit</div>
+            <div class="stack" style="gap:9px;">
+              <div class="between"><span class="muted">Validated against</span><span class="code">template.inputSchema</span></div>
+              <div class="between"><span class="muted">A/B arm</span><span class="pill"><span class="dot"></span>v7 (deterministic)</span></div>
+              <div class="between"><span class="muted">Budget cap</span><span class="pill amber"><span class="dot"></span>$8.00 / run</span></div>
+              <div class="between"><span class="muted">Workflow id</span><span class="code">eng-acme-…-1842</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRIGGERS -->
+    <div class="tabpane" data-pane="triggers">
+      <div class="between" style="margin-bottom:18px;">
+        <p class="muted" style="max-width:660px;">Triggers map an inbound payload to a template's input schema and start a run. Core ships manual/API + schedule + webhook receivers; mappings are config.</p>
+        <button class="btn primary">+ Add trigger</button>
+      </div>
+      <div class="stack" style="gap:12px;">
+        <div class="trig">
+          <span class="conn-ic" style="background:rgba(79,208,227,0.16);color:var(--cyan);">▶</span>
+          <div style="flex:1;"><strong>Manual / API</strong><div class="note">POST /api/v1/runs · CLI · dashboard · Slack</div></div>
+          <span class="pill"><span class="dot"></span>core</span>
+          <span class="pill green"><span class="dot"></span>on</span>
+        </div>
+        <div class="trig">
+          <span class="conn-ic" style="background:rgba(255,111,174,0.16);color:var(--pink);">⚡</span>
+          <div style="flex:1;"><strong>GitHub webhook</strong><div class="note">issue.labeled → <span class="mono">SWE standard run</span> · maps payload → inputSchema</div></div>
+          <span class="pill blue"><span class="dot"></span>swe</span>
+          <span class="pill green"><span class="dot"></span>on</span>
+        </div>
+        <div class="trig">
+          <span class="conn-ic" style="background:rgba(52,216,192,0.16);color:var(--teal);">◇</span>
+          <div style="flex:1;"><strong>Jira ticket fetch</strong><div class="note">on submit → read-only fetch enriches <span class="mono">context.ticket</span></div></div>
+          <span class="pill blue"><span class="dot"></span>swe</span>
+          <span class="pill green"><span class="dot"></span>on</span>
+        </div>
+        <div class="trig">
+          <span class="conn-ic" style="background:rgba(246,181,69,0.16);color:var(--amber);">⏱</span>
+          <div style="flex:1;"><strong>Schedule</strong><div class="note">cron <span class="mono">0 9 * * 1</span> → lesson consolidation</div></div>
+          <span class="pill"><span class="dot"></span>core</span>
+          <span class="pill green"><span class="dot"></span>on</span>
+        </div>
+        <div class="trig" style="border-style:dashed;opacity:0.8;">
+          <span class="conn-ic" style="background:rgba(138,147,171,0.16);color:#aab2c6;">＋</span>
+          <div style="flex:1;"><strong>Custom event adapter</strong><div class="note">map any connector's events → a template input (config, no code)</div></div>
+          <span class="pill teal"><span class="dot"></span>P3 · config</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Conductor — platform pivot mocks</span>
+    <span class="pill"><span class="dot"></span>vision pitch fidelity</span>
+    <span style="margin-left:auto;" class="dim">Mapped to <span class="code">docs/platform-pivot.md</span> · P3</span>
+  </footer>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

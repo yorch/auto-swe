@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conductor — Run JIRA-1842</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .rboard { position: relative; width: 920px; height: 360px; margin: 8px auto; }
+  .rnode { position: absolute; width: 150px; border-radius: 11px; background: linear-gradient(180deg,var(--panel-2),var(--panel)); border: 1px solid var(--border); padding: 10px 11px; z-index: 2; }
+  .rnode .h { display:flex; align-items:center; gap:7px; }
+  .rnode .k { font-family: var(--mono); font-size: 9px; text-transform: uppercase; color: var(--tx-3); }
+  .rnode .t { font-size: 12.5px; font-weight: 600; margin-top: 6px; }
+  .rnode .m { font-size: 10.5px; color: var(--tx-3); margin-top: 2px; }
+  .rnode.done { border-color: rgba(70,210,138,0.5); }
+  .rnode.run { border-color: rgba(77,141,255,0.6); box-shadow: 0 0 0 1px rgba(77,141,255,0.3), 0 10px 30px -12px rgba(77,141,255,0.5); }
+  .rnode.wait { border-color: rgba(246,181,69,0.5); }
+  .rnode .dotmark { width: 8px; height: 8px; border-radius: 50%; margin-left:auto; }
+  .board-wrap2 { background: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0) 0 0 / 24px 24px, var(--bg); border:1px solid var(--border-soft); border-radius:14px; overflow-x:auto; }
+</style>
+</head>
+<body data-page="runs">
+<div class="app">
+  <main class="main">
+    <div class="topbar">
+      <div class="crumb">Runs / <b>JIRA-1842</b></div>
+      <span class="st running" style="margin-left:6px;"><span class="d"></span>running</span>
+      <div class="row" style="margin-left:auto;gap:8px;">
+        <button class="btn sm ghost">Open PR ↗</button>
+        <button class="btn sm ghost" style="color:#ff8a8a;border-color:rgba(255,80,80,0.3);">Cancel run</button>
+      </div>
+    </div>
+    <div class="content">
+
+      <!-- meta strip -->
+      <div class="grid g4" style="margin-bottom:18px;">
+        <div class="card kpi"><div class="lab">Template</div><div style="font-weight:650;margin-top:6px;">Standard run</div><div class="note">swe-starter · v7 · arm B</div></div>
+        <div class="card kpi"><div class="lab">Connection</div><div style="font-weight:650;margin-top:6px;">acme/payments-api</div><div class="note mono">branch: auto/JIRA-1842</div></div>
+        <div class="card kpi"><div class="lab">Cost so far</div><div class="val" style="font-size:24px;">$0.62</div><div class="note">of $8.00 cap</div></div>
+        <div class="card kpi"><div class="lab">Elapsed</div><div class="val" style="font-size:24px;">9m 12s</div><div class="note">started 14:01</div></div>
+      </div>
+
+      <!-- DAG -->
+      <div class="board-wrap2" style="padding:18px;margin-bottom:18px;">
+        <div class="between" style="margin-bottom:6px;"><strong>Execution graph</strong><span class="note">live · auto-refresh</span></div>
+        <div class="rboard">
+          <svg width="920" height="360" style="position:absolute;inset:0;z-index:1;pointer-events:none;overflow:visible;">
+            <g fill="none" stroke="#2f6b46" stroke-width="2.2">
+              <path d="M170,170 C195,170 180,90 205,90"/>
+              <path d="M170,170 C195,170 180,250 205,250"/>
+              <path d="M355,90 C375,90 375,170 392,170"/>
+              <path d="M355,250 C375,250 375,170 392,170"/>
+              <path d="M542,170 C560,170 560,90 578,90"/>
+            </g>
+            <g fill="none" stroke="#2f4f8a" stroke-width="2.4" stroke-dasharray="6 4">
+              <path d="M542,170 L578,170"/>
+            </g>
+            <g fill="none" stroke="#34405e" stroke-width="2" stroke-dasharray="4 5">
+              <path d="M542,170 C560,170 560,250 578,250"/>
+              <path d="M728,90 C746,90 746,170 764,170"/>
+              <path d="M728,170 C746,170 746,170 764,170"/>
+            </g>
+          </svg>
+
+          <div class="rnode done" style="left:24px;top:142px;"><div class="h"><span class="k">input</span><span class="dotmark" style="background:var(--green);"></span></div><div class="t">Run input</div><div class="m">0.0s</div></div>
+          <div class="rnode done" style="left:206px;top:62px;"><div class="h"><span class="k">mcp</span><span class="dotmark" style="background:var(--green);"></span></div><div class="t">Fetch ticket</div><div class="m">1.2s</div></div>
+          <div class="rnode done" style="left:206px;top:222px;"><div class="h"><span class="k">agent</span><span class="dotmark" style="background:var(--green);"></span></div><div class="t">Validate context</div><div class="m">18s · $0.04</div></div>
+          <div class="rnode done" style="left:392px;top:142px;"><div class="h"><span class="k">agent</span><span class="dotmark" style="background:var(--green);"></span></div><div class="t">Implement (TDD)</div><div class="m">6m · $0.39</div></div>
+          <div class="rnode done" style="left:578px;top:62px;"><div class="h"><span class="k">gate</span><span class="dotmark" style="background:var(--green);"></span></div><div class="t">Tests gate</div><div class="m">passed · 41s</div></div>
+          <div class="rnode run" style="left:578px;top:142px;"><div class="h"><span class="k">fan-out</span><span class="dotmark" style="background:var(--blue);"></span></div><div class="t">Review network</div><div class="m">running · 2/3</div></div>
+          <div class="rnode" style="left:578px;top:222px;opacity:0.6;"><div class="h"><span class="k">shell</span><span class="dotmark" style="background:var(--tx-3);"></span></div><div class="t">Build</div><div class="m">queued</div></div>
+          <div class="rnode wait" style="left:764px;top:142px;"><div class="h"><span class="k">human</span><span class="dotmark" style="background:var(--amber);"></span></div><div class="t">Approve PR</div><div class="m">pending</div></div>
+        </div>
+      </div>
+
+      <!-- tabs -->
+      <div data-tabs>
+        <div class="tabs">
+          <div class="tab active" data-tab="traces">Agent traces</div>
+          <div class="tab" data-tab="timeline">Timeline</div>
+          <div class="tab" data-tab="security">Security</div>
+          <div class="tab" data-tab="diff">Diff</div>
+          <div class="tab" data-tab="cost">Cost</div>
+        </div>
+
+        <!-- TRACES -->
+        <div class="tabpane active" data-pane="traces">
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:18px;">
+            <div>
+              <div class="between" style="margin-bottom:10px;"><strong>Implement (TDD)</strong><span class="pill"><span class="dot"></span>implementer · opus-4-7</span></div>
+              <div class="trace"><div class="th"><span class="pill teal"><span class="dot"></span>tool</span> <span>writeFile</span><span class="tt" style="margin-left:auto;">240ms</span></div><pre>src/refunds/idempotency.ts (+48 lines)</pre></div>
+              <div class="trace"><div class="th"><span class="pill teal"><span class="dot"></span>tool</span> <span>bash</span><span class="tt" style="margin-left:auto;">1.1s</span></div><pre>$ yarn test refunds  →  6 passed</pre></div>
+              <div class="trace"><div class="th"><span class="pill violet"><span class="dot"></span>llm</span> <span>response</span><span class="tt" style="margin-left:auto;">3.4s · 2.1k tok</span></div><pre>Added idempotency-key check before insert; wrote 3 tests covering replay…</pre></div>
+              <div class="trace"><div class="th"><span class="pill teal"><span class="dot"></span>tool</span> <span>readFile</span><span class="tt" style="margin-left:auto;">90ms</span></div><pre>src/refunds/handler.ts</pre></div>
+            </div>
+            <div>
+              <div class="between" style="margin-bottom:10px;"><strong>Review network</strong><span class="st running"><span class="d"></span>running</span></div>
+              <div class="trace"><div class="th"><span class="pill green"><span class="dot"></span>security</span> <span>reviewer · done</span><span class="tt" style="margin-left:auto;">no findings</span></div><pre>Checked input validation, secrets, injection surface — clean.</pre></div>
+              <div class="trace"><div class="th"><span class="pill green"><span class="dot"></span>domain-logic</span> <span>reviewer · done</span><span class="tt" style="margin-left:auto;">1 nit</span></div><pre>Suggest returning cached response on replay rather than 409.</pre></div>
+              <div class="trace" style="border-color:rgba(77,141,255,0.4);"><div class="th"><span class="pill blue"><span class="dot"></span>performance</span> <span>reviewer · running…</span></div><pre>Analyzing index usage on idempotency_keys…</pre></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TIMELINE -->
+        <div class="tabpane" data-pane="timeline">
+          <div class="tl" style="margin-top:8px;">
+            <div class="tl-item ok"><strong>Run input received</strong> <span class="note">14:01:02 · trigger: GitHub webhook</span></div>
+            <div class="tl-item ok"><strong>Fetch ticket (mcp)</strong> <span class="note">14:01:03 · jira.getIssue → context.ticket</span></div>
+            <div class="tl-item ok"><strong>Validate context</strong> <span class="note">14:01:21 · ready=true</span></div>
+            <div class="tl-item ok"><strong>Implement (TDD)</strong> <span class="note">14:07:* · 7 files changed · 6 tests added</span></div>
+            <div class="tl-item ok"><strong>Tests gate</strong> <span class="note">14:08:* · passed (41s)</span></div>
+            <div class="tl-item run"><strong>Review network</strong> <span class="note">14:09:* · 2 of 3 reviewers done</span></div>
+            <div class="tl-item"><strong>Approve PR (human)</strong> <span class="dim">pending</span></div>
+          </div>
+        </div>
+
+        <!-- SECURITY -->
+        <div class="tabpane" data-pane="security">
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table>
+              <thead><tr><th>Scanner</th><th>Stage</th><th>Finding</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Shell command</strong></td><td>pre-exec</td><td class="mono" style="color:#ff9a9a;">curl … | sh</td><td><span class="pill pink"><span class="dot"></span>soft-blocked</span></td></tr>
+                <tr><td><strong>Sensitive file</strong></td><td>pre-write</td><td class="mono">.env</td><td><span class="pill pink"><span class="dot"></span>hard-blocked</span></td></tr>
+                <tr><td><strong>Code security</strong></td><td>post-commit</td><td>no findings</td><td><span class="pill green"><span class="dot"></span>clean</span></td></tr>
+                <tr><td><strong>LLM output</strong></td><td>post-generate</td><td>no injection/exfil patterns</td><td><span class="pill green"><span class="dot"></span>clean</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note" style="margin-top:12px;">2 blocks were returned to the agent as errors; it self-corrected and proceeded. Full feed at <a href="security.html" style="color:var(--violet-soft);">Security →</a></p>
+        </div>
+
+        <!-- DIFF -->
+        <div class="tabpane" data-pane="diff">
+          <div class="between" style="margin:4px 0 12px;"><strong>src/refunds/idempotency.ts</strong><span class="note">+48 −2</span></div>
+          <div class="diff">
+            <div class="ln ctx">  export async function createRefund(req: RefundReq) {</div>
+            <div class="ln add">+   const key = req.headers['idempotency-key'];</div>
+            <div class="ln add">+   if (key) {</div>
+            <div class="ln add">+     const existing = await store.get(key);</div>
+            <div class="ln add">+     if (existing) return existing; // replay-safe</div>
+            <div class="ln add">+   }</div>
+            <div class="ln ctx">    const refund = await gateway.refund(req);</div>
+            <div class="ln del">-   return refund;</div>
+            <div class="ln add">+   if (key) await store.put(key, refund);</div>
+            <div class="ln add">+   return refund;</div>
+            <div class="ln ctx">  }</div>
+          </div>
+        </div>
+
+        <!-- COST -->
+        <div class="tabpane" data-pane="cost">
+          <div class="grid g2" style="gap:18px;align-items:start;">
+            <div class="card" style="padding:0;overflow:hidden;">
+              <table>
+                <thead><tr><th>Step</th><th>Model</th><th>Tokens</th><th>Cost</th></tr></thead>
+                <tbody>
+                  <tr><td>Validate context</td><td class="mono">sonnet-4-6</td><td>3.1k</td><td class="mono">$0.04</td></tr>
+                  <tr><td>Implement (TDD)</td><td class="mono">opus-4-7</td><td>22k</td><td class="mono">$0.39</td></tr>
+                  <tr><td>Review · security</td><td class="mono">opus-4-7</td><td>6k</td><td class="mono">$0.10</td></tr>
+                  <tr><td>Review · domain</td><td class="mono">opus-4-7</td><td>5k</td><td class="mono">$0.09</td></tr>
+                  <tr><td colspan="3"><strong>Total</strong></td><td class="mono"><strong>$0.62</strong></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card">
+              <div class="between" style="margin-bottom:8px;"><span class="note">Run cap</span><span class="note">$0.62 / $8.00</span></div>
+              <div class="bar"><span style="width:8%"></span></div>
+              <p class="note" style="margin-top:14px;">Pricing resolves from the model spec (<span class="code">provider/model</span>), decoupled from agent identity — so any Agent prices correctly with no code change.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
