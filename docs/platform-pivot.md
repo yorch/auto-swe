@@ -194,10 +194,11 @@ pack" P0 — without inventing a pack abstraction.
   `runAgent` or keep their multi-turn logic — registered, not switched.
 - **Cost decoupled from identity** (`costTracking.ts:35–65,148–252`): pricing already spec-keyed;
   remove any identity→price assumption, keep the key as a telemetry dimension.
-- **Content → seed data.** Move SWE Skills (`packages/shared/src/skills/`), SWE templates
-  (`seed.ts`), and SWE-specific scanner patterns into **seeded DB rows** tagged `origin='swe-
-  starter'`. **Cross-cutting** scanner patterns (injection/exfil/shell/sensitive-file) become
-  **core defaults**; only code-security patterns stay SWE-tagged.
+- **Content → seed data.** Tag every SWE-originated seed row with `origin='swe-starter'` across
+  the **canonical six tables**: `Skill`, `ScannerPattern`, `WorkflowTemplate`, `ModelRoleConfig`,
+  `AgentSkillAssignment`, `AgentToolConfig`. **Cross-cutting** scanner patterns
+  (injection/exfil/shell/sensitive-file) become **core defaults** (`origin=null`); only
+  code-security patterns stay SWE-tagged. (This list is authoritative; the P0 epic WS6 mirrors it.)
 - **Computed `assertConfigReady`** (`config/assertReady.ts:18–103`): required set = Agents
   referenced by active template specs + seeded defaults.
 
@@ -221,7 +222,7 @@ pack" P0 — without inventing a pack abstraction.
 ### What ships
 - **`Agent` entity** consolidating `ModelRoleConfig` + `AgentSkillAssignment` + `AgentToolConfig`
   into one versioned row + layered override rows for the cascade.
-- **Library UI + API** (the page mocked as "Roles & models" becomes the **Agents** library).
+- **Library UI + API** (the current dashboard's "Roles & models" page becomes the **Agents** library — mocked in `mocks/agents.html`).
 - **Reference + reuse:** `agentRef: "<key>"` from any number of templates; or inline for one-offs.
 - **Override cascade** `GLOBAL → TEAM → TEMPLATE` per Agent.
 - **Versioning** (pin `@v` or float), **prompt-edit security scan** (injection/exfil; resets

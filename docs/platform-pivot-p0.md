@@ -62,13 +62,21 @@ Ordered for low-risk landing. Each is independently reviewable.
 - `packages/worker/src/lib/config/resolver.ts:26–146` — `resolveModelConfig` queries by the role string directly (drop `ROLE_TO_PRISMA[role]`).
 - `packages/worker/src/lib/config/agentSkills.ts` — `loadAgentSkills`/`loadAgentToolConfig` take `string`.
 - `packages/worker/src/lib/models.ts`, `costTracking.ts` — `AgentRole` params become `string`.
-- `packages/shared/src/lib/syncBuiltins.ts:52–132` + `packages/shared/src/skills/*` — seed writes **canonical camelCase keys** (`implementer`, `reviewer`, `securityReviewer`, …) instead of `UPPER_SNAKE`. Pick camelCase as the single canonical casing (matches worker call sites, which already pass `'implementer'` etc.).
+- `packages/shared/src/lib/syncBuiltins.ts:52–132` + `packages/shared/src/skills/*` — seed writes the canonical key. **4 skill files hardcode `UPPER_SNAKE` in `assignments`** (`securityReviewDepth.ts`, `domainLogicIntegrity.ts`, `performanceImpactAssessment.ts`, `subtaskDecomposition.ts`) — update them.
 
-**Approach:** since the system is undeployed (no back-compat), consolidate the Prisma migration — change the column type to text and drop the enum. Call sites already pass camelCase literals, so they're unaffected once the mapping layer is removed.
+> ⚠️ **Correction from review.** WS1 is bigger than "the worker already uses camelCase." There is a **casing split**: the worker is camelCase, but the gateway, web, skill-defs, and tests all use `UPPER_SNAKE`. The schema change alone will break routing + UI unless these are updated in the **same PR**:
+> - **Gateway (Zod route validation):** `packages/gateway/src/lib/skillAssignmentService.ts` (`SKILL_AGENT_ROLES`, 10 values, `SkillAgentRole`, `getAgentRolesOverview`), `packages/gateway/src/lib/modelConfigService.ts` (`MODEL_AGENT_ROLES`, `DEFAULT_ROLE_SPECS`, `ModelAgentRole`), `packages/gateway/src/routes/skills.ts` (`z.enum(SKILL_AGENT_ROLES)`, `AgentRoleParams`, `:role` routes).
+> - **Web:** `packages/web/src/lib/agentRoles.ts` (`AGENT_ROLES`, `AgentRoleKey`, `ROLE_LABELS`, `ROLES_WITH_TOOLS`), `packages/web/src/hooks/useModelConfig.ts` (`ModelRole`, `MODEL_ROLES`), `packages/web/src/lib/rolePromptDefaults.ts`, components `components/agents/AgentConfigSection.tsx`, `components/templates/TemplateAgentSkillsSection.tsx`, `components/teams/TeamAgentSkillsSection.tsx`, pages `app/admin/agents/page.tsx` + `app/admin/agents/[role]/page.tsx`.
+> - **Shared export:** `packages/shared/src/index.ts:4` re-exports the generated enum — remove.
+> - **Tests:** `packages/worker/src/lib/config/assertReady.test.ts` (`ALL_PRISMA_ROLES`), gateway route tests, web fixtures.
 
-**Acceptance:** `grep -r AgentRole packages/` returns nothing; `resolver.test.ts` green; config rows are keyed by camelCase string; seed produces the same logical rows.
+**Prerequisite (blocking):** decide the **one canonical casing** before any code moves. Recommend **camelCase** (`implementer`, `securityReviewer`, …) everywhere — DB column values, gateway enums, web labels' keys, skill-def assignments, seed. This is a one-time decision the whole PR depends on.
 
-**Gotcha:** pick **one** canonical casing and make seed + resolver + assignments agree (today they round-trip through `ROLE_TO_PRISMA`; after removal the casing must be consistent). The partial unique indexes on `AgentSkillAssignment`/`AgentToolConfig` are unaffected (string key occupies the same column).
+**Approach:** since the system is undeployed (no back-compat), consolidate the Prisma migration — change the column type to text and drop the enum. Then sweep all `UPPER_SNAKE` surfaces above to the canonical casing in the same PR. Gateway enums become a small shared `const KNOWN_AGENT_KEYS` (still validates inbound `:role`, just not a Prisma enum); web reads labels keyed by the same const.
+
+**Acceptance:** `grep -ri AgentRole packages/` returns nothing (incl. gateway/web); `yarn typecheck` + `yarn build` clean across **all** packages; `resolver.test.ts`, `assertReady.test.ts`, gateway route tests green; config rows keyed by the canonical string; seed produces the same logical rows; the web admin/agents pages and `:role` routes still resolve.
+
+**Gotcha:** the partial unique indexes on `AgentSkillAssignment`/`AgentToolConfig` are unaffected (string key occupies the same column). Regenerate the Prisma client after the enum drop. Watch the **config cache key** (`config/cache.ts`) — it embeds the role string; verify keys still resolve post-casing-change.
 
 ---
 
@@ -112,7 +120,9 @@ Ordered for low-risk landing. Each is independently reviewable.
 
 **Approach:** required set = `union(registeredExecutors.flatMap(e => e.requiredAgents))`. Validate each has a GLOBAL `ModelRoleConfig` + resolvable credential (same per-row logic as today). Embedding-config check unchanged. Agent keys no registered executor needs are ignored.
 
-**Acceptance:** `assertReady.test.ts` updated — passes with the computed union; fails fast on a missing GLOBAL row for a *required* key; ignores unused keys.
+> **Forward note (degrade-don't-crash).** In P0 the required set is computed from *static* registered executors, so a missing binding is a legitimate hard boot failure (same as today). But once P1/P2 let **templates** reference arbitrary `agentRef`s, computing the required set from mutable template content means a bad template edit could prevent the worker from booting. Design the validator now so that path can later **fail the offending template, not the whole worker** — keep the "referenced by a registered executor" set as the hard-fail set, and treat template-referenced agents as a separate, non-fatal validation surface.
+
+**Acceptance:** `assertReady.test.ts` updated — passes with the computed union; fails fast on a missing GLOBAL row for a *required* (executor-declared) key; ignores unused keys.
 
 ---
 
