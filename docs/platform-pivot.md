@@ -176,6 +176,8 @@ third-party coded capability) is **P4**.
 
 ## P0 — De-domainify the engine (no behavior change)
 
+> Detailed build plan: [`platform-pivot-p0.md`](./platform-pivot-p0.md) (workstreams, PR slicing, parity tests).
+
 **Goal:** remove every hardcoded SWE assumption from core so the engine is domain-agnostic, while
 keeping every existing workflow running identically. This replaces the original "extract SWE into a
 pack" P0 — without inventing a pack abstraction.
