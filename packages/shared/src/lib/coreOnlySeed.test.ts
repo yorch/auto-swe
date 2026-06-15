@@ -24,10 +24,14 @@ interface Captured {
   assignmentOrigins: Array<string | null>;
   toolConfigCreates: number;
   toolConfigOrigins: Array<string | null>;
+  agentCreates: number;
+  agentOrigins: Array<string | null>;
 }
 
 function makeMockPrisma() {
   const cap: Captured = {
+    agentCreates: 0,
+    agentOrigins: [],
     assignmentOrigins: [],
     scannerCreates: [],
     scannerUpdates: [],
@@ -39,6 +43,14 @@ function makeMockPrisma() {
     toolConfigOrigins: [],
   };
   const prisma = {
+    agent: {
+      create: vi.fn(async ({ data }: { data: { origin: string | null } }) => {
+        cap.agentCreates += 1;
+        cap.agentOrigins.push(data.origin);
+        return { id: 'agent-id' };
+      }),
+      findFirst: vi.fn(async () => null),
+    },
     agentSkillAssignment: {
       create: vi.fn(async ({ data }: { data: { origin: string | null } }) => {
         cap.assignmentOrigins.push(data.origin);
@@ -121,6 +133,7 @@ describe('seedCoreDefaults — core-only deployment', () => {
     expect(cap.templateCreates).toBe(0);
     expect(cap.toolConfigCreates).toBe(0);
     expect(cap.assignmentOrigins).toHaveLength(0);
+    expect(cap.agentCreates).toBe(0);
   });
 });
 
@@ -138,6 +151,10 @@ describe('seedSweStarter — provenance tagging', () => {
     expect(cap.templateOrigins.every((o) => o === 'swe-starter')).toBe(true);
     expect(cap.toolConfigOrigins.every((o) => o === 'swe-starter')).toBe(true);
     expect(cap.assignmentOrigins.every((o) => o === 'swe-starter')).toBe(true);
+
+    // The SWE agent library rows are seeded and tagged.
+    expect(cap.agentCreates).toBeGreaterThan(0);
+    expect(cap.agentOrigins.every((o) => o === 'swe-starter')).toBe(true);
 
     // Only the code-security scanner patterns belong to the SWE starter.
     expect(cap.scannerCreates).toHaveLength(CODE_SECURITY_COUNT);

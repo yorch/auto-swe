@@ -1,13 +1,8 @@
 import type { Agent } from '@mastra/core/agent';
 import type { z } from 'zod';
 import { resolveModel } from '../models.js';
-import {
-  loadAgentSkills,
-  loadAgentToolConfig,
-  type ResolvedSkill,
-  skillsToPromptSuffix,
-} from './agentSkills.js';
-import { resolveModelConfig } from './resolver.js';
+import { resolveAgent } from './agentResolver.js';
+import { type ResolvedSkill, skillsToPromptSuffix } from './agentSkills.js';
 import type { AgentRole, ResolveCtx } from './types.js';
 
 /**
@@ -137,24 +132,23 @@ export async function resolveAgentSpec(
   }
 
   const { agentKey, basePrompt, promptOverride, outputSchema, availableTools, memoryScope } = input;
-  const [resolved, skills, toolKeys] = await Promise.all([
-    resolveModelConfig(agentKey, ctx),
-    loadAgentSkills(agentKey, ctx),
-    loadAgentToolConfig(agentKey, ctx),
-  ]);
+  // P1: one resolution path. The Agent overlay falls through to the legacy
+  // ModelRoleConfig / AgentSkillAssignment / AgentToolConfig cascade for any
+  // null override, so the composed spec is unchanged from P0 for seeded agents.
+  const agent = await resolveAgent(agentKey, ctx);
 
   // Mirror resolveSystemPrompt's priority: explicit override → DB prompt → base.
-  const base = promptOverride ?? resolved.systemPrompt ?? basePrompt;
-  const suffix = skillsToPromptSuffix(skills);
+  const base = promptOverride ?? agent.model.systemPrompt ?? basePrompt;
+  const suffix = skillsToPromptSuffix(agent.skills);
 
   return {
     agentKey,
     memoryScope,
-    model: resolveModel(resolved.spec, resolved.apiKey, resolved.apiBase),
-    modelSpec: resolved.spec,
+    model: resolveModel(agent.model.spec, agent.model.apiKey, agent.model.apiBase),
+    modelSpec: agent.model.spec,
     outputSchema,
-    skills,
+    skills: agent.skills,
     systemPrompt: suffix ? `${base}\n\n${suffix}` : base,
-    tools: selectTools(availableTools, toolKeys),
+    tools: selectTools(availableTools, agent.toolKeys),
   };
 }

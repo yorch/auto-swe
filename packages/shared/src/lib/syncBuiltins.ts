@@ -39,6 +39,84 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncImplementerToolConfig(prisma);
+  await syncAgents(prisma);
+}
+
+/**
+ * P1 Agent library: the SWE agent keys as first-class GLOBAL Agent rows.
+ *
+ * These are seeded as identity-only overlays — every override column is null
+ * (no modelSpec / systemPrompt / toolKeys / skillRefs) — so `resolveAgent`
+ * falls through to the legacy ModelRoleConfig / AgentSkillAssignment /
+ * AgentToolConfig cascade and resolution is byte-identical to P0. The rows give
+ * the Agent library something to list and the versioning/override paths
+ * (WS3/WS4) somewhere to attach.
+ */
+const SWE_AGENTS: ReadonlyArray<{ key: string; name: string; description: string }> = [
+  {
+    description: 'Writes code in the workspace via the TDD loop.',
+    key: 'implementer',
+    name: 'Implementer',
+  },
+  {
+    description: 'Reviews diffs through the multi-agent review network.',
+    key: 'reviewer',
+    name: 'Reviewer',
+  },
+  { description: 'Decomposes work into an implementation plan.', key: 'planner', name: 'Planner' },
+  {
+    description: 'Legacy security-review role (review network is canonical).',
+    key: 'securityReview',
+    name: 'Security Review',
+  },
+  {
+    description: 'Extracts success criteria from the work request.',
+    key: 'validateContext',
+    name: 'Context Validator',
+  },
+  {
+    description: 'Commits lessons to semantic memory.',
+    key: 'commitToMemory',
+    name: 'Memory Committer',
+  },
+  {
+    description: 'Security-focused sub-reviewer in the review network.',
+    key: 'securityReviewer',
+    name: 'Security Reviewer',
+  },
+  {
+    description: 'Domain-logic sub-reviewer in the review network.',
+    key: 'domainLogicReviewer',
+    name: 'Domain Logic Reviewer',
+  },
+  {
+    description: 'Performance-focused sub-reviewer in the review network.',
+    key: 'performanceReviewer',
+    name: 'Performance Reviewer',
+  },
+  { description: 'Breaks an epic into subtasks.', key: 'decomposer', name: 'Decomposer' },
+];
+
+async function syncAgents(prisma: PrismaClient): Promise<void> {
+  for (const def of SWE_AGENTS) {
+    const existing = await prisma.agent.findFirst({
+      where: { key: def.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+    });
+    if (!existing) {
+      await prisma.agent.create({
+        data: {
+          description: def.description,
+          isBuiltIn: true,
+          isVerified: true,
+          key: def.key,
+          name: def.name,
+          origin: SWE_ORIGIN,
+          scope: 'GLOBAL',
+          version: 1,
+        },
+      });
+    }
+  }
 }
 
 async function syncTemplates(prisma: PrismaClient): Promise<void> {

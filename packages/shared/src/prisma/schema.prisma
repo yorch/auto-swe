@@ -236,6 +236,7 @@ model Team {
   providerCredentials    ProviderCredential[]
   agentSkillAssignments  AgentSkillAssignment[]
   agentToolConfigs       AgentToolConfig[]
+  agents                 Agent[]
 
   @@map("teams")
 }
@@ -577,6 +578,7 @@ model WorkflowTemplate {
   modelRoleConfigs      ModelRoleConfig[]
   agentSkillAssignments AgentSkillAssignment[]
   agentToolConfigs      AgentToolConfig[]
+  agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([teamId, name])
@@ -660,6 +662,7 @@ model ProviderCredential {
 
   modelRoleConfigs ModelRoleConfig[]
   embeddingConfigs EmbeddingConfig[]
+  agents           Agent[]
 
   @@index([provider, scope, teamId])
   @@map("provider_credentials")
@@ -912,6 +915,7 @@ model Skill {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   assignments AgentSkillAssignment[]
+  agentSkillRefs AgentSkillRef[]
 
   @@map("skills")
 }
@@ -989,6 +993,68 @@ model AgentToolConfig {
   @@index([agentRole, scope, teamId])
   @@index([agentRole, scope, workflowTemplateId])
   @@map("agent_tool_configs")
+}
+
+/// First-class, versioned Agent entity (P1). Consolidates an agent's identity +
+/// governance and OPTIONALLY overrides model / prompt / skills / tools. When an
+/// override field is null (no skillRefs / null toolKeys / null modelSpec / null
+/// systemPrompt), `resolveAgent` falls through to the legacy per-scope config
+/// tables (ModelRoleConfig / AgentSkillAssignment / AgentToolConfig) for `key`,
+/// preserving P0 behavior exactly. The override cascade GLOBAL → TEAM →
+/// WORKFLOW_TEMPLATE mirrors the other config tables (partial unique indexes
+/// live in raw SQL — Prisma can't express `WHERE scope = …`). `version` is
+/// bumped on base edits; the active row is the highest `version` with
+/// `isActive` at a scope, and runs snapshot the resolved version (P1 WS3).
+model Agent {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key                String
+  scope              ConfigScope
+  teamId             String?             @map("team_id") @db.Uuid
+  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
+  version            Int                 @default(1)
+  name               String
+  description        String?
+  // Optional overrides — null means "inherit from the legacy config cascade".
+  modelSpec          String?             @map("model_spec")
+  systemPrompt       String?             @map("system_prompt")
+  credentialId       String?             @map("credential_id") @db.Uuid
+  // Nullable JSON array of tool keys. null = no tool override (use
+  // AgentToolConfig); [] = explicitly no tools; [...] = exactly these.
+  toolKeys           Json?               @map("tool_keys")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content.
+  origin             String?
+  isBuiltIn          Boolean             @default(false) @map("is_built_in")
+  isVerified         Boolean             @default(false) @map("is_verified")
+  isActive           Boolean             @default(true) @map("is_active")
+  createdById        String?             @map("created_by_id") @db.Uuid
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+  credential       ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  skillRefs        AgentSkillRef[]
+
+  @@index([scope, teamId])
+  @@index([scope, workflowTemplateId])
+  @@map("agents")
+}
+
+/// Skill attached to an Agent (P1) with ordering. When an Agent has any
+/// skillRefs, `resolveAgent` uses them in place of the legacy
+/// AgentSkillAssignment cascade for that key.
+model AgentSkillRef {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId   String   @map("agent_id") @db.Uuid
+  skillId   String   @map("skill_id") @db.Uuid
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, skillId])
+  @@map("agent_skill_refs")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template

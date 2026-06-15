@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-// Mock the DB so importing agentSkills (for the real skillsToPromptSuffix) and
-// resolver does not instantiate a live Prisma client.
+// Mock the DB so importing agentSkills (for the real skillsToPromptSuffix) does
+// not instantiate a live Prisma client.
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
 vi.mock('../models.js', () => ({
@@ -14,48 +14,53 @@ vi.mock('../models.js', () => ({
   })),
 }));
 
-vi.mock('./resolver.js', () => ({ resolveModelConfig: vi.fn() }));
+// resolveAgentSpec's role path now resolves through the P1 Agent overlay.
+vi.mock('./agentResolver.js', () => ({ resolveAgent: vi.fn() }));
 
-// Keep the real skillsToPromptSuffix (pure) but stub the DB-backed loaders.
-vi.mock('./agentSkills.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./agentSkills.js')>();
-  return { ...actual, loadAgentSkills: vi.fn(), loadAgentToolConfig: vi.fn() };
-});
-
-import { loadAgentSkills, loadAgentToolConfig, type ResolvedSkill } from './agentSkills.js';
+import { resolveAgent } from './agentResolver.js';
+import type { ResolvedSkill } from './agentSkills.js';
 import { type AgentTools, resolveAgentSpec } from './agentSpec.js';
-import { resolveModelConfig } from './resolver.js';
 
-const mockedResolveModelConfig = vi.mocked(resolveModelConfig);
-const mockedLoadSkills = vi.mocked(loadAgentSkills);
-const mockedLoadToolConfig = vi.mocked(loadAgentToolConfig);
+const mockedResolveAgent = vi.mocked(resolveAgent);
 
 function skill(name: string, promptText: string, sortOrder = 0): ResolvedSkill {
   return { description: `${name} desc`, id: name, isVerified: true, name, promptText, sortOrder };
 }
 
-const baseResolved = {
-  apiBase: undefined,
-  apiKey: 'secret-key',
-  scope: 'GLOBAL' as const,
-  spec: 'anthropic/claude-x',
-  systemPrompt: undefined as string | undefined,
-};
+type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
+
+function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
+  return {
+    isVerified: true,
+    key: 'validateContext',
+    model: {
+      apiBase: undefined,
+      apiKey: 'secret-key',
+      scope: 'GLOBAL',
+      spec: 'anthropic/claude-x',
+      systemPrompt: undefined,
+    },
+    origin: null,
+    skills: [],
+    toolKeys: null,
+    version: 1,
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedResolveModelConfig.mockResolvedValue({ ...baseResolved });
-  mockedLoadSkills.mockResolvedValue([]);
-  mockedLoadToolConfig.mockResolvedValue(null);
+  mockedResolveAgent.mockResolvedValue(resolvedAgent());
 });
 
 describe('resolveAgentSpec — role path', () => {
   it('composes base prompt + skill suffix exactly like the legacy per-call path', async () => {
-    mockedLoadSkills.mockResolvedValue([skill('s1', 'SK1'), skill('s2', 'SK2')]);
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({ skills: [skill('s1', 'SK1'), skill('s2', 'SK2')] })
+    );
 
     const spec = await resolveAgentSpec({ agentKey: 'validateContext', basePrompt: 'BASE' });
 
-    // Identical to: resolveSystemPrompt(... ) + skillsToPromptSuffix join.
     expect(spec.systemPrompt).toBe('BASE\n\nSK1\n\nSK2');
     expect(spec.modelSpec).toBe('anthropic/claude-x');
     expect(spec.agentKey).toBe('validateContext');
@@ -64,12 +69,17 @@ describe('resolveAgentSpec — role path', () => {
   });
 
   it('binds the model from the resolved spec + credential', async () => {
-    mockedResolveModelConfig.mockResolvedValue({
-      ...baseResolved,
-      apiBase: 'https://base',
-      apiKey: 'k2',
-      spec: 'openrouter/foo',
-    });
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({
+        model: {
+          apiBase: 'https://base',
+          apiKey: 'k2',
+          scope: 'GLOBAL',
+          spec: 'openrouter/foo',
+          systemPrompt: undefined,
+        },
+      })
+    );
     const { resolveModel } = await import('../models.js');
 
     await resolveAgentSpec({ agentKey: 'reviewer', basePrompt: 'B' });
@@ -78,19 +88,39 @@ describe('resolveAgentSpec — role path', () => {
   });
 
   it('returns the base prompt unchanged when there are no skills', async () => {
-    mockedLoadSkills.mockResolvedValue([]);
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ skills: [] }));
     const spec = await resolveAgentSpec({ agentKey: 'planner', basePrompt: 'ONLY_BASE' });
     expect(spec.systemPrompt).toBe('ONLY_BASE');
   });
 
-  it('prefers the DB systemPrompt over the fallback base prompt', async () => {
-    mockedResolveModelConfig.mockResolvedValue({ ...baseResolved, systemPrompt: 'DB_PROMPT' });
+  it('prefers the resolved Agent prompt over the fallback base prompt', async () => {
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({
+        model: {
+          apiBase: undefined,
+          apiKey: 'k',
+          scope: 'GLOBAL',
+          spec: 'anthropic/claude-x',
+          systemPrompt: 'DB_PROMPT',
+        },
+      })
+    );
     const spec = await resolveAgentSpec({ agentKey: 'planner', basePrompt: 'BASE' });
     expect(spec.systemPrompt).toBe('DB_PROMPT');
   });
 
-  it('lets an explicit promptOverride win over both DB and base', async () => {
-    mockedResolveModelConfig.mockResolvedValue({ ...baseResolved, systemPrompt: 'DB_PROMPT' });
+  it('lets an explicit promptOverride win over both Agent prompt and base', async () => {
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({
+        model: {
+          apiBase: undefined,
+          apiKey: 'k',
+          scope: 'GLOBAL',
+          spec: 'anthropic/claude-x',
+          systemPrompt: 'DB_PROMPT',
+        },
+      })
+    );
     const spec = await resolveAgentSpec({
       agentKey: 'planner',
       basePrompt: 'BASE',
@@ -122,8 +152,8 @@ describe('resolveAgentSpec — tool selection', () => {
     expect(spec.tools).toEqual({});
   });
 
-  it('returns every candidate when the role has no tool config (null)', async () => {
-    mockedLoadToolConfig.mockResolvedValue(null);
+  it('returns every candidate when the agent has no tool override (null)', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ toolKeys: null }));
     const spec = await resolveAgentSpec({
       agentKey: 'implementer',
       availableTools: tools,
@@ -133,7 +163,9 @@ describe('resolveAgentSpec — tool selection', () => {
   });
 
   it('intersects candidates with the enabled-tool keys', async () => {
-    mockedLoadToolConfig.mockResolvedValue(['readFile', 'bash', 'missingTool']);
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({ toolKeys: ['readFile', 'bash', 'missingTool'] })
+    );
     const spec = await resolveAgentSpec({
       agentKey: 'implementer',
       availableTools: tools,
@@ -144,7 +176,7 @@ describe('resolveAgentSpec — tool selection', () => {
 });
 
 describe('resolveAgentSpec — inline path', () => {
-  it('binds an inline spec without touching the DB resolvers', async () => {
+  it('binds an inline spec without touching the Agent resolver', async () => {
     const schema = z.object({ x: z.number() });
     const spec = await resolveAgentSpec({
       inline: {
@@ -156,8 +188,7 @@ describe('resolveAgentSpec — inline path', () => {
       },
     });
 
-    expect(mockedResolveModelConfig).not.toHaveBeenCalled();
-    expect(mockedLoadSkills).not.toHaveBeenCalled();
+    expect(mockedResolveAgent).not.toHaveBeenCalled();
     expect(spec.agentKey).toBe('inlineAgent');
     expect(spec.systemPrompt).toBe('INLINE_SYS');
     expect(spec.modelSpec).toBe('google/gemini-x');
