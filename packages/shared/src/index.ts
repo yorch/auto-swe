@@ -1,7 +1,6 @@
 export { PrismaClient, prisma } from './db.js';
 export { Prisma } from './generated/prisma/client.js';
 export { ConfigAuditAction, ConfigScope, Role } from './generated/prisma/enums.js';
-export type { AgentToolConfigModel as AgentToolConfig } from './generated/prisma/models.js';
 export {
   assertCredentialScope,
   type CredentialScope,

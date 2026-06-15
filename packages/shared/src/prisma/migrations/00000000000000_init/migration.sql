@@ -1,9 +1,9 @@
 -- Consolidated initial schema, generated from schema.prisma via
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
--- consolidation; includes the P1 Agent library tables/columns folded in while
--- nothing is deployed yet). Custom DDL Prisma cannot express (partial unique
--- indexes, the pgvector HNSW index, and seed inserts) lives in the next
--- migration.
+-- consolidation; the legacy ModelRoleConfig / AgentSkillAssignment /
+-- AgentToolConfig tables were retired in P1.5 — per-role config now lives on
+-- the Agent entity). Custom DDL Prisma cannot express (partial unique indexes,
+-- the pgvector HNSW index, seed inserts) lives in the next migration.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
@@ -385,24 +385,6 @@ CREATE TABLE "workflow_template_versions" (
 );
 
 -- CreateTable
-CREATE TABLE "model_role_configs" (
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "role" TEXT NOT NULL,
-    "scope" "ConfigScope" NOT NULL,
-    "team_id" UUID,
-    "workflow_template_id" UUID,
-    "model_spec" TEXT NOT NULL,
-    "system_prompt" TEXT,
-    "origin" TEXT,
-    "credential_id" UUID,
-    "created_by_id" UUID,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "model_role_configs_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "provider_credentials" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "provider" TEXT NOT NULL,
@@ -610,36 +592,6 @@ CREATE TABLE "scanner_patterns" (
 );
 
 -- CreateTable
-CREATE TABLE "agent_skill_assignments" (
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "agent_role" TEXT NOT NULL,
-    "skill_id" UUID NOT NULL,
-    "origin" TEXT,
-    "scope" "ConfigScope" NOT NULL,
-    "team_id" UUID,
-    "workflow_template_id" UUID,
-    "sort_order" INTEGER NOT NULL DEFAULT 0,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "agent_skill_assignments_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "agent_tool_configs" (
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "agent_role" TEXT NOT NULL,
-    "scope" "ConfigScope" NOT NULL,
-    "team_id" UUID,
-    "workflow_template_id" UUID,
-    "enabled_tools" TEXT[],
-    "origin" TEXT,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "agent_tool_configs_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "agents" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "key" TEXT NOT NULL,
@@ -795,12 +747,6 @@ CREATE UNIQUE INDEX "workflow_templates_team_id_name_key" ON "workflow_templates
 CREATE UNIQUE INDEX "workflow_template_versions_template_id_version_key" ON "workflow_template_versions"("template_id", "version");
 
 -- CreateIndex
-CREATE INDEX "model_role_configs_scope_team_id_idx" ON "model_role_configs"("scope", "team_id");
-
--- CreateIndex
-CREATE INDEX "model_role_configs_scope_workflow_template_id_idx" ON "model_role_configs"("scope", "workflow_template_id");
-
--- CreateIndex
 CREATE INDEX "provider_credentials_provider_scope_team_id_idx" ON "provider_credentials"("provider", "scope", "team_id");
 
 -- CreateIndex
@@ -811,18 +757,6 @@ CREATE INDEX "config_audit_log_actor_id_idx" ON "config_audit_log"("actor_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "scanner_patterns_label_key" ON "scanner_patterns"("label");
-
--- CreateIndex
-CREATE INDEX "agent_skill_assignments_agent_role_scope_team_id_idx" ON "agent_skill_assignments"("agent_role", "scope", "team_id");
-
--- CreateIndex
-CREATE INDEX "agent_skill_assignments_agent_role_scope_workflow_template__idx" ON "agent_skill_assignments"("agent_role", "scope", "workflow_template_id");
-
--- CreateIndex
-CREATE INDEX "agent_tool_configs_agent_role_scope_team_id_idx" ON "agent_tool_configs"("agent_role", "scope", "team_id");
-
--- CreateIndex
-CREATE INDEX "agent_tool_configs_agent_role_scope_workflow_template_id_idx" ON "agent_tool_configs"("agent_role", "scope", "workflow_template_id");
 
 -- CreateIndex
 CREATE INDEX "agents_scope_team_id_idx" ON "agents"("scope", "team_id");
@@ -921,34 +855,10 @@ ALTER TABLE "workflow_templates" ADD CONSTRAINT "workflow_templates_team_id_fkey
 ALTER TABLE "workflow_template_versions" ADD CONSTRAINT "workflow_template_versions_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "model_role_configs" ADD CONSTRAINT "model_role_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "embedding_configs" ADD CONSTRAINT "embedding_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "agent_skill_assignments" ADD CONSTRAINT "agent_skill_assignments_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "agent_skill_assignments" ADD CONSTRAINT "agent_skill_assignments_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "agent_skill_assignments" ADD CONSTRAINT "agent_skill_assignments_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "agent_tool_configs" ADD CONSTRAINT "agent_tool_configs_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "agent_tool_configs" ADD CONSTRAINT "agent_tool_configs_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;

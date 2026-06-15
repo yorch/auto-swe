@@ -232,10 +232,7 @@ model Team {
   repositories           Repository[]
   workflowTemplates      WorkflowTemplate[]
   shellAudits            WorkflowShellAudit[]
-  modelRoleConfigs       ModelRoleConfig[]
   providerCredentials    ProviderCredential[]
-  agentSkillAssignments  AgentSkillAssignment[]
-  agentToolConfigs       AgentToolConfig[]
   agents                 Agent[]
 
   @@map("teams")
@@ -581,9 +578,6 @@ model WorkflowTemplate {
 
   versions              WorkflowTemplateVersion[]
   workflowRuns          WorkflowRun[]
-  modelRoleConfigs      ModelRoleConfig[]
-  agentSkillAssignments AgentSkillAssignment[]
-  agentToolConfigs      AgentToolConfig[]
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
@@ -606,41 +600,6 @@ model WorkflowTemplateVersion {
 
   @@unique([templateId, version])
   @@map("workflow_template_versions")
-}
-
-/// Per-role model spec (`<provider>/<model-id>`) at one of three scopes:
-/// GLOBAL (system-wide default), TEAM (overrides global for one team), or
-/// WORKFLOW_TEMPLATE (overrides team+global for one template). Resolution
-/// cascade is template → team → global; the first match wins. At most one
-/// row per (role, scope, scope-key) — enforced by partial unique indexes
-/// defined in raw SQL alongside this migration since Prisma's DSL can't
-/// express WHERE clauses on unique indexes.
-///
-/// `credentialId` is an optional override that points at a specific
-/// `ProviderCredential` row. When null the resolver looks up the credential
-/// by provider name using the same scope cascade. Typically set only at
-/// WORKFLOW_TEMPLATE scope to pin a template to a specific credential set.
-model ModelRoleConfig {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  role               String
-  scope              ConfigScope
-  teamId             String?             @map("team_id") @db.Uuid
-  team               Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
-  workflowTemplate   WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
-  modelSpec          String              @map("model_spec")
-  systemPrompt       String?             @map("system_prompt")
-  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
-  origin             String?
-  credentialId      String?              @map("credential_id") @db.Uuid
-  credential        ProviderCredential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
-  createdById       String?              @map("created_by_id") @db.Uuid
-  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@index([scope, teamId])
-  @@index([scope, workflowTemplateId])
-  @@map("model_role_configs")
 }
 
 /// Encrypted API credential for one LLM provider, scoped GLOBAL or TEAM.
@@ -666,7 +625,6 @@ model ProviderCredential {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  modelRoleConfigs ModelRoleConfig[]
   embeddingConfigs EmbeddingConfig[]
   agents           Agent[]
 
@@ -920,7 +878,6 @@ model Skill {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  assignments AgentSkillAssignment[]
   agentSkillRefs AgentSkillRef[]
 
   @@map("skills")
@@ -948,57 +905,6 @@ model ScannerPattern {
   updatedAt DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("scanner_patterns")
-}
-
-/// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
-/// (defined in raw SQL in the migration) enforce one assignment per
-/// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:
-/// WORKFLOW_TEMPLATE → TEAM → GLOBAL. The first scope that has any
-/// assignments for the role wins.
-model AgentSkillAssignment {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          String            @map("agent_role")
-  skillId            String            @map("skill_id") @db.Uuid
-  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
-  origin             String?
-  scope              ConfigScope
-  teamId             String?           @map("team_id") @db.Uuid
-  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
-  sortOrder          Int               @default(0) @map("sort_order")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
-
-  skill              Skill             @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
-
-  @@index([agentRole, scope, teamId])
-  @@index([agentRole, scope, workflowTemplateId])
-  @@map("agent_skill_assignments")
-}
-
-/// Controls which built-in tools (readFile, writeFile, listDirectory, bash) are
-/// available to an agent role. Follows the same GLOBAL → TEAM → WORKFLOW_TEMPLATE
-/// scope cascade as ModelRoleConfig. A missing row at a scope means "no override
-/// at that scope" — the cascade falls through to the next level.
-/// An empty array is treated as "no tools" (maximum lockdown); the API enforces min(1).
-model AgentToolConfig {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          String            @map("agent_role")
-  scope              ConfigScope
-  teamId             String?           @map("team_id") @db.Uuid
-  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
-  enabledTools       String[]          @map("enabled_tools")
-  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
-  origin             String?
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
-
-  @@index([agentRole, scope, teamId])
-  @@index([agentRole, scope, workflowTemplateId])
-  @@map("agent_tool_configs")
 }
 
 /// First-class, versioned Agent entity (P1). Consolidates an agent's identity +

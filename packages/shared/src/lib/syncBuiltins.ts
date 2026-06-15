@@ -15,9 +15,10 @@ const SWE_ORIGIN = 'swe-starter';
  *     patterns: injection / exfiltration / shell-command / sensitive-file).
  *     These rows carry `origin = null`.
  *   - {@link seedSweStarter} — the SWE use case as seed content: workflow
- *     templates, coding skills + their agent assignments, the implementer tool
- *     config, and the SWE-specific code-security scanner patterns. Every row is
- *     tagged `origin = 'swe-starter'` so it is distinguishable and removable.
+ *     templates, coding skills, the first-class Agents (model/skills/tools) +
+ *     their skillRefs, and the SWE-specific code-security scanner patterns.
+ *     Every row is tagged `origin = 'swe-starter'` so it is distinguishable
+ *     and removable.
  *
  * Behavior is identical to before — everything is still seeded — it is just
  * grouped and provenance-tagged. Safe to call on every startup (findFirst +
@@ -38,7 +39,6 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
   await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
-  await syncImplementerToolConfig(prisma);
   await syncAgents(prisma);
 }
 
@@ -224,51 +224,32 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
     const existingSkill = await prisma.skill.findFirst({
       where: { isBuiltIn: true, name: skillDef.name },
     });
-    const skill = existingSkill
-      ? await prisma.skill.update({
-          // isActive is intentionally omitted — preserve any admin disable decision.
-          data: {
-            description: skillDef.description,
-            isVerified: true,
-            origin: SWE_ORIGIN,
-            promptText: skillDef.promptText,
-          },
-          where: { id: existingSkill.id },
-        })
-      : await prisma.skill.create({
-          data: {
-            description: skillDef.description,
-            isActive: true,
-            isBuiltIn: true,
-            isVerified: true,
-            name: skillDef.name,
-            origin: SWE_ORIGIN,
-            promptText: skillDef.promptText,
-          },
-        });
-
-    for (const assignment of skillDef.assignments) {
-      const existingAssignment = await prisma.agentSkillAssignment.findFirst({
-        where: {
-          agentRole: assignment.role,
-          scope: 'GLOBAL',
-          skillId: skill.id,
-          teamId: null,
-          workflowTemplateId: null,
+    if (existingSkill) {
+      // isActive is intentionally omitted — preserve any admin disable decision.
+      await prisma.skill.update({
+        data: {
+          description: skillDef.description,
+          isVerified: true,
+          origin: SWE_ORIGIN,
+          promptText: skillDef.promptText,
+        },
+        where: { id: existingSkill.id },
+      });
+    } else {
+      await prisma.skill.create({
+        data: {
+          description: skillDef.description,
+          isActive: true,
+          isBuiltIn: true,
+          isVerified: true,
+          name: skillDef.name,
+          origin: SWE_ORIGIN,
+          promptText: skillDef.promptText,
         },
       });
-      if (!existingAssignment) {
-        await prisma.agentSkillAssignment.create({
-          data: {
-            agentRole: assignment.role,
-            origin: SWE_ORIGIN,
-            scope: 'GLOBAL',
-            skillId: skill.id,
-            sortOrder: assignment.sortOrder,
-          },
-        });
-      }
     }
+    // Skill→agent attachment is via the Agent's skillRefs (synced in syncAgents);
+    // the legacy AgentSkillAssignment table was removed in P1.5.
   }
 }
 
@@ -297,22 +278,6 @@ async function syncScannerPatterns(prisma: PrismaClient, group: 'core' | 'swe'):
       },
       update: { flags: p.flags, isActive: true, origin, pattern: p.pattern, type: p.type },
       where: { label: p.label },
-    });
-  }
-}
-
-async function syncImplementerToolConfig(prisma: PrismaClient): Promise<void> {
-  const existing = await prisma.agentToolConfig.findFirst({
-    where: { agentRole: 'implementer', scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
-  });
-  if (!existing) {
-    await prisma.agentToolConfig.create({
-      data: {
-        agentRole: 'implementer',
-        enabledTools: ['readFile', 'writeFile', 'listDirectory', 'bash'],
-        origin: SWE_ORIGIN,
-        scope: 'GLOBAL',
-      },
     });
   }
 }

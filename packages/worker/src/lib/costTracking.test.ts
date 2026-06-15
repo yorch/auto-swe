@@ -22,13 +22,21 @@ vi.mock('@auto-swe/shared/db', async () => {
         findFirst: vi.fn(),
         update: vi.fn().mockResolvedValue({}),
       },
-      embeddingConfig: { findUnique: vi.fn() },
-      modelRoleConfig: {
+      agent: {
         findFirst: vi.fn().mockResolvedValue({
-          credential: null,
+          inheritsModelFrom: null,
+          isVerified: true,
+          key: 'implementer',
           modelSpec: 'anthropic/claude-opus-4-7',
+          origin: null,
+          scope: 'GLOBAL',
+          skillRefs: [],
+          systemPrompt: null,
+          toolKeys: null,
+          version: 1,
         }),
       },
+      embeddingConfig: { findUnique: vi.fn() },
       providerCredential: {
         findFirst: vi.fn().mockResolvedValue({
           apiBase: null,
@@ -180,10 +188,16 @@ describe('recordLlmUsage', () => {
   });
 
   it('still records usage for unknown models, just at zero cost', async () => {
-    // Swap the GLOBAL ModelRoleConfig row to a spec not in MODEL_PRICES.
-    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
-      credential: null,
+    // Swap the GLOBAL Agent's spec to a model not in MODEL_PRICES.
+    vi.mocked(prisma.agent.findFirst).mockResolvedValueOnce({
+      inheritsModelFrom: null,
+      key: 'implementer',
       modelSpec: 'mystery/unreleased',
+      scope: 'GLOBAL',
+      skillRefs: [],
+      systemPrompt: null,
+      toolKeys: null,
+      version: 1,
     } as never);
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       budgetTier: 'STANDARD',
@@ -212,9 +226,15 @@ describe('recordLlmUsage', () => {
     // already spent at the upstream LLM would never get debited and
     // BUDGET_EXCEEDED would never fire — Temporal retries would re-spend
     // tokens indefinitely.
-    vi.mocked(prisma.modelRoleConfig.findFirst).mockResolvedValueOnce({
-      credential: null,
+    vi.mocked(prisma.agent.findFirst).mockResolvedValueOnce({
+      inheritsModelFrom: null,
+      key: 'implementer',
       modelSpec: 'broken-no-slash',
+      scope: 'GLOBAL',
+      skillRefs: [],
+      systemPrompt: null,
+      toolKeys: null,
+      version: 1,
     } as never);
     vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
       budgetTier: 'STANDARD',

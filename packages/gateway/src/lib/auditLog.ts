@@ -3,12 +3,9 @@ import type { JwtPayload } from '../plugins/auth.js';
 
 export type AuditEntityType =
   | 'Agent'
-  | 'AgentSkillAssignment'
-  | 'AgentToolConfig'
   | 'EmbeddingConfig'
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
-  | 'ModelRoleConfig'
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'Skill'
