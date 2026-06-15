@@ -199,6 +199,37 @@ describe('resolveAgent — model inheritance', () => {
   });
 });
 
+describe('resolveAgent — run-start version pin (WS3)', () => {
+  it('queries the pinned version from ctx.agentVersions instead of the latest', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    let capturedWhere: any;
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      capturedWhere = args.where;
+      return agentRow({ version: 2 });
+    });
+
+    const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 } });
+
+    expect(capturedWhere).toMatchObject({ key: 'reviewer', scope: 'GLOBAL', version: 2 });
+    expect(r.version).toBe(2);
+  });
+
+  it('does not pin when the key is absent from the snapshot', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    let capturedWhere: any;
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      capturedWhere = args.where;
+      return agentRow();
+    });
+
+    await resolveAgent('reviewer', { agentVersions: { other: 5 } });
+
+    expect(capturedWhere.version).toBeUndefined();
+  });
+});
+
 describe('resolveAgent — scope cascade', () => {
   it('prefers a TEAM Agent row over GLOBAL', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: arg inspection

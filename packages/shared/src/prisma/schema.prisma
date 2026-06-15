@@ -453,6 +453,12 @@ model WorkflowRun {
   workRequest     WorkRequest?       @relation(fields: [workRequestId], references: [id])
   specSnapshot    Json               @map("spec_snapshot")
   contextSnapshot Json?              @map("context_snapshot")
+  /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`
+  /// map of the active GLOBAL Agent versions when the run began. resolveAgent
+  /// pins to these versions for the life of the run, so editing an Agent
+  /// (cutting a new version) does not change an in-flight run. Null for runs
+  /// created before this column existed (they resolve the latest version).
+  agentVersions   Json?              @map("agent_versions")
   status          WorkflowRunStatus  @default(RUNNING)
   startedAt       DateTime           @default(now()) @map("started_at") @db.Timestamptz
   endedAt         DateTime?          @map("ended_at") @db.Timestamptz

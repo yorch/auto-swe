@@ -21,6 +21,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     activeWorkflow: {
       updateMany: vi.fn(),
     },
+    agent: {
+      findMany: vi.fn(),
+    },
     repository: {
       findUniqueOrThrow: vi.fn(),
     },
@@ -56,6 +59,7 @@ const updateRun = vi.mocked(prisma.workflowRun.update);
 const createStep = vi.mocked(prisma.workflowStep.create);
 const findRepo = vi.mocked(prisma.repository.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
+const findAgents = vi.mocked(prisma.agent.findMany);
 
 const validSpec = {
   description: '',
@@ -72,11 +76,26 @@ afterEach(() => {
   createStep.mockReset();
   findRepo.mockReset();
   findTemplate.mockReset();
+  findAgents.mockReset();
 });
 
 describe('createWorkflowRun', () => {
   beforeEach(() => {
     upsertRun.mockResolvedValue({ id: 'run-1' } as never);
+    findAgents.mockResolvedValue([
+      { key: 'implementer', version: 1 },
+      { key: 'reviewer', version: 2 },
+    ] as never);
+  });
+
+  it('snapshots the active GLOBAL Agent versions onto the run', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect((args.create as Record<string, unknown>).agentVersions).toEqual({
+      implementer: 1,
+      reviewer: 2,
+    });
   });
 
   it('returns an error when the template version is missing', async () => {

@@ -43,15 +43,23 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
           where: { temporalWorkflowId: wid },
         }),
         prisma.workflowRun.findUnique({
-          select: { templateId: true },
+          select: { agentVersions: true, templateId: true },
           where: { workflowId: wid },
         }),
       ]);
+      const agentVersions =
+        run?.agentVersions && typeof run.agentVersions === 'object'
+          ? (run.agentVersions as Record<string, number>)
+          : undefined;
       return {
+        agentVersions,
         teamId: active?.repository?.teamId,
         workflowTemplateId: run?.templateId,
       };
     },
-    (ctx) => ctx.teamId !== undefined || ctx.workflowTemplateId !== undefined
+    (ctx) =>
+      ctx.teamId !== undefined ||
+      ctx.workflowTemplateId !== undefined ||
+      ctx.agentVersions !== undefined
   );
 }

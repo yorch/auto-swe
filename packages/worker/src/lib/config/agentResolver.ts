@@ -38,21 +38,30 @@ type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
  * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → TEAM → GLOBAL,
  * highest `version` at the first scope that has a row. Returns null when no
  * Agent row exists for the key (pure-legacy resolution).
+ *
+ * When the run carries a version pin for `key` (`ctx.agentVersions`), the exact
+ * pinned version is resolved instead of the latest — freezing an in-flight run
+ * against later Agent edits (WS3 run-start snapshot).
  */
 async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   const include = {
     skillRefs: { include: { skill: true }, orderBy: { sortOrder: 'asc' as const } },
   };
+  const pinnedVersion = ctx?.agentVersions?.[key];
+  // Pin the exact version when snapshotted; otherwise take the latest active.
+  const versionClause = pinnedVersion !== undefined ? { version: pinnedVersion } : {};
+  const orderBy = { version: 'desc' as const };
 
   if (ctx?.workflowTemplateId) {
     const row = await prisma.agent.findFirst({
       include,
-      orderBy: { version: 'desc' },
+      orderBy,
       where: {
         isActive: true,
         key,
         scope: 'WORKFLOW_TEMPLATE',
         workflowTemplateId: ctx.workflowTemplateId,
+        ...versionClause,
       },
     });
     if (row) {
@@ -63,8 +72,8 @@ async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   if (ctx?.teamId) {
     const row = await prisma.agent.findFirst({
       include,
-      orderBy: { version: 'desc' },
-      where: { isActive: true, key, scope: 'TEAM', teamId: ctx.teamId },
+      orderBy,
+      where: { isActive: true, key, scope: 'TEAM', teamId: ctx.teamId, ...versionClause },
     });
     if (row) {
       return row;
@@ -73,8 +82,8 @@ async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
 
   return prisma.agent.findFirst({
     include,
-    orderBy: { version: 'desc' },
-    where: { isActive: true, key, scope: 'GLOBAL' },
+    orderBy,
+    where: { isActive: true, key, scope: 'GLOBAL', ...versionClause },
   });
 }
 
@@ -124,7 +133,10 @@ async function modelFromAgentOverride(
  * WS4 refinement; WS1 resolves a single most-specific Agent row.)
  */
 export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
-  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.teamId ?? ''}`;
+  // Version pin is part of the cache key so two runs pinned to different
+  // versions of the same key+scope don't collide within the TTL.
+  const pin = ctx?.agentVersions?.[key] ?? '';
+  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.teamId ?? ''}:${pin}`;
   return withCache(cacheKey, configCacheTtlMs(), () => resolveAgentUncached(key, ctx));
 }
 

@@ -38,6 +38,10 @@ export const ALL_ROLES: readonly AgentRole[] = [
 export interface ResolveCtx {
   teamId?: string;
   workflowTemplateId?: string;
+  /// P1/WS3 run-start Agent-version pins (`{ agentKey: version }`). When present
+  /// for a key, `resolveAgent` resolves that exact Agent version instead of the
+  /// latest active one, freezing the run against later Agent edits.
+  agentVersions?: Record<string, number>;
 }
 
 /// Resolved model + credential for a single role lookup. Returned by
