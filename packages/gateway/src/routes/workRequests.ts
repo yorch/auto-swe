@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { resolveTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -308,6 +309,34 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // P3: build the generic run-input payload and validate it against the
+      // template's declared inputSchema (if any). SWE maps its request fields
+      // onto the seeded `{ ticketId, connectionId, description, budget }`
+      // contract; templates without a schema accept any payload. Validate
+      // before starting Temporal so a bad payload never leaves an orphan run.
+      const payload = {
+        budget: budgetTier,
+        connectionId: repo.id,
+        description,
+        ticketId: externalTicketId,
+      };
+      const tpl = await fastify.prisma.workflowTemplate.findUnique({
+        select: { inputSchema: true },
+        where: { id: resolvedTemplate.templateId },
+      });
+      if (tpl?.inputSchema && isInputSchema(tpl.inputSchema)) {
+        const result = validateInputPayload(tpl.inputSchema, payload);
+        if (!result.ok) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_INPUT',
+              details: result.errors,
+              message: `Run input does not satisfy the template's input schema: ${result.errors.join('; ')}`,
+            },
+          });
+        }
+      }
+
       // Start Temporal workflow FIRST — this is the idempotency gate.
       // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
       // and we haven't written any orphan DB rows yet.
@@ -342,9 +371,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // which is preferable to orphan DB rows that block future retries.
       const workRequest = await fastify.prisma.runInput.create({
         data: {
+          connectionId: repo.id,
           description,
           externalTicketId,
           id: workRequestId,
+          payload,
           requestedById: user.sub,
           requestPayload: JSON.stringify(request.body),
           templateId: resolvedTemplate.templateId,

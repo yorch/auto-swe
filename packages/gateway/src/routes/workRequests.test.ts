@@ -34,6 +34,9 @@ describe('POST /api/v1/work-requests', () => {
   let existingWorkflows: Array<{ currentStatus: string; temporalWorkflowId: string }> = [];
   const startedWorkflowIds: string[] = [];
   const snapshotUpserts: Record<string, unknown>[] = [];
+  // Per-test control over the resolved template's inputSchema (P3). Null =
+  // no schema → submit validation is skipped (the default for most tests).
+  let templateInputSchema: unknown = null;
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -82,6 +85,7 @@ describe('POST /api/v1/work-requests', () => {
           activeVersion: 1,
           id: 'tpl-1',
         }),
+        findUnique: async () => ({ inputSchema: templateInputSchema }),
       },
     } as unknown as never);
     app.decorate('temporal', {
@@ -155,6 +159,55 @@ describe('POST /api/v1/work-requests', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
     expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+  });
+
+  it('accepts a submission that satisfies the template inputSchema', async () => {
+    existingWorkflows = [];
+    templateInputSchema = {
+      properties: { description: { type: 'string' }, ticketId: { type: 'string' } },
+      required: ['ticketId', 'description'],
+      type: 'object',
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-OK',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    templateInputSchema = null;
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('rejects a submission that violates the template inputSchema', async () => {
+    existingWorkflows = [];
+    const before = startedWorkflowIds.length;
+    // Require a field the server-built payload never supplies → 400, no Temporal start.
+    templateInputSchema = {
+      properties: { approvalToken: { type: 'string' } },
+      required: ['approvalToken'],
+      type: 'object',
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-BAD',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    templateInputSchema = null;
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.payload);
+    expect(body.error.code).toBe('INVALID_INPUT');
+    expect(body.error.details).toContain("'approvalToken' is required");
+    // Validation happens before the idempotency gate — no workflow was started.
+    expect(startedWorkflowIds.length).toBe(before);
   });
 
   it('returns 409 when an execution for the ticket is still running', async () => {
