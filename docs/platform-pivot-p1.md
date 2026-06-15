@@ -208,9 +208,16 @@ until the cutover lands (no orphaned UI).
 
 ## Sequencing checklist
 
-- [ ] WS1 — `Agent` entity + `resolveAgent`; `resolveAgentSpec` re-pointed; seed + parity golden
-- [ ] WS2 — `SkillOnlyRole` removed; sub-reviewers resolve by key (review-network parity)
-- [ ] WS3 — versioning (pin/float) + run snapshot
-- [ ] WS4 — cascade write path + RBAC + referential integrity
-- [ ] WS5 — prompt-edit security scan + verification reset
-- [ ] WS6 — Agent library API + `/admin/agents` UI cutover
+**Status: ✅ complete — all work-streams merged into the pivot branch.**
+
+- [x] WS1 — `Agent` entity + `resolveAgent`; `resolveAgentSpec` re-pointed; seed + parity golden
+- [x] WS2 — `SkillOnlyRole` removed; sub-reviewers resolve by key (via `inheritsModelFrom`; review-network parity)
+- [x] WS3 — versioning (pin/float, `parseAgentRef`) + run-start version snapshot
+- [x] WS4 — cascade write path + RBAC + referential integrity (gateway `agentLibraryService`)
+- [x] WS5 — prompt-edit security scan + verification reset
+- [x] WS6 — Agent library API (`/api/v1/admin/agent-library`) + `/admin/agents/library` UI
+
+> **Post-P1 cleanup:** the three P1 migrations were folded back into the consolidated
+> `00000000000000_init` + `00000000000001_custom_constraints_and_indexes` chain (regenerated via
+> `prisma migrate diff --from-empty --to-schema`) since nothing is deployed yet — the repo stays at
+> two migrations.

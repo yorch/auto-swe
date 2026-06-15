@@ -177,10 +177,12 @@ Ordered for low-risk landing. Each is independently reviewable.
 
 ## Sequencing checklist
 
-- [ ] WS1 — `AgentRole` enum deleted; identity is string; seed uses camelCase keys
-- [ ] WS5 — `recordLlmUsage` identity-agnostic (fold into WS1 PR)
-- [ ] WS2 — `StepRegistry` replaces `dispatchStepImpl` switch
-- [ ] WS4 — `assertConfigReady` computed from registered executors' `requiredAgents`
-- [ ] WS3 — `resolveAgentSpec` + `runAgent`; `validateContext` migrated as proof
-- [ ] WS6 — `origin` tags; cross-cutting scanners → core defaults; **core-only boot test green**
-- [ ] Full existing suite green; new tests (`agentSpec`, `coreOnlySeed`) added
+**Status: ✅ complete — all work-streams merged into the pivot branch.**
+
+- [x] WS1 — `AgentRole` enum deleted; identity is string; seed uses camelCase keys
+- [x] WS5 — `recordLlmUsage` identity-agnostic (fold into WS1 PR)
+- [x] WS2 — `StepRegistry` replaces `dispatchStepImpl` switch
+- [x] WS4 — `assertConfigReady` computed from registered executors' `requiredAgents`
+- [x] WS3 — `resolveAgentSpec` + `runAgent`; `validateContext` migrated as proof
+- [x] WS6 — `origin` tags; cross-cutting scanners → core defaults; **core-only boot test green**
+- [x] Full existing suite green; new tests (`agentSpec`, `coreOnlySeed`) added

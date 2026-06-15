@@ -48,7 +48,7 @@ flowchart TB
         WR[Work requests\nWeb / CLI / REST / Slack]
         SCHED[Scheduled work requests\nTemporal Schedules]
         EPIC[Multi-repo epics\ndependency-graph fan-out]
-        WF[Configurable workflow engine\n11 node types, versioned, A/B]
+        WF[Configurable workflow engine\n12 node types, versioned, A/B]
     end
 
     subgraph Agents["Agent Execution"]
@@ -83,7 +83,7 @@ flowchart TB
 | **Agent system** | 10 roles (6 model-backed + 4 skill-only sub-personas); multi-agent review network; TDD implementation loop. See [agents.md](./agents.md). |
 | **Skills** | 27 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
-| **Workflow engine** | 11 node types; versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
+| **Workflow engine** | 12 node types (incl. the declarative `agent` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 51 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |

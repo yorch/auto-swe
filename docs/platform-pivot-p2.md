@@ -126,7 +126,11 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 
 ## Sequencing checklist
 
-- [ ] WS1 — `agent` node + interpreter dispatch + `runAgentNode` activity (parity)
+**Status: 🔄 in progress (1 / 5).**
+
+- [x] WS1 — `agent` node + interpreter dispatch + `runAgentNode` activity (parity); spec
+  `SPEC_SCHEMA_VERSION 4→5` + codemod; per-node `systemPrompt` override; canvas rendering. The
+  inline-AgentSpec path is deferred to a follow-up (agentRef is the WS1 path).
 - [ ] WS2 — `'mcp'` tool kind accepted for Agents
 - [ ] WS3 — `mcp` Connection + client + tool loading
 - [ ] WS4 — `mcp` node (single-tool step)

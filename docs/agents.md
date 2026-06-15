@@ -6,37 +6,44 @@
 
 ## 1. Agent Roles
 
-The system has **10 agent roles** split into two tiers.
+Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The 10 seeded SWE agent keys still fall into two groups by convention.
 
-### Tier 1 — `AgentRole` (6)
+### Group 1 — model-backed roles (6)
 
-These roles each **require a GLOBAL `ModelRoleConfig` row** in the database. The worker refuses to start (`assertConfigReady()`) until all six rows exist. Model selection, system prompt, and credential can be overridden at TEAM or WORKFLOW_TEMPLATE scope via the admin UI.
+These keys each **require a GLOBAL `ModelRoleConfig` row** in the database. The worker refuses to start (`assertConfigReady()`) until all six rows exist. Model selection, system prompt, and credential can be overridden at TEAM or WORKFLOW_TEMPLATE scope via the admin UI.
 
-| Role | Camel-case key | Prisma enum | Activity | Default model |
-|---|---|---|---|---|
-| Implementer | `implementer` | `IMPLEMENTER` | `executeImplementation` | `anthropic/claude-opus-4-7` |
-| Reviewer | `reviewer` | `REVIEWER` | `runReviewNetwork` | `anthropic/claude-opus-4-7` |
-| Planner | `planner` | `PLANNER` | `planDecomposition` | `anthropic/claude-sonnet-4-6` |
-| Security Review | `securityReview` | `SECURITY_REVIEW` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
-| Validate Context | `validateContext` | `VALIDATE_CONTEXT` | `validateContext` | `anthropic/claude-sonnet-4-6` |
-| Commit to Memory | `commitToMemory` | `COMMIT_TO_MEMORY` | `commitToMemory` | `anthropic/claude-opus-4-7` |
+| Role | Key | Activity | Default model |
+|---|---|---|---|
+| Implementer | `implementer` | `executeImplementation` | `anthropic/claude-opus-4-7` |
+| Reviewer | `reviewer` | `runReviewNetwork` | `anthropic/claude-opus-4-7` |
+| Planner | `planner` | `planDecomposition` | `anthropic/claude-sonnet-4-6` |
+| Security Review | `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
+| Validate Context | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
+| Commit to Memory | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-7` |
 
 > **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` `ModelRoleConfig` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
 
-### Tier 2 — `SkillOnlyRole` (4)
+### Group 2 — sub-role personas (4)
 
-These are **sub-agent personas** used within a parent activity. They do **not** need their own `ModelRoleConfig` row — they inherit the parent role's model. They exist so skills and tool access can be assigned at per-sub-agent granularity.
+**Sub-agent personas** used within a parent activity. They have **no** `ModelRoleConfig` row — their seeded `Agent` row carries `inheritsModelFrom`, so `resolveAgent` binds the parent's model. They exist so skills and tools can be assigned at per-sub-agent granularity.
 
-| Role | Camel-case key | Parent model | Used by |
+| Role | Key | Inherits model from | Used by |
 |---|---|---|---|
 | Security Reviewer | `securityReviewer` | `reviewer` | `runReviewNetwork` |
 | Domain Logic Reviewer | `domainLogicReviewer` | `reviewer` | `runReviewNetwork` |
 | Performance Reviewer | `performanceReviewer` | `reviewer` | `runReviewNetwork` |
 | Decomposer | `decomposer` | `planner` | `planDecomposition` |
 
-**Type definitions:** `packages/worker/src/lib/config/types.ts`
+**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; `AgentRole` is the 6-key model-backed union).
 
-`AnySkillRole = AgentRole | SkillOnlyRole` — the union accepted by `loadAgentSkills` and `loadAgentToolConfig`.
+### First-class `Agent` entity (P1) + `agent` node (P2)
+
+The **`Agent`** table is the versioned, governed library object that consolidates an agent's model/prompt/skills/tools. It **overlays** the three legacy config tables (`ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig`): `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → GLOBAL`; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref), and any null override field falls through to the legacy cascade — so seeded SWE agents resolve byte-identically to pre-P1.
+
+- **Resolution → execution:** `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the resolved model + skills + tools + prompt into an `AgentSpec`; the generic `runAgent` activity (`activities/runAgent.ts`) runs it.
+- **Governance:** editing an Agent's system prompt runs the injection/exfil scan and resets `isVerified`; versions are immutable (a base edit cuts a new version); RBAC GLOBAL=ADMIN, TEAM=team OWNER. Seeded built-ins are `origin='swe-starter'`.
+- **API + UI:** `/api/v1/admin/agent-library` (+ `/api/v1/teams/:id/agent-library`) and `/admin/agents/library`.
+- **Declarative `agent` node (P2):** a workflow node with `agentRef` (`<key>` / `<key>@<version>`) + optional `userMessage`/`systemPrompt` that the interpreter dispatches to the `runAgentNode` activity (resolve → `runAgent`).
 
 ---
 

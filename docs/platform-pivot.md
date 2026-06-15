@@ -6,8 +6,11 @@ platform**, where SWE is simply the first use case seeded into the platform's re
 libraries. Each phase is sized to land in one (or a small handful of) PR(s). Pick up here
 when starting a follow-up PR.
 
-> Status: **Proposed** (rev. 2026-06-14). Phases P0–P3 are committed for build; P4–P5 are
-> deferred but specified here so the architecture stays compatible with them from day one.
+> Status: **In progress** (rev. 2026-06-14). **P0 and P1 are implemented and merged into the
+> pivot branch; P2 is underway (the declarative `agent` node is done, MCP work pending).** Phases
+> P0–P3 are committed for build; P4–P5 are deferred but specified here so the architecture stays
+> compatible with them from day one. Per-phase build plans + status: `platform-pivot-p0.md`,
+> `platform-pivot-p1.md`, `platform-pivot-p2.md`.
 >
 > **This is rev. 2** — it supersedes the original pack-centric framing. See
 > [Design evolution](#design-evolution) for the rationale trail.
@@ -169,9 +172,9 @@ third-party coded capability) is **P4**.
 
 | Phase | Status | Slice |
 |---|---|---|
-| **P0. De-domainify the engine** | Planned | Delete `AgentRole` enum (→ string keys); registry-driven step dispatch; `AgentSpec` resolver + generic `runAgent`; cost decoupled from identity; move SWE content out of core code into seeded data (+ `origin` tag); cross-cutting scanner patterns → core defaults; computed `assertConfigReady`. **No behavior change.** |
-| **P1. Agent library** | Planned | First-class `Agent` entity (consolidates model/skill/tool config); library UI + API; reference-by-key + inline; override cascade; versioning (pin/float) + prompt-edit security scan + RBAC. Supersedes `SkillOnlyRole`. |
-| **P2. Declarative agent node + MCP** | Planned | New `agent` node (agentRef/inline) on the canvas; finish MCP — `'mcp'` tool enum, `mcp` Connection, `mcp` node. The no/low-code tiers. |
+| **P0. De-domainify the engine** | ✅ Done | Delete `AgentRole` enum (→ string keys); registry-driven step dispatch; `AgentSpec` resolver + generic `runAgent`; cost decoupled from identity; move SWE content out of core code into seeded data (+ `origin` tag); cross-cutting scanner patterns → core defaults; computed `assertConfigReady`. **No behavior change.** |
+| **P1. Agent library** | ✅ Done | First-class `Agent` entity (consolidates model/skill/tool config); library UI + API; reference-by-key + inline; override cascade; versioning (pin/float) + prompt-edit security scan + RBAC. Supersedes `SkillOnlyRole`. |
+| **P2. Declarative agent node + MCP** | 🔄 In progress | New `agent` node (agentRef/inline) on the canvas — **done (WS1)**; remaining: finish MCP — `'mcp'` tool enum, `mcp` Connection, `mcp` node. The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | Planned | `Connection` replaces `Repository`; template `inputSchema` + generic `RunInput`; generic trigger receivers + config-driven mappings; `MemoryItem` replaces `AgentLesson`. SWE specializes via seed/config. |
 | **P4. Distribution layer** | **Deferred (spec'd)** | Export/import versioned, dependency-aware bundles of library entities; marketplace + cross-deployment install; provenance/trust; third-party **capability** extension via the plugin SDK (container contract). This is "packaging," reframed as distribution. |
 | **P5. UX layering + multi-org** | **Deferred (spec'd)** | Canvas palette polish for all node kinds; authoring SDK; true multi-tenancy on the `orgId` stub. |

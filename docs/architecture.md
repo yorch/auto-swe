@@ -69,7 +69,7 @@ packages/
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/index.ts` | Re-exports types and enums from `@auto-swe/shared` |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 36 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 38 models (see §6; +`Agent`, `AgentSkillRef` from the P1 Agent library) |
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
@@ -110,6 +110,7 @@ packages/
 | `src/routes/users.ts` | User management (ADMIN only) |
 | `src/routes/lessons.ts` | `AgentLesson` list, text search, per-repo stats, delete |
 | `src/routes/skills.ts` | `Skill` CRUD; `AgentSkillAssignment` + `AgentToolConfig` CRUD at GLOBAL, TEAM, and WORKFLOW_TEMPLATE scope |
+| `src/routes/agentLibrary.ts` | P1 Agent library CRUD — `/api/v1/admin/agent-library` (all scopes, ADMIN) + `/api/v1/teams/:id/agent-library` (team OWNER); create/version/list/deactivate with prompt scan + referential integrity (`lib/agentLibraryService.ts`) |
 | `src/routes/me.ts` | `GET /api/v1/me/preferences` + `PATCH /api/v1/me/preferences` — read and merge-update the authenticated user's preferences JSON (e.g. `runDetailLayout`) |
 | `src/routes/tokens.ts` | Personal access token create / list / revoke |
 | `src/routes/modelConfig.ts` | `ModelRoleConfig` + `ProviderCredential` + `EmbeddingConfig` CRUD (admin + team-owner) |
@@ -155,6 +156,9 @@ packages/
 | `src/lib/models.ts` | `getModel(role, ctx)` — 3-level scope cascade (template → team → global) |
 | `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` + `loadAgentToolConfig(role, ctx)` + `skillsToPromptSuffix(skills)` — skill and tool config loading at WORKFLOW_TEMPLATE → TEAM → GLOBAL scope |
 | `src/lib/config/resolver.ts` | `resolveModelConfig(role, ctx)` + `resolveProviderCredential(provider, ctx)` + `resolveEmbeddingConfig()` — model spec + credential cascade; `ConfigMissingError` |
+| `src/lib/config/agentResolver.ts` | `resolveAgent(key, ctx)` — P1 Agent overlay over the model/skill/tool cascade; most-specific active version with run-start pin (`WorkflowRun.agentVersions`); null overrides fall through to legacy |
+| `src/lib/config/agentSpec.ts` | `resolveAgentSpec(input, ctx)` — composes the resolved Agent into an `AgentSpec` (model + prompt + skills + tools); used by `runAgent` |
+| `src/lib/config/agentRef.ts` | `parseAgentRef(ref)` / `formatAgentRef` — `<key>` (float) / `<key>@<version>` (pin) grammar for the `agent` node |
 | `src/lib/embeddings.ts` | `generateEmbedding` — resolves `EmbeddingConfig` from DB, enforces 1536-dim |
 | `src/lib/costTracking.ts` | `recordLlmUsage` — per-call USD metering via `MODEL_PRICES`, OTel span attributes |
 
@@ -331,11 +335,12 @@ flowchart TD
 
 ### Node types in a WorkflowSpec
 
-The spec supports **11 node types**. The seven core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
+The spec supports **12 node types**. The eight core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
 
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step` (name), `inputs`, `next`, `onFail`, `config` |
+| `agent` | Run a library Agent by reference (P2) | `agentRef` (`<key>` / `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `next`, `onFail` |
 | `set` | Write values into the workflow context | `values` (map of path → binding) |
 | `cond` | Branch on a boolean expression | `expr` (jsonpath), `onTrue`, `onFalse` |
 | `signal` | Await a named Temporal signal with timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |
@@ -378,18 +383,20 @@ For each LLM call / activity invocation:
   ↓ (fall through if missing)
   3. GLOBAL row
 
-Model config  → getModel()            in packages/worker/src/lib/models.ts            (GLOBAL required — 6 AgentRoles only)
-Skills        → loadAgentSkills()     in packages/worker/src/lib/config/agentSkills.ts (falls back to empty — all 10 AnySkillRoles)
+Agent (P1)    → resolveAgent()        in packages/worker/src/lib/config/agentResolver.ts (overlay over the three below; run-start version pin)
+Model config  → getModel()            in packages/worker/src/lib/models.ts            (GLOBAL required — 6 model-backed roles)
+Skills        → loadAgentSkills()     in packages/worker/src/lib/config/agentSkills.ts (falls back to empty — any agent key)
 Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/agentSkills.ts (null = all tools)
 ```
 
-**Role types:**
+**Agent identity (post-P1):**
 
-There are two distinct role sets:
+Agent identity is a **free-form string** (`AnySkillRole = string`); the legacy `AgentRole` enum and the `SkillOnlyRole` union were removed in the platform pivot (P0/P1). Two groups of seeded SWE keys remain by convention:
 
-- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each requires a `ModelRoleConfig` GLOBAL row (checked at worker boot by `assertConfigReady`). Note: `securityReview` is a legacy role name preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all three sub-agents. Do not route new code through `securityReview`.
-- **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas used within a parent activity. They can have skill and tool assignments but do **not** require their own `ModelRoleConfig` row.
-- **`AnySkillRole`** = `AgentRole | SkillOnlyRole` — accepted by `loadAgentSkills` and `loadAgentToolConfig`.
+- **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each requires a `ModelRoleConfig` GLOBAL row (checked at worker boot by `assertConfigReady`). Note: `securityReview` is a legacy role name preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all three sub-agents. Do not route new code through `securityReview`.
+- **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — used within a parent activity. They have **no** `ModelRoleConfig` row; their seeded `Agent` row carries `inheritsModelFrom` (→ `reviewer` for the three reviewers, → `planner` for `decomposer`) so `resolveAgent` binds the parent's model.
+
+**First-class `Agent` entity (P1):** the `Agent` table is the versioned, governed library object that **overlays** the three legacy config tables (`ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig`). `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → GLOBAL`, with the run-start version pinned via the `WorkflowRun.agentVersions` snapshot); any null override field falls through to the legacy cascade, so seeded SWE agents resolve byte-identically to pre-P1. `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the resolved model + skills + tools + prompt into an `AgentSpec`; the generic `runAgent` activity executes it. Seeded built-in agents live at GLOBAL scope tagged `origin='swe-starter'`. Managed at `/admin/agents/library` via `/api/v1/admin/agent-library`.
 
 Sub-role usage:
 - `securityReviewer`, `domainLogicReviewer`, `performanceReviewer` — loaded by `runReviewNetwork`; each reviewer agent gets its own skill suffix appended to its system prompt. All three inherit the `reviewer` model.

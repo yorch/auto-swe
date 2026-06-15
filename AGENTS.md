@@ -16,9 +16,12 @@
 
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `docs/platform-pivot.md`         | Proposed   | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). Engine/mechanism vs. content, reusable libraries (Agents/Templates/Skills/Connections), role→`Agent` rename + override cascade, generic Connection/input/trigger/memory; phases P0–P3 (committed) + P4–P5 (deferred: distribution layer, UX/multi-org) |
+| `docs/platform-pivot.md`         | In progress | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **P0 + P1 implemented; P2 underway (agent node done).** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p2.md` |
+| `docs/platform-pivot-p0.md`      | Done       | P0 build plan (de-domainify the engine): enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams complete |
+| `docs/platform-pivot-p1.md`      | Done       | P1 build plan (Agent library): first-class `Agent` entity + `resolveAgent` overlay, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI. All 6 work-streams complete |
+| `docs/platform-pivot-p2.md`      | In progress | P2 build plan (declarative `agent` node + MCP): WS1 (agent node) done; MCP work-streams pending |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
-| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (11 node types), runtime security scanners, budget tiers, auth, data model, infra   |
+| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (12 node types), runtime security scanners, budget tiers, auth, data model, infra   |
 | `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
 | `docs/deployment.md`             | Living     | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
 | `docs/model-configuration.md`    | Living     | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
@@ -34,7 +37,7 @@
 | `docs/configurable-workflows.md`  | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale              |
 | `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
 | `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
-| `docs/data-and-infra.md`          | Schema section outdated (actual: 36 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
+| `docs/data-and-infra.md`          | Schema section outdated (actual: 38 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
 | `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
 | `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
 
@@ -196,9 +199,11 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 - **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 51 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
 - **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `AgentToolConfig`. `null` tool config = all four workspace tools enabled.
 
-**Role types** accepted by `loadAgentSkills` and `loadAgentToolConfig` (`AnySkillRole`):
-- **`AgentRole` (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row. Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
-- **`SkillOnlyRole` (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — sub-agent personas that can have skill/tool assignments but do **not** need their own `ModelRoleConfig` row.
+**Agent identity** is a free-form `string` (`AnySkillRole = string`; the `AgentRole` enum + `SkillOnlyRole` union were removed in P0/P1). `loadAgentSkills`/`loadAgentToolConfig` accept any key. The seeded SWE keys group as:
+- **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row. Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
+- **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — no `ModelRoleConfig` row; their seeded `Agent` row carries `inheritsModelFrom` (→ `reviewer` / `planner`) so `resolveAgent` binds the parent's model.
+
+**First-class `Agent` entity (P1):** the `Agent` table is the versioned, governed library object overlaying the three legacy config tables. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active version (cascade + run-start `WorkflowRun.agentVersions` pin or explicit `key@version`); null overrides fall through to the legacy cascade (byte-identical to pre-P1). `resolveAgentSpec` (`agentSpec.ts`) → `AgentSpec` → the generic `runAgent` activity. Library API `/api/v1/admin/agent-library`, UI `/admin/agents/library`. The declarative **`agent` workflow node** (P2) dispatches `agentRef` to the `runAgentNode` activity.
 
 **Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
 
@@ -207,7 +212,7 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 2. `TEAM` scope (if the team has an override)
 3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole`, `SkillOnlyRole`), `packages/worker/src/lib/config/resolver.ts` (`resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`, `AgentRole`), `packages/worker/src/lib/config/resolver.ts` (`resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
 
 Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
 
