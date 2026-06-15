@@ -15,6 +15,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 import { assertConfigReady } from './assertReady.js';
+import { requiredAgentRoles } from './stepRequiredAgents.js';
 
 const ALL_AGENT_ROLES = [
   'implementer',
@@ -44,6 +45,14 @@ function fullyConfigured() {
     modelSpec: 'openai/text-embedding-3-large',
   });
 }
+
+describe('requiredAgentRoles', () => {
+  it('computes the deduped union of every registered step’s required agents', () => {
+    // Locks the WS4 invariant: the computed set equals the 6 SWE roles today,
+    // so the boot check requires exactly what the registered steps resolve.
+    expect([...requiredAgentRoles()].sort()).toEqual([...ALL_AGENT_ROLES].sort());
+  });
+});
 
 describe('assertConfigReady', () => {
   it('passes when all required rows exist', async () => {

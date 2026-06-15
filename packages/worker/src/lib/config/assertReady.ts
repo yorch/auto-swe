@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
-import { ALL_ROLES } from './types.js';
+import { requiredAgentRoles } from './stepRequiredAgents.js';
 
 /// Walks every required GLOBAL config row and confirms the worker has
 /// everything it needs to run an activity. Throws a single error listing
@@ -9,7 +9,9 @@ import { ALL_ROLES } from './types.js';
 /// with the message visible.
 ///
 /// Checked invariants:
-///   - One GLOBAL `ModelRoleConfig` row per AgentRole (all 6).
+///   - One GLOBAL `ModelRoleConfig` row per agent role *that a registered step
+///     actually resolves* (computed via `requiredAgentRoles()`, not a fixed
+///     list — so roles no step uses are not required).
 ///   - For each role's `<provider>/...` spec, EITHER the row pins a
 ///     specific `credentialId`, OR a GLOBAL `ProviderCredential` exists
 ///     for that provider name.
@@ -18,8 +20,8 @@ import { ALL_ROLES } from './types.js';
 export async function assertConfigReady(): Promise<void> {
   const missing: string[] = [];
 
-  // Per-role checks
-  for (const role of ALL_ROLES) {
+  // Per-role checks — only the roles some registered step needs.
+  for (const role of requiredAgentRoles()) {
     const row = await prisma.modelRoleConfig.findFirst({
       include: { credential: { select: { provider: true } } },
       where: { role, scope: 'GLOBAL' },
