@@ -82,7 +82,7 @@
 
 ## Sequencing checklist
 
-- [ ] Slice 1 — worker: `resolveAgent` authoritative; seed full Agents; `assertConfigReady` on Agents
+- [x] Slice 1 — worker: `resolveAgent` authoritative; seed full Agents; `assertConfigReady` on Agents
 - [ ] Slice 2 — gateway: retire role services/routes; keep credentials + embeddings
 - [ ] Slice 3 — web: admin UI onto the Agent library
 - [ ] Slice 4 — drop the three tables + dead code; consolidate migration; update bootstrap docs
