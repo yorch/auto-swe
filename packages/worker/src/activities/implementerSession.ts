@@ -22,8 +22,8 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
 
-/** Repository row shape (the shared index doesn't export Prisma model types). */
-type Repository = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>>;
+/** Connection (git_repo) row shape (the shared index doesn't export Prisma model types). */
+type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>>;
 
 export interface FixSessionInput {
   mode: FixMode;
@@ -44,7 +44,7 @@ export interface FixSessionInput {
    * (e.g. gate-fix re-runs the failed gate). The returned string is passed to
    * `notes` as `extraNote`. Failures here are informational, never fatal.
    */
-  afterGenerate?: (workspace: Workspace, repo: Repository) => Promise<string | null>;
+  afterGenerate?: (workspace: Workspace, repo: Connection) => Promise<string | null>;
 }
 
 /**
@@ -54,7 +54,7 @@ export interface FixSessionInput {
  * The legacy lookup is unreliable by design (branch names repeat across repos
  * and epic-child rows have a null branch) — it exists only for in-flight runs.
  */
-async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Repository> {
+async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Connection> {
   if (previousCodeResult.repoId) {
     return prisma.connection.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
   }
