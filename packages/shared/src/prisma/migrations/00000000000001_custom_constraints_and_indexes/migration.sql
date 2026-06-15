@@ -145,8 +145,8 @@ ON CONFLICT ("id") DO NOTHING;
 -- Default GLOBAL tool config for the implementer agent (all 4 workspace tools).
 -- syncBuiltins() at gateway startup maintains this too; the seed keeps a
 -- fresh DB correct even before the gateway's first boot.
-INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools")
-VALUES ('implementer', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
+INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools", "origin")
+VALUES ('implementer', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'], 'swe-starter')
 ON CONFLICT DO NOTHING;
 
 -- ── NOT NULL on array columns ────────────────────────────────────────────────
