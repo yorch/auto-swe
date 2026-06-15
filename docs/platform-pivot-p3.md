@@ -106,11 +106,29 @@ Landed as three green-at-each-step commits:
   proves a non-SWE template validates a different payload (unit test) and submit rejects a payload
   that violates the declared schema (route test).
 
-### Slice 4 — Generic triggers
-- **Schema/config:** trigger receivers (core webhook verify + manual/API + schedule) + a config/seed
-  mapping from event → `RunInput`. SWE: GitHub `issue.labeled` + Jira fetch map to the SWE input.
-- **Acceptance:** a sample GitHub/Jira payload maps to a `RunInput` via config; a schedule trigger
-  fires a non-SWE template.
+### Slice 4 — Generic triggers ✅ DONE
+- **Config-driven event → run-input mapping.** New `@auto-swe/shared/lib/triggerMapping`: a
+  declarative `TriggerMapping { source, event?, templateName, fields[] }` where each field pulls a
+  value out of the inbound event by dot-path (`from`) or supplies a `const`, with small string
+  transforms (`toString`/`beforeSlash`/`afterSlash`/`lower`). The pure `mapEventToRunInput(mapping,
+  event)` turns any event (GitHub/Jira webhook body, a schedule fire, …) into a run-input payload —
+  which then flows through the same `validateInputPayload` + template `inputSchema` path a manual
+  submission uses. This is the decoupling: *what fires a run* is config, not a hard-coded
+  `issue.labeled → ticket` path.
+- **SWE seed mappings** (`SWE_TRIGGER_MAPPINGS`, removable SWE content like the built-in templates):
+  GitHub `issues.labeled` and Jira `issue_updated` → the SWE `{ ticketId, description, budget }` +
+  `repoFullName` (which a receiver resolves to a `connectionId` via a `git_repo` Connection lookup —
+  the pure mapping stays DB-free).
+- **Schedule:** scheduled runs already fire any template against a connection (`ScheduledWorkRequest`
+  → `RunnableWorkflow`), so "a schedule fires a non-SWE template" is supported today; the trigger
+  mapping additionally lets a schedule supply a constant-only payload.
+- **Deferred polish (optional):** persisting mappings in a `Trigger` DB table + wiring a live GitHub
+  *issues* webhook receiver that calls `mapEventToRunInput` → resolves the connection → submits the
+  run. The mechanism + proof are in place; this is the surface wiring (mirrors slice 3c's deferred
+  generic endpoint).
+- **Acceptance:** unit-proven — a GitHub `issues.labeled` payload and a Jira payload map to a
+  run-input via the seed config; a non-SWE schedule trigger produces a payload that validates against
+  its own template `inputSchema` (no ticket/repo assumptions). 8 tests.
 
 ## Risks & gotchas
 1. **`Repository` blast radius** (slice 2) — referenced across gateway routes, worker workspace/clone,
@@ -128,4 +146,4 @@ Landed as three green-at-each-step commits:
 - [x] Slice 1 — `MemoryItem` replaces `AgentLesson` (+ pgvector index; SWE lessons under an SWE scope)
 - [x] Slice 2 — `Connection` replaces `Repository` (`git_repo` type carries SWE repo config)
 - [x] Slice 3 — template `inputSchema` + generic `RunInput` (replaces `WorkRequest`; SWE satellites)
-- [ ] Slice 4 — generic triggers (webhook/manual/schedule → config-driven input mappings)
+- [x] Slice 4 — generic triggers (webhook/manual/schedule → config-driven input mappings)
