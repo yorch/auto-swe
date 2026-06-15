@@ -116,7 +116,7 @@ describe('modelConfigRoutes — admin', () => {
           credential: null,
           id: 'r1',
           modelSpec: 'anthropic/opus',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
           scope: 'GLOBAL',
         },
       ]);
@@ -154,13 +154,13 @@ describe('modelConfigRoutes — admin', () => {
       ctx.mockPrisma.modelRoleConfig.create.mockResolvedValueOnce({
         id: 'new-1',
         modelSpec: 'openai/gpt-5',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
       });
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'PUT',
-        payload: { modelSpec: 'openai/gpt-5', role: 'IMPLEMENTER', scope: 'GLOBAL' },
+        payload: { modelSpec: 'openai/gpt-5', role: 'implementer', scope: 'GLOBAL' },
         url: '/api/v1/admin/model-config',
       });
       expect(res.statusCode).toBe(201);
@@ -172,19 +172,19 @@ describe('modelConfigRoutes — admin', () => {
       ctx.mockPrisma.modelRoleConfig.findFirst.mockResolvedValueOnce({
         id: 'r1',
         modelSpec: 'anthropic/opus',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
       });
       ctx.mockPrisma.modelRoleConfig.update.mockResolvedValueOnce({
         id: 'r1',
         modelSpec: 'openai/gpt-5',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
       });
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'PUT',
-        payload: { modelSpec: 'openai/gpt-5', role: 'IMPLEMENTER', scope: 'GLOBAL' },
+        payload: { modelSpec: 'openai/gpt-5', role: 'implementer', scope: 'GLOBAL' },
         url: '/api/v1/admin/model-config',
       });
       expect(res.statusCode).toBe(200);
@@ -196,7 +196,7 @@ describe('modelConfigRoutes — admin', () => {
       ctx.mockPrisma.modelRoleConfig.create.mockResolvedValueOnce({
         id: 'new-sp-1',
         modelSpec: 'anthropic/claude-opus-4-7',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
         systemPrompt: 'You are a TypeScript expert.',
       });
@@ -205,7 +205,7 @@ describe('modelConfigRoutes — admin', () => {
         method: 'PUT',
         payload: {
           modelSpec: 'anthropic/claude-opus-4-7',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
           scope: 'GLOBAL',
           systemPrompt: 'You are a TypeScript expert.',
         },
@@ -221,14 +221,14 @@ describe('modelConfigRoutes — admin', () => {
       ctx.mockPrisma.modelRoleConfig.findFirst.mockResolvedValueOnce({
         id: 'r-sp-1',
         modelSpec: 'anthropic/claude-opus-4-7',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
         systemPrompt: 'initial prompt',
       });
       ctx.mockPrisma.modelRoleConfig.update.mockResolvedValueOnce({
         id: 'r-sp-1',
         modelSpec: 'anthropic/claude-opus-4-7',
-        role: 'IMPLEMENTER',
+        role: 'implementer',
         scope: 'GLOBAL',
         systemPrompt: null,
       });
@@ -237,7 +237,7 @@ describe('modelConfigRoutes — admin', () => {
         method: 'PUT',
         payload: {
           modelSpec: 'anthropic/claude-opus-4-7',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
           scope: 'GLOBAL',
           systemPrompt: null,
         },
@@ -253,7 +253,7 @@ describe('modelConfigRoutes — admin', () => {
         headers: AUTH,
         method: 'PUT',
         // scope=TEAM without teamId → schema validation fails
-        payload: { modelSpec: 'openai/gpt-5', role: 'IMPLEMENTER', scope: 'TEAM' },
+        payload: { modelSpec: 'openai/gpt-5', role: 'implementer', scope: 'TEAM' },
         url: '/api/v1/admin/model-config',
       });
       expect(res.statusCode).toBe(400);
@@ -267,7 +267,7 @@ describe('modelConfigRoutes — admin', () => {
         payload: {
           credentialId: '11111111-1111-4111-8111-111111111111',
           modelSpec: 'opencodego/glm-5',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
           scope: 'GLOBAL',
         },
         url: '/api/v1/admin/model-config',
@@ -326,7 +326,7 @@ describe('modelConfigRoutes — admin', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/model-config/effective?role=IMPLEMENTER&workflowTemplateId=33333333-3333-4333-8333-333333333333',
+        url: '/api/v1/admin/model-config/effective?role=implementer&workflowTemplateId=33333333-3333-4333-8333-333333333333',
       });
       expect(JSON.parse(res.payload).data.scope).toBe('WORKFLOW_TEMPLATE');
     });
@@ -339,7 +339,7 @@ describe('modelConfigRoutes — admin', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'GET',
-        url: '/api/v1/admin/model-config/effective?role=IMPLEMENTER&teamId=44444444-4444-4444-8444-444444444444&workflowTemplateId=33333333-3333-4333-8333-333333333333',
+        url: '/api/v1/admin/model-config/effective?role=implementer&teamId=44444444-4444-4444-8444-444444444444&workflowTemplateId=33333333-3333-4333-8333-333333333333',
       });
       expect(JSON.parse(res.payload).data.scope).toBe('GLOBAL');
     });
@@ -538,7 +538,7 @@ describe('modelConfigRoutes — team-scoped', () => {
       const res = await app.inject({
         headers: AUTH,
         method: 'PUT',
-        payload: { modelSpec: 'openai/gpt-5', role: 'IMPLEMENTER' },
+        payload: { modelSpec: 'openai/gpt-5', role: 'implementer' },
         url: `/api/v1/teams/${teamId}/model-config`,
       });
       expect(res.statusCode).toBe(201);
@@ -564,7 +564,7 @@ describe('modelConfigRoutes — team-scoped', () => {
         payload: {
           credentialId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
           modelSpec: 'opencodego/glm-5',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
         },
         url: `/api/v1/teams/${teamId}/model-config`,
       });
@@ -591,7 +591,7 @@ describe('modelConfigRoutes — team-scoped', () => {
         payload: {
           credentialId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           modelSpec: 'opencodego/glm-5',
-          role: 'IMPLEMENTER',
+          role: 'implementer',
         },
         url: `/api/v1/teams/${teamId}/model-config`,
       });

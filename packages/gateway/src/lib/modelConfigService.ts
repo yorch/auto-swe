@@ -11,12 +11,12 @@ import { isUniqueConstraintError } from './prismaErrors.js';
  */
 
 export const MODEL_AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
 ] as const;
 export const MODEL_CONFIG_SCOPES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 
@@ -29,12 +29,12 @@ export type ModelRoleConfigRow = NonNullable<
 
 /// Per-role baked-in defaults used by the "Seed defaults" button.
 const DEFAULT_ROLE_SPECS: Record<ModelAgentRole, string> = {
-  COMMIT_TO_MEMORY: 'anthropic/claude-opus-4-7',
-  IMPLEMENTER: 'anthropic/claude-opus-4-7',
-  PLANNER: 'anthropic/claude-sonnet-4-6',
-  REVIEWER: 'anthropic/claude-opus-4-7',
-  SECURITY_REVIEW: 'anthropic/claude-sonnet-4-6',
-  VALIDATE_CONTEXT: 'anthropic/claude-sonnet-4-6',
+  commitToMemory: 'anthropic/claude-opus-4-7',
+  implementer: 'anthropic/claude-opus-4-7',
+  planner: 'anthropic/claude-sonnet-4-6',
+  reviewer: 'anthropic/claude-opus-4-7',
+  securityReview: 'anthropic/claude-sonnet-4-6',
+  validateContext: 'anthropic/claude-sonnet-4-6',
 };
 
 const DEFAULT_EMBEDDING_SPEC = 'openai/text-embedding-3-large';

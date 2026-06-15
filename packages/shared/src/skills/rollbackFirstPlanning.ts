@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const ROLLBACK_FIRST_PLANNING_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'PLANNER', sortOrder: 70 }],
+  assignments: [{ role: 'planner', sortOrder: 70 }],
   description:
     'Requires defining a rollback strategy before planning implementation, so high-risk changes have an explicit escape hatch before any code is written.',
   name: 'rollback-first-planning',

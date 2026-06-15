@@ -13,16 +13,16 @@ import type { Prisma, PrismaClient } from '@auto-swe/shared';
  */
 
 export const SKILL_AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
-  'SECURITY_REVIEWER',
-  'DOMAIN_LOGIC_REVIEWER',
-  'PERFORMANCE_REVIEWER',
-  'DECOMPOSER',
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
+  'securityReviewer',
+  'domainLogicReviewer',
+  'performanceReviewer',
+  'decomposer',
 ] as const;
 export const SKILL_SCOPES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 export const IMPLEMENTER_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;

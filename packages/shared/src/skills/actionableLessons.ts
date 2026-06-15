@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const ACTIONABLE_LESSONS_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'COMMIT_TO_MEMORY', sortOrder: 10 }],
+  assignments: [{ role: 'commitToMemory', sortOrder: 10 }],
   description:
     'Guides the memory agent to produce root-cause-first, transferable lessons with specific fix patterns rather than vague summaries.',
   name: 'actionable-lessons',

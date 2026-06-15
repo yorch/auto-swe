@@ -78,7 +78,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
     for (const assignment of skillDef.assignments) {
       const existingAssignment = await prisma.agentSkillAssignment.findFirst({
         where: {
-          agentRole: assignment.role as never,
+          agentRole: assignment.role,
           scope: 'GLOBAL',
           skillId: skill.id,
           teamId: null,
@@ -88,7 +88,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
       if (!existingAssignment) {
         await prisma.agentSkillAssignment.create({
           data: {
-            agentRole: assignment.role as never,
+            agentRole: assignment.role,
             scope: 'GLOBAL',
             skillId: skill.id,
             sortOrder: assignment.sortOrder,
@@ -118,12 +118,12 @@ async function syncScannerPatterns(prisma: PrismaClient): Promise<void> {
 
 async function syncImplementerToolConfig(prisma: PrismaClient): Promise<void> {
   const existing = await prisma.agentToolConfig.findFirst({
-    where: { agentRole: 'IMPLEMENTER', scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+    where: { agentRole: 'implementer', scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
   });
   if (!existing) {
     await prisma.agentToolConfig.create({
       data: {
-        agentRole: 'IMPLEMENTER',
+        agentRole: 'implementer',
         enabledTools: ['readFile', 'writeFile', 'listDirectory', 'bash'],
         scope: 'GLOBAL',
       },

@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const OBSERVABILITY_FIRST_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'IMPLEMENTER', sortOrder: 110 }],
+  assignments: [{ role: 'implementer', sortOrder: 110 }],
   description:
     'Requires adding structured log statements at key decision points, with correlation IDs and sufficient context to diagnose issues without a debugger.',
   name: 'observability-first',

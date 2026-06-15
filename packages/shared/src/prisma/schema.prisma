@@ -44,20 +44,10 @@ enum ConfigScope {
   WORKFLOW_TEMPLATE
 }
 
-enum AgentRole {
-  IMPLEMENTER
-  REVIEWER
-  PLANNER
-  SECURITY_REVIEW
-  VALIDATE_CONTEXT
-  COMMIT_TO_MEMORY
-  // Skill-only sub-roles — no ModelRoleConfig required; model resolution
-  // falls back to the parent role (reviewer / planner).
-  SECURITY_REVIEWER
-  DOMAIN_LOGIC_REVIEWER
-  PERFORMANCE_REVIEWER
-  DECOMPOSER
-}
+// NOTE: agent identity is a free-form string (camelCase, e.g. 'implementer',
+// 'securityReviewer'), not a DB enum. The platform pivot (P0) removed the
+// `AgentRole` enum so new agents can be added as data without a migration.
+// Canonical values are the worker's `AnySkillRole` union; the seed writes them.
 
 enum ConfigAuditAction {
   CREATE
@@ -622,7 +612,7 @@ model WorkflowTemplateVersion {
 /// WORKFLOW_TEMPLATE scope to pin a template to a specific credential set.
 model ModelRoleConfig {
   id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  role               AgentRole
+  role               String
   scope              ConfigScope
   teamId             String?             @map("team_id") @db.Uuid
   team               Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -949,7 +939,7 @@ model ScannerPattern {
 /// assignments for the role wins.
 model AgentSkillAssignment {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          AgentRole         @map("agent_role")
+  agentRole          String            @map("agent_role")
   skillId            String            @map("skill_id") @db.Uuid
   scope              ConfigScope
   teamId             String?           @map("team_id") @db.Uuid
@@ -973,7 +963,7 @@ model AgentSkillAssignment {
 /// An empty array is treated as "no tools" (maximum lockdown); the API enforces min(1).
 model AgentToolConfig {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          AgentRole         @map("agent_role")
+  agentRole          String            @map("agent_role")
   scope              ConfigScope
   teamId             String?           @map("team_id") @db.Uuid
   workflowTemplateId String?           @map("workflow_template_id") @db.Uuid

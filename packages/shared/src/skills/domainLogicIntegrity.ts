@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const DOMAIN_LOGIC_INTEGRITY_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'DOMAIN_LOGIC_REVIEWER', sortOrder: 10 }],
+  assignments: [{ role: 'domainLogicReviewer', sortOrder: 10 }],
   description:
     'Focuses the domain-logic reviewer on correctness of business rules and contract compliance.',
   name: 'domain-logic-integrity',

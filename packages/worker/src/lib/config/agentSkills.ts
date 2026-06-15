@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { type AnySkillRole, type ResolveCtx, ROLE_TO_PRISMA } from './types.js';
+import type { AnySkillRole, ResolveCtx } from './types.js';
 
 // Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
 // The worker would load and execute it within the Docker workspace, enforcing the same
@@ -15,14 +15,6 @@ export interface ResolvedSkill {
   isVerified: boolean;
 }
 
-const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
-  ...ROLE_TO_PRISMA,
-  decomposer: 'DECOMPOSER',
-  domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
-  performanceReviewer: 'PERFORMANCE_REVIEWER',
-  securityReviewer: 'SECURITY_REVIEWER',
-};
-
 /**
  * Loads the effective skill assignments (prompt fragments) for an agent role
  * using the same scope cascade as ModelRoleConfig:
@@ -37,11 +29,9 @@ export async function loadAgentSkills(
   role: AnySkillRole,
   ctx?: ResolveCtx
 ): Promise<ResolvedSkill[]> {
-  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
-
   // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {
-    const rows = await fetchSkillAssignments(prismaRole, 'WORKFLOW_TEMPLATE', {
+    const rows = await fetchSkillAssignments(role, 'WORKFLOW_TEMPLATE', {
       workflowTemplateId: ctx.workflowTemplateId,
     });
     if (rows.length > 0) {
@@ -51,29 +41,29 @@ export async function loadAgentSkills(
 
   // 2. Team scope
   if (ctx?.teamId) {
-    const rows = await fetchSkillAssignments(prismaRole, 'TEAM', { teamId: ctx.teamId });
+    const rows = await fetchSkillAssignments(role, 'TEAM', { teamId: ctx.teamId });
     if (rows.length > 0) {
       return rows;
     }
   }
 
   // 3. Global scope
-  return fetchSkillAssignments(prismaRole, 'GLOBAL', {});
+  return fetchSkillAssignments(role, 'GLOBAL', {});
 }
 
 async function fetchSkillAssignments(
-  prismaRole: string,
+  agentRole: AnySkillRole,
   scope: 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE',
   scopeFilter: { teamId?: string; workflowTemplateId?: string }
 ): Promise<ResolvedSkill[]> {
   const assignments = await prisma.agentSkillAssignment.findMany({
     include: { skill: true },
     orderBy: { sortOrder: 'asc' },
-    // We cast `agentRole` and `scope` because the Prisma enum type and the
-    // string we pass are identical at runtime but TypeScript cannot narrow
-    // the imported enum to a narrower literal for the filter.
+    // `scope` is cast because the Prisma `ConfigScope` enum cannot be narrowed
+    // from the local string-literal union for the filter. `agentRole` is a
+    // plain TEXT column (camelCase string) so it needs no cast.
     where: {
-      agentRole: prismaRole as 'IMPLEMENTER',
+      agentRole,
       scope: scope as 'GLOBAL',
       skill: { isActive: true },
       ...scopeFilter,
@@ -112,13 +102,11 @@ export async function loadAgentToolConfig(
   role: AnySkillRole,
   ctx?: ResolveCtx
 ): Promise<string[] | null> {
-  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
-
   // 1. Workflow template scope
   if (ctx?.workflowTemplateId) {
     const row = await prisma.agentToolConfig.findFirst({
       where: {
-        agentRole: prismaRole as 'IMPLEMENTER',
+        agentRole: role,
         scope: 'WORKFLOW_TEMPLATE',
         workflowTemplateId: ctx.workflowTemplateId,
       },
@@ -132,7 +120,7 @@ export async function loadAgentToolConfig(
   if (ctx?.teamId) {
     const row = await prisma.agentToolConfig.findFirst({
       where: {
-        agentRole: prismaRole as 'IMPLEMENTER',
+        agentRole: role,
         scope: 'TEAM',
         teamId: ctx.teamId,
       },
@@ -145,7 +133,7 @@ export async function loadAgentToolConfig(
   // 3. Global scope
   const row = await prisma.agentToolConfig.findFirst({
     where: {
-      agentRole: prismaRole as 'IMPLEMENTER',
+      agentRole: role,
       scope: 'GLOBAL',
       teamId: null,
       workflowTemplateId: null,

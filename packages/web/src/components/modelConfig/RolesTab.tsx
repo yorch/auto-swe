@@ -44,12 +44,12 @@ export function RolesTab() {
   const showBootstrapBanner = !isLoading && missingGlobalRoles.length > 0;
 
   const byRole: Record<ModelRole, ModelRoleConfigRow[]> = {
-    COMMIT_TO_MEMORY: [],
-    IMPLEMENTER: [],
-    PLANNER: [],
-    REVIEWER: [],
-    SECURITY_REVIEW: [],
-    VALIDATE_CONTEXT: [],
+    commitToMemory: [],
+    implementer: [],
+    planner: [],
+    reviewer: [],
+    securityReview: [],
+    validateContext: [],
   };
   for (const row of rows ?? []) {
     byRole[row.role].push(row);
@@ -82,7 +82,7 @@ export function RolesTab() {
       {MODEL_ROLES.map((role) => (
         <Card key={role}>
           <CardHeader>
-            <CardTitle eyebrow={role.replace(/_/g, ' ').toLowerCase()}>
+            <CardTitle eyebrow={role.replace(/([A-Z])/g, ' $1').toLowerCase()}>
               {ROLE_LABELS[role]}
             </CardTitle>
             <Button onClick={() => setCreatingFor(role)} size="sm">
@@ -247,7 +247,7 @@ function UuidInput({
 }
 
 function CascadePreview() {
-  const [role, setRole] = useState<ModelRole>('IMPLEMENTER');
+  const [role, setRole] = useState<ModelRole>('implementer');
   const [teamId, setTeamId] = useState('');
   const [templateId, setTemplateId] = useState('');
 
@@ -370,7 +370,7 @@ function EditRoleModal({
     systemPrompt?: string | null;
   }) => Promise<void>;
 }) {
-  const [role, setRole] = useState<ModelRole>(existing?.role ?? newRoleDefault ?? 'IMPLEMENTER');
+  const [role, setRole] = useState<ModelRole>(existing?.role ?? newRoleDefault ?? 'implementer');
   const [scope, setScope] = useState<ConfigScope>(existing?.scope ?? 'GLOBAL');
   const [teamId, setTeamId] = useState(existing?.teamId ?? '');
   const [workflowTemplateId, setWorkflowTemplateId] = useState(existing?.workflowTemplateId ?? '');

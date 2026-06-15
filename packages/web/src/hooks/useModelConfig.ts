@@ -3,31 +3,32 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/// Mirrors the Prisma `AgentRole` enum.
+/// Canonical agent role keys (camelCase). Match the worker's `AgentRole`
+/// union and the gateway's `MODEL_AGENT_ROLES`.
 export type ModelRole =
-  | 'IMPLEMENTER'
-  | 'REVIEWER'
-  | 'PLANNER'
-  | 'SECURITY_REVIEW'
-  | 'VALIDATE_CONTEXT'
-  | 'COMMIT_TO_MEMORY';
+  | 'implementer'
+  | 'reviewer'
+  | 'planner'
+  | 'securityReview'
+  | 'validateContext'
+  | 'commitToMemory';
 
 export const MODEL_ROLES: ModelRole[] = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
 ];
 
 export const ROLE_LABELS: Record<ModelRole, string> = {
-  COMMIT_TO_MEMORY: 'Memory summarizer',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security review',
-  VALIDATE_CONTEXT: 'Context validator',
+  commitToMemory: 'Memory summarizer',
+  implementer: 'Implementer',
+  planner: 'Planner',
+  reviewer: 'Reviewer',
+  securityReview: 'Security review',
+  validateContext: 'Context validator',
 };
 
 export type ConfigScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';

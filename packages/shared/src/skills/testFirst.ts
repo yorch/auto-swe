@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const TEST_FIRST_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 20 },
-    { role: 'PLANNER', sortOrder: 20 },
+    { role: 'implementer', sortOrder: 20 },
+    { role: 'planner', sortOrder: 20 },
   ],
   description:
     'Mandates writing or updating tests before or alongside implementation code, with explicit fail-then-pass verification.',

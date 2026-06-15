@@ -2,12 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { parseProviderModelSpec } from '../providerUtils.js';
 import { configCacheTtlMs, invalidate, withCache } from './cache.js';
-import {
-  type AgentRole,
-  type ResolveCtx,
-  type ResolvedModelConfig,
-  ROLE_TO_PRISMA,
-} from './types.js';
+import type { AgentRole, ResolveCtx, ResolvedModelConfig } from './types.js';
 
 /// Thrown when a required configuration row is missing. The worker boot
 /// `assertConfigReady()` check catches this before activities run; if
@@ -35,8 +30,6 @@ async function resolveModelConfigUncached(
   role: AgentRole,
   ctx?: ResolveCtx
 ): Promise<ResolvedModelConfig> {
-  const prismaRole = ROLE_TO_PRISMA[role];
-
   // Model spec + credential cascade: first non-null row wins. systemPrompt is
   // also cascaded independently — a higher-scope row may carry the model spec
   // but leave systemPrompt=null, so we keep looking at lower scopes for the
@@ -66,7 +59,7 @@ async function resolveModelConfigUncached(
     const row = await prisma.modelRoleConfig.findFirst({
       include: { credential: true },
       where: {
-        role: prismaRole,
+        role,
         scope: 'WORKFLOW_TEMPLATE',
         workflowTemplateId: ctx.workflowTemplateId,
       },
@@ -87,7 +80,7 @@ async function resolveModelConfigUncached(
   if (ctx?.teamId && (!specEntry || needPromptCascade)) {
     const row = await prisma.modelRoleConfig.findFirst({
       include: { credential: true },
-      where: { role: prismaRole, scope: 'TEAM', teamId: ctx.teamId },
+      where: { role, scope: 'TEAM', teamId: ctx.teamId },
     });
     if (row) {
       const isNewSpec = !specEntry;
@@ -113,7 +106,7 @@ async function resolveModelConfigUncached(
   if (!specEntry || needPromptCascade) {
     const globalRow = await prisma.modelRoleConfig.findFirst({
       include: { credential: true },
-      where: { role: prismaRole, scope: 'GLOBAL' },
+      where: { role, scope: 'GLOBAL' },
     });
     if (globalRow) {
       const isNewSpec = !specEntry;

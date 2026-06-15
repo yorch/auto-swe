@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const PR_DESCRIPTION_QUALITY_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'IMPLEMENTER', sortOrder: 70 }],
+  assignments: [{ role: 'implementer', sortOrder: 70 }],
   description:
     'Requires pull request descriptions that explain the why, call out breaking changes, include migration steps, and provide a concrete test plan.',
   name: 'pr-description-quality',

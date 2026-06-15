@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const CONTEXT_AMBIGUITY_RESOLUTION_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'VALIDATE_CONTEXT', sortOrder: 20 }],
+  assignments: [{ role: 'validateContext', sortOrder: 20 }],
   description:
     'Guides how to surface and resolve ambiguities in a work request before implementation begins.',
   name: 'context-ambiguity-resolution',

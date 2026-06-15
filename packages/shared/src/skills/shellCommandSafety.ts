@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const SHELL_COMMAND_SAFETY_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 50 },
-    { role: 'SECURITY_REVIEW', sortOrder: 10 },
+    { role: 'implementer', sortOrder: 50 },
+    { role: 'securityReview', sortOrder: 10 },
   ],
   description:
     'Enforces safe shell command construction to prevent injection, path traversal, and privilege escalation.',

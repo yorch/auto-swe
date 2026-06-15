@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const API_CONTRACT_STABILITY_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 120 },
-    { role: 'REVIEWER', sortOrder: 50 },
+    { role: 'implementer', sortOrder: 120 },
+    { role: 'reviewer', sortOrder: 50 },
   ],
   description:
     'Requires that public APIs evolve additively only, with removals and renames treated as breaking changes requiring a deprecation cycle.',

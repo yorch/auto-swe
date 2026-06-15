@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
-import { ALL_ROLES, ROLE_TO_PRISMA } from './types.js';
+import { ALL_ROLES } from './types.js';
 
 /// Walks every required GLOBAL config row and confirms the worker has
 /// everything it needs to run an activity. Throws a single error listing
@@ -22,7 +22,7 @@ export async function assertConfigReady(): Promise<void> {
   for (const role of ALL_ROLES) {
     const row = await prisma.modelRoleConfig.findFirst({
       include: { credential: { select: { provider: true } } },
-      where: { role: ROLE_TO_PRISMA[role], scope: 'GLOBAL' },
+      where: { role, scope: 'GLOBAL' },
     });
     if (!row) {
       missing.push(`  - GLOBAL ModelRoleConfig for role '${role}'`);

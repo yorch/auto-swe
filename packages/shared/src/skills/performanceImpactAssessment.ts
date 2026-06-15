@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const PERFORMANCE_IMPACT_ASSESSMENT_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'PERFORMANCE_REVIEWER', sortOrder: 10 }],
+  assignments: [{ role: 'performanceReviewer', sortOrder: 10 }],
   description:
     'Focuses the performance reviewer on concrete throughput and latency regressions, not speculative optimisations.',
   name: 'performance-impact-assessment',

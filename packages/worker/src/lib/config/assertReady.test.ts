@@ -16,13 +16,13 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { assertConfigReady } from './assertReady.js';
 
-const ALL_PRISMA_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
+const ALL_AGENT_ROLES = [
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
 ];
 
 beforeEach(() => {
@@ -49,7 +49,7 @@ describe('assertConfigReady', () => {
   it('passes when all required rows exist', async () => {
     fullyConfigured();
     await expect(assertConfigReady()).resolves.toBeUndefined();
-    expect(roleFindFirst).toHaveBeenCalledTimes(ALL_PRISMA_ROLES.length);
+    expect(roleFindFirst).toHaveBeenCalledTimes(ALL_AGENT_ROLES.length);
   });
 
   it('reports every missing role in a single error', async () => {

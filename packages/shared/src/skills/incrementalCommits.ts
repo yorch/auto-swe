@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const INCREMENTAL_COMMITS_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'IMPLEMENTER', sortOrder: 30 }],
+  assignments: [{ role: 'implementer', sortOrder: 30 }],
   description:
     'Requires one logical change per commit with conventional prefixes, ensuring each commit leaves the codebase in a passing state.',
   name: 'incremental-commits',

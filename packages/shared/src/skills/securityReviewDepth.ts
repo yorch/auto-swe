@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const SECURITY_REVIEW_DEPTH_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'SECURITY_REVIEWER', sortOrder: 10 }],
+  assignments: [{ role: 'securityReviewer', sortOrder: 10 }],
   description:
     'Focuses the security reviewer on high-signal attack surfaces rather than surface-level checklist scanning.',
   name: 'security-review-depth',

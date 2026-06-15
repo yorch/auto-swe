@@ -1,21 +1,21 @@
 export const AGENT_ROLES = [
-  'IMPLEMENTER',
-  'REVIEWER',
-  'PLANNER',
-  'SECURITY_REVIEW',
-  'VALIDATE_CONTEXT',
-  'COMMIT_TO_MEMORY',
+  'implementer',
+  'reviewer',
+  'planner',
+  'securityReview',
+  'validateContext',
+  'commitToMemory',
 ] as const;
 
 export type AgentRoleKey = (typeof AGENT_ROLES)[number];
 
 export const ROLE_LABELS: Record<string, string> = {
-  COMMIT_TO_MEMORY: 'Commit to Memory',
-  IMPLEMENTER: 'Implementer',
-  PLANNER: 'Planner',
-  REVIEWER: 'Reviewer',
-  SECURITY_REVIEW: 'Security Review',
-  VALIDATE_CONTEXT: 'Validate Context',
+  commitToMemory: 'Commit to Memory',
+  implementer: 'Implementer',
+  planner: 'Planner',
+  reviewer: 'Reviewer',
+  securityReview: 'Security Review',
+  validateContext: 'Validate Context',
 } satisfies Record<AgentRoleKey, string>;
 
-export const ROLES_WITH_TOOLS = new Set<string>(['IMPLEMENTER']);
+export const ROLES_WITH_TOOLS = new Set<string>(['implementer']);

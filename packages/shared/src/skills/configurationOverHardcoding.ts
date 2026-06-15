@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const CONFIGURATION_OVER_HARDCODING_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 140 },
-    { role: 'PLANNER', sortOrder: 60 },
+    { role: 'implementer', sortOrder: 140 },
+    { role: 'planner', sortOrder: 60 },
   ],
   description:
     'Requires that operational parameters (timeouts, limits, thresholds) are configurable rather than hardcoded constants, enabling tuning without a code deploy.',

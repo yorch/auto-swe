@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const SCOPE_CONSERVATISM_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'PLANNER', sortOrder: 10 },
-    { role: 'VALIDATE_CONTEXT', sortOrder: 10 },
+    { role: 'planner', sortOrder: 10 },
+    { role: 'validateContext', sortOrder: 10 },
   ],
   description:
     'Prevents scope creep by requiring strict adherence to the stated requirement with no unsolicited additions.',

@@ -1,16 +1,7 @@
-// The Prisma-generated enum lives in the shared package; import the value-form
-// from the barrel for runtime use and re-cast as a string-literal union locally.
-type PrismaAgentRole =
-  | 'IMPLEMENTER'
-  | 'REVIEWER'
-  | 'PLANNER'
-  | 'SECURITY_REVIEW'
-  | 'VALIDATE_CONTEXT'
-  | 'COMMIT_TO_MEMORY';
-
-/// Internal-to-the-worker role identifier. Matches the camelCase enum the
-/// rest of the worker code uses (e.g. `'implementer'`), as opposed to the
-/// SCREAMING_SNAKE_CASE variant in the Prisma enum.
+/// Canonical agent identity. Since the platform pivot (P0), agent identity is
+/// a free-form camelCase string stored directly in the DB (no `AgentRole`
+/// enum). This union is the canonical set of SWE agent keys; the DB column
+/// accepts any string so new agents can be added as data.
 ///
 /// These 6 roles require a GLOBAL ModelRoleConfig row at worker startup
 /// (checked by `assertConfigReady`).
@@ -34,25 +25,6 @@ export type SkillOnlyRole =
 
 /// Any role that can have AgentSkillAssignment rows.
 export type AnySkillRole = AgentRole | SkillOnlyRole;
-
-/// Maps the worker's camelCase role names to Prisma's enum values.
-export const ROLE_TO_PRISMA: Record<AgentRole, PrismaAgentRole> = {
-  commitToMemory: 'COMMIT_TO_MEMORY',
-  implementer: 'IMPLEMENTER',
-  planner: 'PLANNER',
-  reviewer: 'REVIEWER',
-  securityReview: 'SECURITY_REVIEW',
-  validateContext: 'VALIDATE_CONTEXT',
-};
-
-export const PRISMA_TO_ROLE: Record<PrismaAgentRole, AgentRole> = {
-  COMMIT_TO_MEMORY: 'commitToMemory',
-  IMPLEMENTER: 'implementer',
-  PLANNER: 'planner',
-  REVIEWER: 'reviewer',
-  SECURITY_REVIEW: 'securityReview',
-  VALIDATE_CONTEXT: 'validateContext',
-};
 
 /// Canonical iteration order for the 6 agent roles. Used by the worker
 /// startup check, the seed helpers (where they still exist), and any test

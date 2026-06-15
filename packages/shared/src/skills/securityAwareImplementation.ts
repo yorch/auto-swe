@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const SECURITY_AWARE_IMPLEMENTATION_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 60 },
-    { role: 'SECURITY_REVIEW', sortOrder: 20 },
+    { role: 'implementer', sortOrder: 60 },
+    { role: 'securityReview', sortOrder: 20 },
   ],
   description:
     'Injects security best practices for input validation, secrets handling, error messages, and authentication checks.',

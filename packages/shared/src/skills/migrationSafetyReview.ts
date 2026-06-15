@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const MIGRATION_SAFETY_REVIEW_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'REVIEWER', sortOrder: 30 }],
+  assignments: [{ role: 'reviewer', sortOrder: 30 }],
   description:
     'Ensures reviewers verify that database migrations are backwards-compatible, rollbackable, and safe to deploy without downtime.',
   name: 'migration-safety-review',

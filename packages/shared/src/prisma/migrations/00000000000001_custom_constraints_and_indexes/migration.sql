@@ -142,11 +142,11 @@ INSERT INTO "embedding_configs" ("id", "model_spec")
 VALUES ('default', 'openai/text-embedding-3-large')
 ON CONFLICT ("id") DO NOTHING;
 
--- Default GLOBAL tool config for IMPLEMENTER (all 4 workspace tools).
+-- Default GLOBAL tool config for the implementer agent (all 4 workspace tools).
 -- syncBuiltins() at gateway startup maintains this too; the seed keeps a
 -- fresh DB correct even before the gateway's first boot.
 INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools")
-VALUES ('IMPLEMENTER', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
+VALUES ('implementer', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
 ON CONFLICT DO NOTHING;
 
 -- ── NOT NULL on array columns ────────────────────────────────────────────────

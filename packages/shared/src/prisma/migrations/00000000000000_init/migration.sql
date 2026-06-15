@@ -25,9 +25,6 @@ CREATE TYPE "WorkflowTemplateStatus" AS ENUM ('DRAFT', 'ACTIVE', 'ARCHIVED');
 CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE');
 
 -- CreateEnum
-CREATE TYPE "AgentRole" AS ENUM ('IMPLEMENTER', 'REVIEWER', 'PLANNER', 'SECURITY_REVIEW', 'VALIDATE_CONTEXT', 'COMMIT_TO_MEMORY', 'SECURITY_REVIEWER', 'DOMAIN_LOGIC_REVIEWER', 'PERFORMANCE_REVIEWER', 'DECOMPOSER');
-
--- CreateEnum
 CREATE TYPE "ConfigAuditAction" AS ENUM ('CREATE', 'UPDATE', 'DELETE');
 
 -- CreateEnum
@@ -386,7 +383,7 @@ CREATE TABLE "workflow_template_versions" (
 -- CreateTable
 CREATE TABLE "model_role_configs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "role" "AgentRole" NOT NULL,
+    "role" TEXT NOT NULL,
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
     "workflow_template_id" UUID,
@@ -608,7 +605,7 @@ CREATE TABLE "scanner_patterns" (
 -- CreateTable
 CREATE TABLE "agent_skill_assignments" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "agent_role" "AgentRole" NOT NULL,
+    "agent_role" TEXT NOT NULL,
     "skill_id" UUID NOT NULL,
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
@@ -622,7 +619,7 @@ CREATE TABLE "agent_skill_assignments" (
 -- CreateTable
 CREATE TABLE "agent_tool_configs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "agent_role" "AgentRole" NOT NULL,
+    "agent_role" TEXT NOT NULL,
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
     "workflow_template_id" UUID,

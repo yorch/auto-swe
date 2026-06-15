@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const ASYNC_SAFETY_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 100 },
-    { role: 'REVIEWER', sortOrder: 40 },
+    { role: 'implementer', sortOrder: 100 },
+    { role: 'reviewer', sortOrder: 40 },
   ],
   description:
     'Prevents async bugs: missing awaits, unhandled rejections, concurrent mutation of shared state, and incorrect Promise.all vs sequential patterns.',

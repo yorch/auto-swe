@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const FOLLOW_EXISTING_PATTERNS_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'IMPLEMENTER', sortOrder: 10 }],
+  assignments: [{ role: 'implementer', sortOrder: 10 }],
   description:
     'Requires reading adjacent code before writing, to ensure new code matches established conventions exactly.',
   name: 'follow-existing-patterns',
