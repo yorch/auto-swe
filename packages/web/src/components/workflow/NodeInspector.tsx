@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/Select';
 import { type HandleKind, handleKindsFor } from './dagNode';
 import { type Binding, InputsBindingsSection } from './inspectorFields';
 import {
+  AgentSection,
   CondSection,
   FanOutSection,
   SetSection,
@@ -137,7 +138,8 @@ export function NodeInspector({
         )}
         {node.type === 'fanOut' && <FanOutSection node={node} onChange={onChangeNode} />}
         {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
-        {(node.type === 'step' || node.type === 'shell') && (
+        {node.type === 'agent' && <AgentSection node={node} onChange={onChangeNode} />}
+        {(node.type === 'step' || node.type === 'shell' || node.type === 'agent') && (
           <InputsBindingsSection
             inputs={(node as { inputs?: Record<string, Binding> }).inputs}
             onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}

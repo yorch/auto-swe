@@ -25,6 +25,12 @@ type PrimitiveDef = {
 
 const PRIMITIVES: PrimitiveDef[] = [
   { hint: 'Run a registered step', label: 'Step', swatch: 'bg-ember-400', type: 'step' },
+  {
+    hint: 'Run a library Agent by reference',
+    label: 'Agent',
+    swatch: 'bg-indigo-400',
+    type: 'agent',
+  },
   { hint: 'Branch on an expression', label: 'Conditional', swatch: 'bg-violet-400', type: 'cond' },
   { hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400', type: 'set' },
   { hint: 'Wait for an external signal', label: 'Signal', swatch: 'bg-dust-400', type: 'signal' },
