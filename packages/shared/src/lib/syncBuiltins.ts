@@ -194,6 +194,7 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
       ? await prisma.workflowTemplate.update({
           data: {
             activeVersion: 1,
+            ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
             isDefault: tmpl.isDefault ?? false,
             origin: SWE_ORIGIN,
             status: 'ACTIVE',
@@ -204,6 +205,7 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
           data: {
             activeVersion: 1,
             description: tmpl.description,
+            ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
             isDefault: tmpl.isDefault ?? false,
             name: tmpl.name,
             origin: SWE_ORIGIN,

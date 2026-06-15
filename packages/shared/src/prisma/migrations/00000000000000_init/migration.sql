@@ -363,6 +363,7 @@ CREATE TABLE "workflow_templates" (
     "team_id" UUID,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
+    "input_schema" JSONB,
     "origin" TEXT,
     "status" "WorkflowTemplateStatus" NOT NULL DEFAULT 'DRAFT',
     "is_default" BOOLEAN NOT NULL DEFAULT false,

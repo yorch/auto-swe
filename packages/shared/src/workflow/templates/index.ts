@@ -1,3 +1,4 @@
+import type { InputSchema } from '../../lib/inputSchema.js';
 import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
@@ -23,12 +24,32 @@ export interface BuiltinTemplate {
   spec: WorkflowSpec;
   /** Marks the global default used when a team has no team-scoped template. */
   isDefault?: boolean;
+  /** P3 declarative run-input contract; null = accept any payload. */
+  inputSchema?: InputSchema;
 }
+
+/**
+ * The SWE run-input contract: a ticket id, the target git_repo Connection, a
+ * free-text description, and an optional budget tier. Declared on the default
+ * engineering template so the gateway validates SWE submissions against it
+ * (and non-SWE templates can declare their own instead).
+ */
+export const SWE_INPUT_SCHEMA: InputSchema = {
+  properties: {
+    budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
+    connectionId: { format: 'uuid', type: 'string' },
+    description: { type: 'string' },
+    ticketId: { type: 'string' },
+  },
+  required: ['ticketId', 'connectionId', 'description'],
+  type: 'object',
+};
 
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   // ── Core (always seeded, first is the global default) ────────────────────
   {
     description: DEFAULT_ENGINEERING_SPEC.description,
+    inputSchema: SWE_INPUT_SCHEMA,
     isDefault: true,
     name: DEFAULT_ENGINEERING_SPEC.name,
     spec: DEFAULT_ENGINEERING_SPEC,

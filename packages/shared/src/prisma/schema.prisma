@@ -584,6 +584,12 @@ model WorkflowTemplate {
   team              Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   name              String
   description       String                    @default("")
+  /// P3: declarative input contract for run submission — a JSON-Schema-subset
+  /// object (`{ type:'object', properties, required }`) the gateway validates
+  /// the run-input payload against. Null = no declared schema (accept any
+  /// payload). SWE's default template declares `{ ticketId, connectionId,
+  /// description, budget }`.
+  inputSchema       Json?                     @map("input_schema")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
   origin            String?
   status            WorkflowTemplateStatus    @default(DRAFT)
