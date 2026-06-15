@@ -249,10 +249,10 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
 
 function parseSpecOrThrow(input: unknown): unknown {
   // Strict check: the spec must already declare the current SPEC_SCHEMA_VERSION.
-  // Codemods exist (and run at workflow start in templates.ts → migrateSpec) for
-  // already-stored specs, but the editor is expected to migrate before saving,
-  // so we don't auto-upgrade here — otherwise older clients could silently
-  // round-trip a spec they don't fully understand.
+  // The codemod machinery runs at workflow start (templates.ts → migrateSpec) to
+  // upgrade already-stored specs, but the editor is expected to migrate before
+  // saving, so we don't auto-upgrade here — otherwise older clients could
+  // silently round-trip a spec they don't fully understand.
   const spec = input as { schemaVersion?: unknown } | null;
   if (!spec || typeof spec !== 'object') {
     throw Object.assign(new Error('spec must be an object'), { statusCode: 400 });

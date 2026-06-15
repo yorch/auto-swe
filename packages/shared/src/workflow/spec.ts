@@ -25,7 +25,7 @@ import { z } from 'zod';
  *                 image allowlist; per-step network mode).
  */
 
-export const SPEC_SCHEMA_VERSION = 5 as const;
+export const SPEC_SCHEMA_VERSION = 1 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
