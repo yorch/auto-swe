@@ -11,7 +11,7 @@ interface RetrievedLesson {
 }
 
 /**
- * Retrieves lessons from the agent_lessons table that are semantically similar
+ * Retrieves lessons from the memory_items table that are semantically similar
  * to the given query text, scoped to a specific repository.
  *
  * Uses pgvector cosine distance for similarity ranking.
@@ -34,7 +34,7 @@ export async function retrieveSimilarLessons(
       failure_type AS "failureType",
       1 - (embedding <=> $1::vector) AS similarity,
       created_at AS "createdAt"
-    FROM agent_lessons
+    FROM memory_items
     WHERE repo_id = $2::uuid
       AND embedding IS NOT NULL
       AND consolidated_at IS NULL

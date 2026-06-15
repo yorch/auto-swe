@@ -93,7 +93,7 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
 
 ## Sequencing checklist
 
-- [ ] Slice 1 — `MemoryItem` replaces `AgentLesson` (+ pgvector index; SWE lessons under an SWE scope)
+- [x] Slice 1 — `MemoryItem` replaces `AgentLesson` (+ pgvector index; SWE lessons under an SWE scope)
 - [ ] Slice 2 — `Connection` replaces `Repository` (`git_repo` type carries SWE repo config)
 - [ ] Slice 3 — template `inputSchema` + generic `RunInput` (replaces `WorkRequest`; SWE satellites)
 - [ ] Slice 4 — generic triggers (webhook/manual/schedule → config-driven input mappings)

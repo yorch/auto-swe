@@ -22,12 +22,12 @@ const LessonOutputSchema = z.object({
 type FailureType = z.infer<typeof LessonOutputSchema>['failureType'];
 
 /**
- * Insert one agent_lessons row + its vector embedding. Shared by the
+ * Insert one memory_items row + its vector embedding. Shared by the
  * LLM-summarized path (`commitToMemory`) and the phase-8 direct recorder
  * (`recordLessonDirectly`). Prisma doesn't support pgvector natively, hence
  * the raw SQL.
  */
-async function writeAgentLessonRow(input: {
+async function writeMemoryItemRow(input: {
   workflowId: string;
   repoId: string;
   rationale: string;
@@ -38,7 +38,7 @@ async function writeAgentLessonRow(input: {
 }): Promise<string> {
   const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
   const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO agent_lessons (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, skills_active, created_at)
+    `INSERT INTO memory_items (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, skills_active, created_at)
      VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7, $8::jsonb, $9::text[], now())
      RETURNING id`,
     input.workflowId,
@@ -142,7 +142,7 @@ export async function commitToMemory(
       role: 'commitToMemory',
     });
 
-    const lessonId = await writeAgentLessonRow({
+    const lessonId = await writeMemoryItemRow({
       failureType: lesson.failureType,
       lessonSummary: lesson.lessonSummary,
       metadata: lesson.metadata,
@@ -193,7 +193,7 @@ export async function recordLessonDirectly(input: {
     if (!workflow) {
       return null;
     }
-    return await writeAgentLessonRow({
+    return await writeMemoryItemRow({
       failureType: input.failureType ?? null,
       lessonSummary: input.lessonSummary,
       metadata: input.metadata ?? null,

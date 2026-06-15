@@ -105,7 +105,7 @@ export async function consolidateLessons(
        failure_type     AS "failureType",
        rationale,
        embedding::text  AS "embeddingJson"
-     FROM agent_lessons
+     FROM memory_items
      WHERE repo_id = $1::uuid
        AND consolidated_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
@@ -231,7 +231,7 @@ export async function consolidateLessons(
           for (let i = 0; i < lessons.length; i++) {
             const lesson = lessons[i];
             await tx.$executeRawUnsafe(
-              `INSERT INTO agent_lessons
+              `INSERT INTO memory_items
                (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, created_at)
              VALUES
                (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb, now())`,
@@ -247,7 +247,7 @@ export async function consolidateLessons(
 
           // Soft-delete source rows.
           await tx.$executeRawUnsafe(
-            `UPDATE agent_lessons SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
+            `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[])`,
             sourceIds
           );
         });
