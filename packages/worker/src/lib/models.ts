@@ -2,8 +2,8 @@ import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
-import { resolveModelConfig } from './config/resolver.js';
 import type { AgentRole as ConfigAgentRole } from './config/types.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
@@ -23,8 +23,8 @@ export type AgentRole = ConfigAgentRole;
  */
 export async function getModelSpec(role: AgentRole): Promise<string> {
   const ctx = await currentRequestContext();
-  const resolved = await resolveModelConfig(role, ctx);
-  return resolved.spec;
+  const resolved = await resolveAgent(role, ctx);
+  return resolved.model.spec;
 }
 
 /**
@@ -35,8 +35,8 @@ export async function getModelSpec(role: AgentRole): Promise<string> {
  */
 export async function getModel(role: AgentRole): Promise<LanguageModel> {
   const ctx = await currentRequestContext();
-  const resolved = await resolveModelConfig(role, ctx);
-  return buildModel(resolved.spec, resolved.apiKey, resolved.apiBase);
+  const { model } = await resolveAgent(role, ctx);
+  return buildModel(model.spec, model.apiKey, model.apiBase);
 }
 
 /**
@@ -113,8 +113,8 @@ export async function resolveSystemPrompt(
     return configOverride;
   }
   const ctx = await currentRequestContext();
-  const resolved = await resolveModelConfig(role, ctx);
-  return resolved.systemPrompt ?? fallback;
+  const { model } = await resolveAgent(role, ctx);
+  return model.systemPrompt ?? fallback;
 }
 
 /// Drops the model-build cache. Used in tests and after credential rotations.

@@ -1,18 +1,15 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
-import { loadAgentSkills, loadAgentToolConfig, type ResolvedSkill } from './agentSkills.js';
 import { configCacheTtlMs, withCache } from './cache.js';
-import { resolveModelConfig, resolveProviderCredential } from './resolver.js';
-import type { AgentRole, AnySkillRole, ResolveCtx, ResolvedModelConfig } from './types.js';
+import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
+import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
 
 /**
- * The effective configuration of an Agent, resolved through the P1 Agent
- * overlay. Shape matches the raw pieces `resolveAgentSpec` composes: a resolved
- * model (spec + credential + base system prompt), ordered skills, and the
- * enabled tool keys (`null` = no override → all candidate tools).
- *
- * `version`/`isVerified`/`origin` describe the resolved Agent row (defaults when
- * no Agent row exists yet — the pure-legacy path).
+ * The effective configuration of an Agent, resolved from the first-class `Agent`
+ * entity — the single source of truth (P1.5). Shape matches the raw pieces
+ * `resolveAgentSpec` composes: a resolved model (spec + credential + optional
+ * base prompt override), ordered skills, and the enabled tool keys (`null` = no
+ * override → all candidate tools).
  */
 export interface ResolvedAgent {
   key: string;
@@ -32,23 +29,25 @@ function parseToolKeys(value: unknown): string[] | null {
   return null;
 }
 
-type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
+export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
 
 /**
  * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → TEAM → GLOBAL,
  * highest `version` at the first scope that has a row. Returns null when no
- * Agent row exists for the key (pure-legacy resolution).
+ * Agent row exists for the key.
  *
  * When the run carries a version pin for `key` (`ctx.agentVersions`), the exact
  * pinned version is resolved instead of the latest — freezing an in-flight run
- * against later Agent edits (WS3 run-start snapshot).
+ * against later Agent edits (the run-start snapshot).
+ *
+ * Exported so the skill/tool shims can read an Agent row without forcing model
+ * + credential resolution.
  */
-async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
+export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   const include = {
     skillRefs: { include: { skill: true }, orderBy: { sortOrder: 'asc' as const } },
   };
   const pinnedVersion = ctx?.agentVersions?.[key];
-  // Pin the exact version when snapshotted; otherwise take the latest active.
   const versionClause = pinnedVersion !== undefined ? { version: pinnedVersion } : {};
   const orderBy = { version: 'desc' as const };
 
@@ -87,29 +86,52 @@ async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   });
 }
 
-/** Build a ResolvedModelConfig from an Agent row that overrides `modelSpec`. */
-async function modelFromAgentOverride(
+/** Map an Agent row's skillRefs to ResolvedSkills (ordered by sortOrder). */
+export function skillsFromAgent(agent: AgentRow): ResolvedSkill[] {
+  return agent.skillRefs
+    .filter((ref) => ref.skill.isActive)
+    .map((ref) => ({
+      description: ref.skill.description ?? '',
+      id: ref.skill.id,
+      isVerified: ref.skill.isVerified,
+      name: ref.skill.name,
+      promptText: ref.skill.promptText,
+      sortOrder: ref.sortOrder,
+    }));
+}
+
+/**
+ * Resolve the model + credential for an Agent. Follows `inheritsModelFrom` to
+ * the ancestor Agent that actually carries a `modelSpec` (sub-reviewer/decomposer
+ * personas inherit their model from a parent role). Throws `ConfigMissingError`
+ * when no `modelSpec` is reachable.
+ */
+async function resolveModelForAgent(
   agent: AgentRow,
   ctx?: ResolveCtx
 ): Promise<ResolvedModelConfig> {
-  const spec = agent.modelSpec as string;
-  const { provider } = parseProviderModelSpec(spec);
-  // Pinned credential on the Agent row, else the provider's TEAM/GLOBAL cascade.
-  if (agent.credentialId) {
-    const cred = await prisma.providerCredential.findUnique({ where: { id: agent.credentialId } });
-    if (cred) {
-      // Reuse the resolver's decrypt path via resolveProviderCredential when the
-      // pinned row matches the provider; otherwise fall back to provider cascade.
-      const resolved = await resolveProviderCredential(provider, ctx);
-      return {
-        apiBase: resolved.apiBase,
-        apiKey: resolved.apiKey,
-        scope: agent.scope,
-        spec,
-        systemPrompt: agent.systemPrompt ?? undefined,
-      };
+  let source: AgentRow = agent;
+  const seen = new Set<string>();
+  while (!source.modelSpec && source.inheritsModelFrom) {
+    if (seen.has(source.key)) {
+      break; // cycle guard
     }
+    seen.add(source.key);
+    const parent = await fetchActiveAgent(source.inheritsModelFrom, ctx);
+    if (!parent) {
+      throw new ConfigMissingError(
+        `Agent '${source.key}' inherits its model from '${source.inheritsModelFrom}', but no active agent with that key exists.`
+      );
+    }
+    source = parent;
   }
+  if (!source.modelSpec) {
+    throw new ConfigMissingError(
+      `Agent '${agent.key}' has no model: set a modelSpec (or an inheritsModelFrom chain that resolves one) at /admin/agents/library.`
+    );
+  }
+  const spec = source.modelSpec;
+  const { provider } = parseProviderModelSpec(spec);
   const cred = await resolveProviderCredential(provider, ctx);
   return {
     apiBase: cred.apiBase,
@@ -121,16 +143,10 @@ async function modelFromAgentOverride(
 }
 
 /**
- * Resolve an Agent by key into its effective configuration.
- *
- * P1 overlay model: the most-specific active Agent row wins; each of its null
- * override fields falls through to the legacy per-scope cascade
- * (`resolveModelConfig` / `loadAgentSkills` / `loadAgentToolConfig`). A seeded
- * SWE Agent with all overrides null therefore resolves byte-identically to P0.
- *
- * (Per-field cross-scope merge of multiple Agent rows — e.g. a TEAM Agent that
- * overrides only the model while inheriting the GLOBAL Agent's prompt — is a
- * WS4 refinement; WS1 resolves a single most-specific Agent row.)
+ * Resolve an Agent by key into its effective configuration. The `Agent` entity
+ * is the sole source of truth (P1.5) — model from `modelSpec`/`inheritsModelFrom`,
+ * skills from `skillRefs`, tools from `toolKeys`. Throws `ConfigMissingError`
+ * when the agent (or its model) is absent.
  */
 export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
   // Version pin is part of the cache key so two runs pinned to different
@@ -142,48 +158,21 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
 
 async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
   const agent = await fetchActiveAgent(key, ctx);
-
-  // Model + base prompt: Agent override, inherited parent model, or legacy
-  // ModelRoleConfig cascade for this key.
-  let model: ResolvedModelConfig;
-  if (agent?.modelSpec) {
-    model = await modelFromAgentOverride(agent, ctx);
-  } else {
-    // Sub-reviewer/decomposer personas inherit a parent role's model via
-    // `inheritsModelFrom` (e.g. securityReviewer → reviewer); otherwise resolve
-    // this key's own ModelRoleConfig. `key` is free-form (P0); the legacy
-    // resolvers are typed to the SWE union.
-    const modelKey = (agent?.inheritsModelFrom ?? key) as AgentRole;
-    const legacy = await resolveModelConfig(modelKey, ctx);
-    model = agent?.systemPrompt ? { ...legacy, systemPrompt: agent.systemPrompt } : legacy;
+  if (!agent) {
+    throw new ConfigMissingError(
+      `No active Agent found for key '${key}' at any scope. Create it at /admin/agents/library.`
+    );
   }
 
-  // Skills: Agent skillRefs (if any) or legacy AgentSkillAssignment cascade.
-  let skills: ResolvedSkill[];
-  if (agent && agent.skillRefs.length > 0) {
-    skills = agent.skillRefs.map((ref) => ({
-      description: ref.skill.description ?? '',
-      id: ref.skill.id,
-      isVerified: ref.skill.isVerified,
-      name: ref.skill.name,
-      promptText: ref.skill.promptText,
-      sortOrder: ref.sortOrder,
-    }));
-  } else {
-    skills = await loadAgentSkills(key as AnySkillRole, ctx);
-  }
-
-  // Tools: Agent toolKeys override or legacy AgentToolConfig cascade.
-  const agentToolKeys = parseToolKeys(agent?.toolKeys);
-  const toolKeys = agentToolKeys ?? (await loadAgentToolConfig(key as AnySkillRole, ctx));
+  const model = await resolveModelForAgent(agent, ctx);
 
   return {
-    isVerified: agent?.isVerified ?? true,
+    isVerified: agent.isVerified,
     key,
     model,
-    origin: agent?.origin ?? null,
-    skills,
-    toolKeys,
-    version: agent?.version ?? 1,
+    origin: agent.origin ?? null,
+    skills: skillsFromAgent(agent),
+    toolKeys: parseToolKeys(agent.toolKeys),
+    version: agent.version,
   };
 }

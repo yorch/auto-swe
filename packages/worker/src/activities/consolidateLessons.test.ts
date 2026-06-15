@@ -4,7 +4,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     $queryRawUnsafe: vi.fn(),
     $transaction: vi.fn(),
-    agentSkillAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    agent: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 vi.mock('../lib/embeddings.js', () => ({

@@ -62,3 +62,15 @@ export interface ResolvedModelConfig {
    */
   systemPrompt?: string;
 }
+
+/// A skill (prompt fragment) resolved for an agent, with ordering. Lives here
+/// (rather than in agentSkills.ts) so the resolver layers can share the type
+/// without an import cycle.
+export interface ResolvedSkill {
+  id: string;
+  name: string;
+  description: string;
+  promptText: string;
+  sortOrder: number;
+  isVerified: boolean;
+}

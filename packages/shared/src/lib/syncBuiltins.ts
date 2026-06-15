@@ -43,48 +43,63 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
 }
 
 /**
- * P1 Agent library: the SWE agent keys as first-class GLOBAL Agent rows.
- *
- * These are seeded as identity-only overlays — every override column is null
- * (no modelSpec / systemPrompt / toolKeys / skillRefs) — so `resolveAgent`
- * falls through to the legacy ModelRoleConfig / AgentSkillAssignment /
- * AgentToolConfig cascade and resolution is byte-identical to P0. The rows give
- * the Agent library something to list and the versioning/override paths
- * (WS3/WS4) somewhere to attach.
+ * The SWE agent keys as first-class GLOBAL `Agent` rows — the single source of
+ * truth for model / skills / tools (P1.5). Model-backed roles carry a default
+ * `modelSpec`; sub-roles carry `inheritsModelFrom`; the implementer carries its
+ * `toolKeys`. Skill refs are synced from `BUILTIN_SKILLS` assignments. The
+ * credential is still resolved by provider from `ProviderCredential` at run
+ * time, so a fresh deploy only needs the admin to add a credential.
  */
 interface SweAgentDef {
   key: string;
   name: string;
   description: string;
+  /** Default `<provider>/<model>` for model-backed roles. */
+  modelSpec?: string;
   /** Parent agent key this persona inherits its model from (sub-roles only). */
   inheritsModelFrom?: string;
+  /** Tool keys this agent may use (null/omitted = all candidate tools). */
+  toolKeys?: string[];
 }
+
+const IMPLEMENTER_TOOLS = ['readFile', 'writeFile', 'listDirectory', 'bash'];
 
 const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
+    modelSpec: 'anthropic/claude-opus-4-7',
     name: 'Implementer',
+    toolKeys: IMPLEMENTER_TOOLS,
   },
   {
     description: 'Reviews diffs through the multi-agent review network.',
     key: 'reviewer',
+    modelSpec: 'anthropic/claude-opus-4-7',
     name: 'Reviewer',
   },
-  { description: 'Decomposes work into an implementation plan.', key: 'planner', name: 'Planner' },
+  {
+    description: 'Decomposes work into an implementation plan.',
+    key: 'planner',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Planner',
+  },
   {
     description: 'Legacy security-review role (review network is canonical).',
     key: 'securityReview',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Security Review',
   },
   {
     description: 'Extracts success criteria from the work request.',
     key: 'validateContext',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Context Validator',
   },
   {
     description: 'Commits lessons to semantic memory.',
     key: 'commitToMemory',
+    modelSpec: 'anthropic/claude-opus-4-7',
     name: 'Memory Committer',
   },
   {
@@ -113,25 +128,59 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   },
 ];
 
+/** Build `agentKey → [{ skillName, sortOrder }]` from the built-in skill assignments. */
+function skillsByAgentKey(): Map<string, Array<{ name: string; sortOrder: number }>> {
+  const map = new Map<string, Array<{ name: string; sortOrder: number }>>();
+  for (const skill of BUILTIN_SKILLS) {
+    for (const a of skill.assignments) {
+      const list = map.get(a.role) ?? [];
+      list.push({ name: skill.name, sortOrder: a.sortOrder });
+      map.set(a.role, list);
+    }
+  }
+  return map;
+}
+
 async function syncAgents(prisma: PrismaClient): Promise<void> {
+  const skillMap = skillsByAgentKey();
   for (const def of SWE_AGENTS) {
-    const existing = await prisma.agent.findFirst({
+    let agent = await prisma.agent.findFirst({
       where: { key: def.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
     });
-    if (!existing) {
-      await prisma.agent.create({
+    if (!agent) {
+      agent = await prisma.agent.create({
         data: {
           description: def.description,
           inheritsModelFrom: def.inheritsModelFrom ?? null,
           isBuiltIn: true,
           isVerified: true,
           key: def.key,
+          modelSpec: def.modelSpec ?? null,
           name: def.name,
           origin: SWE_ORIGIN,
           scope: 'GLOBAL',
+          toolKeys: def.toolKeys ?? undefined,
           version: 1,
         },
       });
+    }
+
+    // Sync the agent's skill refs from the built-in assignments (idempotent).
+    for (const want of skillMap.get(def.key) ?? []) {
+      const skill = await prisma.skill.findFirst({
+        where: { isBuiltIn: true, name: want.name },
+      });
+      if (!skill) {
+        continue;
+      }
+      const existingRef = await prisma.agentSkillRef.findFirst({
+        where: { agentId: agent.id, skillId: skill.id },
+      });
+      if (!existingRef) {
+        await prisma.agentSkillRef.create({
+          data: { agentId: agent.id, skillId: skill.id, sortOrder: want.sortOrder },
+        });
+      }
     }
   }
 }
