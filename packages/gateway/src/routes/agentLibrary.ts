@@ -275,7 +275,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.agentId },
       });
       // Confine team owners to their own team's TEAM-scope agents.
-      if (!current || current.scope !== 'TEAM' || current.teamId !== request.params.id) {
+      if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
       }
       const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {

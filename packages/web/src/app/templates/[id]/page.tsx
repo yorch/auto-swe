@@ -22,7 +22,6 @@ import {
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -43,8 +42,6 @@ function tryParseSpec(
 export default function TemplateDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: template, isLoading } = useWorkflowTemplate(id);
-  const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const isAdmin = platformRole === 'ADMIN';
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id, effectiveVersion);
