@@ -1,3 +1,4 @@
+export { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from './agentKeys.js';
 export { PrismaClient, prisma } from './db.js';
 export { Prisma } from './generated/prisma/client.js';
 export { ConfigAuditAction, ConfigScope, Role } from './generated/prisma/enums.js';

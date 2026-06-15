@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { resolveModel } from '../models.js';
 import { resolveAgent } from './agentResolver.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from './agentSkills.js';
-import type { AgentRole, ResolveCtx } from './types.js';
+import type { ModelBackedAgentKey, ResolveCtx } from './types.js';
 
 /**
  * `AgentSpec` is the single normalized description of "run an agent": which
@@ -64,7 +64,7 @@ export interface InlineAgentSpec {
 
 /** Resolve from a known agent role (must have a `ModelRoleConfig` row). */
 export interface AgentKeySpecInput {
-  agentKey: AgentRole;
+  agentKey: ModelBackedAgentKey;
   /** Fallback system prompt used when no DB/override prompt is configured. */
   basePrompt: string;
   /** Explicit override (highest priority — e.g. a per-step prompt override). */

@@ -1,7 +1,7 @@
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import type { AgentRole } from '../lib/config/types.js';
+import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { runAgent } from './runAgent.js';
 
 export interface RunAgentNodeInput {
@@ -45,7 +45,7 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
   // typed to the SWE role union. basePrompt is empty — the Agent supplies its
   // own system prompt (custom agents set one; sub-roles inherit).
   const spec = await resolveAgentSpec(
-    { agentKey: key as AgentRole, basePrompt: '', promptOverride: input.systemPrompt },
+    { agentKey: key as ModelBackedAgentKey, basePrompt: '', promptOverride: input.systemPrompt },
     resolveCtx
   );
 

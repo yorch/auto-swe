@@ -4,7 +4,7 @@ import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
-import type { AgentRole as ConfigAgentRole } from './config/types.js';
+import type { ModelBackedAgentKey as ConfigModelBackedAgentKey } from './config/types.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
 // All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
@@ -12,7 +12,7 @@ import { parseProviderModelSpec } from './providerUtils.js';
 // dependency on @ai-sdk/provider (the type-only package is a transitive dep).
 type LanguageModel = ReturnType<typeof anthropic>;
 
-export type AgentRole = ConfigAgentRole;
+export type ModelBackedAgentKey = ConfigModelBackedAgentKey;
 
 /**
  * Returns the configured model spec for a role at the current scope. Picks up
@@ -21,7 +21,7 @@ export type AgentRole = ConfigAgentRole;
  * (the worker's startup check should have caught this; runtime delete is
  * the only way to hit it now).
  */
-export async function getModelSpec(role: AgentRole): Promise<string> {
+export async function getModelSpec(role: ModelBackedAgentKey): Promise<string> {
   const ctx = await currentRequestContext();
   const resolved = await resolveAgent(role, ctx);
   return resolved.model.spec;
@@ -33,7 +33,7 @@ export async function getModelSpec(role: AgentRole): Promise<string> {
  * Process-local cache keeps us from rebuilding a fresh provider client on
  * every call to the same role+context combo.
  */
-export async function getModel(role: AgentRole): Promise<LanguageModel> {
+export async function getModel(role: ModelBackedAgentKey): Promise<LanguageModel> {
   const ctx = await currentRequestContext();
   const { model } = await resolveAgent(role, ctx);
   return buildModel(model.spec, model.apiKey, model.apiBase);
@@ -105,7 +105,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
  *  3. `fallback` — used when the DB row has no system prompt set.
  */
 export async function resolveSystemPrompt(
-  role: AgentRole,
+  role: ModelBackedAgentKey,
   fallback: string,
   configOverride?: string
 ): Promise<string> {

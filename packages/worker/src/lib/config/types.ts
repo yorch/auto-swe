@@ -1,17 +1,11 @@
-/// Canonical agent identity. Since the platform pivot (P0), agent identity is
-/// a free-form camelCase string stored directly in the DB (no `AgentRole`
-/// enum). This union is the canonical set of SWE agent keys; the DB column
-/// accepts any string so new agents can be added as data.
-///
-/// These 6 roles require a GLOBAL ModelRoleConfig row at worker startup
-/// (checked by `assertConfigReady`).
-export type AgentRole =
-  | 'implementer'
-  | 'reviewer'
-  | 'planner'
-  | 'securityReview'
-  | 'validateContext'
-  | 'commitToMemory';
+/// The six seeded SWE model-backed agent keys + their canonical iteration
+/// order. Re-exported from the shared single source (`@auto-swe/shared/agentKeys`)
+/// so the worker and web dashboard agree. Since the platform pivot (P0) there is
+/// no `AgentRole` *enum* — agent identity is a free-form string (`AnySkillRole`
+/// below); `ModelBackedAgentKey` is just the narrow convenience set of agents
+/// that carry their own `modelSpec` (so they need a GLOBAL `Agent` at worker boot,
+/// drive cost pricing, and get a model-config UI label).
+export { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 
 /// Any agent key that can have skill/tool assignments. Free-form since the
 /// platform pivot: sub-reviewer and decomposer personas (formerly the
@@ -20,18 +14,6 @@ export type AgentRole =
 /// key, inheriting their model from a parent role via the Agent's
 /// `inheritsModelFrom` pointer (P1/WS2). New personas are data, not a union.
 export type AnySkillRole = string;
-
-/// Canonical iteration order for the 6 agent roles. Used by the worker
-/// startup check, the seed helpers (where they still exist), and any test
-/// that wants to assert behavior across every role.
-export const ALL_ROLES: readonly AgentRole[] = [
-  'implementer',
-  'reviewer',
-  'planner',
-  'securityReview',
-  'validateContext',
-  'commitToMemory',
-] as const;
 
 /// Optional scoping context for config resolution. When unset, only the
 /// GLOBAL row is consulted.
@@ -58,7 +40,7 @@ export interface ResolvedModelConfig {
   apiBase?: string;
   /**
    * Optional system prompt override. `undefined` means use the hardcoded
-   * constant in prompts.ts. Set on the ModelRoleConfig row via the admin UI.
+   * constant in prompts.ts. Set on the `Agent` row via the admin UI.
    */
   systemPrompt?: string;
 }

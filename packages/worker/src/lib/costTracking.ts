@@ -2,7 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
-import { type AgentRole, getModelSpec } from './models.js';
+import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -165,7 +165,7 @@ export async function recordLlmUsage(
   try {
     // `role` is identity-agnostic here; getModelSpec resolves the DB row by the
     // role string. Pricing below is keyed on the resolved spec, not the role.
-    modelSpec = await getModelSpec(role as AgentRole);
+    modelSpec = await getModelSpec(role as ModelBackedAgentKey);
   } catch (err) {
     modelSpec = 'unknown/unknown';
     specResolutionError = err;

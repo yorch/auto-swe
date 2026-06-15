@@ -34,7 +34,7 @@ These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the
 | Performance Reviewer | `performanceReviewer` | `reviewer` | `runReviewNetwork` |
 | Decomposer | `decomposer` | `planner` | `planDecomposition` |
 
-**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; `AgentRole` is the 6-key model-backed union).
+**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` (the 6-key model-backed set) from `@auto-swe/shared/agentKeys`, shared with the web dashboard).
 
 ### First-class `Agent` entity (P1) + `agent` node (P2)
 
@@ -54,7 +54,7 @@ Model config is **fully DB-driven** — no model-related env vars. At activity-c
 ```
 WORKFLOW_TEMPLATE scope  →  (if templateId set and row exists)
 TEAM scope               →  (if teamId set and row exists)
-GLOBAL scope             →  (required — 6 AgentRoles only)
+GLOBAL scope             →  (required — 6 model-backed agent keys only)
 ```
 
 **`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).

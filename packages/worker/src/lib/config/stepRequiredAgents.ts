@@ -1,4 +1,4 @@
-import type { AgentRole } from './types.js';
+import type { ModelBackedAgentKey } from './types.js';
 
 /**
  * The model-role(s) each runnable step resolves at execution time — the data
@@ -22,7 +22,7 @@ import type { AgentRole } from './types.js';
  *   - `runReviewNetwork`'s three sub-reviewers all bind the `reviewer` model.
  *   - `planDecomposition` binds `planner`.
  */
-export const STEP_REQUIRED_AGENTS: Record<string, readonly AgentRole[]> = {
+export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]> = {
   commitToMemory: ['commitToMemory'],
   executeCIFixImplementation: ['implementer', 'securityReview'],
   executeGateFixImplementation: ['implementer', 'securityReview'],
@@ -44,6 +44,6 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly AgentRole[]> = {
  * those template-referenced agents must be validated as a *separate, non-fatal*
  * surface — a bad template edit should fail that template, not block worker boot.
  */
-export function requiredAgentRoles(): AgentRole[] {
+export function requiredAgentRoles(): ModelBackedAgentKey[] {
   return [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];
 }

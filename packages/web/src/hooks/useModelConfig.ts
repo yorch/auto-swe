@@ -1,26 +1,17 @@
 'use client';
 
+import { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/// Canonical agent role keys (camelCase). Match the worker's `AgentRole`
-/// union and the gateway's `MODEL_AGENT_ROLES`.
-export type ModelRole =
-  | 'implementer'
-  | 'reviewer'
-  | 'planner'
-  | 'securityReview'
-  | 'validateContext'
-  | 'commitToMemory';
+/// `ModelRole` is a model-config-UI alias for the canonical
+/// `ModelBackedAgentKey` (the six seeded SWE model-backed agent keys, defined
+/// once in `@auto-swe/shared/agentKeys` and shared with the worker). There is no
+/// `AgentRole` enum since the platform pivot — agent identity is a free-form
+/// string; these are just the model-backed agents the config UI knows about.
+export type ModelRole = ModelBackedAgentKey;
 
-export const MODEL_ROLES: ModelRole[] = [
-  'implementer',
-  'reviewer',
-  'planner',
-  'securityReview',
-  'validateContext',
-  'commitToMemory',
-];
+export const MODEL_ROLES: ModelRole[] = [...MODEL_BACKED_AGENT_KEYS];
 
 export const ROLE_LABELS: Record<ModelRole, string> = {
   commitToMemory: 'Memory summarizer',
