@@ -58,13 +58,7 @@ describe('POST /api/v1/work-requests', () => {
         }),
         findMany: async () => existingWorkflows,
       },
-      contextSnapshot: {
-        upsert: async (args: Record<string, unknown>) => {
-          snapshotUpserts.push(args);
-          return { id: 'cs-1' };
-        },
-      },
-      repository: {
+      connection: {
         findUnique: async () => ({
           id: 'repo-1',
           isActive: true,
@@ -73,6 +67,12 @@ describe('POST /api/v1/work-requests', () => {
           team: { memberships: [{ userId: 'user-1' }] },
           teamId: 'team-1',
         }),
+      },
+      contextSnapshot: {
+        upsert: async (args: Record<string, unknown>) => {
+          snapshotUpserts.push(args);
+          return { id: 'cs-1' };
+        },
       },
       workflowTemplate: {
         findFirst: async () => ({

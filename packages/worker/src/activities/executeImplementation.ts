@@ -45,7 +45,7 @@ export async function executeImplementation(
   subtask?: Subtask,
   systemPromptOverride?: string
 ): Promise<CodeResult> {
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     where: { id: request.repoId },
   });
 

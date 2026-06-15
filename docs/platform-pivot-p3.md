@@ -50,17 +50,31 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
 - **Acceptance:** memory commit/search parity for SWE; a memory item under a non-SWE scope is
   read/written independently. pgvector parity test.
 
-### Slice 2 — `Connection` replaces `Repository`
-- **Schema:** `Connection { id, type (e.g. 'git_repo'), name, scope, teamId?, config Json,
-  <encrypted secrets>, isActive }`. SWE `git_repo` config = `{ org, repo, defaultBranch, gateCommands,
-  githubInstallationId? }`. `WorkRequest`/`ActiveWorkflow`/runs reference `connectionId`.
-- **Worker:** the workspace clone + gate-command + PR steps read the `git_repo` connection config
-  instead of `Repository` columns.
-- **Gateway/web:** `/repositories` becomes `/connections` (or a `git_repo`-filtered view); CRUD on
-  `Connection`. Team relation moves to `Connection`.
-- **Migration:** drop `Repository`; SWE repos seed/migrate as `git_repo` connections.
-- **Acceptance:** SWE run end-to-end against a `git_repo` connection (parity); a non-`git_repo`
-  connection type validates + stores config without touching git code paths.
+### Slice 2 — `Connection` replaces `Repository` ✅ DONE
+- **Schema:** `Repository` model + table renamed to `Connection` / `connections`, with a generic
+  `type String @default("git_repo")` discriminator + a generic `config Json?` bag. The SWE `git_repo`
+  specifics (org/repo, defaultBranch, gateCommands, mcpServerRef, executorImage, …) stay as typed
+  columns for parity; other connection types stash settings in `config`. The seed writes the sample
+  row with `type: 'git_repo'`.
+- **Migration:** folded into the consolidated init (undeployed) — `Repository`→`Connection` rename,
+  new `type`/`config` columns; all four FKs (`active_workflows`, `memory_items`, `pull_requests`,
+  `scheduled_work_requests`) now reference `connections`. Regenerated via
+  `prisma migrate diff --from-empty --to-schema`; the pgvector HNSW + partial-unique custom migration
+  is unchanged.
+- **Code:** the Prisma delegate (`prisma.repository` → `prisma.connection`) and Prisma input types
+  (`Prisma.RepositoryWhereInput` → `Prisma.ConnectionWhereInput`) move across gateway routes + worker
+  activities. Verified parity: 868 tests + typecheck + web build green; real-pgvector migrate + seed.
+- **Scoped to keep parity / defer to slice 3:** the **relation field** names (`ActiveWorkflow.repository`,
+  `PullRequest.repository`, `MemoryItem.repository`, `Team.repositories`, `ScheduledWorkRequest.repository`)
+  and the **scalar FK** (`repoId` / `repo_id`) are intentionally **kept** — they point at `Connection`
+  but retain their names so the public API/JSON shape (`repoId`/`repoIds`, response `repository` fields)
+  and the GitHub-webhook `repository` payload field are byte-stable. The generic `name`/`scope`/encrypted-
+  secrets columns and the `repoId`→`connectionId` / route `/repositories`→`/connections` /
+  response-field renames belong to **slice 3** (it reworks the input/API surface to `RunInput` +
+  `connectionId`), so they ride along there rather than churning the API twice.
+- **Acceptance:** SWE parity (full suite green against a `git_repo` connection); a non-`git_repo`
+  connection type validates + stores `config` without touching git code paths (git paths key off the
+  SWE run flow, not the `type` column).
 
 ### Slice 3 — Template `inputSchema` + generic `RunInput`
 - **Schema:** `WorkflowTemplate.inputSchema Json`; generic `RunInput { id, templateId, connectionId?,
@@ -94,6 +108,6 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
 ## Sequencing checklist
 
 - [x] Slice 1 — `MemoryItem` replaces `AgentLesson` (+ pgvector index; SWE lessons under an SWE scope)
-- [ ] Slice 2 — `Connection` replaces `Repository` (`git_repo` type carries SWE repo config)
+- [x] Slice 2 — `Connection` replaces `Repository` (`git_repo` type carries SWE repo config)
 - [ ] Slice 3 — template `inputSchema` + generic `RunInput` (replaces `WorkRequest`; SWE satellites)
 - [ ] Slice 4 — generic triggers (webhook/manual/schedule → config-driven input mappings)

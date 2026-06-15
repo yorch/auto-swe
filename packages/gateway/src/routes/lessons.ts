@@ -79,7 +79,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // Non-admins must be a member of the team that owns the repo they're searching
       const user = requireUser(request);
       if (user.role !== 'ADMIN') {
-        const accessibleRepo = await fastify.prisma.repository.findFirst({
+        const accessibleRepo = await fastify.prisma.connection.findFirst({
           select: { id: true },
           where: {
             id: repoId,
@@ -129,7 +129,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { repoId, minClusterSize, similarityThreshold } = request.body;
 
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         select: { id: true },
         where: { id: repoId },
       });
@@ -152,7 +152,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/lessons/stats — Per-repo aggregate stats (ADMIN only)
   app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const repos = await fastify.prisma.repository.findMany({
+    const repos = await fastify.prisma.connection.findMany({
       orderBy: [{ organizationName: 'asc' }, { repoName: 'asc' }],
       select: {
         id: true,

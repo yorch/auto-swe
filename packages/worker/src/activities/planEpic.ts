@@ -15,7 +15,7 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   heartbeat('fetching repo metadata');
 
   // Fetch repo metadata for the planner agent
-  const repos = await prisma.repository.findMany({
+  const repos = await prisma.connection.findMany({
     select: { description: true, id: true, language: true, repoName: true },
     where: { id: { in: epicRequest.repoIds } },
   });

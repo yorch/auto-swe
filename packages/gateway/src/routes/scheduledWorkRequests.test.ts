@@ -94,7 +94,7 @@ describe('/api/v1/scheduled-work-requests', () => {
         },
         deleteMany: async () => ({ count: 1 }),
       },
-      repository: {
+      connection: {
         findUnique: async () => ({
           id: REPO_ID,
           isActive: true,

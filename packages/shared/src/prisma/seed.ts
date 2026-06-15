@@ -72,13 +72,14 @@ async function main() {
   });
   console.log(`Seed: admin added to default team`);
 
-  // Seed a sample repository for local development.
-  const repo = await prisma.repository.upsert({
+  // Seed a sample git_repo connection for local development.
+  const repo = await prisma.connection.upsert({
     create: {
       defaultBranch: 'main',
       organizationName: 'your-org',
       repoName: 'your-repo',
       teamId: team.id,
+      type: 'git_repo',
     },
     update: {},
     where: {

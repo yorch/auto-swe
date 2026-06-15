@@ -164,7 +164,7 @@ export async function finalizeWorkflowRun(
 export async function resolveTemplateForRepo(
   repoId: string
 ): Promise<{ templateId: string; templateVersion: number }> {
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     select: { teamId: true },
     where: { id: repoId },
   });

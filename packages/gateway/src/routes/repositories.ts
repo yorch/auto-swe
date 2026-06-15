@@ -67,14 +67,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const where: Prisma.RepositoryWhereInput = {
+      const where: Prisma.ConnectionWhereInput = {
         isActive: true,
         ...(user.role !== 'ADMIN' && {
           team: { memberships: { some: { userId: user.sub } } },
         }),
       };
 
-      const repos = await fastify.prisma.repository.findMany({
+      const repos = await fastify.prisma.connection.findMany({
         include: {
           _count: { select: { activeWorkflows: true } },
           team: { select: { id: true, name: true, slug: true } },
@@ -114,7 +114,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Check for duplicate
-      const existing = await fastify.prisma.repository.findUnique({
+      const existing = await fastify.prisma.connection.findUnique({
         where: { organizationName_repoName: { organizationName, repoName } },
       });
       if (existing) {
@@ -123,7 +123,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const repo = await fastify.prisma.repository.create({
+      const repo = await fastify.prisma.connection.create({
         data: { organizationName, repoName, teamId, ...rest },
         include: { team: { select: { id: true, name: true, slug: true } } },
       });
@@ -141,7 +141,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         where: { id: request.params.id },
       });
       if (!repo) {
@@ -172,7 +172,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const updated = await fastify.prisma.repository.update({
+      const updated = await fastify.prisma.connection.update({
         data: request.body,
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: request.params.id },

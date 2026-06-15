@@ -314,7 +314,7 @@ async function provisionMergeWorkspace(
   sourceBranches: string[],
   label: string
 ): Promise<{ workspace: Workspace; log: string[] }> {
-  const repo = await prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } });
+  const repo = await prisma.connection.findUniqueOrThrow({ where: { id: request.repoId } });
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 

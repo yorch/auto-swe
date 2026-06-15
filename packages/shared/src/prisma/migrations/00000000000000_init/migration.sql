@@ -1,9 +1,9 @@
 -- Consolidated initial schema, generated from schema.prisma via
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
 -- consolidation). P1/P1.5 retired the role-config tables (Agent is the source
--- of truth); P3 renamed AgentLesson → the generic MemoryItem. Custom DDL Prisma
--- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
--- lives in the next migration.
+-- of truth); P3 renamed AgentLesson → the generic MemoryItem and Repository →
+-- the generic Connection. Custom DDL Prisma cannot express (partial unique
+-- indexes, the pgvector HNSW index, seed inserts) lives in the next migration.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
@@ -116,8 +116,10 @@ CREATE TABLE "personal_access_tokens" (
 );
 
 -- CreateTable
-CREATE TABLE "repositories" (
+CREATE TABLE "connections" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "type" TEXT NOT NULL DEFAULT 'git_repo',
+    "config" JSONB,
     "organization_name" TEXT NOT NULL,
     "repo_name" TEXT NOT NULL,
     "default_branch" TEXT NOT NULL DEFAULT 'main',
@@ -132,7 +134,7 @@ CREATE TABLE "repositories" (
     "consolidation_enabled" BOOLEAN NOT NULL DEFAULT true,
     "gate_commands" JSONB,
 
-    CONSTRAINT "repositories_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "connections_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -676,7 +678,7 @@ CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_
 CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "repositories_organization_name_repo_name_key" ON "repositories"("organization_name", "repo_name");
+CREATE UNIQUE INDEX "connections_organization_name_repo_name_key" ON "connections"("organization_name", "repo_name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
@@ -781,13 +783,13 @@ CREATE INDEX "workflow_shell_audit_team_id_idx" ON "workflow_shell_audit"("team_
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repositories"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_id_fkey" FOREIGN KEY ("workflow_id") REFERENCES "active_workflows"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repositories"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -796,13 +798,13 @@ ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_i
 ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_workflow_id_fkey" FOREIGN KEY ("workflow_id") REFERENCES "active_workflows"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repositories"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "repositories" ADD CONSTRAINT "repositories_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "connections" ADD CONSTRAINT "connections_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -820,7 +822,7 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user
 ALTER TABLE "work_requests" ADD CONSTRAINT "work_requests_requested_by_id_fkey" FOREIGN KEY ("requested_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repositories"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;

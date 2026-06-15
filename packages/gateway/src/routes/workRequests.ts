@@ -236,7 +236,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership so non-admins can only trigger work on their
       // own team's repos without a second round-trip query.
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         include: {
           team: {
             select: {

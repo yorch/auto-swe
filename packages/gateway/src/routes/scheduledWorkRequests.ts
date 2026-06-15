@@ -90,7 +90,7 @@ async function loadRepoWithMembership(
   repoId: string,
   userId: string
 ): Promise<RepoWithMembership | null> {
-  return (await prisma.repository.findUnique({
+  return (await prisma.connection.findUnique({
     include: {
       team: {
         select: {

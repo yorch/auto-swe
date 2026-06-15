@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
-    repository: { findUniqueOrThrow: vi.fn() },
+    connection: { findUniqueOrThrow: vi.fn() },
   },
 }));
 
@@ -112,7 +112,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { runImplementerFixSession } from './implementerSession.js';
 
-const findRepo = vi.mocked(prisma.repository.findUniqueOrThrow);
+const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findWorkflow = vi.mocked(prisma.activeWorkflow.findFirst);
 
 const REPO = {

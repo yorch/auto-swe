@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    repository: {
+    connection: {
       findUniqueOrThrow: vi.fn(),
     },
     workflowRun: {
@@ -108,7 +108,7 @@ const baseRequest = {
   workRequestId: 'wr-1',
 } as unknown as RepoWorkRequest;
 
-const mockedFindUnique = vi.mocked(prisma.repository.findUniqueOrThrow);
+const mockedFindUnique = vi.mocked(prisma.connection.findUniqueOrThrow);
 
 const mockedRecordLesson = vi.mocked(recordLessonBackground);
 

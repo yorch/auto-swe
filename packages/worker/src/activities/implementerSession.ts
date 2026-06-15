@@ -23,7 +23,7 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
 
 /** Repository row shape (the shared index doesn't export Prisma model types). */
-type Repository = Awaited<ReturnType<typeof prisma.repository.findUniqueOrThrow>>;
+type Repository = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>>;
 
 export interface FixSessionInput {
   mode: FixMode;
@@ -56,7 +56,7 @@ export interface FixSessionInput {
  */
 async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Repository> {
   if (previousCodeResult.repoId) {
-    return prisma.repository.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
+    return prisma.connection.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
   }
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },

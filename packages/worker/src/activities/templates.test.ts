@@ -24,7 +24,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     agent: {
       findMany: vi.fn(),
     },
-    repository: {
+    connection: {
       findUniqueOrThrow: vi.fn(),
     },
     team: { findUnique: vi.fn() },
@@ -57,7 +57,7 @@ const findVersion = vi.mocked(prisma.workflowTemplateVersion.findUnique);
 const upsertRun = vi.mocked(prisma.workflowRun.upsert);
 const updateRun = vi.mocked(prisma.workflowRun.update);
 const createStep = vi.mocked(prisma.workflowStep.create);
-const findRepo = vi.mocked(prisma.repository.findUniqueOrThrow);
+const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
 

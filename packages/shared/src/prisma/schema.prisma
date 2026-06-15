@@ -76,7 +76,7 @@ model ActiveWorkflow {
   workRequestId      String?        @map("work_request_id") @db.Uuid
   workRequest        WorkRequest?   @relation(fields: [workRequestId], references: [id])
   repoId             String?        @map("repo_id") @db.Uuid
-  repository         Repository?    @relation(fields: [repoId], references: [id])
+  repository         Connection?    @relation(fields: [repoId], references: [id])
   currentStatus      String         @map("current_status")
   assignedBranch     String?        @map("assigned_branch")
   budgetTier         String         @default("STANDARD") @map("budget_tier")
@@ -110,7 +110,7 @@ model MemoryItem {
   workflowId      String?         @map("workflow_id") @db.Uuid
   workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
   repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
+  repository      Connection?     @relation(fields: [repoId], references: [id])
   rationale       String
   lessonSummary   String          @map("lesson_summary")
   embedding       Unsupported("vector(1536)")?
@@ -148,7 +148,7 @@ model PullRequest {
   workflowId      String?         @map("workflow_id") @db.Uuid
   workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
   repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
+  repository      Connection?     @relation(fields: [repoId], references: [id])
   prNumber        Int?            @map("pr_number")
   headSha         String          @map("head_sha")
   status          String
@@ -182,8 +182,20 @@ model PersonalAccessToken {
   @@map("personal_access_tokens")
 }
 
-model Repository {
+/// Generic integration target (P3). Replaces the SWE-specific `Repository`.
+/// `type` is the discriminator — SWE git repos use `'git_repo'`; other domains
+/// define their own connection types (e.g. `'http_api'`, `'database'`) and stash
+/// type-specific settings in the generic `config` bag. The engine treats `type`
+/// and `config` as opaque; only type-specific worker code reads them. The SWE
+/// `git_repo` specifics (GitHub coords, default branch, gate commands) stay as
+/// typed columns for parity and migrate further in later slices.
+model Connection {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Connection-type discriminator. Defaults to SWE's `'git_repo'`.
+  type             String           @default("git_repo")
+  /// Generic typed config for non-`git_repo` types. SWE `git_repo` connections
+  /// keep their specifics in the typed columns below; other types use this bag.
+  config           Json?
   organizationName String           @map("organization_name")
   repoName         String           @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
@@ -197,7 +209,7 @@ model Repository {
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
   consolidationEnabled Boolean      @default(true) @map("consolidation_enabled")
-  /// Optional per-repo overrides for phase-2 quality-gate commands. Shape:
+  /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:
   /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
   /// Resolution order: step config → this field → built-in defaults.
   gateCommands     Json?            @map("gate_commands")
@@ -208,7 +220,7 @@ model Repository {
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([organizationName, repoName])
-  @@map("repositories")
+  @@map("connections")
 }
 
 model Team {
@@ -237,7 +249,7 @@ model Team {
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships            TeamMembership[]
-  repositories           Repository[]
+  repositories           Connection[]
   workflowTemplates      WorkflowTemplate[]
   shellAudits            WorkflowShellAudit[]
   providerCredentials    ProviderCredential[]
@@ -398,7 +410,7 @@ model ScheduledWorkRequest {
   /// 5-field cron expression (validated conservatively at the API layer).
   cronExpression       String            @map("cron_expression")
   repoId               String            @map("repo_id") @db.Uuid
-  repository           Repository        @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repository           Connection        @relation(fields: [repoId], references: [id], onDelete: Cascade)
   /// Explicit template override; null → repo team default resolved at save time.
   templateId           String?           @map("template_id") @db.Uuid
   template             WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)

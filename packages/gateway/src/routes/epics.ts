@@ -48,7 +48,7 @@ async function accessibleRepoIds(
   prisma: FastifyInstance['prisma'],
   userId: string
 ): Promise<Set<string>> {
-  const rows = await prisma.repository.findMany({
+  const rows = await prisma.connection.findMany({
     select: { id: true },
     where: { team: { memberships: { some: { userId } } } },
   });
@@ -73,7 +73,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // Validate all repos exist and are active. Include the requesting user's
       // team membership per repo so the access check below doesn't need a
       // second round-trip (mirrors the single-repo work-request route).
-      const repos = await fastify.prisma.repository.findMany({
+      const repos = await fastify.prisma.connection.findMany({
         select: {
           id: true,
           organizationName: true,
@@ -319,7 +319,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const repos = await fastify.prisma.repository.findMany({
+      const repos = await fastify.prisma.connection.findMany({
         select: { id: true, organizationName: true, repoName: true },
         where: { id: { in: knownRepoIds } },
       });

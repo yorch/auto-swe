@@ -114,7 +114,7 @@ export async function resolveCommand(
     return override;
   }
 
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     select: { gateCommands: true },
     where: { id: request.repoId },
   });
@@ -140,7 +140,7 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } }),
+    prisma.connection.findUniqueOrThrow({ where: { id: request.repoId } }),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;

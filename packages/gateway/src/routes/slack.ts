@@ -655,7 +655,7 @@ async function buildRunModalView(
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
   const tpls = await listVisibleTemplates(fastify, user);
-  const repos = await fastify.prisma.repository.findMany({
+  const repos = await fastify.prisma.connection.findMany({
     select: {
       id: true,
       organizationName: true,
@@ -784,7 +784,7 @@ async function handleRunModalSubmission(
     /* keep defaults */
   }
 
-  const repo = await fastify.prisma.repository.findUnique({
+  const repo = await fastify.prisma.connection.findUnique({
     include: { team: { select: { memberships: { where: { userId: user.id } } } } },
     where: { id: repoId },
   });
