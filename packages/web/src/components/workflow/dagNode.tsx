@@ -47,6 +47,7 @@ export interface DagNodeData {
 }
 
 const CATEGORY_RING: Record<SpecNode['type'], string> = {
+  agent: 'border-l-indigo-400',
   cond: 'border-l-violet-400',
   fanOut: 'border-l-moss-400',
   humanApproval: 'border-l-amber-500',
@@ -61,6 +62,7 @@ const CATEGORY_RING: Record<SpecNode['type'], string> = {
 };
 
 const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
+  agent: 'agent',
   cond: 'cond',
   fanOut: 'fan-out',
   humanApproval: 'approval',
@@ -93,6 +95,7 @@ const DIFF_BORDER: Record<DiffKind, string> = {
 export function handleKindsFor(node: SpecNode): HandleKind[] {
   switch (node.type) {
     case 'step':
+    case 'agent':
     case 'set':
     case 'shell':
       return ['next'];

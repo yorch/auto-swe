@@ -66,5 +66,7 @@ export const BUILTIN_STEPS = [
   'mergeBranches',
   // Phase 3.5 — implementer-driven merge conflict resolution
   'resolveMergeConflict',
+  // P2 — declarative agent node (runs a library Agent by reference)
+  'runAgentNode',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

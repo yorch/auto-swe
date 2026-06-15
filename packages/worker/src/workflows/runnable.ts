@@ -164,6 +164,19 @@ const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMe
   startToCloseTimeout: '5m',
 });
 
+// P2: declarative agent node. Tool-free single-shot agent run; same retry shape
+// as the other LLM activities.
+const agentNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentNode'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '10m',
+});
+
 // ── Inputs ──
 
 export interface RunnableWorkflowInput {
@@ -369,6 +382,18 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'validateContext',
     ({ request, config }) =>
       contextActivities.validateContext(request, config.systemPrompt as string | undefined),
+  ],
+  [
+    // P2 declarative agent node: run a library Agent by reference.
+    'runAgentNode',
+    ({ config, inputs }) =>
+      agentNodeActivities.runAgentNode({
+        agentRef: config.agentRef as string,
+        inputs,
+        spanName: config.spanName as string | undefined,
+        systemPrompt: config.systemPrompt as string | undefined,
+        userMessage: config.userMessage as string | undefined,
+      }),
   ],
   [
     'executeImplementation',

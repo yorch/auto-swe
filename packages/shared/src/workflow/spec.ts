@@ -25,7 +25,7 @@ import { z } from 'zod';
  *                 image allowlist; per-step network mode).
  */
 
-export const SPEC_SCHEMA_VERSION = 4 as const;
+export const SPEC_SCHEMA_VERSION = 5 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
@@ -86,6 +86,30 @@ const StepNodeSchema = z.object({
   startToCloseTimeout: z.string().optional(),
   step: z.string().min(1),
   type: z.literal('step'),
+});
+
+/**
+ * Declarative agent node (P2). Runs a library Agent by reference
+ * (`agentRef` = `"<key>"` float or `"<key>@<version>"` pin) — the worker
+ * resolves it via `resolveAgentSpec`/`resolveAgent` and runs it through
+ * `runAgent`. The agent's output is recorded at `nodes.<id>.output` like any
+ * step. `userMessage` is the literal prompt payload; when omitted the worker
+ * uses the resolved `inputs` (JSON) as the message.
+ */
+const AgentNodeSchema = z.object({
+  agentRef: z.string().min(1),
+  heartbeatTimeout: z.string().optional(),
+  inputs: InputMapSchema.optional(),
+  next: NodeIdSchema.optional(),
+  onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
+  retry: RetryPolicySchema,
+  spanName: z.string().optional(),
+  startToCloseTimeout: z.string().optional(),
+  /** Per-node system-prompt override (wins over the Agent's own prompt). */
+  systemPrompt: z.string().optional(),
+  type: z.literal('agent'),
+  userMessage: z.string().optional(),
 });
 
 const SetNodeSchema = z.object({
@@ -305,6 +329,7 @@ const HumanReviewNodeSchema = z.object({
 
 export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
+  AgentNodeSchema,
   SetNodeSchema,
   CondNodeSchema,
   SignalNodeSchema,
@@ -318,6 +343,7 @@ export const NodeSchema = z.discriminatedUnion('type', [
 ]);
 export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
+export type AgentNode = z.infer<typeof AgentNodeSchema>;
 export type SetNode = z.infer<typeof SetNodeSchema>;
 export type CondNode = z.infer<typeof CondNodeSchema>;
 export type SignalNode = z.infer<typeof SignalNodeSchema>;
@@ -351,6 +377,7 @@ export const WorkflowSpecSchema = z
       const refs: Array<[string, string | undefined]> = [];
       switch (node.type) {
         case 'step':
+        case 'agent':
         case 'set':
         case 'shell':
           refs.push(['next', node.next]);

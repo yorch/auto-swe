@@ -262,6 +262,30 @@ register({
   name: 'resolveMergeConflict',
 });
 
+register({
+  category: 'agent',
+  configFields: [
+    {
+      description: 'Library Agent to run: "<key>" (latest) or "<key>@<version>" (pinned).',
+      key: 'agentRef',
+      label: 'Agent reference',
+      required: true,
+      type: 'string',
+    },
+    {
+      description: 'Literal user message. Leave empty to pass the resolved node inputs as JSON.',
+      key: 'userMessage',
+      label: 'User message',
+      multiline: true,
+      type: 'string',
+    },
+    SYSTEM_PROMPT_FIELD,
+  ],
+  description: 'Run a library Agent by reference (the declarative agent node).',
+  label: 'Run agent',
+  name: 'runAgentNode',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);

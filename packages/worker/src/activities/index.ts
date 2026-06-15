@@ -34,6 +34,8 @@ export {
   runTypecheck,
   runVulnScan,
 } from './qualityGates.js';
+export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
+export { runAgentNode } from './runAgentNode.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
 // Phase 6 — user-authored shell steps
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';

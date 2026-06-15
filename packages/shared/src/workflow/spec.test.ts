@@ -342,3 +342,45 @@ describe('parseWorkflowSpec', () => {
     ).toThrow(/unknown node/);
   });
 });
+
+describe('agent node (P2)', () => {
+  it('parses an agent node with an agentRef', () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent-spec',
+      nodes: {
+        a: { agentRef: 'reviewer@2', next: 'done', type: 'agent', userMessage: 'hi' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const node = spec.nodes.a;
+    expect(node.type).toBe('agent');
+    if (node.type === 'agent') {
+      expect(node.agentRef).toBe('reviewer@2');
+      expect(node.userMessage).toBe('hi');
+    }
+  });
+
+  it('rejects an agent node whose next refers to an unknown node', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'a',
+        name: 'bad',
+        nodes: { a: { agentRef: 'reviewer', next: 'nope', type: 'agent' } },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow(/unknown node/);
+  });
+
+  it('requires an agentRef', () => {
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'a',
+        name: 'bad',
+        nodes: { a: { type: 'agent' } },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow();
+  });
+});

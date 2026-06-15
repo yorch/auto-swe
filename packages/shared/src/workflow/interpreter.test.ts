@@ -1409,3 +1409,26 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
     expect(result.status).toBe('TIMED_OUT');
   });
 });
+
+describe('agent node (P2)', () => {
+  it('dispatches an agent node to the runAgentNode step with its agentRef', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'done', type: 'agent', userMessage: 'review this' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runAgentNode: { text: 'looks good' } },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.map((c) => c.step)).toEqual(['runAgentNode']);
+    expect(calls[0].config.agentRef).toBe('reviewer');
+    expect(calls[0].config.userMessage).toBe('review this');
+  });
+});

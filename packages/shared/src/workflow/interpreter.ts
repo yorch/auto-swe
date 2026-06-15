@@ -272,6 +272,10 @@ async function walk(
           currentNodeId = await runStep(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
+        case 'agent': {
+          currentNodeId = await runAgentNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          break;
+        }
         case 'set': {
           currentNodeId = runSet(node, ctx);
           break;
@@ -356,6 +360,48 @@ async function runStep(
         inputs,
         nodeId,
         step: node.step,
+      }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
+
+async function runAgentNode(
+  nodeId: string,
+  node: import('./spec.js').AgentNode,
+  ctx: Context,
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
+): Promise<string | undefined> {
+  const inputs = resolveInputs(node.inputs, ctx);
+  // Pack the agent-node fields into the step config; the worker's `runAgentNode`
+  // executor resolves agentRef → resolveAgentSpec → runAgent. Dispatching
+  // through the same step path means retry/onFail/recording behave identically
+  // to a step node, and the agent output lands at `nodes.<id>.output`.
+  const config: Record<string, unknown> = { agentRef: node.agentRef };
+  if (node.userMessage !== undefined) {
+    config.userMessage = node.userMessage;
+  }
+  if (node.spanName !== undefined) {
+    config.spanName = node.spanName;
+  }
+  if (node.systemPrompt !== undefined) {
+    config.systemPrompt = node.systemPrompt;
+  }
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () =>
+      dispatcher.dispatchStep({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: 'runAgentNode',
       }),
     next: node.next,
     nodeId,

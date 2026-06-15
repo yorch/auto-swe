@@ -52,3 +52,17 @@ registerCodemod({
     return { ...s, schemaVersion: 4 };
   },
 });
+
+/**
+ * v4 → v5: P2 adds the `agent` node type (run a library Agent by reference).
+ * v4 specs without any `agent` node remain valid under v5, so the transform
+ * only bumps the version.
+ */
+registerCodemod({
+  from: 4,
+  to: 5,
+  transform: (spec) => {
+    const s = spec as Record<string, unknown>;
+    return { ...s, schemaVersion: 5 };
+  },
+});

@@ -6,7 +6,7 @@
  * overwhelming on first load.
  */
 
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '@auto-swe/shared/workflow';
 
 export interface StarterTemplate {
   id: string;
@@ -18,7 +18,7 @@ export interface StarterTemplate {
   spec: WorkflowSpec;
 }
 
-const SCHEMA = 4 as const;
+const SCHEMA = SPEC_SCHEMA_VERSION;
 
 export const STARTER_TEMPLATES: StarterTemplate[] = [
   {
