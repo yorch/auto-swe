@@ -560,6 +560,8 @@ model WorkflowTemplate {
   team              Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   name              String
   description       String                    @default("")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin            String?
   status            WorkflowTemplateStatus    @default(DRAFT)
   isDefault         Boolean                   @default(false) @map("is_default")
   activeVersion     Int?                      @map("active_version")
@@ -620,6 +622,8 @@ model ModelRoleConfig {
   workflowTemplate   WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
   modelSpec          String              @map("model_spec")
   systemPrompt       String?             @map("system_prompt")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin             String?
   credentialId      String?              @map("credential_id") @db.Uuid
   credential        ProviderCredential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   createdById       String?              @map("created_by_id") @db.Uuid
@@ -899,6 +903,8 @@ model Skill {
   name        String
   description String?
   promptText  String    @map("prompt_text")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin      String?
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
   isVerified  Boolean   @default(false) @map("is_verified")
   isActive    Boolean   @default(true) @map("is_active")
@@ -924,6 +930,8 @@ model ScannerPattern {
   pattern   String
   flags     String             @default("")
   type      ScannerPatternType
+  // Provenance: null = core platform default; 'swe-starter' = SWE seed content.
+  origin    String?
   isActive  Boolean            @default(true) @map("is_active")
   isBuiltIn Boolean            @default(false) @map("is_built_in")
   createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
@@ -941,6 +949,8 @@ model AgentSkillAssignment {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agentRole          String            @map("agent_role")
   skillId            String            @map("skill_id") @db.Uuid
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin             String?
   scope              ConfigScope
   teamId             String?           @map("team_id") @db.Uuid
   workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
@@ -968,6 +978,8 @@ model AgentToolConfig {
   teamId             String?           @map("team_id") @db.Uuid
   workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
   enabledTools       String[]          @map("enabled_tools")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin             String?
   createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

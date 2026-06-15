@@ -6,6 +6,17 @@ export interface BuiltinScannerPatternDef {
 }
 
 /**
+ * Provenance of a built-in scanner pattern. The four cross-cutting categories
+ * (INJECTION / EXFILTRATION / SHELL_COMMAND / SENSITIVE_FILE) guard any
+ * workflow regardless of domain, so they are **core platform defaults**
+ * (`origin = null`) and survive a core-only deployment. CODE_SECURITY is
+ * OWASP-style source scanning specific to the SWE use case → `'swe-starter'`.
+ */
+export function scannerPatternOrigin(type: BuiltinScannerPatternDef['type']): string | null {
+  return type === 'CODE_SECURITY' ? 'swe-starter' : null;
+}
+
+/**
  * Built-in scanner patterns seeded into the scanner_patterns table on yarn db:seed.
  * All are isBuiltIn=true and cannot be deleted via the admin UI (only disabled).
  *

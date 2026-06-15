@@ -1,23 +1,43 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
-import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
+import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 
+/** Provenance tag for all SWE seed content. */
+const SWE_ORIGIN = 'swe-starter';
+
 /**
- * Upserts all built-in reference data — workflow templates, skills, scanner
- * patterns, and the default implementer tool config — so every environment
- * automatically receives new or updated built-ins on gateway startup without a
- * manual `yarn db:seed` step.
+ * Upserts all built-in reference data — split by provenance so a future
+ * deployment can run the platform without the SWE use case:
  *
- * Safe to call on every startup: templates and skills use findFirst + conditional
- * create/update (Postgres NULL != NULL prevents standard upsert on nullable unique
- * keys); scanner patterns upsert by the `label` unique index; tool config is
- * created only when absent.
+ *   - {@link seedCoreDefaults} — domain-agnostic platform defaults that always
+ *     seed and survive a "core-only" deployment (the cross-cutting scanner
+ *     patterns: injection / exfiltration / shell-command / sensitive-file).
+ *     These rows carry `origin = null`.
+ *   - {@link seedSweStarter} — the SWE use case as seed content: workflow
+ *     templates, coding skills + their agent assignments, the implementer tool
+ *     config, and the SWE-specific code-security scanner patterns. Every row is
+ *     tagged `origin = 'swe-starter'` so it is distinguishable and removable.
+ *
+ * Behavior is identical to before — everything is still seeded — it is just
+ * grouped and provenance-tagged. Safe to call on every startup (findFirst +
+ * conditional create/update; scanner patterns upsert by the `label` unique index).
  */
 export async function syncBuiltins(prisma: PrismaClient): Promise<void> {
+  await seedCoreDefaults(prisma);
+  await seedSweStarter(prisma);
+}
+
+/** Core platform defaults (origin=null). Always seeded. */
+export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
+  await syncScannerPatterns(prisma, 'core');
+}
+
+/** SWE starter content (origin='swe-starter'). Opt-out-able in the future. */
+export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
   await syncSkills(prisma);
-  await syncScannerPatterns(prisma);
+  await syncScannerPatterns(prisma, 'swe');
   await syncImplementerToolConfig(prisma);
 }
 
@@ -28,7 +48,12 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
     });
     const t = existing
       ? await prisma.workflowTemplate.update({
-          data: { activeVersion: 1, isDefault: tmpl.isDefault ?? false, status: 'ACTIVE' },
+          data: {
+            activeVersion: 1,
+            isDefault: tmpl.isDefault ?? false,
+            origin: SWE_ORIGIN,
+            status: 'ACTIVE',
+          },
           where: { id: existing.id },
         })
       : await prisma.workflowTemplate.create({
@@ -37,6 +62,7 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
             description: tmpl.description,
             isDefault: tmpl.isDefault ?? false,
             name: tmpl.name,
+            origin: SWE_ORIGIN,
             status: 'ACTIVE',
             teamId: null,
           },
@@ -60,6 +86,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
           data: {
             description: skillDef.description,
             isVerified: true,
+            origin: SWE_ORIGIN,
             promptText: skillDef.promptText,
           },
           where: { id: existingSkill.id },
@@ -71,6 +98,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
             isBuiltIn: true,
             isVerified: true,
             name: skillDef.name,
+            origin: SWE_ORIGIN,
             promptText: skillDef.promptText,
           },
         });
@@ -89,6 +117,7 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
         await prisma.agentSkillAssignment.create({
           data: {
             agentRole: assignment.role,
+            origin: SWE_ORIGIN,
             scope: 'GLOBAL',
             skillId: skill.id,
             sortOrder: assignment.sortOrder,
@@ -99,18 +128,30 @@ async function syncSkills(prisma: PrismaClient): Promise<void> {
   }
 }
 
-async function syncScannerPatterns(prisma: PrismaClient): Promise<void> {
+/**
+ * Seeds the subset of built-in scanner patterns belonging to `group`:
+ *   - 'core' → patterns whose origin is null (cross-cutting categories)
+ *   - 'swe'  → patterns tagged 'swe-starter' (CODE_SECURITY)
+ * Provenance is derived from the pattern type via `scannerPatternOrigin`.
+ */
+async function syncScannerPatterns(prisma: PrismaClient, group: 'core' | 'swe'): Promise<void> {
+  const wantOrigin = group === 'core' ? null : SWE_ORIGIN;
   for (const p of BUILTIN_SCANNER_PATTERNS) {
+    const origin = scannerPatternOrigin(p.type);
+    if (origin !== wantOrigin) {
+      continue;
+    }
     await prisma.scannerPattern.upsert({
       create: {
         flags: p.flags,
         isActive: true,
         isBuiltIn: true,
         label: p.label,
+        origin,
         pattern: p.pattern,
         type: p.type,
       },
-      update: { flags: p.flags, isActive: true, pattern: p.pattern, type: p.type },
+      update: { flags: p.flags, isActive: true, origin, pattern: p.pattern, type: p.type },
       where: { label: p.label },
     });
   }
@@ -125,6 +166,7 @@ async function syncImplementerToolConfig(prisma: PrismaClient): Promise<void> {
       data: {
         agentRole: 'implementer',
         enabledTools: ['readFile', 'writeFile', 'listDirectory', 'bash'],
+        origin: SWE_ORIGIN,
         scope: 'GLOBAL',
       },
     });
