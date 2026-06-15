@@ -1,4 +1,4 @@
-# Platform Pivot — P1.5 Epic: Retire the role tables (Agent as single source of truth)
+# Platform Pivot — P1.5 Epic (✅ complete): Retire the role tables (Agent as single source of truth)
 
 > Finishes the role→Agent migration started in P1. P1 made `Agent` a first-class entity that
 > **overlays** the three legacy config tables; P1.5 makes `Agent` the **sole** source and **deletes**
@@ -83,6 +83,6 @@
 ## Sequencing checklist
 
 - [x] Slice 1 — worker: `resolveAgent` authoritative; seed full Agents; `assertConfigReady` on Agents
-- [ ] Slice 2 — gateway: retire role services/routes; keep credentials + embeddings
-- [ ] Slice 3 — web: admin UI onto the Agent library
-- [ ] Slice 4 — drop the three tables + dead code; consolidate migration; update bootstrap docs
+- [x] Slice 2 — gateway: retire role services/routes; keep credentials + embeddings
+- [x] Slice 3 — web: admin UI onto the Agent library
+- [x] Slice 4 — drop the three tables + dead code; consolidate migration; update bootstrap docs

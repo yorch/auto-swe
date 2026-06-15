@@ -2,11 +2,9 @@
 
 import Link from 'next/link';
 import { use, useState } from 'react';
-import { TeamModelConfigSection } from '@/components/modelConfig/TeamModelConfigSection';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
-import { TeamAgentSkillsSection } from '@/components/teams/TeamAgentSkillsSection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -177,8 +175,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
       {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
       {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
-      {canManageTeamConfig && <TeamModelConfigSection teamId={id} />}
-      {canManageTeamConfig && <TeamAgentSkillsSection teamId={id} />}
 
       <TeamFormModal
         mode={{

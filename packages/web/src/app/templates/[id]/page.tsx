@@ -4,8 +4,6 @@ import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
-import { TemplateModelConfigSection } from '@/components/modelConfig/TemplateModelConfigSection';
-import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgentSkillsSection';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -410,13 +408,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             )}
           </aside>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="fade-up stagger-3 space-y-6">
-          <TemplateModelConfigSection templateId={id} />
-          <TemplateAgentSkillsSection templateId={id} />
         </div>
       )}
       <ConfirmModal
