@@ -10,7 +10,7 @@ Agent identity is a **free-form string** since the platform pivot — the `Agent
 
 ### Group 1 — model-backed roles (6)
 
-These keys each **require a GLOBAL `ModelRoleConfig` row** in the database. The worker refuses to start (`assertConfigReady()`) until all six rows exist. Model selection, system prompt, and credential can be overridden at TEAM or WORKFLOW_TEMPLATE scope via the admin UI.
+These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the seed with the defaults below). The worker refuses to start (`assertConfigReady()`) until all six resolve a model + credential. Model, prompt, skills, and tools are edited — and overridden at TEAM / WORKFLOW_TEMPLATE scope — via the Agent library (`/admin/agents/library`).
 
 | Role | Key | Activity | Default model |
 |---|---|---|---|
@@ -25,7 +25,7 @@ These keys each **require a GLOBAL `ModelRoleConfig` row** in the database. The 
 
 ### Group 2 — sub-role personas (4)
 
-**Sub-agent personas** used within a parent activity. They have **no** `ModelRoleConfig` row — their seeded `Agent` row carries `inheritsModelFrom`, so `resolveAgent` binds the parent's model. They exist so skills and tools can be assigned at per-sub-agent granularity.
+**Sub-agent personas** used within a parent activity. Their `Agent` row has **no** `modelSpec` — it carries `inheritsModelFrom`, so `resolveAgent` binds the parent's model. They exist so skills and tools can be assigned at per-sub-agent granularity.
 
 | Role | Key | Inherits model from | Used by |
 |---|---|---|---|
@@ -38,7 +38,7 @@ These keys each **require a GLOBAL `ModelRoleConfig` row** in the database. The 
 
 ### First-class `Agent` entity (P1) + `agent` node (P2)
 
-The **`Agent`** table is the versioned, governed library object that consolidates an agent's model/prompt/skills/tools. It **overlays** the three legacy config tables (`ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig`): `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → GLOBAL`; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref), and any null override field falls through to the legacy cascade — so seeded SWE agents resolve byte-identically to pre-P1.
+The **`Agent`** table is the versioned, governed, **single source of truth** for an agent's model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → GLOBAL`; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it.
 
 - **Resolution → execution:** `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the resolved model + skills + tools + prompt into an `AgentSpec`; the generic `runAgent` activity (`activities/runAgent.ts`) runs it.
 - **Governance:** editing an Agent's system prompt runs the injection/exfil scan and resets `isVerified`; versions are immutable (a base edit cuts a new version); RBAC GLOBAL=ADMIN, TEAM=team OWNER. Seeded built-ins are `origin='swe-starter'`.

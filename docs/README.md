@@ -26,6 +26,7 @@ agent-workflow platform (SWE becomes seed content). **P0 + P1 are implemented; P
 | [platform-pivot.md](./platform-pivot.md) | In progress | RFC + roadmap (phases P0–P5) |
 | [platform-pivot-p0.md](./platform-pivot-p0.md) | ✅ Done | De-domainify the engine (enum→string, step registry, `AgentSpec`/`runAgent`, …) |
 | [platform-pivot-p1.md](./platform-pivot-p1.md) | ✅ Done | Agent library (first-class `Agent` entity, versioning, governed API + UI) |
+| [platform-pivot-p1.5.md](./platform-pivot-p1.5.md) | ✅ Done | Retire the role tables — `Agent` is the sole source of truth |
 | [platform-pivot-p2.md](./platform-pivot-p2.md) | 🔄 In progress | Declarative `agent` node (done) + MCP (pending) |
 | [platform-pivot-diagrams.md](./platform-pivot-diagrams.md) | Reference | Diagrams for the pivot |
 
@@ -46,7 +47,7 @@ Preserved for design rationale; the code is the authoritative reference where th
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- |
 | [configurable-workflows.md](./configurable-workflows.md)   | Workflow engine roadmap + architecture decisions log                            | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale |
 | [mvp-architecture.md](./mvp-architecture.md)               | Phase 1 MVP architecture & component design                                    | `EngineeringWorkflow` deleted (PR #13); replaced by `RunnableWorkflow` + seeded spec |
-| [data-and-infra.md](./data-and-infra.md)                   | Prisma schema, embedding pipeline, executor images, security                   | Schema section outdated — actual schema is `packages/shared/src/prisma/schema.prisma` (38 models); §3.1–3.2 DinD description is accurate |
+| [data-and-infra.md](./data-and-infra.md)                   | Prisma schema, embedding pipeline, executor images, security                   | Schema section outdated — actual schema is `packages/shared/src/prisma/schema.prisma` (35 models); §3.1–3.2 DinD description is accurate |
 | [gateway-and-auth.md](./gateway-and-auth.md)               | Full Gateway API spec, JWT/RBAC, Slack OAuth                                   | RS256 framing; HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
 | [workflow-and-activities.md](./workflow-and-activities.md) | Temporal workflow, agent data flow, review network, CI loop, memory commit     | K8s workspace references; `EngineeringWorkflow` pseudocode replaced by `RunnableWorkflow` |
 | [wireframes.md](./wireframes.md)                           | Web dashboard wireframes (ASCII) for every page                                | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4 |

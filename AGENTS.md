@@ -18,7 +18,8 @@
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
 | `docs/platform-pivot.md`         | In progress | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **P0 + P1 implemented; P2 underway (agent node done).** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p2.md` |
 | `docs/platform-pivot-p0.md`      | Done       | P0 build plan (de-domainify the engine): enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams complete |
-| `docs/platform-pivot-p1.md`      | Done       | P1 build plan (Agent library): first-class `Agent` entity + `resolveAgent` overlay, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI. All 6 work-streams complete |
+| `docs/platform-pivot-p1.md`      | Done       | P1 build plan (Agent library): first-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI. All 6 work-streams complete |
+| `docs/platform-pivot-p1.5.md`    | Done       | P1.5: retire the role tables — `Agent` is the **sole** source of truth; `ModelRoleConfig`/`AgentSkillAssignment`/`AgentToolConfig` deleted. All 4 slices complete (worker, gateway, web, drop tables) |
 | `docs/platform-pivot-p2.md`      | In progress | P2 build plan (declarative `agent` node + MCP): WS1 (agent node) done; MCP work-streams pending |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
 | `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (12 node types), runtime security scanners, budget tiers, auth, data model, infra   |
@@ -37,7 +38,7 @@
 | `docs/configurable-workflows.md`  | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale              |
 | `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
 | `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
-| `docs/data-and-infra.md`          | Schema section outdated (actual: 38 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
+| `docs/data-and-infra.md`          | Schema section outdated (actual: 35 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
 | `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
 | `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
 
@@ -200,10 +201,10 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 - **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `AgentToolConfig`. `null` tool config = all four workspace tools enabled.
 
 **Agent identity** is a free-form `string` (`AnySkillRole = string`; the `AgentRole` enum + `SkillOnlyRole` union were removed in P0/P1). `loadAgentSkills`/`loadAgentToolConfig` accept any key. The seeded SWE keys group as:
-- **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — require a `ModelRoleConfig` GLOBAL row. Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
-- **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — no `ModelRoleConfig` row; their seeded `Agent` row carries `inheritsModelFrom` (→ `reviewer` / `planner`) so `resolveAgent` binds the parent's model.
+- **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each has a GLOBAL `Agent` with a `modelSpec` (seeded). Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
+- **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — their `Agent` has no `modelSpec`; it carries `inheritsModelFrom` (→ `reviewer` / `planner`) so `resolveAgent` binds the parent's model.
 
-**First-class `Agent` entity (P1):** the `Agent` table is the versioned, governed library object overlaying the three legacy config tables. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active version (cascade + run-start `WorkflowRun.agentVersions` pin or explicit `key@version`); null overrides fall through to the legacy cascade (byte-identical to pre-P1). `resolveAgentSpec` (`agentSpec.ts`) → `AgentSpec` → the generic `runAgent` activity. Library API `/api/v1/admin/agent-library`, UI `/admin/agents/library`. The declarative **`agent` workflow node** (P2) dispatches `agentRef` to the `runAgentNode` activity.
+**First-class `Agent` entity (single source of truth since P1.5):** the `Agent` table holds per-role model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were **removed** in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) is the sole resolver: most-specific active version (cascade + run-start `WorkflowRun.agentVersions` pin or explicit `key@version`), model via `modelSpec`/`inheritsModelFrom`, skills via `skillRefs`, tools via `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are shims over it. `resolveAgentSpec` (`agentSpec.ts`) → `AgentSpec` → the generic `runAgent` activity. Library API `/api/v1/admin/agent-library`, UI `/admin/agents/library`. The declarative **`agent` workflow node** (P2) dispatches `agentRef` to the `runAgentNode` activity.
 
 **Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
 
@@ -257,13 +258,13 @@ No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker 
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — creates the admin user.
 2. Start gateway + web only.
-3. Sign in as admin at `/admin/model-config`. Click "Seed Anthropic defaults" to create the 6 GLOBAL `ModelRoleConfig` rows + the `EmbeddingConfig` singleton.
+3. The DB seed already created the 6 model-backed GLOBAL `Agent` rows (with default model specs) + the `EmbeddingConfig` singleton. Sign in as admin at `/admin/model-config → Credentials` and add a `ProviderCredential`.
 4. Add at least one `ProviderCredential` for the providers the seeded specs reference (Anthropic by default; OpenAI for embeddings).
 5. Go to `/admin/integrations → GitHub`. Enter the GitHub PAT and webhook secret. Save.
 6. Configure any other integrations (Slack, Storage, OAuth) as needed.
 7. Start the worker.
 
-Per-role baked-in defaults (used by the "Seed defaults" button):
+Per-role baked-in defaults (seeded onto the GLOBAL Agents by `syncAgents`):
 
 | Role              | Default                       |
 | ----------------- | ----------------------------- |
@@ -390,7 +391,7 @@ yarn dev:web             # Terminal 2 — http://localhost:3000
 
 # 4b. Configure integrations in the admin UI
 #    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD
-#    → /admin/model-config → "Seed Anthropic defaults" → add provider credentials
+#    → /admin/model-config → Credentials → add a provider credential (agents are seeded with default specs)
 #    → /admin/integrations → GitHub → enter GITHUB_TOKEN + GITHUB_WEBHOOK_SECRET → Save
 #    (or skip if GITHUB_TOKEN is set in .env — the env var fallback still works)
 

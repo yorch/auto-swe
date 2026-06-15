@@ -162,7 +162,7 @@ Several categories of credentials that were previously env-only are now stored e
 **Bootstrap order** (first deployment):
 1. Start gateway + web only (`yarn dev:gateway && yarn dev:web`).
 2. Sign in as admin.
-3. `/admin/model-config` → "Seed Anthropic defaults" → add provider credentials.
+3. `/admin/model-config` → Credentials → add a provider credential (the seed already created the agents + embedding config).
 4. `/admin/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
 5. `/admin/integrations` → any other tabs you need (Slack, Storage, OAuth).
 6. Start the worker (`yarn dev:worker`). The worker now reads all config from the DB.
