@@ -52,7 +52,15 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
  * the Agent library something to list and the versioning/override paths
  * (WS3/WS4) somewhere to attach.
  */
-const SWE_AGENTS: ReadonlyArray<{ key: string; name: string; description: string }> = [
+interface SweAgentDef {
+  key: string;
+  name: string;
+  description: string;
+  /** Parent agent key this persona inherits its model from (sub-roles only). */
+  inheritsModelFrom?: string;
+}
+
+const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
@@ -81,20 +89,28 @@ const SWE_AGENTS: ReadonlyArray<{ key: string; name: string; description: string
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',
+    inheritsModelFrom: 'reviewer',
     key: 'securityReviewer',
     name: 'Security Reviewer',
   },
   {
     description: 'Domain-logic sub-reviewer in the review network.',
+    inheritsModelFrom: 'reviewer',
     key: 'domainLogicReviewer',
     name: 'Domain Logic Reviewer',
   },
   {
     description: 'Performance-focused sub-reviewer in the review network.',
+    inheritsModelFrom: 'reviewer',
     key: 'performanceReviewer',
     name: 'Performance Reviewer',
   },
-  { description: 'Breaks an epic into subtasks.', key: 'decomposer', name: 'Decomposer' },
+  {
+    description: 'Breaks an epic into subtasks.',
+    inheritsModelFrom: 'planner',
+    key: 'decomposer',
+    name: 'Decomposer',
+  },
 ];
 
 async function syncAgents(prisma: PrismaClient): Promise<void> {
@@ -106,6 +122,7 @@ async function syncAgents(prisma: PrismaClient): Promise<void> {
       await prisma.agent.create({
         data: {
           description: def.description,
+          inheritsModelFrom: def.inheritsModelFrom ?? null,
           isBuiltIn: true,
           isVerified: true,
           key: def.key,

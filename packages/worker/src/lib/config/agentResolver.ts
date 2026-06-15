@@ -131,13 +131,18 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
 async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
   const agent = await fetchActiveAgent(key, ctx);
 
-  // Model + base prompt: Agent override or legacy ModelRoleConfig cascade.
+  // Model + base prompt: Agent override, inherited parent model, or legacy
+  // ModelRoleConfig cascade for this key.
   let model: ResolvedModelConfig;
   if (agent?.modelSpec) {
     model = await modelFromAgentOverride(agent, ctx);
   } else {
-    // `key` is free-form (P0); the legacy resolvers are typed to the SWE union.
-    const legacy = await resolveModelConfig(key as AgentRole, ctx);
+    // Sub-reviewer/decomposer personas inherit a parent role's model via
+    // `inheritsModelFrom` (e.g. securityReviewer → reviewer); otherwise resolve
+    // this key's own ModelRoleConfig. `key` is free-form (P0); the legacy
+    // resolvers are typed to the SWE union.
+    const modelKey = (agent?.inheritsModelFrom ?? key) as AgentRole;
+    const legacy = await resolveModelConfig(modelKey, ctx);
     model = agent?.systemPrompt ? { ...legacy, systemPrompt: agent.systemPrompt } : legacy;
   }
 

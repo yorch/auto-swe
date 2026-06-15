@@ -1017,6 +1017,12 @@ model Agent {
   // Optional overrides — null means "inherit from the legacy config cascade".
   modelSpec          String?             @map("model_spec")
   systemPrompt       String?             @map("system_prompt")
+  // When set and `modelSpec` is null, resolve the model from this parent agent
+  // key instead of this key's own ModelRoleConfig. Lets sub-reviewer personas
+  // (e.g. securityReviewer → reviewer, decomposer → planner) inherit a model
+  // without their own ModelRoleConfig row. Replaces the implicit SkillOnlyRole
+  // inheritance (P1/WS2).
+  inheritsModelFrom  String?             @map("inherits_model_from")
   credentialId       String?             @map("credential_id") @db.Uuid
   // Nullable JSON array of tool keys. null = no tool override (use
   // AgentToolConfig); [] = explicitly no tools; [...] = exactly these.

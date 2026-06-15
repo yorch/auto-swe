@@ -185,6 +185,20 @@ describe('resolveAgent — overrides', () => {
   });
 });
 
+describe('resolveAgent — model inheritance', () => {
+  it('binds the parent role model via inheritsModelFrom when modelSpec is null', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ inheritsModelFrom: 'reviewer', key: 'securityReviewer', modelSpec: null })
+    );
+
+    const r = await resolveAgent('securityReviewer');
+
+    // Model resolved from the PARENT key, not the sub-role's own (missing) row.
+    expect(mockedResolveModelConfig).toHaveBeenCalledWith('reviewer', undefined);
+    expect(r.model).toEqual(legacyModel);
+  });
+});
+
 describe('resolveAgent — scope cascade', () => {
   it('prefers a TEAM Agent row over GLOBAL', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: arg inspection

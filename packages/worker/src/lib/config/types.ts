@@ -13,18 +13,13 @@ export type AgentRole =
   | 'validateContext'
   | 'commitToMemory';
 
-/// Skill-only sub-roles. These do NOT require ModelRoleConfig rows — they
-/// inherit the model from their parent role (e.g. securityReviewer inherits
-/// from reviewer). They exist solely so skills can be assigned at per-reviewer
-/// or per-decomposer granularity.
-export type SkillOnlyRole =
-  | 'securityReviewer'
-  | 'domainLogicReviewer'
-  | 'performanceReviewer'
-  | 'decomposer';
-
-/// Any role that can have AgentSkillAssignment rows.
-export type AnySkillRole = AgentRole | SkillOnlyRole;
+/// Any agent key that can have skill/tool assignments. Free-form since the
+/// platform pivot: sub-reviewer and decomposer personas (formerly the
+/// `SkillOnlyRole` union — `securityReviewer`, `domainLogicReviewer`,
+/// `performanceReviewer`, `decomposer`) are now ordinary Agents resolved by
+/// key, inheriting their model from a parent role via the Agent's
+/// `inheritsModelFrom` pointer (P1/WS2). New personas are data, not a union.
+export type AnySkillRole = string;
 
 /// Canonical iteration order for the 6 agent roles. Used by the worker
 /// startup check, the seed helpers (where they still exist), and any test
