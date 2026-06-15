@@ -104,6 +104,21 @@ CREATE UNIQUE INDEX "agent_tool_configs_role_template_uidx"
     ON "agent_tool_configs" ("agent_role", "workflow_template_id")
     WHERE "scope" = 'WORKFLOW_TEMPLATE';
 
+-- ── Agent library (P1): one row per (key, version) at a scope ─────────────────
+-- Partial uniques per scope; Prisma can't express `WHERE scope = …`. Postgres
+-- treats NULL discriminators as distinct, so each WHERE scopes its uniqueness.
+CREATE UNIQUE INDEX "agents_key_version_global_uidx"
+    ON "agents" ("key", "version")
+    WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "agents_key_version_team_uidx"
+    ON "agents" ("key", "version", "team_id")
+    WHERE "scope" = 'TEAM';
+
+CREATE UNIQUE INDEX "agents_key_version_template_uidx"
+    ON "agents" ("key", "version", "workflow_template_id")
+    WHERE "scope" = 'WORKFLOW_TEMPLATE';
+
 -- ── HITL idempotency ─────────────────────────────────────────────────────────
 -- Prevents duplicate PENDING rows for the same (run_id, node_id) pair while
 -- allowing multiple historical resolved/cancelled rows (retry loops).

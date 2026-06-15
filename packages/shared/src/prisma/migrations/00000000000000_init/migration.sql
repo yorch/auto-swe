@@ -1,8 +1,10 @@
 -- Consolidated initial schema, generated from schema.prisma via
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
--- consolidation of the original 18-migration chain; schema-equivalence
--- verified against the old chain with a normalized pg_dump diff).
--- Custom DDL Prisma cannot express lives in the next migration.
+-- consolidation; includes the P1 Agent library tables/columns folded in while
+-- nothing is deployed yet). Custom DDL Prisma cannot express (partial unique
+-- indexes, the pgvector HNSW index, and seed inserts) lives in the next
+-- migration.
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -287,6 +289,7 @@ CREATE TABLE "workflow_runs" (
     "work_request_id" UUID,
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
+    "agent_versions" JSONB,
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
@@ -637,6 +640,43 @@ CREATE TABLE "agent_tool_configs" (
 );
 
 -- CreateTable
+CREATE TABLE "agents" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "key" TEXT NOT NULL,
+    "scope" "ConfigScope" NOT NULL,
+    "team_id" UUID,
+    "workflow_template_id" UUID,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "model_spec" TEXT,
+    "system_prompt" TEXT,
+    "inherits_model_from" TEXT,
+    "credential_id" UUID,
+    "tool_keys" JSONB,
+    "origin" TEXT,
+    "is_built_in" BOOLEAN NOT NULL DEFAULT false,
+    "is_verified" BOOLEAN NOT NULL DEFAULT false,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "agents_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "agent_skill_refs" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "agent_id" UUID NOT NULL,
+    "skill_id" UUID NOT NULL,
+    "sort_order" INTEGER NOT NULL DEFAULT 0,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "agent_skill_refs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "workflow_shell_audit" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "template_version_id" UUID NOT NULL,
@@ -785,6 +825,15 @@ CREATE INDEX "agent_tool_configs_agent_role_scope_team_id_idx" ON "agent_tool_co
 CREATE INDEX "agent_tool_configs_agent_role_scope_workflow_template_id_idx" ON "agent_tool_configs"("agent_role", "scope", "workflow_template_id");
 
 -- CreateIndex
+CREATE INDEX "agents_scope_team_id_idx" ON "agents"("scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "agents_scope_workflow_template_id_idx" ON "agents"("scope", "workflow_template_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "agent_skill_refs_agent_id_skill_id_key" ON "agent_skill_refs"("agent_id", "skill_id");
+
+-- CreateIndex
 CREATE INDEX "workflow_shell_audit_template_version_id_idx" ON "workflow_shell_audit"("template_version_id");
 
 -- CreateIndex
@@ -900,6 +949,21 @@ ALTER TABLE "agent_tool_configs" ADD CONSTRAINT "agent_tool_configs_team_id_fkey
 
 -- AddForeignKey
 ALTER TABLE "agent_tool_configs" ADD CONSTRAINT "agent_tool_configs_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_skill_refs" ADD CONSTRAINT "agent_skill_refs_agent_id_fkey" FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agent_skill_refs" ADD CONSTRAINT "agent_skill_refs_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_shell_audit" ADD CONSTRAINT "workflow_shell_audit_template_version_id_fkey" FOREIGN KEY ("template_version_id") REFERENCES "workflow_template_versions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
