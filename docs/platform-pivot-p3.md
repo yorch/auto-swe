@@ -76,17 +76,35 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
   connection type validates + stores `config` without touching git code paths (git paths key off the
   SWE run flow, not the `type` column).
 
-### Slice 3 — Template `inputSchema` + generic `RunInput`
-- **Schema:** `WorkflowTemplate.inputSchema Json`; generic `RunInput { id, templateId, connectionId?,
-  payload Json, ... }` replacing `WorkRequest`. SWE template declares
-  `{ ticketId, connectionId, description, budget }`. `ContextSnapshot` + `PullRequest` → SWE
-  satellite tables keyed by run.
-- **Gateway:** run-submit validates `payload` against the template's `inputSchema`; `POST
-  /work-requests` becomes `POST /runs` (or generalized) with the SWE input shape.
-- **Worker:** the workflow reads `RunInput.payload` (SWE: ticketId/description/connectionId) instead
-  of `WorkRequest` columns.
-- **Acceptance:** SWE submit→run parity via `RunInput`; a non-SWE template's `inputSchema` validates
-  a different payload and runs with no ticket/repo assumptions.
+### Slice 3 — Template `inputSchema` + generic `RunInput` ✅ DONE (3 sub-slices)
+Landed as three green-at-each-step commits:
+- **3a — `WorkflowTemplate.inputSchema` + validator.** New `inputSchema Json?` column holding a small
+  JSON-Schema subset, plus a dependency-free `validateInputPayload` helper
+  (`@auto-swe/shared/lib/inputSchema`: required fields, scalar/array types, `enum`, `format:'uuid'`,
+  all violations at once). The default engineering template seeds the SWE contract
+  `{ ticketId, connectionId, description, budget }`. 11 unit tests.
+- **3b — `WorkRequest` → `RunInput`.** Model + `work_requests` table renamed to `RunInput` /
+  `run_inputs`; added generic `payload Json?` + `connectionId` FK (onDelete SetNull). SWE columns
+  (`externalTicketId`, `requestPayload`) kept as typed columns for parity. Per the slice-2 playbook
+  only the delegate (`prisma.workRequest`→`prisma.runInput`) + Prisma types move; the relation field
+  names (`.workRequest`/`.workRequests`), scalar FK (`workRequestId`), and `/work-requests` endpoint
+  stay stable. (`ScheduledWorkRequest` + the `RepoWorkRequest` Temporal payload are distinct and
+  unchanged.)
+- **3c — submit-time enforcement + payload population.** `POST /work-requests` builds the generic
+  payload, validates it against the resolved template's `inputSchema` (400 `INVALID_INPUT` with
+  per-field details, **before** the Temporal idempotency gate so no orphan run), and persists
+  `payload` + `connectionId` on the `RunInput`. Templates with no schema accept any payload (parity).
+  Two route-level enforcement tests.
+- **`ContextSnapshot` / `PullRequest`:** already separate tables keyed by `workRequestId` /
+  `workflowId` — i.e. structurally SWE satellites already; left as-is (no rename needed; they hang
+  off `RunInput`/`ActiveWorkflow`).
+- **Deferred polish (optional, not blocking):** a fully generic `POST /runs` endpoint + migrating
+  web/CLI/Slack to submit a raw `payload` (the current submit keeps the SWE-shaped body and maps it),
+  and making `externalTicketId` nullable. The engine pieces (`inputSchema` + `payload` +
+  `validateInputPayload` + `connectionId`) are all in place and enforced; these are surface-level.
+- **Acceptance:** SWE submit→run parity via `RunInput` (881 tests green); `validateInputPayload`
+  proves a non-SWE template validates a different payload (unit test) and submit rejects a payload
+  that violates the declared schema (route test).
 
 ### Slice 4 — Generic triggers
 - **Schema/config:** trigger receivers (core webhook verify + manual/API + schedule) + a config/seed
@@ -109,5 +127,5 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
 
 - [x] Slice 1 — `MemoryItem` replaces `AgentLesson` (+ pgvector index; SWE lessons under an SWE scope)
 - [x] Slice 2 — `Connection` replaces `Repository` (`git_repo` type carries SWE repo config)
-- [ ] Slice 3 — template `inputSchema` + generic `RunInput` (replaces `WorkRequest`; SWE satellites)
+- [x] Slice 3 — template `inputSchema` + generic `RunInput` (replaces `WorkRequest`; SWE satellites)
 - [ ] Slice 4 — generic triggers (webhook/manual/schedule → config-driven input mappings)
