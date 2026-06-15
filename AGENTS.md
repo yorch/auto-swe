@@ -16,11 +16,12 @@
 
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `docs/platform-pivot.md`         | In progress | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **P0 + P1 implemented; P2 underway (agent node done).** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p2.md` |
+| `docs/platform-pivot.md`         | In progress | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **P0 + P1 + P1.5 + P3 done; P2 underway (agent node done; MCP pending).** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p1.5.md`, `-p2.md`, `-p3.md` |
 | `docs/platform-pivot-p0.md`      | Done       | P0 build plan (de-domainify the engine): enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams complete |
 | `docs/platform-pivot-p1.md`      | Done       | P1 build plan (Agent library): first-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI. All 6 work-streams complete |
 | `docs/platform-pivot-p1.5.md`    | Done       | P1.5: retire the role tables — `Agent` is the **sole** source of truth; `ModelRoleConfig`/`AgentSkillAssignment`/`AgentToolConfig` deleted. All 4 slices complete (worker, gateway, web, drop tables) |
 | `docs/platform-pivot-p2.md`      | In progress | P2 build plan (declarative `agent` node + MCP): WS1 (agent node) done; MCP work-streams pending |
+| `docs/platform-pivot-p3.md`      | Done       | P3 build plan (generic Connections/inputs/triggers/memory): `MemoryItem`←`AgentLesson` (slice 1), `Connection`←`Repository` (slice 2), template `inputSchema` + generic `RunInput`←`WorkRequest` with submit validation (slice 3), config-driven trigger event→`RunInput` mappings (slice 4). All 4 slices complete; surface polish deferred |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
 | `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (12 node types), runtime security scanners, budget tiers, auth, data model, infra   |
 | `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
@@ -198,7 +199,7 @@ All six tables follow the singleton pattern (single row, `id = 'default'`, enfor
 Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
 
 - **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (24 built-in INJECTION/EXFILTRATION patterns used by this scanner, 51 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
-- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `AgentToolConfig`. `null` tool config = all four workspace tools enabled.
+- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by the resolved `Agent`'s `toolKeys` (P1.5: replaced the `AgentToolConfig` table). A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `toolKeys`. `null` `toolKeys` = all four workspace tools enabled.
 
 **Agent identity** is a free-form `string` (`AnySkillRole = string`; the `AgentRole` enum + `SkillOnlyRole` union were removed in P0/P1). `loadAgentSkills`/`loadAgentToolConfig` accept any key. The seeded SWE keys group as:
 - **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each has a GLOBAL `Agent` with a `modelSpec` (seeded). Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents.
@@ -215,7 +216,7 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 
 Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`, `AgentRole`), `packages/worker/src/lib/config/resolver.ts` (`resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
 
-Note: `AgentSkillAssignment` and `AgentToolConfig` use partial unique indexes — Prisma cannot express `WHERE IS NULL` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
+Note: `Agent` (and `ProviderCredential`) use partial unique indexes per scope — Prisma cannot express `WHERE scope = …` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
 
 ---
 
@@ -306,7 +307,7 @@ MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumer
 
 ### Embeddings
 
-`packages/worker/src/lib/embeddings.ts` resolves its `<provider>/<model>` spec, API key, and (for OpenAI-compatible providers) `apiBase` entirely from the DB-backed `EmbeddingConfig` singleton via `resolveEmbeddingConfig()` — there are no `EMBEDDING_MODEL` / `<PROVIDER>_API_BASE` env vars (model + credential config is fully DB-driven; see `docs/model-configuration.md`). Built-in: `openai`; any other provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase` on the credential row. Output **must** be 1536-dimensional — the `agent_lessons.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
+`packages/worker/src/lib/embeddings.ts` resolves its `<provider>/<model>` spec, API key, and (for OpenAI-compatible providers) `apiBase` entirely from the DB-backed `EmbeddingConfig` singleton via `resolveEmbeddingConfig()` — there are no `EMBEDDING_MODEL` / `<PROVIDER>_API_BASE` env vars (model + credential config is fully DB-driven; see `docs/model-configuration.md`). Built-in: `openai`; any other provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase` on the credential row. Output **must** be 1536-dimensional — the `memory_items.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
 
 ### Agent Observability (AgentTracer)
 
@@ -423,5 +424,5 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | Auth                         | better-auth sessions (browser) + PATs (CLI/CI); short-lived JWTs only via the session-token bridge | One identity store; PATs survive restarts; the legacy refresh-token rotation flow was removed (ARCH-4) |
 | DinD over K8s                | `docker run`/`exec`                                       | No cluster needed; same isolation model, zero infra beyond Docker |
 | PAT or GitHub App            | PAT for simplicity; GitHub App for production             | GitHub App: short-lived tokens, per-installation scope, full audit trail; admin UI at /admin/integrations |
-| pgvector for memory          | Vector embeddings on AgentLesson                          | Semantic similarity search for agent context enrichment           |
+| pgvector for memory          | Vector embeddings on MemoryItem                          | Semantic similarity search for agent context enrichment           |
 | Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |

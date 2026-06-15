@@ -179,7 +179,7 @@ The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly
 | Migration | What it adds |
 | --------- | ------------ |
 | `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 36 tables, enums, FKs, Prisma-expressible indexes) |
-| `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `agent_lessons.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config + implementer tool-config seeds |
+| `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
 
 New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.
 
@@ -351,8 +351,8 @@ open https://app.example.com
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
 | Sessions admin             | `/admin/sessions` (revoke any session); `/admin/access-tokens` (revoke PATs across all users).                   |
 | Shell-step audit           | `/admin/access-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
-| Lesson retention           | `agent_lessons` grows over time; no automatic pruning. Manual `DELETE` is fine — drops the row from the HNSW index. |
-| pgvector index rebuild     | `REINDEX INDEX idx_agent_lessons_embedding;` — only needed after a bulk import or if recall degrades.            |
+| Lesson retention           | `memory_items` grows over time; no automatic pruning. Manual `DELETE` is fine — drops the row from the HNSW index. |
+| pgvector index rebuild     | `REINDEX INDEX idx_memory_items_embedding;` — only needed after a bulk import or if recall degrades.            |
 
 ---
 

@@ -75,7 +75,7 @@ packages/
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
 | `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 51 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
-| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/set/cond/signal/terminate/fanOut/shell) |
+| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/agent/set/cond/signal/terminate/fanOut/shell/human*) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` node predicates (jsonpath + comparison, no JS sandbox) |
 | `src/workflow/stepRegistry.ts` | Step catalog (metadata, input schemas) — imported by gateway + web without worker dependency |
@@ -98,17 +98,17 @@ packages/
 | `src/lib/github.ts` | Octokit singleton and GitHub webhook HMAC verification |
 | `src/lib/slack.ts` | Slack SDK client; slash-command and interactive-webhook handlers |
 | `src/lib/telemetry.ts` | OpenTelemetry SDK init (OTLP/HTTP exporter) |
-| `src/routes/workRequests.ts` | `POST /api/v1/work-requests` — creates `WorkRequest` + starts `RunnableWorkflow` |
+| `src/routes/workRequests.ts` | `POST /api/v1/work-requests` — validates the run-input payload against the template's `inputSchema`, then creates `RunInput` (`payload` + `connectionId`) + starts `RunnableWorkflow` |
 | `src/routes/workflows.ts` | `GET /api/v1/workflows` — list active workflows (RBAC-filtered) |
 | `src/routes/workflowRuns.ts` | `GET /api/v1/workflow-runs` — paginated run history; `POST /:id/cancel` |
 | `src/routes/workflowTemplates.ts` | CRUD for `WorkflowTemplate` + versions; promotes active version; step registry catalog |
 | `src/routes/workflowProjections.ts` | Live step-status projections for the `/runs/[id]` viewer |
 | `src/routes/webhooks.ts` | `POST /api/v1/webhooks/git` (merge signal) + `/webhooks/ci` (CI signal) |
 | `src/routes/epics.ts` | `POST /api/v1/epics` — starts `EpicOrchestratorWorkflow` |
-| `src/routes/repositories.ts` | CRUD for `Repository` (team-scoped) |
+| `src/routes/repositories.ts` | CRUD for `Connection` (team-scoped) |
 | `src/routes/teams.ts` | CRUD for `Team` + membership + shell-image allowlist; team-scoped credentials |
 | `src/routes/users.ts` | User management (ADMIN only) |
-| `src/routes/lessons.ts` | `AgentLesson` list, text search, per-repo stats, delete |
+| `src/routes/lessons.ts` | `MemoryItem` list, text search, per-repo stats, delete |
 | `src/routes/skills.ts` | `Skill` library CRUD + a team-scoped read-only skill list (per-role skill/tool config moved to the Agent library) |
 | `src/routes/agentLibrary.ts` | P1 Agent library CRUD — `/api/v1/admin/agent-library` (all scopes, ADMIN) + `/api/v1/teams/:id/agent-library` (team OWNER); create/version/list/deactivate with prompt scan + referential integrity (`lib/agentLibraryService.ts`) |
 | `src/routes/me.ts` | `GET /api/v1/me/preferences` + `PATCH /api/v1/me/preferences` — read and merge-update the authenticated user's preferences JSON (e.g. `runDetailLayout`) |
@@ -120,7 +120,7 @@ packages/
 | `src/routes/humanSteps.ts` | `GET /api/v1/inbox` + `GET /api/v1/inbox/:id` + `POST /api/v1/inbox/:id/respond` — HITL pending-step inbox and response endpoint (see [hitl-workflows.md](./hitl-workflows.md)) |
 | `src/routes/systemConfig.ts` | `/api/v1/admin` system-config CRUD — GitHub (incl. GitHub App), Slack, Storage, Tracker, OAuth, and workflow-defaults singletons backing `/admin/integrations` and `/admin/workflow` |
 | `src/lib/ticketTracker.ts` | Read-only issue-tracker connectors (Jira REST v3 / Linear GraphQL / GitHub Issues) — `fetchTicket()` runs at work-request submit time and seeds `ContextSnapshot.rawTicketData`; 5 s timeout, never throws (best-effort enrichment) |
-| `src/routes/scheduledWorkRequests.ts` | CRUD for `ScheduledWorkRequest` + Temporal Schedule lifecycle — creates a standing `WorkRequest` + `ActiveWorkflow` (status `SCHEDULED`) on first save; each Temporal Schedule fire starts a fresh `RunnableWorkflow` |
+| `src/routes/scheduledWorkRequests.ts` | CRUD for `ScheduledWorkRequest` + Temporal Schedule lifecycle — creates a standing `RunInput` + `ActiveWorkflow` (status `SCHEDULED`) on first save; each Temporal Schedule fire starts a fresh `RunnableWorkflow` |
 | `src/routes/slack.ts` | `/api/v1/auth/slack` — OAuth connect + callback, `/auto-swe` slash command, signature-verified interactive webhooks |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — shared helper that writes `ConfigAuditLog` rows for all config mutations |
 
@@ -139,7 +139,7 @@ packages/
 | `src/activities/shellStep.ts` | Phase-6 `runShellStep` — ephemeral container, image allowlist, audit write |
 | `src/activities/decomposition.ts` | `planDecomposition` — Decomposer agent → `Subtask[]` for fan-out |
 | `src/activities/validateContext.ts` | `validateContext` — Context Validator agent → `ContextSnapshot` |
-| `src/activities/commitToMemory.ts` | Memory Agent summarization → `AgentLesson` + pgvector embedding |
+| `src/activities/commitToMemory.ts` | Memory Agent summarization → `MemoryItem` + pgvector embedding |
 | `src/activities/createOrUpdatePullRequest.ts` | GitHub PR create/update via Octokit; idempotent on branch |
 | `src/activities/templates.ts` | Fetches + resolves `WorkflowSpec` for a run (scope cascade + A/B routing) |
 | `src/activities/state.ts` | `updateDomainState`, `createWorkflowRun`, `recordWorkflowStep`, `finalizeWorkflowRun` |
@@ -174,7 +174,7 @@ packages/
 | `src/app/templates/[id]/` | React Flow canvas editor (`TemplateEditor`) — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/workflows/` | Active workflow list |
 | `src/app/epics/` | Multi-repo epic creation + status |
-| `src/app/repositories/` | Repository CRUD |
+| `src/app/repositories/` | Connection CRUD |
 | `src/app/teams/` | Team management — members, roles, shell-image allowlist |
 | `src/app/users/` | User management (ADMIN) |
 | `src/app/lessons/` | Agent memory search |
@@ -239,7 +239,7 @@ sequenceDiagram
     participant GitHub
 
     Client->>Gateway: POST /api/v1/work-requests {externalTicketId, repoIds, description}
-    Gateway->>DB: INSERT work_requests
+    Gateway->>DB: INSERT run_inputs
     Gateway->>DB: INSERT active_workflows (status=IMPLEMENTING)
     Gateway->>Temporal: workflow.start(RunnableWorkflow)
     Gateway-->>Client: {workRequestId, workflowIds}
@@ -279,7 +279,7 @@ sequenceDiagram
     GitHub->>Gateway: POST /api/v1/webhooks/git (PR merged)
     Gateway->>Temporal: signal humanMergeSignal
 
-    Worker->>Worker: commitToMemory activity (AgentLesson + pgvector)
+    Worker->>Worker: commitToMemory activity (MemoryItem + pgvector)
     Worker->>DB: UPDATE active_workflows (status=COMPLETED)
     Worker->>DB: INSERT WorkflowRun finalize (costUsdAccrued)
 ```
@@ -404,17 +404,17 @@ Sub-role usage:
 
 **Skills vs tools:**
 - **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 51 built-in patterns (all 5 types) synced by `syncBuiltins()` at gateway startup, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
-- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) tracked in `IMPLEMENTER_TOOL_IDS` and controlled by `AgentToolConfig`. A fifth tool, `loadSkill`, is automatically added alongside the workspace tools when skills are present — it is not configurable via `AgentToolConfig`. Other agents have no tools; they use skills for reasoning guidance only.
+- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) tracked in `IMPLEMENTER_TOOL_IDS` and controlled by the resolved `Agent`'s `toolKeys` (P1.5: replaced the `AgentToolConfig` table; `null` = all four enabled). A fifth tool, `loadSkill`, is automatically added alongside the workspace tools when skills are present — it is not part of `toolKeys`. Other agents have no tools; they use skills for reasoning guidance only.
 
 **Progressive skill disclosure (implementer agent):** Skills are not pre-injected wholesale. The implementer agent receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch the full `promptText` only when it decides to engage a skill. This avoids token bloat from unused skills. Other agents (reviewer sub-agents, planner, decomposer) continue to receive their skill fragments directly in the system prompt since they have no tools.
 
-**Lesson memory and skills:** When `commitToMemory` creates an `AgentLesson`, it records which skills were active during that run in the `skillsActive` column (`String[]`). This allows future observability and skill-effectiveness analysis without changing the lesson query path.
+**Lesson memory and skills:** When `commitToMemory` creates a `MemoryItem` (SWE lessons live under `scope = 'swe-lessons'`), it records which skills were active during that run in the `skillsActive` column (`String[]`). This allows future observability and skill-effectiveness analysis without changing the lesson query path.
 
 **Agent observability — `AgentTracer`:** Every LLM-calling activity must create an `AgentTracer`, call `addToolCall` / `addLlmResponse` / `addActivityEvent` as operations run, and then call `persistActivityTrace(tracer, role)` at exit (best-effort; failures are swallowed). These records land in the `agent_traces` table and power the `/runs/[id]` viewer. See [docs/agents.md §8](./agents.md#8-agent-observability-agenttracer) for the full pattern and table schema.
 
 **Full agent, tool, and skill reference:** [docs/agents.md](./agents.md) covers all 10 roles, all 27 built-in skills, the implementer's 5 tools, the review network model resolution, the `AgentTracer` pattern, and the complete skill + tool assignment API endpoint reference.
 
-Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/worker/src/lib/agentTracer.ts`, `packages/worker/src/lib/activityContext.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/gateway/src/routes/scannerPatterns.ts`, `packages/gateway/src/routes/skills.ts`, `packages/shared/src/prisma/schema.prisma` (`ModelRoleConfig`, `Skill`, `AgentSkillAssignment`, `AgentToolConfig`, `AgentLesson`, `ScannerPattern`, `AgentTrace`).
+Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/worker/src/lib/agentTracer.ts`, `packages/worker/src/lib/activityContext.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/gateway/src/routes/scannerPatterns.ts`, `packages/gateway/src/routes/skills.ts`, `packages/shared/src/prisma/schema.prisma` (`Agent`, `AgentSkillRef`, `Skill`, `MemoryItem`, `ScannerPattern`, `AgentTrace`).
 
 ---
 
@@ -464,18 +464,19 @@ erDiagram
     User ||--o{ Session : "better-auth"
 
     Team ||--o{ TeamMembership : has
-    Team ||--o{ Repository : owns
+    Team ||--o{ Connection : owns
     Team ||--o{ WorkflowTemplate : owns
-    Team ||--o{ ModelRoleConfig : configures
+    Team ||--o{ Agent : configures
     Team ||--o{ ProviderCredential : holds
 
-    Repository ||--o{ ActiveWorkflow : tracks
-    Repository ||--o{ PullRequest : has
-    Repository ||--o{ AgentLesson : learns
+    Connection ||--o{ ActiveWorkflow : tracks
+    Connection ||--o{ PullRequest : has
+    Connection ||--o{ MemoryItem : learns
+    Connection ||--o{ RunInput : targets
 
-    WorkRequest ||--o| ContextSnapshot : captures
-    WorkRequest ||--o{ ActiveWorkflow : drives
-    WorkRequest ||--o{ WorkflowRun : records
+    RunInput ||--o| ContextSnapshot : captures
+    RunInput ||--o{ ActiveWorkflow : drives
+    RunInput ||--o{ WorkflowRun : records
 
     WorkflowTemplate ||--o{ WorkflowTemplateVersion : versions
     WorkflowTemplate ||--o{ WorkflowRun : spawns
@@ -485,9 +486,10 @@ erDiagram
     WorkflowRun ||--o{ WorkflowArtifact : stores
 
     ActiveWorkflow ||--o{ PullRequest : opens
-    ActiveWorkflow ||--o{ AgentLesson : generates
+    ActiveWorkflow ||--o{ MemoryItem : generates
 
-    ModelRoleConfig }o--|| ProviderCredential : uses
+    Agent }o--|| ProviderCredential : uses
+    Agent ||--o{ AgentSkillRef : "has skills"
     EmbeddingConfig }o--|| ProviderCredential : uses
 ```
 
@@ -498,15 +500,15 @@ erDiagram
 | Identity | `User`, `Account`, `Session`, `Verification` | User identity (better-auth sessions + PATs + JWT bridge); `User.preferences` JSONB stores per-user settings (e.g. `runDetailLayout`) |
 | Auth tokens | `PersonalAccessToken` | PAT lifecycle — `ats_*` bearer tokens minted in Settings → API tokens |
 | RBAC | `TeamMembership` | Platform + team role enforcement |
-| Work | `WorkRequest`, `ContextSnapshot` | Input + context capture |
+| Work | `RunInput`, `ContextSnapshot` | Generic run input (P3) — `payload` Json validated against the template's `inputSchema`, `connectionId` target, plus the SWE columns (`externalTicketId`, `description`) for parity; `ContextSnapshot` is an SWE satellite keyed by run |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Template versioning, run tracking, artifact storage, shell audit |
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows — full agent observability |
-| Memory | `AgentLesson` | pgvector semantic memory (1536-dim HNSW index) |
-| Model config | `ModelRoleConfig`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys) |
+| Memory | `MemoryItem` | Generic pgvector semantic memory (1536-dim HNSW index); `scope` partitions domains (SWE lessons use `'swe-lessons'`) |
+| Model config | `Agent`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys); the first-class `Agent` is the sole source of model/skill/tool config (P1.5 retired `ModelRoleConfig`) |
 | System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `TrackerConfig` | Singleton (`id='default'`) integration config — encrypted secrets, env-var fallback; `TrackerConfig` drives the submit-time ticket fetch into `ContextSnapshot.rawTicketData` |
-| Agent config | `Skill`, `AgentSkillAssignment`, `AgentToolConfig` | Skills (prompt fragments) and tool access control — scoped at GLOBAL / TEAM / WORKFLOW_TEMPLATE |
-| Infrastructure | `Team`, `Repository` | Tenant isolation + repo registry |
+| Agent config | `Agent`, `AgentSkillRef`, `Skill` | First-class versioned agents (model/skill/tool overrides, scoped GLOBAL / TEAM / WORKFLOW_TEMPLATE) + skills (prompt fragments) joined via `AgentSkillRef` |
+| Infrastructure | `Team`, `Connection` | Tenant isolation + connection registry — `Connection.type` (`'git_repo'` for SWE) + generic `config` Json |
 
 ---
 
@@ -609,10 +611,10 @@ Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events wr
 | `RunnableWorkflow` over hardcoded workflow | Teams can configure and version their own workflow DAGs without code changes | `runnable.ts`, `spec.ts`, `interpreter.ts` |
 | Pure interpreter in `shared` | Importable by V8 workflow isolate, tests, and gateway (step catalog) without Temporal | `interpreter.ts` |
 | Dispatcher interface | Decouples spec traversal from Temporal activity dispatch; test-friendly | `interpreter.ts` |
-| DB-backed model config | Provider keys and per-role model selection without env vars; scope cascade supports per-team overrides | `models.ts`, `ModelRoleConfig` |
+| DB-backed model config | Provider keys and per-role model selection without env vars; scope cascade supports per-team overrides | `models.ts`, `Agent` (P1.5: replaced `ModelRoleConfig`) |
 | AES-256-GCM for credentials | Keys stored encrypted at rest; `CONFIG_ENCRYPTION_KEY` is the only LLM-related env var | `crypto.ts`, `ProviderCredential` |
 | Three auth paths | CLI + CI use PATs; web uses better-auth cookies; session-token bridge issues short-lived JWTs for the API surface | `plugins/auth.ts`, `betterAuth.ts`, `tokens.ts` |
 | Docker-in-Docker (not K8s) | Zero cluster dependency; same isolation model; works in Docker Compose | `workspace.ts` |
 | Temporal for orchestration | Durable execution — workflows survive crashes, wait days for signals, replay deterministically | `runnable.ts`, `epicOrchestrator.ts` |
-| pgvector for agent memory | Semantic similarity search surfaces relevant past lessons into agent context at query time | `commitToMemory.ts`, `embeddings.ts`, `AgentLesson` |
+| pgvector for agent memory | Semantic similarity search surfaces relevant past lessons into agent context at query time | `commitToMemory.ts`, `embeddings.ts`, `MemoryItem` |
 | Human-governed merges only | The system opens PRs but never merges; a Temporal signal bridges the GitHub webhook | `webhooks.ts` → `humanMergeSignal` |

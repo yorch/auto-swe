@@ -21,7 +21,7 @@ These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the
 | Validate Context | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
 | Commit to Memory | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-7` |
 
-> **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` `ModelRoleConfig` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
+> **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` GLOBAL `Agent` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
 
 ### Group 2 — sub-role personas (4)
 
@@ -61,7 +61,7 @@ GLOBAL scope             →  (required — 6 AgentRoles only)
 
 `resolveModelConfig` throws `ConfigMissingError` when no row is found at any scope. Missing rows surface as a clear error message pointing to `/admin/model-config`.
 
-**Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → GLOBAL (templates reference an existing credential via `ModelRoleConfig.credentialId`).
+**Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → GLOBAL (an Agent pins an existing credential via `Agent.credentialId`).
 
 **File:** `packages/worker/src/lib/config/resolver.ts` — exports `resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`, `ConfigMissingError`.
 
@@ -79,7 +79,7 @@ Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => 
 
 ### 3.1 Workspace Tools (4, configurable)
 
-These tools translate agent calls to `docker exec` commands inside the workspace container. All four are listed in `IMPLEMENTER_TOOL_IDS` and are controlled by `AgentToolConfig`.
+These tools translate agent calls to `docker exec` commands inside the workspace container. All four are listed in `IMPLEMENTER_TOOL_IDS` and are controlled by `Agent.toolKeys`.
 
 | Tool ID | Description | Security layer |
 |---|---|---|
@@ -88,11 +88,11 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 | `listDirectory` | List directory contents (`ls -la`) | Path traversal check |
 | `bash` | Execute a shell command in the workspace | Shell command scanner (soft-block; returns error string to agent) |
 
-`AgentToolConfig.enabledTools` is a `String[]` of tool IDs to allow. `null` (no row) means all 4 tools are enabled.
+`Agent.toolKeys` is a nullable Json string array of tool IDs to allow. `null` means all 4 tools are enabled.
 
 ### 3.2 `loadSkill` Tool (5th tool, always present when skills exist)
 
-When `skills` is non-empty, a fifth tool — `loadSkill` — is automatically added alongside the four workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** controlled by `AgentToolConfig`.
+When `skills` is non-empty, a fifth tool — `loadSkill` — is automatically added alongside the four workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).
 
 ```
 loadSkill({ name: string }) → { promptText: string }
@@ -121,7 +121,7 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
 2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security-events` can classify the event without raw SQL.
 
-### 3.5 MCP Tools (`Repository.mcpServerRef`, opt-in)
+### 3.5 MCP Tools (`Connection.mcpServerRef`, opt-in)
 
 **File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
 
@@ -135,7 +135,7 @@ When a repository has `mcpServerRef` set, the implementer agent can be given the
 **Activation requires all three:**
 
 1. The caller passes `options.mcpServerRef` to `createImplementerAgent` — **defaults to disabled**; activities have not opted in yet (follow-up).
-2. The effective `AgentToolConfig` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty config = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `enabledTools` must explicitly contain `'mcp'`. Since the gateway tool-config enum does not accept `'mcp'` yet, **every existing tool config row disables MCP**.
+2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty config = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'`. Since the gateway tool-config enum does not accept `'mcp'` yet, **every existing non-empty tool config disables MCP**.
 3. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only — it never fails the implementation.
 
 **Security and observability:**
@@ -145,7 +145,7 @@ When a repository has `mcpServerRef` set, the implementer agent can be given the
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
 - Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
 
-**Follow-ups:** (a) the gateway Zod enum for `AgentToolConfig.enabledTools` (`routes/skills.ts`) must accept `'mcp'` before admins can enable it on configs that restrict tools; (b) the implementer activities (`executeImplementation`, `implementerSession`, decomposition) need to pass the repo's `mcpServerRef` into `createImplementerAgent` and call `closeMcp()` in their `finally` blocks.
+**Follow-ups:** (a) the gateway Zod enum for `Agent.toolKeys` (`routes/skills.ts`) must accept `'mcp'` before admins can enable it on configs that restrict tools; (b) the implementer activities (`executeImplementation`, `implementerSession`, decomposition) need to pass the repo's `mcpServerRef` into `createImplementerAgent` and call `closeMcp()` in their `finally` blocks.
 
 ---
 
@@ -240,19 +240,19 @@ A **skill** is a named prompt fragment (`promptText`) injected into an agent's s
 
 ### 6.3 Skill Assignment & Scope Cascade
 
-Skill assignments are stored in `AgentSkillAssignment`, which links a skill to an agent role at a scope:
+Skill assignments live on the resolved `Agent` as `skillRefs` → `AgentSkillRef` rows (each joins to a `Skill` with a `sortOrder`). The resolver picks the most-specific active Agent version per scope:
 
 ```
-WORKFLOW_TEMPLATE  →  (if templateId set and any assignments exist for role)
-TEAM               →  (if teamId set and any assignments exist for role)
-GLOBAL             →  (always falls back to this; may be empty)
+WORKFLOW_TEMPLATE  →  (if templateId set and an Agent override exists for the key)
+TEAM               →  (if teamId set and an Agent override exists for the key)
+GLOBAL             →  (always falls back to this; may carry no skill refs)
 ```
 
-**Loaded per-activity-invocation** — admin edits to skill assignments take effect on the next LLM call within an already-running workflow.
+**Loaded per-activity-invocation** — admin edits to an Agent's skill refs take effect on the next LLM call within an already-running workflow.
 
-`loadAgentSkills(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts`:
+`loadAgentSkills(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`):
 - Returns `ResolvedSkill[]` sorted by `sortOrder` ascending.
-- The first scope with **any** assignments for the role wins — returning an empty array means no skills injected for that role.
+- The most-specific Agent version's `skillRefs` win — an empty list means no skills injected for that role.
 - Only `isActive: true` skills are included.
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
@@ -270,22 +270,22 @@ The scan runs:
 
 ---
 
-## 7. Tool Access Control (`AgentToolConfig`)
+## 7. Tool Access Control (`Agent.toolKeys`)
 
-`AgentToolConfig` controls which of the four workspace tools are available to an agent role.
+`Agent.toolKeys` controls which of the four workspace tools are available to an agent role. It is a nullable Json string array on the resolved `Agent`.
 
 | Field | Purpose |
 |---|---|
-| `agentRole` | Which role (e.g. `IMPLEMENTER`) |
+| `key` | Which agent key (e.g. `implementer`) |
 | `scope` | `GLOBAL` \| `TEAM` \| `WORKFLOW_TEMPLATE` |
-| `enabledTools` | `String[]` of allowed tool IDs |
+| `toolKeys` | nullable Json `string[]` of allowed tool IDs (`null` = all four enabled) |
 | `teamId` / `workflowTemplateId` | Scope keys (partial unique index) |
 
-**Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` follows the same WORKFLOW_TEMPLATE → TEAM → GLOBAL order. Returns `null` when no row exists at any scope, which means all tools are enabled.
+**Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → TEAM → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
-**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `enabledTools` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` and the gateway enum does not accept it yet — a non-empty config therefore disables MCP until that follow-up lands.
+**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` and the gateway enum does not accept it yet — a non-empty config therefore disables MCP until that follow-up lands.
 
-Note: `AgentToolConfig` and `AgentSkillAssignment` use partial unique indexes (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
+Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
 
 ---
 
@@ -411,7 +411,7 @@ The `PUT` body is `{ skillIds: string[], sortOrders?: number[] }`. `sortOrders` 
 | `PUT` | `/api/v1/teams/:teamId/agents/:role/tools` | Team `ADMIN` | Set TEAM-scope tool config |
 | `DELETE` | `/api/v1/teams/:teamId/agents/:role/tools` | Team `ADMIN` | Remove TEAM-scope config |
 
-The `PUT` body is `{ enabledTools: string[] }` where values are from `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`.
+The `PUT` body is `{ toolKeys: string[] }` where values are from `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`.
 
 ---
 
@@ -420,13 +420,12 @@ The `PUT` body is `{ enabledTools: string[] }` where values are from `IMPLEMENTE
 | Model | Table | Purpose |
 |---|---|---|
 | `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive) |
-| `AgentSkillAssignment` | `agent_skill_assignments` | Links skills to roles at GLOBAL/TEAM/WORKFLOW_TEMPLATE scope |
-| `AgentToolConfig` | `agent_tool_configs` | Controls which workspace tools each role can use, per scope |
-| `ModelRoleConfig` | `model_role_configs` | Model spec + system prompt override per role per scope |
+| `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs (versioned) |
+| `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
 | `EmbeddingConfig` | `embedding_configs` | Singleton embedding model + credential |
 | `AgentTrace` | `agent_traces` | Per-activity tool-call / LLM-response / event rows |
-| `AgentLesson` | `agent_lessons` | pgvector semantic memory (1536-dim HNSW); `skillsActive` column records which skills were active during the run |
+| `MemoryItem` | `memory_items` | pgvector semantic memory (1536-dim HNSW); `skillsActive` column records which skills were active during the run |
 | `ScannerPattern` | `scanner_patterns` | Regex rules for INJECTION, EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE scanners |
 
 **Schema file:** `packages/shared/src/prisma/schema.prisma`
