@@ -11,9 +11,9 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    runInput: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
-    workRequest: { findUnique: vi.fn() },
   },
 }));
 
@@ -27,7 +27,7 @@ import {
 
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
 const findTeam = vi.mocked(prisma.team.findUnique);
-const findWorkRequest = vi.mocked(prisma.workRequest.findUnique);
+const findWorkRequest = vi.mocked(prisma.runInput.findUnique);
 
 const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; body: unknown }>;

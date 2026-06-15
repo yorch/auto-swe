@@ -1,9 +1,10 @@
 -- Consolidated initial schema, generated from schema.prisma via
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
 -- consolidation). P1/P1.5 retired the role-config tables (Agent is the source
--- of truth); P3 renamed AgentLesson → the generic MemoryItem and Repository →
--- the generic Connection. Custom DDL Prisma cannot express (partial unique
--- indexes, the pgvector HNSW index, seed inserts) lives in the next migration.
+-- of truth); P3 renamed AgentLesson → the generic MemoryItem, Repository → the
+-- generic Connection, and WorkRequest → the generic RunInput. Custom DDL Prisma
+-- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
+-- lives in the next migration.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
@@ -229,11 +230,13 @@ CREATE TABLE "verifications" (
 );
 
 -- CreateTable
-CREATE TABLE "work_requests" (
+CREATE TABLE "run_inputs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "external_ticket_id" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "request_payload" TEXT NOT NULL,
+    "payload" JSONB,
+    "connection_id" UUID,
     "slack_message_ts" TEXT,
     "slack_channel_id" TEXT,
     "is_cross_repo" BOOLEAN NOT NULL DEFAULT false,
@@ -242,7 +245,7 @@ CREATE TABLE "work_requests" (
     "requested_by_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "work_requests_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "run_inputs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -781,7 +784,7 @@ CREATE INDEX "workflow_shell_audit_template_version_id_idx" ON "workflow_shell_a
 CREATE INDEX "workflow_shell_audit_team_id_idx" ON "workflow_shell_audit"("team_id");
 
 -- AddForeignKey
-ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -793,7 +796,7 @@ ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_id_fkey" FOREIG
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_workflow_id_fkey" FOREIGN KEY ("workflow_id") REFERENCES "active_workflows"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -820,7 +823,10 @@ ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_fkey" FOREIGN KEY ("user
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "work_requests" ADD CONSTRAINT "work_requests_requested_by_id_fkey" FOREIGN KEY ("requested_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_requested_by_id_fkey" FOREIGN KEY ("requested_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -832,7 +838,7 @@ ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_te
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -841,7 +847,7 @@ ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_run_id_fkey"
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "work_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;

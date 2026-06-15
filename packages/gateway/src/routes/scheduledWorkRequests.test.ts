@@ -107,6 +107,17 @@ describe('/api/v1/scheduled-work-requests', () => {
           teamId: 'team-1',
         }),
       },
+      runInput: {
+        create: async (args: { data: Record<string, unknown> }) => {
+          createdWorkRequests.push(args.data);
+          return { ...args.data };
+        },
+        delete: async (args: { where: { id: string } }) => {
+          deletedWorkRequestIds.push(args.where.id);
+          return {};
+        },
+        update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
+      },
       scheduledWorkRequest: {
         create: async (args: { data: Record<string, unknown> }) => rowWithInclude({ ...args.data }),
         delete: async (args: { where: { id: string } }) => {
@@ -129,17 +140,6 @@ describe('/api/v1/scheduled-work-requests', () => {
       },
       workflowTemplateVersion: {
         findUnique: async () => ({ id: 'tplv-1' }),
-      },
-      workRequest: {
-        create: async (args: { data: Record<string, unknown> }) => {
-          createdWorkRequests.push(args.data);
-          return { ...args.data };
-        },
-        delete: async (args: { where: { id: string } }) => {
-          deletedWorkRequestIds.push(args.where.id);
-          return {};
-        },
-        update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
     } as unknown as never);
 

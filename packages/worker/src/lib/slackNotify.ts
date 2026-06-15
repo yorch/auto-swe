@@ -157,7 +157,7 @@ async function postToSlack(
 async function resolveSlackChannelByWorkRequest(
   workRequestId: string
 ): Promise<{ channel: string; threadTs: string | null; ticket: string } | null> {
-  const workRequest = await prisma.workRequest.findUnique({
+  const workRequest = await prisma.runInput.findUnique({
     include: {
       activeWorkflows: {
         include: { repository: { select: { teamId: true } } },

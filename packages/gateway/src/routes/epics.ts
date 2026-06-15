@@ -144,7 +144,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Persist work request to DB
-      await fastify.prisma.workRequest.create({
+      await fastify.prisma.runInput.create({
         data: {
           description,
           externalTicketId,
@@ -184,7 +184,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Epics are rare — fetch a generous window and filter/paginate in JS,
       // since the repo set only exists inside the JSON payload.
-      const workRequests = await fastify.prisma.workRequest.findMany({
+      const workRequests = await fastify.prisma.runInput.findMany({
         include: { requestedBy: { select: { email: true, id: true, name: true } } },
         orderBy: { createdAt: 'desc' },
         take: 500,
@@ -262,7 +262,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const externalTicketId = workflowId.slice(EPIC_ID_PREFIX.length);
 
       const [workRequest, epicRow] = await Promise.all([
-        fastify.prisma.workRequest.findFirst({
+        fastify.prisma.runInput.findFirst({
           include: { requestedBy: { select: { email: true, id: true, name: true } } },
           orderBy: { createdAt: 'desc' },
           where: { externalTicketId, isCrossRepo: true },

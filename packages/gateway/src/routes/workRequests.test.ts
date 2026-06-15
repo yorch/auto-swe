@@ -74,14 +74,14 @@ describe('POST /api/v1/work-requests', () => {
           return { id: 'cs-1' };
         },
       },
+      runInput: {
+        create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
+      },
       workflowTemplate: {
         findFirst: async () => ({
           activeVersion: 1,
           id: 'tpl-1',
         }),
-      },
-      workRequest: {
-        create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
       },
     } as unknown as never);
     app.decorate('temporal', {

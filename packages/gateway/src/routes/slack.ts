@@ -852,7 +852,7 @@ async function handleRunModalSubmission(
     throw err;
   }
 
-  await fastify.prisma.workRequest.create({
+  await fastify.prisma.runInput.create({
     data: {
       description,
       externalTicketId: ticket,

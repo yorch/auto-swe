@@ -191,7 +191,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             }),
       };
       const [rows, total] = await Promise.all([
-        fastify.prisma.workRequest.findMany({
+        fastify.prisma.runInput.findMany({
           include: {
             activeWorkflows: {
               select: { currentStatus: true, id: true, temporalWorkflowId: true },
@@ -203,7 +203,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           take: limit,
           where,
         }),
-        fastify.prisma.workRequest.count({ where }),
+        fastify.prisma.runInput.count({ where }),
       ]);
       return {
         data: rows.map((wr) => ({
@@ -340,7 +340,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Workflow started — now persist to DB.
       // If DB write fails, the Temporal workflow will eventually time out,
       // which is preferable to orphan DB rows that block future retries.
-      const workRequest = await fastify.prisma.workRequest.create({
+      const workRequest = await fastify.prisma.runInput.create({
         data: {
           description,
           externalTicketId,
@@ -393,7 +393,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const workRequest = await fastify.prisma.workRequest.findUnique({
+      const workRequest = await fastify.prisma.runInput.findUnique({
         include: {
           activeWorkflows: {
             include: {

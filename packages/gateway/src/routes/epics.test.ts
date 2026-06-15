@@ -122,7 +122,7 @@ describe('epic routes', () => {
             }));
         },
       },
-      workRequest: {
+      runInput: {
         create: async (args: { data: Record<string, unknown> }) => {
           createdWorkRequests.push(args.data);
           return { ...args.data };

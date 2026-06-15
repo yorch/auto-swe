@@ -74,7 +74,7 @@ model ActiveWorkflow {
   temporalWorkflowId String         @unique @map("temporal_workflow_id")
   parentWorkflowId   String?        @map("parent_workflow_id")
   workRequestId      String?        @map("work_request_id") @db.Uuid
-  workRequest        WorkRequest?   @relation(fields: [workRequestId], references: [id])
+  workRequest        RunInput?      @relation(fields: [workRequestId], references: [id])
   repoId             String?        @map("repo_id") @db.Uuid
   repository         Connection?    @relation(fields: [repoId], references: [id])
   currentStatus      String         @map("current_status")
@@ -134,7 +134,7 @@ model MemoryItem {
 model ContextSnapshot {
   id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workRequestId    String       @unique @map("work_request_id") @db.Uuid
-  workRequest      WorkRequest  @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
+  workRequest      RunInput     @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
   rawTicketData    Json?        @map("raw_jira_epic")
   rawDocumentation Json?        @map("raw_confluence")
   successCriteria  String[]     @map("success_criteria")
@@ -217,6 +217,7 @@ model Connection {
   activeWorkflows  ActiveWorkflow[]
   pullRequests     PullRequest[]
   memoryItems      MemoryItem[]
+  runInputs        RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([organizationName, repoName])
@@ -297,7 +298,7 @@ model User {
   accounts              Account[]
   sessions              Session[]
   humanStepsResolved    WorkflowHumanStep[]
-  workRequests          WorkRequest[]
+  workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@map("users")
@@ -361,11 +362,26 @@ model Verification {
   @@map("verifications")
 }
 
-model WorkRequest {
+/// One run submission (P3 — generic; replaces the SWE-specific `WorkRequest`).
+/// `payload` is the generic run-input bag validated against the template's
+/// `inputSchema`; `connectionId` is the generic target Connection. The SWE
+/// specifics (`externalTicketId`, `requestPayload`) stay as typed columns for
+/// parity and are re-expressed through `payload` over the P3 slices. The
+/// relation field names on related models (`workRequest`/`workRequests`) and
+/// the scalar FK (`workRequestId`) are intentionally kept stable across the
+/// rename so the public API shape doesn't churn.
+model RunInput {
   id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId   String           @map("external_ticket_id")
   description        String           @default("")
   requestPayload     String           @map("request_payload")
+  /// Generic run-input payload (P3); validated against the template's
+  /// `inputSchema`. Null on rows created before this column existed.
+  payload            Json?
+  /// Generic target Connection (P3). Null = not connection-scoped (or legacy
+  /// rows where the linkage lives on requestPayload/ActiveWorkflow.repoId).
+  connectionId       String?          @map("connection_id") @db.Uuid
+  connection         Connection?      @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   slackMessageTs     String?          @map("slack_message_ts")
   /// Channel that originated the request (paired with slackMessageTs to thread
   /// per-step failure notifications back to the source conversation). Populated
@@ -387,7 +403,7 @@ model WorkRequest {
   workflowRuns       WorkflowRun[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
-  @@map("work_requests")
+  @@map("run_inputs")
 }
 
 /// A standing automation: a Temporal Schedule that fires RunnableWorkflow on a
@@ -424,7 +440,7 @@ model ScheduledWorkRequest {
   createdBy            User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
   workRequestId        String?           @map("work_request_id") @db.Uuid
-  workRequest          WorkRequest?      @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
   /// Best-effort bookkeeping — authoritative fire history lives in Temporal.
   lastFiredAt          DateTime?         @map("last_fired_at") @db.Timestamptz
   nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
@@ -467,7 +483,7 @@ model WorkflowRun {
   template        WorkflowTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
   templateVersion Int                @map("template_version")
   workRequestId   String?            @map("work_request_id") @db.Uuid
-  workRequest     WorkRequest?       @relation(fields: [workRequestId], references: [id])
+  workRequest     RunInput?          @relation(fields: [workRequestId], references: [id])
   specSnapshot    Json               @map("spec_snapshot")
   contextSnapshot Json?              @map("context_snapshot")
   /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`

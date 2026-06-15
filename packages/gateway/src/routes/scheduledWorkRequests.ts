@@ -301,7 +301,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
 
       // Standing WorkRequest — every fire's WorkflowRun links to it, so
       // scheduled runs are attributable in /runs and the work-request list.
-      await fastify.prisma.workRequest.create({
+      await fastify.prisma.runInput.create({
         data: {
           description: body.description,
           externalTicketId: ticketId,
@@ -364,7 +364,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         await fastify.prisma.activeWorkflow.deleteMany({
           where: { temporalWorkflowId: `sched-${scheduleId}` },
         });
-        await fastify.prisma.workRequest.delete({ where: { id: workRequestId } });
+        await fastify.prisma.runInput.delete({ where: { id: workRequestId } });
         return reply.status(502).send({
           error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not create Temporal schedule' },
         });
@@ -461,7 +461,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // Keep the standing WorkRequest's description/template snapshot in step
       // so the /runs attribution stays truthful.
       if (row.workRequestId) {
-        await fastify.prisma.workRequest.update({
+        await fastify.prisma.runInput.update({
           data: {
             description: row.description,
             templateId: template.templateId,
