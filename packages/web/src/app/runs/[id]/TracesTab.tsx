@@ -29,7 +29,7 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
   const name = trace.toolName ?? '';
 
   if (trace.type === 'llm_response') {
-    return { detail: trace.agentRole, label: name || trace.agentRole };
+    return { detail: trace.agentKey, label: name || trace.agentKey };
   }
 
   if (trace.type === 'activity_event') {

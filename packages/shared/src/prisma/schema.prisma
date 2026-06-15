@@ -522,7 +522,8 @@ model AgentTrace {
   run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
   nodeId     String      @map("node_id")
-  agentRole  String      @map("agent_role")
+  /// The agent key (identity) that produced this trace, e.g. "implementer".
+  agentKey   String      @map("agent_key")
   /// Temporal activity attempt number (1-based). Lets the UI group traces by retry attempt.
   attempt    Int         @default(1)
   seq        Int

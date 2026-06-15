@@ -61,11 +61,11 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
  * Persist all in-memory traces for the currently executing activity.
  * Best-effort: errors are swallowed inside `AgentTracer.persist`.
  */
-export async function persistActivityTrace(tracer: AgentTracer, agentRole: string): Promise<void> {
+export async function persistActivityTrace(tracer: AgentTracer, agentKey: string): Promise<void> {
   await tracer.persist(
     await currentWorkflowRunId(),
     currentActivityType(),
-    agentRole,
+    agentKey,
     currentAttempt()
   );
 }

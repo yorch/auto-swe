@@ -18,9 +18,9 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('./agentResolver.js', () => ({ resolveAgent: resolveAgentMock }));
 
 import { assertConfigReady } from './assertReady.js';
-import { requiredAgentRoles } from './stepRequiredAgents.js';
+import { requiredAgentKeys } from './stepRequiredAgents.js';
 
-const ALL_AGENT_ROLES = [
+const ALL_MODEL_BACKED_AGENT_KEYS = [
   'implementer',
   'reviewer',
   'planner',
@@ -45,9 +45,9 @@ function fullyConfigured() {
   });
 }
 
-describe('requiredAgentRoles', () => {
+describe('requiredAgentKeys', () => {
   it('computes the deduped union of every registered step’s required agents', () => {
-    expect([...requiredAgentRoles()].sort()).toEqual([...ALL_AGENT_ROLES].sort());
+    expect([...requiredAgentKeys()].sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
   });
 });
 
@@ -55,7 +55,7 @@ describe('assertConfigReady', () => {
   it('passes when every required Agent resolves and the embedding is healthy', async () => {
     fullyConfigured();
     await expect(assertConfigReady()).resolves.toBeUndefined();
-    expect(resolveAgentMock).toHaveBeenCalledTimes(ALL_AGENT_ROLES.length);
+    expect(resolveAgentMock).toHaveBeenCalledTimes(ALL_MODEL_BACKED_AGENT_KEYS.length);
   });
 
   it('reports every Agent that fails to resolve in a single error', async () => {
@@ -68,7 +68,7 @@ describe('assertConfigReady', () => {
 
     const err = await assertConfigReady().catch((e) => e);
     expect(err).toBeInstanceOf(Error);
-    for (const role of ALL_AGENT_ROLES) {
+    for (const role of ALL_MODEL_BACKED_AGENT_KEYS) {
       expect(err.message).toContain(role);
     }
   });

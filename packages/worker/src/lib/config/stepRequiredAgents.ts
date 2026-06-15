@@ -35,15 +35,15 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]
 };
 
 /**
- * The deduplicated set of agent (model) roles required by *some* registered
- * step. `assertConfigReady` requires a GLOBAL `ModelRoleConfig` + resolvable
- * credential for each of these. Roles no registered step needs are ignored.
+ * The deduplicated set of model-backed agent keys required by *some* registered
+ * step. `assertConfigReady` requires a GLOBAL `Agent` (with a `modelSpec`) +
+ * resolvable credential for each of these. Keys no registered step needs are ignored.
  *
  * Forward note (degrade-don't-crash): this is the static, executor-declared
  * hard-fail set. When P1/P2 let templates reference arbitrary `agentRef`s,
  * those template-referenced agents must be validated as a *separate, non-fatal*
  * surface — a bad template edit should fail that template, not block worker boot.
  */
-export function requiredAgentRoles(): ModelBackedAgentKey[] {
+export function requiredAgentKeys(): ModelBackedAgentKey[] {
   return [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];
 }

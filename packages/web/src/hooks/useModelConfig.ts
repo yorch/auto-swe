@@ -1,42 +1,14 @@
 'use client';
 
-import { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/// `ModelRole` is a model-config-UI alias for the canonical
-/// `ModelBackedAgentKey` (the six seeded SWE model-backed agent keys, defined
-/// once in `@auto-swe/shared/agentKeys` and shared with the worker). There is no
-/// `AgentRole` enum since the platform pivot — agent identity is a free-form
-/// string; these are just the model-backed agents the config UI knows about.
-export type ModelRole = ModelBackedAgentKey;
-
-export const MODEL_ROLES: ModelRole[] = [...MODEL_BACKED_AGENT_KEYS];
-
-export const ROLE_LABELS: Record<ModelRole, string> = {
-  commitToMemory: 'Memory summarizer',
-  implementer: 'Implementer',
-  planner: 'Planner',
-  reviewer: 'Reviewer',
-  securityReview: 'Security review',
-  validateContext: 'Context validator',
-};
+// Per-role model config (`ModelRoleConfig`) and its UI were retired in P1.5 —
+// per-agent model/skill/tool config now lives on the first-class `Agent`
+// (managed at /admin/agents/library). This hook module is what remains: the
+// provider-credential, embedding-config, and config-audit surfaces.
 
 export type ConfigScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
-
-export interface ModelRoleConfigRow {
-  id: string;
-  role: ModelRole;
-  scope: ConfigScope;
-  teamId: string | null;
-  workflowTemplateId: string | null;
-  modelSpec: string;
-  credentialId: string | null;
-  systemPrompt: string | null;
-  credential?: { id: string; provider: string; lastFour: string } | null;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface ProviderCredentialRow {
   id: string;
@@ -54,7 +26,7 @@ export interface ProviderCredentialRow {
 
 export interface ConfigAuditRow {
   id: string;
-  entityType: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
+  entityType: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   actorId: string | null;
@@ -73,99 +45,7 @@ export interface EmbeddingConfigRow {
   updatedAt: string;
 }
 
-// ── Admin (cross-scope) ──
-
-export function useAdminModelConfigs(filter?: {
-  scope?: ConfigScope;
-  teamId?: string;
-  workflowTemplateId?: string;
-}) {
-  const qs = new URLSearchParams();
-  if (filter?.scope) {
-    qs.set('scope', filter.scope);
-  }
-  if (filter?.teamId) {
-    qs.set('teamId', filter.teamId);
-  }
-  if (filter?.workflowTemplateId) {
-    qs.set('workflowTemplateId', filter.workflowTemplateId);
-  }
-  const query = qs.toString();
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: ModelRoleConfigRow[] }>(
-          `/api/v1/admin/model-config${query ? `?${query}` : ''}`
-        )
-        .then((r) => r.data),
-    queryKey: [
-      'admin-model-config',
-      filter?.scope ?? null,
-      filter?.teamId ?? null,
-      filter?.workflowTemplateId ?? null,
-    ],
-  });
-}
-
-export function useAdminUpsertModelConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: {
-      role: ModelRole;
-      scope: ConfigScope;
-      teamId?: string;
-      workflowTemplateId?: string;
-      modelSpec: string;
-      credentialId?: string | null;
-      systemPrompt?: string | null;
-    }) => api.put<{ data: ModelRoleConfigRow }>('/api/v1/admin/model-config', body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-      qc.invalidateQueries({ queryKey: ['team-model-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
-    },
-  });
-}
-
-export function useAdminDeleteModelConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/model-config/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-      qc.invalidateQueries({ queryKey: ['team-model-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
-    },
-  });
-}
-
-export function useAdminEffectiveModelConfig(args: {
-  role: ModelRole;
-  teamId?: string;
-  workflowTemplateId?: string;
-}) {
-  const qs = new URLSearchParams({ role: args.role });
-  if (args.teamId) {
-    qs.set('teamId', args.teamId);
-  }
-  if (args.workflowTemplateId) {
-    qs.set('workflowTemplateId', args.workflowTemplateId);
-  }
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: { scope: ConfigScope | null; row: ModelRoleConfigRow | null } }>(
-          `/api/v1/admin/model-config/effective?${qs}`
-        )
-        .then((r) => r.data),
-    queryKey: [
-      'admin-model-config-effective',
-      args.role,
-      args.teamId ?? null,
-      args.workflowTemplateId ?? null,
-    ],
-  });
-}
+// ── Provider credentials (admin, cross-scope) ──
 
 export function useAdminCredentials() {
   return useQuery({
@@ -176,15 +56,11 @@ export function useAdminCredentials() {
 }
 
 /// Invalidate every query that may display a credential or a row that joins
-/// against one. Model-role configs embed `credential.{lastFour, provider}`,
-/// so any credential mutation also stales those.
+/// against one.
 function invalidateCredentialQueries(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['admin-credentials'] });
   qc.invalidateQueries({ queryKey: ['team-credentials'] });
   qc.invalidateQueries({ queryKey: ['team-accessible-credentials'] });
-  qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-  qc.invalidateQueries({ queryKey: ['team-model-config'] });
-  qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
 }
 
 export function useAdminCreateCredential() {
@@ -229,7 +105,7 @@ export function useAdminTestCredential() {
 }
 
 export function useAdminConfigAuditLog(filter?: {
-  entityType?: 'ModelRoleConfig' | 'ProviderCredential' | 'EmbeddingConfig';
+  entityType?: 'Agent' | 'ProviderCredential' | 'EmbeddingConfig';
   entityId?: string;
   limit?: number;
 }) {
@@ -259,48 +135,7 @@ export function useAdminConfigAuditLog(filter?: {
   });
 }
 
-// ── Team-scoped ──
-
-export function useTeamModelConfig(teamId: string) {
-  return useQuery({
-    enabled: Boolean(teamId),
-    queryFn: () =>
-      api
-        .get<{ data: ModelRoleConfigRow[] }>(`/api/v1/teams/${teamId}/model-config`)
-        .then((r) => r.data),
-    queryKey: ['team-model-config', teamId],
-  });
-}
-
-export function useTeamUpsertModelConfig(teamId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: {
-      role: ModelRole;
-      modelSpec: string;
-      credentialId?: string | null;
-      systemPrompt?: string | null;
-    }) => api.put<{ data: ModelRoleConfigRow }>(`/api/v1/teams/${teamId}/model-config`, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['team-model-config', teamId] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
-    },
-  });
-}
-
-export function useTeamDeleteModelConfig(teamId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (configId: string) =>
-      api.delete(`/api/v1/teams/${teamId}/model-config/${configId}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['team-model-config', teamId] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
-    },
-  });
-}
+// ── Provider credentials (team-scoped) ──
 
 export function useTeamCredentials(teamId: string) {
   return useQuery({
@@ -314,7 +149,7 @@ export function useTeamCredentials(teamId: string) {
 }
 
 /// Returns this team's TEAM-scope credentials + all GLOBAL credentials —
-/// the union the team owner is allowed to pin on a model role override.
+/// the union the team owner is allowed to pin on an Agent override.
 /// Backed by `GET /api/v1/teams/:id/accessible-credentials`, which is
 /// gated on team-ADMIN role (not platform-ADMIN), so non-admin team owners
 /// can populate the picker without 403'ing.
@@ -383,25 +218,6 @@ export function useUpdateEmbeddingConfig() {
     mutationFn: (body: { modelSpec: string; credentialId?: string | null }) =>
       api.put<{ data: EmbeddingConfigRow }>('/api/v1/admin/embedding-config', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-embedding-config'] }),
-  });
-}
-
-// ── Bootstrap "Seed defaults" button ──
-
-export function useSeedDefaults() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      api.post<{ data: { rolesSeeded: number; embeddingSeeded: boolean } }>(
-        '/api/v1/admin/defaults',
-        {}
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-model-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-model-config-effective'] });
-      qc.invalidateQueries({ queryKey: ['admin-embedding-config'] });
-      qc.invalidateQueries({ queryKey: ['admin-config-audit-log'] });
-    },
   });
 }
 

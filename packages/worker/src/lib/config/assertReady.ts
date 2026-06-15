@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
 import { resolveAgent } from './agentResolver.js';
-import { requiredAgentRoles } from './stepRequiredAgents.js';
+import { requiredAgentKeys } from './stepRequiredAgents.js';
 
 /// Walks every required Agent and confirms the worker has everything it needs
 /// to run an activity. Throws a single error listing EVERY missing piece so the
@@ -9,7 +9,7 @@ import { requiredAgentRoles } from './stepRequiredAgents.js';
 /// throws, the process exits non-zero with the message visible.
 ///
 /// Checked invariants:
-///   - Every agent key a registered step resolves (`requiredAgentRoles()`) has
+///   - Every agent key a registered step resolves (`requiredAgentKeys()`) has
 ///     an active GLOBAL `Agent` whose model resolves — i.e. a `modelSpec` (or an
 ///     `inheritsModelFrom` chain to one) AND a `ProviderCredential` for that
 ///     provider. `resolveAgent` performs exactly this resolution, so we just run
@@ -22,7 +22,7 @@ export async function assertConfigReady(): Promise<void> {
   // Per-agent checks — only the keys some registered step needs. resolveAgent
   // throws ConfigMissingError when the Agent, its model, or its credential is
   // absent; collect the messages instead of failing on the first.
-  for (const role of requiredAgentRoles()) {
+  for (const role of requiredAgentKeys()) {
     try {
       await resolveAgent(role);
     } catch (err) {

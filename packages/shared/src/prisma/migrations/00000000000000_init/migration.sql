@@ -5,7 +5,6 @@
 -- generic Connection, and WorkRequest → the generic RunInput. Custom DDL Prisma
 -- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
 -- lives in the next migration.
-
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -309,7 +308,7 @@ CREATE TABLE "agent_traces" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "run_id" UUID NOT NULL,
     "node_id" TEXT NOT NULL,
-    "agent_role" TEXT NOT NULL,
+    "agent_key" TEXT NOT NULL,
     "attempt" INTEGER NOT NULL DEFAULT 1,
     "seq" INTEGER NOT NULL,
     "type" TEXT NOT NULL,

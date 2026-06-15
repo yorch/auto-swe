@@ -62,7 +62,7 @@ export interface InlineAgentSpec {
   memoryScope?: string;
 }
 
-/** Resolve from a known agent role (must have a `ModelRoleConfig` row). */
+/** Resolve from a known model-backed agent key (its `Agent` carries a `modelSpec`). */
 export interface AgentKeySpecInput {
   agentKey: ModelBackedAgentKey;
   /** Fallback system prompt used when no DB/override prompt is configured. */
@@ -132,9 +132,10 @@ export async function resolveAgentSpec(
   }
 
   const { agentKey, basePrompt, promptOverride, outputSchema, availableTools, memoryScope } = input;
-  // P1: one resolution path. The Agent overlay falls through to the legacy
-  // ModelRoleConfig / AgentSkillAssignment / AgentToolConfig cascade for any
-  // null override, so the composed spec is unchanged from P0 for seeded agents.
+  // P1.5: one resolution path. The first-class `Agent` is the sole source of
+  // model/prompt/skills/tools (the legacy ModelRoleConfig / AgentSkillAssignment
+  // / AgentToolConfig tables were removed), so the composed spec comes entirely
+  // from the resolved Agent.
   const agent = await resolveAgent(agentKey, ctx);
 
   // Mirror resolveSystemPrompt's priority: explicit override → DB prompt → base.
