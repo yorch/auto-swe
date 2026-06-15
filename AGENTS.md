@@ -214,7 +214,7 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 2. `TEAM` scope (if the team has an override)
 3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` from `@auto-swe/shared/agentKeys`), `packages/worker/src/lib/config/resolver.ts` (`resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
+Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` from `@auto-swe/shared/agentKeys`), `packages/worker/src/lib/config/resolver.ts` (`resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
 
 Note: `Agent` (and `ProviderCredential`) use partial unique indexes per scope — Prisma cannot express `WHERE scope = …` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
 
@@ -245,9 +245,9 @@ Six scanners run during agent execution. Each is independently advisory or block
 
 ### Multi-Model Support
 
-Model selection and provider credentials are fully DB-driven via the dashboard at `/admin/model-config` (admins) or per team from `/teams/<id>` (team owners). There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).
+Model selection and provider credentials are fully DB-driven. Per-agent **model selection** (each agent's `modelSpec`) lives on the first-class `Agent`, managed at `/admin/agents/library` (admins) or per team from `/teams/<id>` (team owners); **provider credentials** and the **embedding model** are managed at `/admin/model-config`. There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).
 
-**Scope cascade** at activity-call time (worker's `resolveModelConfig(role, ctx)`):
+**Scope cascade** at activity-call time (worker's `resolveAgent(key, ctx)`):
 
 1. `WORKFLOW_TEMPLATE` row matching the run's template ID, if any
 2. `TEAM` row matching the work request's team, if any

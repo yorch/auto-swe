@@ -70,7 +70,7 @@ packages/
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/index.ts` | Re-exports types and enums from `@auto-swe/shared` |
 | `src/prisma/schema.prisma` | **Authoritative data model** — 35 models (see §6; the `Agent` + `AgentSkillRef` entities replaced `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` in P1/P1.5) |
-| `src/prisma/seed.ts` | Seeds admin user, default team, sample repo, default workflow template, built-in skills, and GLOBAL tool config |
+| `src/prisma/seed.ts` | Seeds admin user, default team, sample `git_repo` connection, default workflow template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
 | `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 51 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
@@ -155,7 +155,7 @@ packages/
 | `src/lib/codeSecurityScanner.ts` | `scanDiffForCodeIssues(diff)` — advisory scan of git diff added-lines against `CODE_SECURITY` patterns; `formatCodeSecurityFindings(findings)` — formats for security reviewer prompt |
 | `src/lib/models.ts` | `getModel(role, ctx)` — 3-level scope cascade (template → team → global) |
 | `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` + `loadAgentToolConfig(role, ctx)` + `skillsToPromptSuffix(skills)` — skill and tool config loading at WORKFLOW_TEMPLATE → TEAM → GLOBAL scope |
-| `src/lib/config/resolver.ts` | `resolveModelConfig(role, ctx)` + `resolveProviderCredential(provider, ctx)` + `resolveEmbeddingConfig()` — model spec + credential cascade; `ConfigMissingError` |
+| `src/lib/config/resolver.ts` | `resolveProviderCredential(provider, ctx)` + `resolveEmbeddingConfig()` — credential + embedding cascade (per-agent model resolution lives in `agentResolver.ts` → `resolveAgent`); `ConfigMissingError` |
 | `src/lib/config/agentResolver.ts` | `resolveAgent(key, ctx)` — **sole** model/skill/tool resolver (P1.5); most-specific active Agent version with run-start pin (`WorkflowRun.agentVersions`); model via `modelSpec`/`inheritsModelFrom`, skills via `skillRefs`, tools via `toolKeys` |
 | `src/lib/config/agentSpec.ts` | `resolveAgentSpec(input, ctx)` — composes the resolved Agent into an `AgentSpec` (model + prompt + skills + tools); used by `runAgent` |
 | `src/lib/config/agentRef.ts` | `parseAgentRef(ref)` / `formatAgentRef` — `<key>` (float) / `<key>@<version>` (pin) grammar for the `agent` node |

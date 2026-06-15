@@ -11,7 +11,7 @@ import type { ModelBackedAgentKey, ResolveCtx } from './types.js';
  * resolved skills, the enabled tools, and an optional structured-output schema.
  *
  * It is produced by {@link resolveAgentSpec} (which composes the existing
- * `resolveModelConfig` + `loadAgentSkills` + `loadAgentToolConfig` +
+ * `resolveAgent` + `loadAgentSkills` + `loadAgentToolConfig` +
  * `skillsToPromptSuffix`) and consumed by the generic `runAgent` loop. Carrying
  * a built `model` (rather than a `<provider>/<model>` spec + plaintext key)
  * keeps decrypted credentials out of the spec object and means `runAgent` never

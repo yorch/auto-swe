@@ -49,7 +49,7 @@ The **`Agent`** table is the versioned, governed, **single source of truth** for
 
 ## 2. Model Configuration & Resolution
 
-Model config is **fully DB-driven** — no model-related env vars. At activity-call time, `resolveModelConfig(role, ctx)` cascades through three scopes:
+Model config is **fully DB-driven** — no model-related env vars. At activity-call time, `resolveAgent(key, ctx)` cascades through three scopes:
 
 ```
 WORKFLOW_TEMPLATE scope  →  (if templateId set and row exists)
@@ -59,11 +59,11 @@ GLOBAL scope             →  (required — 6 model-backed agent keys only)
 
 **`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
 
-`resolveModelConfig` throws `ConfigMissingError` when no row is found at any scope. Missing rows surface as a clear error message pointing to `/admin/model-config`.
+Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/admin/model-config`, per-agent model specs at `/admin/agents/library`.
 
 **Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → GLOBAL (an Agent pins an existing credential via `Agent.credentialId`).
 
-**File:** `packages/worker/src/lib/config/resolver.ts` — exports `resolveModelConfig`, `resolveProviderCredential`, `resolveEmbeddingConfig`, `ConfigMissingError`.
+**Files:** `packages/worker/src/lib/config/agentResolver.ts` — `resolveAgent` (the sole model/prompt/skills/tools resolver; `getModel`/`getModelSpec` are shims over it); `packages/worker/src/lib/config/resolver.ts` — `resolveProviderCredential`, `resolveEmbeddingConfig`, `ConfigMissingError`.
 
 **Cache:** Model config is cached in-process with a short TTL (configurable via `configCacheTtlMs()`). Cache is invalidated on pattern mutations via `invalidate()`. Mid-run config changes take effect on the next LLM call.
 
@@ -360,7 +360,7 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 |---|---|
 | `runId` | FK to `workflow_runs` |
 | `nodeId` | Activity type (e.g. `executeImplementation`) |
-| `agentRole` | Which role produced this trace |
+| `agentKey` | Which agent key (identity) produced this trace |
 | `attempt` | Temporal activity attempt number (for retries) |
 | `seq` | Insertion order within the activity attempt |
 | `type` | `tool_call` \| `llm_response` \| `activity_event` |
@@ -370,9 +370,13 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 
 ---
 
-## 9. Skill & Tool Assignment API
+## 9. Skill & Agent-Library API
 
-All endpoints below are in `packages/gateway/src/routes/skills.ts`.
+Skill *definitions* live in `packages/gateway/src/routes/skills.ts`; per-agent
+model / prompt / skills / tools live on the first-class `Agent` and are managed
+via the **agent-library** API in `packages/gateway/src/routes/agentLibrary.ts`.
+(P1.5 retired the per-role `/api/v1/admin/agents/:role/skills` + `:role/tools`
+assignment endpoints — that config is now fields on the `Agent`.)
 
 ### 9.1 Skills CRUD
 
@@ -386,32 +390,24 @@ All endpoints below are in `packages/gateway/src/routes/skills.ts`.
 
 Updating `promptText` automatically resets `isVerified` to `false` and triggers a security scan (the scan result is returned in the response but does not block the save).
 
-### 9.2 Agent Skill Assignments
+### 9.2 Agent library (model / prompt / skills / tools)
 
-| Method | Path | Min role | Scope |
+The single governed surface for per-key config. An Agent payload carries
+`modelSpec` / `inheritsModelFrom`, `systemPrompt`, `credentialId`, ordered
+`skillRefs`, and `toolKeys` (`null` = all four workspace tools; values from
+`IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
+Writes cut a new immutable `version`.
+
+| Method | Path | Min role | Purpose |
 |---|---|---|---|
-| `GET` | `/api/v1/admin/agents` | `ADMIN` | List all 10 roles with GLOBAL skill count and tool config |
-| `GET` | `/api/v1/admin/agents/:role/skills` | `ADMIN` | Get GLOBAL skill assignments for a role |
-| `PUT` | `/api/v1/admin/agents/:role/skills` | `ADMIN` | Replace GLOBAL skill assignments for a role |
-| `DELETE` | `/api/v1/admin/agents/:role/skills` | `ADMIN` | Clear all GLOBAL assignments for a role |
-| `GET` | `/api/v1/teams/:teamId/agents/:role/skills` | Team `ADMIN` | Get TEAM-scope assignments |
-| `PUT` | `/api/v1/teams/:teamId/agents/:role/skills` | Team `ADMIN` | Replace TEAM-scope assignments |
-| `DELETE` | `/api/v1/teams/:teamId/agents/:role/skills` | Team `ADMIN` | Clear TEAM-scope assignments |
-
-The `PUT` body is `{ skillIds: string[], sortOrders?: number[] }`. `sortOrders` defaults to the array index if omitted.
-
-### 9.3 Agent Tool Configs
-
-| Method | Path | Min role | Scope |
-|---|---|---|---|
-| `GET` | `/api/v1/admin/agents/:role/tools` | `ADMIN` | Get GLOBAL tool config |
-| `PUT` | `/api/v1/admin/agents/:role/tools` | `ADMIN` | Set GLOBAL tool config |
-| `DELETE` | `/api/v1/admin/agents/:role/tools` | `ADMIN` | Remove GLOBAL config (reverts to "all tools") |
-| `GET` | `/api/v1/teams/:teamId/agents/:role/tools` | Team `ADMIN` | Get TEAM-scope tool config |
-| `PUT` | `/api/v1/teams/:teamId/agents/:role/tools` | Team `ADMIN` | Set TEAM-scope tool config |
-| `DELETE` | `/api/v1/teams/:teamId/agents/:role/tools` | Team `ADMIN` | Remove TEAM-scope config |
-
-The `PUT` body is `{ toolKeys: string[] }` where values are from `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`.
+| `GET` | `/api/v1/admin/agent-library` | `ADMIN` | List Agents (GLOBAL + overrides) with resolved fields |
+| `GET` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Agent detail + version history |
+| `POST` | `/api/v1/admin/agent-library` | `ADMIN` | Create an Agent (or cut a new version) |
+| `PUT` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Update an Agent → bumps `version` |
+| `DELETE` | `/api/v1/admin/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
+| `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
+| `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
+| `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |
 
 ---
 

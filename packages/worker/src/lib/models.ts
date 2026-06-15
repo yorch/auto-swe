@@ -99,7 +99,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
 
 /**
  * Resolves the system prompt for a role using the same scope cascade as
- * `resolveModelConfig`. Priority order:
+ * `resolveAgent`. Priority order:
  *  1. `configOverride` — returned immediately if truthy (no DB access).
  *  2. `systemPrompt` from the DB-resolved `ModelRoleConfig` row.
  *  3. `fallback` — used when the DB row has no system prompt set.

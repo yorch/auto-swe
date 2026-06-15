@@ -27,7 +27,7 @@ export interface ResolveCtx {
 }
 
 /// Resolved model + credential for a single role lookup. Returned by
-/// `resolveModelConfig`. `apiKey` is the decrypted plaintext; callers should
+/// `resolveAgent`. `apiKey` is the decrypted plaintext; callers should
 /// pass it straight into the provider client and not log it.
 export interface ResolvedModelConfig {
   /** `<provider>/<model-id>` spec the agent should bind to. */
