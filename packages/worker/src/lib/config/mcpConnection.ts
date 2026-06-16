@@ -15,7 +15,7 @@ export async function mcpUrlForConnection(connectionId: string | null): Promise<
   }
   try {
     const conn = await prisma.connection.findUnique({ where: { id: connectionId } });
-    if (!conn || !conn.isActive || conn.type !== 'mcp') {
+    if (!conn?.isActive || conn.type !== 'mcp') {
       return null;
     }
     const config = conn.config as { url?: unknown } | null;
