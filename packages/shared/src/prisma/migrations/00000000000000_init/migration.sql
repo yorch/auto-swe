@@ -6,6 +6,7 @@
 -- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
 -- lives in the next migration.
 -- CreateSchema
+-- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateExtension
@@ -120,14 +121,14 @@ CREATE TABLE "connections" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "type" TEXT NOT NULL DEFAULT 'git_repo',
     "config" JSONB,
-    "organization_name" TEXT NOT NULL,
-    "repo_name" TEXT NOT NULL,
+    "name" TEXT,
+    "organization_name" TEXT,
+    "repo_name" TEXT,
     "default_branch" TEXT NOT NULL DEFAULT 'main',
     "language" TEXT,
     "description" TEXT,
     "github_url" TEXT,
     "github_api_url" TEXT,
-    "mcp_server_ref" TEXT,
     "team_id" UUID NOT NULL,
     "executor_image" TEXT DEFAULT 'node:24-alpine',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
@@ -611,6 +612,7 @@ CREATE TABLE "agents" (
     "system_prompt" TEXT,
     "inherits_model_from" TEXT,
     "credential_id" UUID,
+    "mcp_connection_id" UUID,
     "tool_keys" JSONB,
     "origin" TEXT,
     "is_built_in" BOOLEAN NOT NULL DEFAULT false,
@@ -679,9 +681,6 @@ CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_
 
 -- CreateIndex
 CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("user_id");
-
--- CreateIndex
-CREATE UNIQUE INDEX "connections_organization_name_repo_name_key" ON "connections"("organization_name", "repo_name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
@@ -880,6 +879,9 @@ ALTER TABLE "agents" ADD CONSTRAINT "agents_workflow_template_id_fkey" FOREIGN K
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_mcp_connection_id_fkey" FOREIGN KEY ("mcp_connection_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agent_skill_refs" ADD CONSTRAINT "agent_skill_refs_agent_id_fkey" FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -196,14 +196,19 @@ model Connection {
   /// Generic typed config for non-`git_repo` types. SWE `git_repo` connections
   /// keep their specifics in the typed columns below; other types use this bag.
   config           Json?
-  organizationName String           @map("organization_name")
-  repoName         String           @map("repo_name")
+  /// Human label for non-`git_repo` connections (e.g. an `mcp` server name).
+  /// git_repo connections identify by org/repo below and may leave this null.
+  name             String?
+  /// git_repo identity — nullable so non-git connection types (e.g. `mcp`) need
+  /// not supply them. Uniqueness is enforced by a partial unique index
+  /// (`WHERE type = 'git_repo'`) in the custom-constraints migration.
+  organizationName String?          @map("organization_name")
+  repoName         String?          @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
   language         String?          @map("language")
   description      String?          @map("description")
   githubUrl        String?          @map("github_url")
   githubApiUrl     String?          @map("github_api_url")
-  mcpServerRef     String?          @map("mcp_server_ref")
   teamId           String           @map("team_id") @db.Uuid
   team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
@@ -219,8 +224,8 @@ model Connection {
   memoryItems      MemoryItem[]
   runInputs        RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  mcpAgents        Agent[]          @relation("AgentMcpConnection")
 
-  @@unique([organizationName, repoName])
   @@map("connections")
 }
 
@@ -979,8 +984,12 @@ model Agent {
   // inheritance (P1/WS2).
   inheritsModelFrom  String?             @map("inherits_model_from")
   credentialId       String?             @map("credential_id") @db.Uuid
-  // Nullable JSON array of tool keys. null = no tool override (use
-  // AgentToolConfig); [] = explicitly no tools; [...] = exactly these.
+  // P2/WS3: when set AND `toolKeys` includes 'mcp', the run binds the tools
+  // from this `mcp`-type Connection (config.url) onto the agent. SetNull so
+  // deleting the connection degrades the agent to its non-MCP tools.
+  mcpConnectionId    String?             @map("mcp_connection_id") @db.Uuid
+  // Nullable JSON array of tool keys. null = no tool override (all workspace
+  // tools); [] = explicitly no tools; [...] = exactly these (may include 'mcp').
   toolKeys           Json?               @map("tool_keys")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content.
   origin             String?
@@ -994,6 +1003,7 @@ model Agent {
   team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
   workflowTemplate WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
   credential       ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  mcpConnection    Connection?         @relation("AgentMcpConnection", fields: [mcpConnectionId], references: [id], onDelete: SetNull)
   skillRefs        AgentSkillRef[]
 
   @@index([scope, teamId])

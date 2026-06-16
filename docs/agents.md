@@ -121,21 +121,26 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
 2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security-events` can classify the event without raw SQL.
 
-### 3.5 MCP Tools (`Connection.mcpServerRef`, opt-in)
+### 3.5 MCP Tools (first-class `mcp` Connection, opt-in)
 
 **File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
 
-When a repository has `mcpServerRef` set, the implementer agent can be given the tools served by that MCP server **in addition to** its built-in workspace tools. Implemented via `@mastra/mcp` (`MCPClient`).
+MCP servers are modelled as a first-class **`mcp`-type `Connection`** (`type='mcp'`,
+`config.url`) — P2/WS3 replaced the legacy `Connection.mcpServerRef` column. An Agent opts in by
+(a) referencing an `mcp` Connection via `Agent.mcpConnectionId` and (b) including `'mcp'` in its
+`toolKeys`; at run time the tools served by that MCP server are bound **in addition to** the agent's
+built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 
-**Semantics of `mcpServerRef`:**
+**Semantics of the `mcp` Connection `config.url`:**
 
 - Interpreted as an **http(s) URL** of a streamable-HTTP (or legacy SSE) MCP server, e.g. `https://mcp.example.com/mcp`.
 - Anything that is not `http://` or `https://` is rejected (`mcp.invalid_ref` activity event). **stdio MCP servers are deliberately unsupported** — the worker must never exec arbitrary commands sourced from a DB column.
 
 **Activation requires all three:**
 
-1. The caller passes `options.mcpServerRef` to `createImplementerAgent` — **defaults to disabled**; activities have not opted in yet (follow-up).
-2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty config = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'`. Since the gateway tool-config enum does not accept `'mcp'` yet, **every existing non-empty tool config disables MCP**.
+1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection (the run-time
+   binding that resolves the connection → `loadMcpTools(config.url)` is WS3-binding, landing next).
+2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'` — now accepted by the gateway tool-key validation (WS2).
 3. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only — it never fails the implementation.
 
 **Security and observability:**
@@ -145,7 +150,10 @@ When a repository has `mcpServerRef` set, the implementer agent can be given the
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
 - Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
 
-**Follow-ups:** (a) the gateway Zod enum for `Agent.toolKeys` (`routes/skills.ts`) must accept `'mcp'` before admins can enable it on configs that restrict tools; (b) the implementer activities (`executeImplementation`, `implementerSession`, decomposition) need to pass the repo's `mcpServerRef` into `createImplementerAgent` and call `closeMcp()` in their `finally` blocks.
+**Follow-ups:** ✅ (a) gateway `toolKeys` validation accepts `'mcp'` (WS2, via `AGENT_TOOL_KEYS`).
+(b) WS3-binding: resolve the Agent's `mcpConnectionId` → `loadMcpTools(config.url)` in the implementer
+(`executeImplementation`/`implementerSession`/decomposition) and the generic `runAgentNode` path, and
+call `closeMcp()` in their `finally` blocks.
 
 ---
 

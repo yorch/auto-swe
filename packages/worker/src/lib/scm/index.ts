@@ -25,16 +25,23 @@ export function getScmProvider(_repo?: RepoRef): ScmProvider {
 }
 
 /**
- * Map a Prisma `Repository` row to the provider-agnostic `RepoRef`. The DB
+ * Map a `git_repo` Connection row to the provider-agnostic `RepoRef`. The DB
  * columns keep their GitHub-era names (`githubUrl`, `githubApiUrl`); they act
  * as per-repo host overrides for whichever provider serves the repo.
+ *
+ * `organizationName`/`repoName` are nullable on `Connection` (P2/WS3: non-git
+ * connection types like `mcp` omit them) — this throws if called on a row that
+ * lacks git identity, since the SCM paths only run for `git_repo` connections.
  */
 export function toRepoRef(repo: {
-  organizationName: string;
-  repoName: string;
+  organizationName: string | null;
+  repoName: string | null;
   githubUrl?: string | null;
   githubApiUrl?: string | null;
 }): RepoRef {
+  if (!repo.organizationName || !repo.repoName) {
+    throw new Error('toRepoRef requires a git_repo connection (organizationName/repoName)');
+  }
   return {
     apiUrl: repo.githubApiUrl ?? null,
     baseUrl: repo.githubUrl ?? null,

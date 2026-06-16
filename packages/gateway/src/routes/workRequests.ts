@@ -265,6 +265,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // A SWE work request targets a git_repo connection (org/repo are nullable
+      // on Connection since non-git types like `mcp` omit them).
+      if (!repo.organizationName || !repo.repoName) {
+        return reply.status(400).send({
+          error: {
+            code: 'NOT_A_GIT_REPO',
+            message: `Connection ${repo.id} is not a git_repo connection`,
+          },
+        });
+      }
+
       // Generate deterministic workflow ID (includes org to prevent cross-org collisions).
       // Re-submitting a finished ticket allocates an -rN suffix instead of
       // 500ing on the unique temporalWorkflowId and leaving a zombie
@@ -466,6 +477,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      if (!repo.organizationName || !repo.repoName) {
+        return reply.status(400).send({
+          error: { code: 'NOT_A_GIT_REPO', message: 'Work request target is not a git_repo' },
+        });
+      }
       const baseWorkflowId = generateWorkflowId(
         workRequest.externalTicketId,
         repo.organizationName,

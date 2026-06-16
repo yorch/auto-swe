@@ -72,23 +72,23 @@ async function main() {
   });
   console.log(`Seed: admin added to default team`);
 
-  // Seed a sample git_repo connection for local development.
-  const repo = await prisma.connection.upsert({
-    create: {
-      defaultBranch: 'main',
-      organizationName: 'your-org',
-      repoName: 'your-repo',
-      teamId: team.id,
-      type: 'git_repo',
-    },
-    update: {},
-    where: {
-      organizationName_repoName: {
+  // Seed a sample git_repo connection for local development. The org/repo
+  // uniqueness is a partial index (git_repo only), so use findFirst + create
+  // rather than a compound-unique upsert.
+  const existingRepo = await prisma.connection.findFirst({
+    where: { organizationName: 'your-org', repoName: 'your-repo', type: 'git_repo' },
+  });
+  const repo =
+    existingRepo ??
+    (await prisma.connection.create({
+      data: {
+        defaultBranch: 'main',
         organizationName: 'your-org',
         repoName: 'your-repo',
+        teamId: team.id,
+        type: 'git_repo',
       },
-    },
-  });
+    }));
   console.log(`Seed: sample repository created (${repo.id})`);
 
   // Sync built-in reference data (templates, skills, scanner patterns, tool config).

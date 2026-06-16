@@ -800,6 +800,12 @@ async function handleRunModalSubmission(
       response_action: 'errors',
     };
   }
+  if (!repo.organizationName || !repo.repoName) {
+    return {
+      errors: { repo_block: 'Selected connection is not a git repository' },
+      response_action: 'errors',
+    };
+  }
 
   // Resolve workflow template — explicit choice wins, else default resolver.
   let resolvedTemplate: { templateId: string; version: number } | null = null;

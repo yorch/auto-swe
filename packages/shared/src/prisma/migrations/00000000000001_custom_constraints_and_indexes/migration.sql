@@ -33,6 +33,14 @@ ALTER TABLE "provider_credentials"
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
 
+-- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
+-- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
+-- them; uniqueness applies only to git_repo rows. Prisma can't express a
+-- partial `@@unique`, so it lives here.
+CREATE UNIQUE INDEX "connections_git_repo_org_repo_uidx"
+    ON "connections" ("organization_name", "repo_name")
+    WHERE "type" = 'git_repo';
+
 -- ── Agent library: one row per (key, version) at a scope ─────────────────────
 -- Partial uniques per scope; Prisma can't express `WHERE scope = …`. Postgres
 -- treats NULL discriminators as distinct, so each WHERE scopes its uniqueness.

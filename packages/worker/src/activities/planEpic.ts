@@ -21,10 +21,15 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   });
 
   const repoInfos: RepoInfo[] = repos.map(
-    (r: { id: string; repoName: string; language: string | null; description: string | null }) => ({
+    (r: {
+      id: string;
+      repoName: string | null;
+      language: string | null;
+      description: string | null;
+    }) => ({
       description: r.description ?? '',
       language: r.language ?? 'unknown',
-      name: r.repoName,
+      name: r.repoName ?? '',
       repoId: r.id,
     })
   );
