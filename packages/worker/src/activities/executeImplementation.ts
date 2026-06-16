@@ -17,6 +17,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
@@ -64,6 +65,8 @@ export async function executeImplementation(
   );
 
   const tracer = new AgentTracer();
+  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
+  let closeMcp: (() => Promise<void>) | undefined;
 
   try {
     heartbeat('workspace provisioned');
@@ -87,12 +90,13 @@ export async function executeImplementation(
 
     // Create Mastra agent with tools bound to workspace (tracer captures every call).
     // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      tracer,
-      toolConfig,
-      skills
-    );
+    const mcpServerRef = await resolveAgentMcpUrl('implementer', activityCtx);
+    const {
+      agent,
+      promptSuffix,
+      closeMcp: cm,
+    } = await createImplementerAgent(workspace, tracer, toolConfig, skills, { mcpServerRef });
+    closeMcp = cm;
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -284,6 +288,7 @@ export async function executeImplementation(
       testResults: testResult,
     };
   } finally {
+    await closeMcp?.();
     await persistActivityTrace(tracer, 'implementer');
     await workspace.destroy();
   }

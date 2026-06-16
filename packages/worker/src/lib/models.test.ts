@@ -24,6 +24,7 @@ function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAg
   return {
     isVerified: true,
     key: 'implementer',
+    mcpConnectionId: null,
     model: {
       apiBase: undefined,
       apiKey: 'sk-ant-x',

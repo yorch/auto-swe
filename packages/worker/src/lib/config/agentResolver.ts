@@ -19,6 +19,8 @@ export interface ResolvedAgent {
   model: ResolvedModelConfig;
   skills: ResolvedSkill[];
   toolKeys: string[] | null;
+  /** P2/WS3: the `mcp` Connection whose tools to bind when `toolKeys` includes 'mcp'. */
+  mcpConnectionId: string | null;
 }
 
 /** Coerce the nullable JSON `toolKeys` column into `string[] | null`. */
@@ -169,6 +171,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   return {
     isVerified: agent.isVerified,
     key,
+    mcpConnectionId: agent.mcpConnectionId ?? null,
     model,
     origin: agent.origin ?? null,
     skills: skillsFromAgent(agent),

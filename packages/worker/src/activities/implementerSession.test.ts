@@ -104,6 +104,10 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));
 
+vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpUrl: vi.fn(async () => null),
+}));
+
 vi.mock('../lib/models.js', () => ({
   resolveSystemPrompt: vi.fn(async (_role: string, fallback: string) => fallback),
 }));

@@ -33,6 +33,7 @@ function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
   return {
     isVerified: true,
     key: 'validateContext',
+    mcpConnectionId: null,
     model: {
       apiBase: undefined,
       apiKey: 'secret-key',

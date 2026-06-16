@@ -13,6 +13,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -91,6 +92,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   );
 
   const tracer = new AgentTracer();
+  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
+  let closeMcp: (() => Promise<void>) | undefined;
 
   try {
     heartbeat(`${mode} workspace provisioned`);
@@ -116,12 +119,13 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       loadAgentToolConfig('implementer', activityCtx),
       loadAgentSkills('implementer', activityCtx),
     ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      tracer,
-      toolConfig,
-      skills
-    );
+    const mcpServerRef = await resolveAgentMcpUrl('implementer', activityCtx);
+    const {
+      agent,
+      promptSuffix,
+      closeMcp: cm,
+    } = await createImplementerAgent(workspace, tracer, toolConfig, skills, { mcpServerRef });
+    closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -268,6 +272,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       testResults: testResult,
     };
   } finally {
+    await closeMcp?.();
     const done = persistActivityTrace(tracer, 'implementer');
     await workspace.destroy();
     await done;
