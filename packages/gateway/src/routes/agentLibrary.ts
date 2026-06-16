@@ -1,3 +1,4 @@
+import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -11,7 +12,6 @@ import {
   updateAgent,
   validateAgentScopeRefs,
 } from '../lib/agentLibraryService.js';
-import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';

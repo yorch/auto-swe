@@ -19,6 +19,7 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
+import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
 import type { AgentTracer } from '../lib/agentTracer.js';
@@ -29,8 +30,7 @@ import { getErrorMessage } from '../lib/errors.js';
  * canonical tool-key set (`AGENT_TOOL_KEYS`) so the gateway, worker, and web
  * agree; an Agent's `toolKeys` may include it (P2/WS2).
  */
-export { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
-import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
+export { MCP_TOOL_KEY };
 
 /** Subset of AgentTracer used here — keeps tests free of the Prisma import chain. */
 export type McpTracer = Pick<AgentTracer, 'addToolCall' | 'addActivityEvent'>;
