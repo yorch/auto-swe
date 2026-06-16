@@ -79,8 +79,11 @@ export {
 export type { SpecDiff, SpecMetaChange } from './specDiff.js';
 export { diffSpecs, specsEqual } from './specDiff.js';
 export {
+  AGENT_TOOL_KEYS,
+  type AgentToolKey,
   assertBuiltinStepsRegistered,
   getStepMetadata,
   hasStep,
   listSteps,
+  MCP_TOOL_KEY,
 } from './stepRegistry.js';

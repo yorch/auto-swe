@@ -11,6 +11,7 @@ import {
   updateAgent,
   validateAgentScopeRefs,
 } from '../lib/agentLibraryService.js';
+import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -31,7 +32,7 @@ const AgentBaseFields = {
   modelSpec: z.string().max(200).nullable().optional(),
   name: z.string().min(1).max(200),
   systemPrompt: z.string().max(50_000).nullable().optional(),
-  toolKeys: z.array(z.string().max(100)).nullable().optional(),
+  toolKeys: z.array(z.enum(AGENT_TOOL_KEYS)).nullable().optional(),
 };
 
 const CreateAgentSchema = z

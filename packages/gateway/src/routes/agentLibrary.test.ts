@@ -112,6 +112,32 @@ describe('agentLibraryRoutes — admin', () => {
     await app.close();
   });
 
+  it("accepts 'mcp' in toolKeys (WS2)", async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'mcp-1', key: 'mcpAgent', version: 1 });
+    const res = await app.inject({
+      body: { key: 'mcpAgent', name: 'MCP Agent', scope: 'GLOBAL', toolKeys: ['bash', 'mcp'] },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('rejects an unknown tool key', async () => {
+    const { app } = await buildAdminApp();
+    const res = await app.inject({
+      body: { key: 'x', name: 'X', scope: 'GLOBAL', toolKeys: ['bogusTool'] },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('409s when the lineage already exists', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1

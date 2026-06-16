@@ -25,11 +25,12 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 
 /**
- * Pseudo-tool key in `AgentToolConfig.enabledTools` that gates MCP tool loading.
- * Not part of `IMPLEMENTER_TOOL_IDS` — the gateway Zod enum does not accept it
- * yet (follow-up), so no existing config row can contain it.
+ * Pseudo tool-key that gates MCP tool loading. Re-exported from the shared
+ * canonical tool-key set (`AGENT_TOOL_KEYS`) so the gateway, worker, and web
+ * agree; an Agent's `toolKeys` may include it (P2/WS2).
  */
-export const MCP_TOOL_KEY = 'mcp';
+export { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
+import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 
 /** Subset of AgentTracer used here — keeps tests free of the Prisma import chain. */
 export type McpTracer = Pick<AgentTracer, 'addToolCall' | 'addActivityEvent'>;
