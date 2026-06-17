@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { resolveTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
@@ -267,7 +268,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
       // A SWE work request targets a git_repo connection (org/repo are nullable
       // on Connection since non-git types like `mcp` omit them).
-      if (!repo.organizationName || !repo.repoName) {
+      if (!isGitRepoConnection(repo)) {
         return reply.status(400).send({
           error: {
             code: 'NOT_A_GIT_REPO',
@@ -477,7 +478,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (!repo.organizationName || !repo.repoName) {
+      if (!isGitRepoConnection(repo)) {
         return reply.status(400).send({
           error: { code: 'NOT_A_GIT_REPO', message: 'Work request target is not a git_repo' },
         });

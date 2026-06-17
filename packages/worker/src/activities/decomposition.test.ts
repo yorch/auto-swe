@@ -76,10 +76,11 @@ vi.mock('../lib/scm/index.js', () => ({
 
 const generateMock = vi.fn();
 vi.mock('../agents/implementer.js', () => ({
-  createImplementerAgent: vi.fn(() => ({
+  buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
-    mastra: {},
     promptSuffix: '',
+    skills: [],
+    toolKeys: null,
   })),
 }));
 

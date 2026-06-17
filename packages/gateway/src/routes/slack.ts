@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -662,7 +663,8 @@ async function buildRunModalView(
       repoName: true,
       team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
     },
-    where: { isActive: true },
+    // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
+    where: { isActive: true, type: 'git_repo' },
   });
   const accessibleRepos =
     user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
@@ -800,7 +802,7 @@ async function handleRunModalSubmission(
       response_action: 'errors',
     };
   }
-  if (!repo.organizationName || !repo.repoName) {
+  if (!isGitRepoConnection(repo)) {
     return {
       errors: { repo_block: 'Selected connection is not a git repository' },
       response_action: 'errors',

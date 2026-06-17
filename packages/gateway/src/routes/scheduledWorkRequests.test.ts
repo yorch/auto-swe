@@ -95,7 +95,7 @@ describe('/api/v1/scheduled-work-requests', () => {
         deleteMany: async () => ({ count: 1 }),
       },
       connection: {
-        findUnique: async () => ({
+        findFirst: async () => ({
           id: REPO_ID,
           isActive: true,
           organizationName: 'org',
@@ -105,6 +105,7 @@ describe('/api/v1/scheduled-work-requests', () => {
               membershipRole === 'NONE' ? [] : [{ role: membershipRole, userId: 'user-1' }],
           },
           teamId: 'team-1',
+          type: 'git_repo',
         }),
       },
       runInput: {

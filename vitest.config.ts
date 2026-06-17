@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/connectionGuards',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/inputSchema',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/inputSchema.ts'),
       },

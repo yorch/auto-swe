@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
-import { resolveAgent } from './agentResolver.js';
+import { fetchActiveAgent } from './agentResolver.js';
 import type { ResolveCtx } from './types.js';
 
 /**
@@ -32,9 +32,23 @@ export async function mcpUrlForConnection(connectionId: string | null): Promise<
  * references an active `mcp` Connection with a `config.url` (`mcpConnectionId`).
  */
 export async function resolveAgentMcpUrl(key: string, ctx?: ResolveCtx): Promise<string | null> {
-  const agent = await resolveAgent(key, ctx);
-  if (!isMcpToolEnabled(agent.toolKeys)) {
+  // Read the raw Agent row (no model bind / credential decrypt — only toolKeys +
+  // mcpConnectionId are needed) and stay best-effort: a resolution error must
+  // never break the activity, which degrades to built-in tools.
+  let agent: Awaited<ReturnType<typeof fetchActiveAgent>>;
+  try {
+    agent = await fetchActiveAgent(key, ctx);
+  } catch {
     return null;
   }
-  return mcpUrlForConnection(agent.mcpConnectionId);
+  if (!agent) {
+    return null;
+  }
+  const toolKeys = Array.isArray(agent.toolKeys)
+    ? (agent.toolKeys as unknown[]).filter((v): v is string => typeof v === 'string')
+    : null;
+  if (!isMcpToolEnabled(toolKeys)) {
+    return null;
+  }
+  return mcpUrlForConnection(agent.mcpConnectionId ?? null);
 }

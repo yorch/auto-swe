@@ -67,6 +67,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const where: Prisma.ConnectionWhereInput = {
         isActive: true,
+        // This endpoint surfaces SWE repositories; exclude non-git connection
+        // types (e.g. `mcp`) which have no org/repo identity.
+        type: 'git_repo',
         ...(user.role !== 'ADMIN' && {
           team: { memberships: { some: { userId: user.sub } } },
         }),

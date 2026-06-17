@@ -76,7 +76,11 @@ export async function createImplementerAgent(
   agent: Agent;
   mastra: Mastra;
   promptSuffix: string;
-  /** Present when MCP tools were loaded — callers should invoke it in a `finally` block. */
+  /**
+   * Present whenever an MCP server was contacted (including a connect that
+   * returned zero tools) — callers MUST invoke it in a `finally` block to avoid
+   * leaking the client connection.
+   */
   closeMcp?: () => Promise<void>;
 }> {
   // Tool: Read a file from the workspace

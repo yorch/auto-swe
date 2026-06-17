@@ -18,6 +18,7 @@
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
+    "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
     "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",

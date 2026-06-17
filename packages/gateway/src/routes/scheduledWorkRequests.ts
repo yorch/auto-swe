@@ -90,7 +90,10 @@ async function loadRepoWithMembership(
   repoId: string,
   userId: string
 ): Promise<RepoWithMembership | null> {
-  return (await prisma.connection.findUnique({
+  // findFirst (not findUnique) so we can scope to git_repo — a scheduled work
+  // request only targets git repos; a non-git id (e.g. mcp) resolves to null and
+  // the caller rejects it like a missing/forbidden repo.
+  return (await prisma.connection.findFirst({
     include: {
       team: {
         select: {
@@ -98,7 +101,7 @@ async function loadRepoWithMembership(
         },
       },
     },
-    where: { id: repoId },
+    where: { id: repoId, type: 'git_repo' },
   })) as RepoWithMembership | null;
 }
 

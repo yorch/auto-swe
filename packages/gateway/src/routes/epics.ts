@@ -87,7 +87,9 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        where: { id: { in: repoIds }, isActive: true },
+        // Only git_repo connections are valid epic targets; a non-git id (e.g.
+        // mcp) simply isn't found and surfaces as REPOS_NOT_FOUND below.
+        where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
       });
 
       const foundIds = new Set(repos.map((r) => r.id));

@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { connection: { findUnique: vi.fn() } },
 }));
-vi.mock('./agentResolver.js', () => ({ resolveAgent: vi.fn() }));
+vi.mock('./agentResolver.js', () => ({ fetchActiveAgent: vi.fn() }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { resolveAgent } from './agentResolver.js';
+import { fetchActiveAgent } from './agentResolver.js';
 import { mcpUrlForConnection, resolveAgentMcpUrl } from './mcpConnection.js';
 
 const findUnique = vi.mocked(prisma.connection.findUnique);
-const mockedResolveAgent = vi.mocked(resolveAgent);
+const mockedFetchActiveAgent = vi.mocked(fetchActiveAgent);
 
 const mcpConn = (over: Record<string, unknown> = {}) => ({
   config: { url: 'https://mcp.example.com/mcp' },
@@ -56,19 +56,24 @@ describe('resolveAgentMcpUrl', () => {
     ({ key: 'implementer', mcpConnectionId: 'c1', toolKeys: ['bash', 'mcp'], ...over }) as never;
 
   it('returns the url when the agent enables mcp and references an mcp connection', async () => {
-    mockedResolveAgent.mockResolvedValue(agent());
+    mockedFetchActiveAgent.mockResolvedValue(agent());
     findUnique.mockResolvedValue(mcpConn() as never);
     expect(await resolveAgentMcpUrl('implementer')).toBe('https://mcp.example.com/mcp');
   });
 
   it('returns null when the agent does not enable mcp', async () => {
-    mockedResolveAgent.mockResolvedValue(agent({ toolKeys: ['bash'] }));
+    mockedFetchActiveAgent.mockResolvedValue(agent({ toolKeys: ['bash'] }));
     expect(await resolveAgentMcpUrl('implementer')).toBeNull();
     expect(findUnique).not.toHaveBeenCalled();
   });
 
   it('returns null when the agent enables mcp but has no connection', async () => {
-    mockedResolveAgent.mockResolvedValue(agent({ mcpConnectionId: null }));
+    mockedFetchActiveAgent.mockResolvedValue(agent({ mcpConnectionId: null }));
+    expect(await resolveAgentMcpUrl('implementer')).toBeNull();
+  });
+
+  it('never throws — a resolution error yields null', async () => {
+    mockedFetchActiveAgent.mockRejectedValueOnce(new Error('config missing'));
     expect(await resolveAgentMcpUrl('implementer')).toBeNull();
   });
 });

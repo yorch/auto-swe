@@ -17,7 +17,7 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
-import { createImplementerAgent } from '../agents/implementer.js';
+import { buildImplementerForActivity } from '../agents/implementer.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import {
   currentWorkflowId,
@@ -26,7 +26,7 @@ import {
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
@@ -404,42 +404,41 @@ async function mergeOneWithResolver(
     );
 
     const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
+    const { agent, promptSuffix, closeMcp } = await buildImplementerForActivity(
       workspace,
       opts.tracer,
-      toolConfig,
-      skills
+      activityCtx
     );
-    const result = await agent.generate(
-      [
-        {
-          content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
-          role: 'system',
-        },
-        {
-          content: JSON.stringify({
-            attempt,
-            conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
-            sourceBranch: source,
-            targetBranch,
-          }),
-          role: 'user',
-        },
-      ],
-      { toolChoice: 'auto' }
-    );
-
-    if (result.usage) {
-      await recordLlmUsage(
-        currentWorkflowId(),
-        'implementer',
-        result.usage,
-        `llm.resolve_conflict.${source}.attempt_${attempt}`
+    try {
+      const result = await agent.generate(
+        [
+          {
+            content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
+            role: 'system',
+          },
+          {
+            content: JSON.stringify({
+              attempt,
+              conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
+              sourceBranch: source,
+              targetBranch,
+            }),
+            role: 'user',
+          },
+        ],
+        { toolChoice: 'auto' }
       );
+
+      if (result.usage) {
+        await recordLlmUsage(
+          currentWorkflowId(),
+          'implementer',
+          result.usage,
+          `llm.resolve_conflict.${source}.attempt_${attempt}`
+        );
+      }
+    } finally {
+      await closeMcp?.();
     }
 
     const remaining = await listConflictedFiles(workspace);

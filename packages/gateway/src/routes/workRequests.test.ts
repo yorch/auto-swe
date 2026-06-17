@@ -69,6 +69,7 @@ describe('POST /api/v1/work-requests', () => {
           repoName: 'test',
           team: { memberships: [{ userId: 'user-1' }] },
           teamId: 'team-1',
+          type: 'git_repo',
         }),
       },
       contextSnapshot: {

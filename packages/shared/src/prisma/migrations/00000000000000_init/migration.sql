@@ -6,7 +6,6 @@
 -- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
 -- lives in the next migration.
 -- CreateSchema
--- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateExtension
