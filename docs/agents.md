@@ -156,11 +156,16 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 ✅ (b) WS3-binding is wired into the implementer activities: `executeImplementation` and
 `implementerSession` resolve the Agent's `mcpConnectionId` via `resolveAgentMcpUrl` →
 `mcpUrlForConnection` → `loadMcpTools(config.url)` (through the shared `buildImplementerForActivity`
-helper in `implementer.ts`) and call `closeMcp()` in their `finally` blocks.
-**Remaining (P2/WS3 slice 3):** the merge-conflict resolver in `decomposition` and the generic
-`runAgentNode` path are not yet MCP-bound; there is no gateway/UI write-path yet to set
-`Agent.mcpConnectionId` or create an `mcp` Connection (so the binding is inert until that lands), and
-the connection-listing read paths do not yet filter `type='git_repo'`.
+helper in `implementer.ts`) and call `closeMcp()` in their `finally` blocks. The `decomposition`
+merge-conflict resolver also goes through `buildImplementerForActivity`, so all three implementer
+activities bind MCP uniformly. Non-git connections are filtered out of the repo read/submit paths
+(GET `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
+`isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the work-request/Slack submit
+paths.
+**Remaining (P2/WS3 slice 3):** there is no gateway/UI write-path yet to set `Agent.mcpConnectionId`
+or create an `mcp` Connection (so the binding is inert until that lands), and the generic
+`runAgentNode` path is not yet MCP-bound — both are coupled (the generic node binding only becomes
+testable once an agent can be given an `mcpConnectionId`).
 
 ---
 

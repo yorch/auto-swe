@@ -95,10 +95,14 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
   tracer + per-call timeout) and is failure-isolated. Bound into `executeImplementation` and
   `implementerSession` via the shared `buildImplementerForActivity` helper, with `closeMcp()` in
   `finally`.
+- **Worker (done, all implementer paths):** `executeImplementation`, `implementerSession`, and the
+  `decomposition` merge-conflict resolver all bind MCP through `buildImplementerForActivity`. Non-git
+  connections are filtered out of the repo read/submit paths and rejected by the shared
+  `isGitRepoConnection` guard.
 - **Remaining (slice 3):** gateway/UI write-path to create an `mcp` Connection and set
-  `Agent.mcpConnectionId` (the binding is inert until this lands); MCP binding for the
-  `decomposition` merge-conflict resolver and the generic `runAgentNode` path; a `type='git_repo'`
-  filter on the connection-listing read paths + a tenancy check on `mcpConnectionId`.
+  `Agent.mcpConnectionId` (the binding is inert until this lands), plus MCP binding for the generic
+  `runAgentNode` path (coupled — only testable once an agent can carry an `mcpConnectionId`) and a
+  tenancy check on `mcpConnectionId`.
 - **Acceptance:** MCP tools load from an `mcp` Connection and are callable; auth is encrypted at rest.
 
 ### WS4 — `mcp` node (single-tool step)
@@ -147,8 +151,10 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 - [x] WS2 — `'mcp'` tool kind accepted for Agents (`MCP_TOOL_KEY` + `AGENT_TOOL_KEYS` in
   `stepRegistry.ts`; gateway `toolKeys` validation + worker `isMcpToolEnabled` gating).
 - [~] WS3 — `mcp` Connection + client + tool loading. **Done:** first-class `mcp` Connection schema +
-  `Agent.mcpConnectionId` (slice 1); implementer MCP binding via `resolveAgentMcpUrl` +
-  `buildImplementerForActivity` (slice 2). **Pending (slice 3):** gateway/UI write-path,
-  `decomposition` + `runAgentNode` binding, read-path `git_repo` filter + tenancy check.
+  `Agent.mcpConnectionId` (slice 1); MCP binding across all three implementer activities
+  (`executeImplementation`, `implementerSession`, `decomposition`) via `resolveAgentMcpUrl` +
+  `buildImplementerForActivity`; non-git read/submit paths filtered + guarded by `isGitRepoConnection`
+  (slice 2). **Pending (slice 3):** gateway/UI write-path, generic `runAgentNode` binding, tenancy
+  check on `mcpConnectionId`.
 - [ ] WS4 — `mcp` node (single-tool step)
 - [ ] WS5 — canvas palette + inspector for `agent`/`mcp`

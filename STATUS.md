@@ -181,7 +181,7 @@ RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase
 | **P1 — Agent library** | Done | First-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI (`/admin/agents/library`). All 6 work-streams. |
 | **P1.5 — retire the role tables** | Done | `Agent` is the sole source of truth; `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` deleted. All 4 slices. |
 | **P3 — generic Connections / inputs / triggers / memory** | Done | `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + generic `RunInput`←`WorkRequest` (with submit validation), config-driven trigger event→`RunInput` mappings. All 4 slices. |
-| **P2 — declarative `agent` node + MCP** | Partial | WS1 (`agent` node + `runAgentNode`) **done**; WS2 (`'mcp'` tool key) **done**; WS3 (first-class `mcp` Connection schema + implementer MCP binding) slices 1–2 **done**; remaining: WS3 slice 3 (gateway/UI write-path, `decomposition` + `runAgentNode` binding), WS4 (`mcp` node), WS5 (canvas/inspector). |
+| **P2 — declarative `agent` node + MCP** | Partial | WS1 (`agent` node + `runAgentNode`) **done**; WS2 (`'mcp'` tool key) **done**; WS3 slices 1–2 **done** (first-class `mcp` Connection schema; MCP binding across all three implementer activities via `buildImplementerForActivity`; non-git read/submit paths filtered + guarded by `isGitRepoConnection`); remaining: WS3 slice 3 (gateway/UI write-path for `mcpConnectionId`, generic `runAgentNode` binding, tenancy check), WS4 (`mcp` node), WS5 (canvas/inspector). |
 
 ---
 
