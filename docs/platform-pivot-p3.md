@@ -53,8 +53,9 @@ workflow byte-identical; the generalization is additive, with SWE re-expressed a
 ### Slice 2 — `Connection` replaces `Repository` ✅ DONE
 - **Schema:** `Repository` model + table renamed to `Connection` / `connections`, with a generic
   `type String @default("git_repo")` discriminator + a generic `config Json?` bag. The SWE `git_repo`
-  specifics (org/repo, defaultBranch, gateCommands, mcpServerRef, executorImage, …) stay as typed
-  columns for parity; other connection types stash settings in `config`. The seed writes the sample
+  specifics (org/repo, defaultBranch, gateCommands, executorImage, …) stay as typed
+  columns for parity; other connection types stash settings in `config` (e.g. the `mcp` type's
+  server URL in `config.url` — P2/WS3 dropped the `mcpServerRef` column added here). The seed writes the sample
   row with `type: 'git_repo'`.
 - **Migration:** folded into the consolidated init (undeployed) — `Repository`→`Connection` rename,
   new `type`/`config` columns; all four FKs (`active_workflows`, `memory_items`, `pull_requests`,

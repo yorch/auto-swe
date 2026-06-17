@@ -81,11 +81,24 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 ### WS3 — `mcp` Connection + tool loading
 **Why:** one governed place for MCP server config.
 
-- **Schema:** `Connection` (narrow first instance) or an `McpConnection` table: `name`, `transport`
-  (`stdio`/`http`), `url`/command, encrypted auth (reuse the AES-256-GCM envelope), scope. Migrate
-  `Repository.mcpServerRef` usage onto it (keep a shim/back-compat read).
-- **Worker:** an `mcpClient` lib that connects to a `mcp` Connection and lists/calls tools; bind
-  them as Mastra tools for `runAgent` when an Agent has `'mcp'`.
+- **Schema (done, slice 1):** a first-class **`mcp`-type `Connection`** (`type='mcp'`, server URL in
+  `config.url`) rather than a separate table. The git-identity columns (`organizationName`,
+  `repoName`, git `url`, `defaultBranch`) are now nullable so non-git connection types need not set
+  them; git uniqueness is a **partial unique index** scoped to `type='git_repo'` (Prisma can't
+  express partial `@@unique`, so it lives in the custom-constraints migration). An Agent points at its
+  server via the new `Agent.mcpConnectionId`. The legacy `Connection.mcpServerRef` column was
+  **dropped** (no back-compat shim — there were no production rows). **http(s) only** — stdio MCP
+  servers are deliberately unsupported (the worker must never exec commands sourced from a DB column).
+- **Worker (done, slice 2 — implementer path):** `mcpUrlForConnection` / `resolveAgentMcpUrl`
+  (`lib/config/mcpConnection.ts`) resolve the Agent's `mcpConnectionId` → `config.url`;
+  `loadMcpTools` (`agents/mcpTools.ts`, `@mastra/mcp`) connects + lists + wraps each tool (audit log +
+  tracer + per-call timeout) and is failure-isolated. Bound into `executeImplementation` and
+  `implementerSession` via the shared `buildImplementerForActivity` helper, with `closeMcp()` in
+  `finally`.
+- **Remaining (slice 3):** gateway/UI write-path to create an `mcp` Connection and set
+  `Agent.mcpConnectionId` (the binding is inert until this lands); MCP binding for the
+  `decomposition` merge-conflict resolver and the generic `runAgentNode` path; a `type='git_repo'`
+  filter on the connection-listing read paths + a tenancy check on `mcpConnectionId`.
 - **Acceptance:** MCP tools load from an `mcp` Connection and are callable; auth is encrypted at rest.
 
 ### WS4 — `mcp` node (single-tool step)
@@ -126,12 +139,16 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 
 ## Sequencing checklist
 
-**Status: 🔄 in progress (1 / 5).**
+**Status: 🔄 in progress (WS1 + WS2 done; WS3 partial).**
 
 - [x] WS1 — `agent` node + interpreter dispatch + `runAgentNode` activity (parity); spec
   `SPEC_SCHEMA_VERSION 4→5` + codemod; per-node `systemPrompt` override; canvas rendering. The
   inline-AgentSpec path is deferred to a follow-up (agentRef is the WS1 path).
-- [ ] WS2 — `'mcp'` tool kind accepted for Agents
-- [ ] WS3 — `mcp` Connection + client + tool loading
+- [x] WS2 — `'mcp'` tool kind accepted for Agents (`MCP_TOOL_KEY` + `AGENT_TOOL_KEYS` in
+  `stepRegistry.ts`; gateway `toolKeys` validation + worker `isMcpToolEnabled` gating).
+- [~] WS3 — `mcp` Connection + client + tool loading. **Done:** first-class `mcp` Connection schema +
+  `Agent.mcpConnectionId` (slice 1); implementer MCP binding via `resolveAgentMcpUrl` +
+  `buildImplementerForActivity` (slice 2). **Pending (slice 3):** gateway/UI write-path,
+  `decomposition` + `runAgentNode` binding, read-path `git_repo` filter + tenancy check.
 - [ ] WS4 — `mcp` node (single-tool step)
 - [ ] WS5 — canvas palette + inspector for `agent`/`mcp`

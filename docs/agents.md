@@ -150,10 +150,15 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
 - Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
 
-**Follow-ups:** ✅ (a) gateway `toolKeys` validation accepts `'mcp'` (WS2, via `AGENT_TOOL_KEYS`).
-(b) WS3-binding: resolve the Agent's `mcpConnectionId` → `loadMcpTools(config.url)` in the implementer
-(`executeImplementation`/`implementerSession`/decomposition) and the generic `runAgentNode` path, and
-call `closeMcp()` in their `finally` blocks.
+**Status:** ✅ (a) gateway `toolKeys` validation accepts `'mcp'` (WS2, via `AGENT_TOOL_KEYS`).
+✅ (b) WS3-binding is wired into the implementer activities: `executeImplementation` and
+`implementerSession` resolve the Agent's `mcpConnectionId` via `resolveAgentMcpUrl` →
+`mcpUrlForConnection` → `loadMcpTools(config.url)` (through the shared `buildImplementerForActivity`
+helper in `implementer.ts`) and call `closeMcp()` in their `finally` blocks.
+**Remaining (P2/WS3 slice 3):** the merge-conflict resolver in `decomposition` and the generic
+`runAgentNode` path are not yet MCP-bound; there is no gateway/UI write-path yet to set
+`Agent.mcpConnectionId` or create an `mcp` Connection (so the binding is inert until that lands), and
+the connection-listing read paths do not yet filter `type='git_repo'`.
 
 ---
 
@@ -291,7 +296,7 @@ The scan runs:
 
 **Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → TEAM → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
-**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` and the gateway enum does not accept it yet — a non-empty config therefore disables MCP until that follow-up lands.
+**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it (P2/WS2). A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
 
 Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
 

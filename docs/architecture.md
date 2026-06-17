@@ -508,7 +508,7 @@ erDiagram
 | Model config | `Agent`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys); the first-class `Agent` is the sole source of model/skill/tool config (P1.5 retired `ModelRoleConfig`) |
 | System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `TrackerConfig` | Singleton (`id='default'`) integration config — encrypted secrets, env-var fallback; `TrackerConfig` drives the submit-time ticket fetch into `ContextSnapshot.rawTicketData` |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill` | First-class versioned agents (model/skill/tool overrides, scoped GLOBAL / TEAM / WORKFLOW_TEMPLATE) + skills (prompt fragments) joined via `AgentSkillRef` |
-| Infrastructure | `Team`, `Connection` | Tenant isolation + connection registry — `Connection.type` (`'git_repo'` for SWE) + generic `config` Json |
+| Infrastructure | `Team`, `Connection` | Tenant isolation + connection registry — `Connection.type` (`'git_repo'` for SWE; `'mcp'` for an MCP server, URL in `config.url`, referenced by `Agent.mcpConnectionId`) + generic `config` Json. Git-identity columns (org/repo/url/defaultBranch) are nullable for non-git types; git uniqueness is a partial unique index scoped to `type='git_repo'` |
 
 ---
 

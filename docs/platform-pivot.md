@@ -6,8 +6,10 @@ platform**, where SWE is simply the first use case seeded into the platform's re
 libraries. Each phase is sized to land in one (or a small handful of) PR(s). Pick up here
 when starting a follow-up PR.
 
-> Status: **In progress** (rev. 2026-06-14). **P0 and P1 are implemented and merged into the
-> pivot branch; P2 is underway (the declarative `agent` node is done, MCP work pending).** Phases
+> Status: **In progress** (rev. 2026-06-14). **P0, P1, P1.5 and P3 are implemented and merged into
+> the pivot branch; P2 is underway — the declarative `agent` node (WS1) and the `'mcp'` tool key
+> (WS2) are done, the first-class `mcp` Connection schema + implementer MCP binding (WS3 slices 1–2)
+> are done, and the MCP write-path / `mcp` node / canvas work remains.** Phases
 > P0–P3 are committed for build; P4–P5 are deferred but specified here so the architecture stays
 > compatible with them from day one. Per-phase build plans + status: `platform-pivot-p0.md`,
 > `platform-pivot-p1.md`, `platform-pivot-p2.md`.
@@ -174,7 +176,7 @@ third-party coded capability) is **P4**.
 |---|---|---|
 | **P0. De-domainify the engine** | ✅ Done | Delete `AgentRole` enum (→ string keys); registry-driven step dispatch; `AgentSpec` resolver + generic `runAgent`; cost decoupled from identity; move SWE content out of core code into seeded data (+ `origin` tag); cross-cutting scanner patterns → core defaults; computed `assertConfigReady`. **No behavior change.** |
 | **P1. Agent library** | ✅ Done | First-class `Agent` entity (consolidates model/skill/tool config); library UI + API; reference-by-key + inline; override cascade; versioning (pin/float) + prompt-edit security scan + RBAC. Supersedes `SkillOnlyRole`. |
-| **P2. Declarative agent node + MCP** | 🔄 In progress | New `agent` node (agentRef/inline) on the canvas — **done (WS1)**; remaining: finish MCP — `'mcp'` tool enum, `mcp` Connection, `mcp` node. The no/low-code tiers. |
+| **P2. Declarative agent node + MCP** | 🔄 In progress | New `agent` node (agentRef/inline) on the canvas — **done (WS1)**; `'mcp'` tool key — **done (WS2)**; first-class `mcp` Connection + implementer MCP binding — **done (WS3 slices 1–2)**; remaining: MCP write-path (gateway/UI), `mcp` node (WS4), canvas/inspector (WS5). The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | ✅ Done | `Connection` replaces `Repository` (slice 2); `MemoryItem` replaces `AgentLesson` (slice 1); template `inputSchema` + generic `RunInput` with submit-time validation (slice 3); config-driven trigger event→`RunInput` mappings (slice 4). SWE specializes via seed/config. Surface polish (generic `POST /runs`, live issues-webhook receiver, nullable `externalTicketId`) deferred — see `platform-pivot-p3.md`. |
 | **P4. Distribution layer** | **Deferred (spec'd)** | Export/import versioned, dependency-aware bundles of library entities; marketplace + cross-deployment install; provenance/trust; third-party **capability** extension via the plugin SDK (container contract). This is "packaging," reframed as distribution. |
 | **P5. UX layering + multi-org** | **Deferred (spec'd)** | Canvas palette polish for all node kinds; authoring SDK; true multi-tenancy on the `orgId` stub. |
@@ -255,9 +257,11 @@ pack" P0 — without inventing a pack abstraction.
 ### What ships
 - **`agent` node type** (`spec.ts` `NodeSchema`): carries `agentRef` or an inline AgentSpec;
   interpreter dispatches it to `runAgent`. Canvas inspector + step metadata gain the node.
-- **MCP completion:** add `'mcp'` to the tool enum (`IMPLEMENTER_TOOL_IDS` + gateway
-  `skillAssignmentService.ts`) valid for any Agent; MCP config moves from `Repository.mcpServerRef`
-  to an `mcp` **Connection**; new **`mcp` node** calls a single MCP tool as a workflow step.
+- **MCP completion:** ✅ `'mcp'` added to the canonical tool-key set (`AGENT_TOOL_KEYS` in
+  `stepRegistry.ts`) valid for any Agent (WS2); ✅ MCP config moved off the dropped
+  `Repository.mcpServerRef` onto a first-class `mcp`-type **Connection** (`config.url`) referenced by
+  `Agent.mcpConnectionId`, bound into the implementer at run time (WS3 slices 1–2). Remaining: the
+  gateway/UI write-path and a new **`mcp` node** that calls a single MCP tool as a workflow step.
 - Canvas palette gains `agent` + `mcp` nodes.
 
 ### Tests
@@ -396,8 +400,10 @@ This RFC reached its current shape through a sequence of refinements (rationale 
   `WorkflowStep` (`514–530`), `AgentTrace` (`489–510`).
 - **Node types:** `packages/shared/src/workflow/spec.ts:306–330` (11, all generic) → P2 adds
   `agent` + `mcp`.
-- **MCP:** `packages/worker/src/agents/mcpTools.ts`, `Repository.mcpServerRef`
-  (`schema.prisma:196`), enums in `stepRegistry.ts` + `gateway/.../skillAssignmentService.ts` → P2.
+- **MCP:** `packages/worker/src/agents/mcpTools.ts` + `lib/config/mcpConnection.ts`; first-class
+  `mcp`-type `Connection` (`config.url`) + `Agent.mcpConnectionId` (replaced the dropped
+  `Repository.mcpServerRef`); `MCP_TOOL_KEY` / `AGENT_TOOL_KEYS` in `stepRegistry.ts` → P2 (WS2 + WS3
+  slices 1–2 done).
 - **Container infra (coded-step basis):** `packages/worker/src/lib/ephemeralContainer.ts`,
   `packages/worker/src/activities/shellStep.ts` → reused by P4.
 - **Content → seed:** `packages/shared/src/skills/`, `prisma/seed.ts`, `lib/syncBuiltins.ts`,
