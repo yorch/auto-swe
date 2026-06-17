@@ -66,9 +66,11 @@ const generateMock = vi.fn(async () => ({
   usage: { inputTokens: 10, outputTokens: 5 },
 }));
 vi.mock('../agents/implementer.js', () => ({
-  createImplementerAgent: vi.fn(async () => ({
+  buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
     promptSuffix: '',
+    skills: [],
+    toolKeys: null,
   })),
 }));
 

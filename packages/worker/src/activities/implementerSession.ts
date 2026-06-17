@@ -6,14 +6,12 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
+import { buildImplementerForActivity } from '../agents/implementer.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -115,16 +113,11 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const mcpServerRef = await resolveAgentMcpUrl('implementer', activityCtx);
     const {
       agent,
       promptSuffix,
       closeMcp: cm,
-    } = await createImplementerAgent(workspace, tracer, toolConfig, skills, { mcpServerRef });
+    } = await buildImplementerForActivity(workspace, tracer, activityCtx);
     closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(

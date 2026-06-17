@@ -7,7 +7,13 @@ import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
-import type { ResolvedSkill } from '../lib/config/agentSkills.js';
+import {
+  loadAgentSkills,
+  loadAgentToolConfig,
+  type ResolvedSkill,
+} from '../lib/config/agentSkills.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import type { ResolveCtx } from '../lib/config/types.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getModel } from '../lib/models.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
@@ -326,10 +332,11 @@ export async function createImplementerAgent(
   let closeMcp: (() => Promise<void>) | undefined;
   if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
     const loaded = await loadMcpTools(options.mcpServerRef, tracer);
-    if (Object.keys(loaded.tools).length > 0) {
-      mcpTools = loaded.tools;
-      closeMcp = loaded.close;
-    }
+    // Always adopt the returned close — it is NOOP on failure/empty paths and
+    // safe to call repeatedly. Capturing it only when tools>0 would leak the
+    // live MCP client connection when a server connects but exposes zero tools.
+    closeMcp = loaded.close;
+    mcpTools = loaded.tools;
   }
 
   // L1 skill menu: compact name + description list injected into system prompt.
@@ -360,4 +367,37 @@ export async function createImplementerAgent(
   });
 
   return { agent: mastra.getAgent('implementer'), closeMcp, mastra, promptSuffix };
+}
+
+/**
+ * Shared implementer setup for activities: loads the implementer's tool config +
+ * skills at the current scope (WORKFLOW_TEMPLATE → TEAM → GLOBAL), resolves its
+ * optional MCP server URL, and builds the agent. Used by every implementer
+ * activity so the load + MCP-binding lifecycle lives in one place. The caller
+ * MUST invoke the returned `closeMcp` in a `finally` block.
+ */
+export async function buildImplementerForActivity(
+  workspace: Workspace,
+  tracer: AgentTracer,
+  ctx?: ResolveCtx
+): Promise<{
+  agent: Agent;
+  promptSuffix: string;
+  closeMcp?: () => Promise<void>;
+  skills: ResolvedSkill[];
+  toolKeys: string[] | null;
+}> {
+  const [toolKeys, skills] = await Promise.all([
+    loadAgentToolConfig('implementer', ctx),
+    loadAgentSkills('implementer', ctx),
+  ]);
+  const mcpServerRef = await resolveAgentMcpUrl('implementer', ctx);
+  const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
+    workspace,
+    tracer,
+    toolKeys,
+    skills,
+    { mcpServerRef }
+  );
+  return { agent, closeMcp, promptSuffix, skills, toolKeys };
 }
