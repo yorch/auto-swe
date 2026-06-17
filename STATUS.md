@@ -171,6 +171,20 @@ The early-June feature burst (PRs #48–#68 plus the post-review remediation pas
 
 ---
 
+## Platform Pivot: SWE-system → generic durable-workflow platform (in progress)
+
+RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p3.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
+
+| Phase | Status | Notes |
+| ----- | ------ | ----- |
+| **P0 — de-domainify the engine** | Done | enum→string node kinds, step registry, `AgentSpec` + generic `runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams. |
+| **P1 — Agent library** | Done | First-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI (`/admin/agents/library`). All 6 work-streams. |
+| **P1.5 — retire the role tables** | Done | `Agent` is the sole source of truth; `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` deleted. All 4 slices. |
+| **P3 — generic Connections / inputs / triggers / memory** | Done | `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + generic `RunInput`←`WorkRequest` (with submit validation), config-driven trigger event→`RunInput` mappings. All 4 slices. |
+| **P2 — declarative `agent` node + MCP** | Partial | WS1 (`agent` node + `runAgentNode`) **done**; WS2 (`'mcp'` tool key) **done**; WS3 (first-class `mcp` Connection schema + implementer MCP binding) slices 1–2 **done**; remaining: WS3 slice 3 (gateway/UI write-path, `decomposition` + `runAgentNode` binding), WS4 (`mcp` node), WS5 (canvas/inspector). |
+
+---
+
 ## Summary
 
 | Phase     | Planned Features | Done   | Partial | Not Started |

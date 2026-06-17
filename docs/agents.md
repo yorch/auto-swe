@@ -75,7 +75,9 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 **Factory:** `createImplementerAgent(workspace, tracer?, tools?, skills?, options?)`
 
-Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present only when MCP tools were loaded and should be called in a `finally` block.
+Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
+
+Activities don't call the factory directly — they use the **`buildImplementerForActivity(workspace, tracer, ctx)`** helper (same file), which loads `toolKeys` + skills at the current scope, resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent in one call (returning `{ agent, promptSuffix, closeMcp, skills, toolKeys }`). `executeImplementation` and `implementerSession` both go through it, so the load + MCP-binding lifecycle lives in one place.
 
 ### 3.1 Workspace Tools (4, configurable)
 
