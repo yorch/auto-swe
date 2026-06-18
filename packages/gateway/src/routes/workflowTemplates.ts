@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -178,6 +178,7 @@ const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
+  inputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -591,8 +592,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const { inputSchema: rawInputSchema, ...restBody } = request.body;
       const updated = await fastify.prisma.workflowTemplate.update({
-        data: request.body,
+        data: {
+          ...restBody,
+          ...(rawInputSchema !== undefined && {
+            inputSchema:
+              rawInputSchema != null
+                ? (rawInputSchema as unknown as Prisma.InputJsonValue)
+                : Prisma.DbNull,
+          }),
+        },
         include: TEMPLATE_INCLUDE,
         where: { id: existing.id },
       });

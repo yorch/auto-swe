@@ -1,19 +1,14 @@
 'use client';
 
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
-import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
-import Link from 'next/link';
 import { useState } from 'react';
-import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useRunTemplate } from '@/hooks/useTemplates';
 import { useRepositories } from '@/hooks/useWorkflows';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
-function ConnectionPicker({
+function PreviewConnectionPicker({
   label,
   hint,
   value,
@@ -23,7 +18,7 @@ function ConnectionPicker({
   label: string;
   hint?: string;
   value: string;
-  onChange: (v: unknown) => void;
+  onChange: (v: string) => void;
   connectionType?: string;
 }) {
   const { data: connections = [] } = useRepositories();
@@ -42,7 +37,7 @@ function ConnectionPicker({
   );
 }
 
-function FieldInput({
+function PreviewFieldInput({
   name,
   prop,
   value,
@@ -61,11 +56,11 @@ function FieldInput({
 
   if (prop.type === 'connection') {
     return (
-      <ConnectionPicker
+      <PreviewConnectionPicker
         connectionType={prop.connectionType}
         hint={hint}
         label={label}
-        onChange={onChange}
+        onChange={(v) => onChange(v)}
         value={typeof value === 'string' ? value : ''}
       />
     );
@@ -118,7 +113,6 @@ function FieldInput({
     );
   }
 
-  // string (including uuid format) and fallback
   return (
     <Input
       hint={prop.format === 'uuid' ? `${hint ?? ''} (UUID)`.trim() : hint}
@@ -144,120 +138,52 @@ function buildInitialPayload(schema: InputSchema): Record<string, unknown> {
   return payload;
 }
 
-// Note: `connection` type defaults to '' (empty string) which is handled by
-// the else branch above — no special case needed.
-
-export function RunTemplateModal({
-  template,
-  open,
-  onClose,
-}: {
-  template: WorkflowTemplateSummary;
-  open: boolean;
-  onClose: () => void;
-}) {
-  const runTemplate = useRunTemplate(template.id);
-  const schema = template.inputSchema as InputSchema | null | undefined;
-
+export function SchemaFormPreview({ schema }: { schema: InputSchema | null | undefined }) {
   const [payload, setPayload] = useState<Record<string, unknown>>(
     schema ? buildInitialPayload(schema) : {}
   );
-  const [label, setLabel] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [launchedRunId, setLaunchedRunId] = useState<string | null>(null);
 
-  const handleClose = () => {
-    onClose();
-    setError(null);
-    setLaunchedRunId(null);
-  };
+  if (!schema || Object.keys(schema.properties).length === 0) {
+    return (
+      <p className="rounded border border-dashed border-ink-600 py-6 text-center text-xs text-paper-500">
+        No fields defined — add fields above to see a preview
+      </p>
+    );
+  }
 
-  const handleRun = async () => {
-    setError(null);
-    try {
-      const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
-      setLaunchedRunId(result.workflowId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Run failed';
-      setError(msg);
-    }
-  };
+  const requiredKeys = new Set(schema.required ?? []);
 
   const setField = (key: string, value: unknown) => {
     setPayload((prev) => ({ ...prev, [key]: value }));
   };
 
-  const hasSchema = schema && Object.keys(schema.properties).length > 0;
-  const requiredKeys = new Set(schema?.required ?? []);
-
-  if (launchedRunId) {
-    return (
-      <Modal
-        eyebrow={`§ ${template.name}`}
-        onClose={handleClose}
-        open={open}
-        title="Workflow started"
-      >
-        <div className="space-y-6 py-2 text-center">
-          <div className="text-3xl text-moss-400">✓</div>
-          <p className="text-sm text-paper-300">
-            Your workflow is running. Track its progress in the run detail view.
-          </p>
-          <div className="flex justify-center gap-3 pt-2">
-            <Button onClick={handleClose} variant="secondary">
-              Close
-            </Button>
-            <Link href={`/workflows/${launchedRunId}`} onClick={handleClose}>
-              <Button variant="primary">View run →</Button>
-            </Link>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
   return (
-    <Modal
-      eyebrow={`§ ${template.name}`}
-      onClose={handleClose}
-      open={open}
-      subtitle={template.description || undefined}
-      title="Run workflow"
-    >
-      <div className="space-y-4">
-        {error && <Alert>{error}</Alert>}
-
-        {!hasSchema && (
-          <Input
-            hint="Optional label for this run"
-            label="Run label"
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder={`run-${Date.now()}`}
-            value={label}
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          Preview — how this form will look to users
+        </span>
+      </div>
+      <div className="space-y-4 rounded border border-ink-600 bg-ink-900 p-4">
+        {Object.entries(schema.properties).map(([key, prop]) => (
+          <PreviewFieldInput
+            key={key}
+            name={key}
+            onChange={(v) => setField(key, v)}
+            prop={prop}
+            required={requiredKeys.has(key)}
+            value={payload[key]}
           />
-        )}
-
-        {hasSchema &&
-          Object.entries(schema.properties).map(([key, prop]) => (
-            <FieldInput
-              key={key}
-              name={key}
-              onChange={(v) => setField(key, v)}
-              prop={prop}
-              required={requiredKeys.has(key)}
-              value={payload[key]}
-            />
-          ))}
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button onClick={handleClose} variant="secondary">
+        ))}
+        <div className="flex justify-end gap-2 border-t border-ink-600 pt-3">
+          <Button disabled size="sm" variant="secondary">
             Cancel
           </Button>
-          <Button disabled={runTemplate.isPending} onClick={handleRun} variant="primary">
-            {runTemplate.isPending ? 'Starting…' : 'Run →'}
+          <Button disabled size="sm" variant="primary">
+            Run →
           </Button>
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }

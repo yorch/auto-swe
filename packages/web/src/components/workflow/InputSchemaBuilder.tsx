@@ -15,6 +15,7 @@ const FIELD_TYPES: { label: string; value: InputFieldType }[] = [
   { label: 'Number', value: 'number' },
   { label: 'Boolean', value: 'boolean' },
   { label: 'Array', value: 'array' },
+  { label: 'Connection', value: 'connection' },
 ];
 
 interface FieldDraft {
@@ -26,6 +27,7 @@ interface FieldDraft {
   enumValues: string;
   format: '' | 'uuid';
   itemType: Exclude<InputFieldType, 'array' | 'connection'>;
+  connectionType: string;
 }
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
@@ -45,11 +47,15 @@ function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
   if (draft.type === 'array') {
     prop.items = { type: draft.itemType };
   }
+  if (draft.type === 'connection' && draft.connectionType) {
+    prop.connectionType = draft.connectionType;
+  }
   return prop;
 }
 
 function propertyToDraft(key: string, prop: InputSchemaProperty, required: boolean): FieldDraft {
   return {
+    connectionType: prop.connectionType ?? '',
     description: prop.description ?? '',
     enumValues: prop.enum ? prop.enum.join(', ') : '',
     format: prop.format === 'uuid' ? 'uuid' : '',
@@ -119,6 +125,7 @@ export function InputSchemaBuilder({
     update([
       ...fields,
       {
+        connectionType: '',
         description: '',
         enumValues: '',
         format: '',
@@ -224,6 +231,20 @@ export function InputSchemaBuilder({
               <option value="string">String</option>
               <option value="number">Number</option>
               <option value="boolean">Boolean</option>
+            </Select>
+          )}
+          {f.type === 'connection' && (
+            <Select
+              hint="Only show connections of this type in the run form"
+              id={`conn-type-${i}`}
+              label="Filter by connection type"
+              onChange={(e) => updateField(i, { connectionType: e.target.value })}
+              value={f.connectionType}
+            >
+              <option value="">Any type</option>
+              <option value="git_repo">Git repository</option>
+              <option value="api_endpoint">REST API</option>
+              <option value="generic">Generic</option>
             </Select>
           )}
           <div className="flex justify-end">
