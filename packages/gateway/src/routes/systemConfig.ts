@@ -378,6 +378,24 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (_req, reply) => reply.send(await testKnowledgeBaseConnection())
   );
 
+  f.post(
+    '/config/issue-tracker/detect-fields',
+    {
+      schema: {
+        response: {
+          200: z.object({
+            fields: z.array(z.object({ id: z.string(), name: z.string() })),
+            storyPointsFieldId: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    async (_req, reply) => {
+      const result = await detectJiraFields();
+      return reply.send(result);
+    }
+  );
+
   // ── Config audit log ─────────────────────────────────────────────────────────
 
   f.get('/config/audit-log', { schema: { response: { 200: z.any() } } }, async (req, reply) => {

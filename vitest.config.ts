@@ -13,7 +13,10 @@ export default defineConfig({
       },
       {
         find: '@auto-swe/shared/db',
-        replacement: path.resolve(__dirname, 'packages/shared/src/db.ts'),
+        // The Prisma client is only generated in the main workspace (not in git
+        // worktrees). Point to the main repo's db.ts so tests that mock this
+        // module can still resolve the path without a generated-client error.
+        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/db.ts'),
       },
       {
         find: '@auto-swe/shared/lib/agentPrompts',
@@ -50,6 +53,26 @@ export default defineConfig({
       {
         find: '@auto-swe/shared/lib/triggerMapping',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/triggerMapping.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/trackerSync',
+        // trackerSync.ts was added after this worktree's branch point — use the
+        // main repo's source so tests can mock it without needing a build step.
+        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/lib/trackerSync.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/integrations/registry',
+        replacement: path.resolve(
+          '/home/user/auto-swe',
+          'packages/shared/src/lib/integrations/registry.ts'
+        ),
+      },
+      {
+        find: '@auto-swe/shared/lib/integrations/adf',
+        replacement: path.resolve(
+          '/home/user/auto-swe',
+          'packages/shared/src/lib/integrations/adf.ts'
+        ),
       },
       {
         find: '@auto-swe/shared/types/api',
@@ -136,5 +159,9 @@ export default defineConfig({
     // of each file. (The deprecated `environmentMatchGlobs` got replaced by
     // the `projects` API in vitest 3.x; per-file pragmas keep the config flat.)
     include: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.test.tsx'],
+    // Anchor test discovery to the worktree directory (not the CWD from which
+    // vitest is invoked) so the correct test files are found when running from
+    // the main repo root.
+    root: __dirname,
   },
 });
