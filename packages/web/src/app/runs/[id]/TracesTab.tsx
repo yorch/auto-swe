@@ -383,6 +383,37 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
   );
 }
 
+// ── OtelLink ──────────────────────────────────────────────────────────────────
+
+const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL ?? '';
+
+function OtelLink({ trace }: { trace: AgentTraceRecord }) {
+  if (trace.type !== 'llm_response' || !trace.otelTraceId) {
+    return null;
+  }
+  const shortId = trace.otelTraceId.slice(0, 16);
+  const href = GRAFANA_URL
+    ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
+    : null;
+
+  const content = (
+    <span
+      className="text-paper-600 hover:text-paper-400 transition-colors"
+      style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' }}
+    >
+      {shortId}…
+    </span>
+  );
+
+  return href ? (
+    <a href={href} onClick={(e) => e.stopPropagation()} rel="noreferrer" target="_blank">
+      {content}
+    </a>
+  ) : (
+    content
+  );
+}
+
 // ── EventRow ──────────────────────────────────────────────────────────────────
 
 function EventRow({
@@ -449,9 +480,10 @@ function EventRow({
             </span>
           )}
 
-          {/* Right: token/cost chip + duration + error chip */}
+          {/* Right: token/cost chip + otel link + duration + error chip */}
           <div className="flex items-center gap-2 ml-auto shrink-0">
             <TokenCostChip trace={trace} />
+            <OtelLink trace={trace} />
             {durationLabel && (
               <span className="text-paper-600 num" style={{ fontSize: '10px' }}>
                 {durationLabel}
