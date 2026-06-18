@@ -4,8 +4,6 @@ import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
-import { TemplateModelConfigSection } from '@/components/modelConfig/TemplateModelConfigSection';
-import { TemplateAgentSkillsSection } from '@/components/templates/TemplateAgentSkillsSection';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -24,7 +22,6 @@ import {
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
 import { formatRelativeTime } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -45,8 +42,6 @@ function tryParseSpec(
 export default function TemplateDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: template, isLoading } = useWorkflowTemplate(id);
-  const platformRole = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const isAdmin = platformRole === 'ADMIN';
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id, effectiveVersion);
@@ -410,13 +405,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             )}
           </aside>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="fade-up stagger-3 space-y-6">
-          <TemplateModelConfigSection templateId={id} />
-          <TemplateAgentSkillsSection templateId={id} />
         </div>
       )}
       <ConfirmModal

@@ -9,13 +9,12 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
+import { buildImplementerForActivity } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
@@ -45,7 +44,7 @@ export async function executeImplementation(
   subtask?: Subtask,
   systemPromptOverride?: string
 ): Promise<CodeResult> {
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     where: { id: request.repoId },
   });
 
@@ -64,6 +63,8 @@ export async function executeImplementation(
   );
 
   const tracer = new AgentTracer();
+  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
+  let closeMcp: (() => Promise<void>) | undefined;
 
   try {
     heartbeat('workspace provisioned');
@@ -72,27 +73,23 @@ export async function executeImplementation(
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson);
 
-    // Load tool config and skills for this role at the current scope
-    // (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade for both).
+    // Load tool config + skills (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade),
+    // resolve any MCP server, and build the agent — bound to the workspace so
+    // the tracer captures every call. promptSuffix carries prompt-fragment
+    // skills to append to the system prompt.
     const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
+    const {
+      agent,
+      promptSuffix,
+      closeMcp: cm,
+      skills,
+    } = await buildImplementerForActivity(workspace, tracer, activityCtx);
+    closeMcp = cm;
 
     tracer.addActivityEvent({
       name: 'skills.loaded',
       outputJson: { count: skills.length, skills: skills.map((s) => s.name) },
     });
-
-    // Create Mastra agent with tools bound to workspace (tracer captures every call).
-    // promptSuffix contains any prompt-fragment skills to be appended to the system prompt.
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      tracer,
-      toolConfig,
-      skills
-    );
 
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
@@ -284,6 +281,7 @@ export async function executeImplementation(
       testResults: testResult,
     };
   } finally {
+    await closeMcp?.();
     await persistActivityTrace(tracer, 'implementer');
     await workspace.destroy();
   }

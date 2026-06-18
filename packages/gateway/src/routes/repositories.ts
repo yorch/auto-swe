@@ -11,7 +11,6 @@ const CreateRepoSchema = z.object({
   githubApiUrl: z.string().url().optional(),
   githubUrl: z.string().url().optional(),
   language: z.string().optional(),
-  mcpServerRef: z.string().optional(),
   organizationName: z.string().min(1),
   repoName: z.string().min(1),
   teamId: z.string().uuid(),
@@ -28,7 +27,6 @@ const UpdateRepoSchema = z.object({
   githubUrl: z.string().url().nullable().optional(),
   isActive: z.boolean().optional(),
   language: z.string().nullable().optional(),
-  mcpServerRef: z.string().nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -67,14 +65,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const where: Prisma.RepositoryWhereInput = {
+      const where: Prisma.ConnectionWhereInput = {
         isActive: true,
+        // This endpoint surfaces SWE repositories; exclude non-git connection
+        // types (e.g. `mcp`) which have no org/repo identity.
+        type: 'git_repo',
         ...(user.role !== 'ADMIN' && {
           team: { memberships: { some: { userId: user.sub } } },
         }),
       };
 
-      const repos = await fastify.prisma.repository.findMany({
+      const repos = await fastify.prisma.connection.findMany({
         include: {
           _count: { select: { activeWorkflows: true } },
           team: { select: { id: true, name: true, slug: true } },
@@ -113,9 +114,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Check for duplicate
-      const existing = await fastify.prisma.repository.findUnique({
-        where: { organizationName_repoName: { organizationName, repoName } },
+      // Check for duplicate (org/repo uniqueness is a partial index scoped to
+      // git_repo connections, so query by fields rather than a compound unique).
+      const existing = await fastify.prisma.connection.findFirst({
+        where: { organizationName, repoName, type: 'git_repo' },
       });
       if (existing) {
         return reply.status(409).send({
@@ -123,8 +125,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const repo = await fastify.prisma.repository.create({
-        data: { organizationName, repoName, teamId, ...rest },
+      const repo = await fastify.prisma.connection.create({
+        data: { organizationName, repoName, teamId, type: 'git_repo', ...rest },
         include: { team: { select: { id: true, name: true, slug: true } } },
       });
 
@@ -141,7 +143,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         where: { id: request.params.id },
       });
       if (!repo) {
@@ -172,7 +174,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const updated = await fastify.prisma.repository.update({
+      const updated = await fastify.prisma.connection.update({
         data: request.body,
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: request.params.id },

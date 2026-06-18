@@ -35,17 +35,17 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { includeConsolidated } = request.query;
 
-      const accessFilter: Prisma.AgentLessonWhereInput =
+      const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
           ? {}
           : { repository: { team: { memberships: { some: { userId: user.sub } } } } };
 
-      const where: Prisma.AgentLessonWhereInput = {
+      const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
         ...(!includeConsolidated && { consolidatedAt: null }),
       };
 
-      const lessons = await fastify.prisma.agentLesson.findMany({
+      const lessons = await fastify.prisma.memoryItem.findMany({
         orderBy: { createdAt: 'desc' },
         select: {
           consolidatedAt: true,
@@ -79,7 +79,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // Non-admins must be a member of the team that owns the repo they're searching
       const user = requireUser(request);
       if (user.role !== 'ADMIN') {
-        const accessibleRepo = await fastify.prisma.repository.findFirst({
+        const accessibleRepo = await fastify.prisma.connection.findFirst({
           select: { id: true },
           where: {
             id: repoId,
@@ -95,7 +95,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Semantic search requires the worker's embedding + pgvector query
       // For the gateway API, we do a text-based fallback search
-      const lessons = await fastify.prisma.agentLesson.findMany({
+      const lessons = await fastify.prisma.memoryItem.findMany({
         orderBy: { createdAt: 'desc' },
         select: {
           createdAt: true,
@@ -129,7 +129,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { repoId, minClusterSize, similarityThreshold } = request.body;
 
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         select: { id: true },
         where: { id: repoId },
       });
@@ -152,23 +152,23 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/lessons/stats — Per-repo aggregate stats (ADMIN only)
   app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const repos = await fastify.prisma.repository.findMany({
+    const repos = await fastify.prisma.connection.findMany({
       orderBy: [{ organizationName: 'asc' }, { repoName: 'asc' }],
       select: {
-        agentLessons: {
+        id: true,
+        memoryItems: {
           orderBy: { consolidatedAt: 'desc' },
           select: { consolidatedAt: true },
         },
-        id: true,
         organizationName: true,
         repoName: true,
       },
     });
 
     const data = repos.map((repo) => {
-      const activeCount = repo.agentLessons.filter((l) => l.consolidatedAt === null).length;
-      const consolidatedCount = repo.agentLessons.filter((l) => l.consolidatedAt !== null).length;
-      const lastConsolidated = repo.agentLessons.find((l) => l.consolidatedAt !== null);
+      const activeCount = repo.memoryItems.filter((l) => l.consolidatedAt === null).length;
+      const consolidatedCount = repo.memoryItems.filter((l) => l.consolidatedAt !== null).length;
+      const lastConsolidated = repo.memoryItems.find((l) => l.consolidatedAt !== null);
       return {
         activeCount,
         consolidatedCount,
@@ -176,7 +176,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         lastConsolidatedAt: lastConsolidated?.consolidatedAt ?? null,
         organizationName: repo.organizationName,
         repoName: repo.repoName,
-        totalCount: repo.agentLessons.length,
+        totalCount: repo.memoryItems.length,
       };
     });
 
@@ -190,7 +190,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
     },
     async (request, reply) => {
-      const lesson = await fastify.prisma.agentLesson.findUnique({
+      const lesson = await fastify.prisma.memoryItem.findUnique({
         where: { id: request.params.id },
       });
       if (!lesson) {
@@ -199,7 +199,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      await fastify.prisma.agentLesson.delete({
+      await fastify.prisma.memoryItem.delete({
         where: { id: request.params.id },
       });
 

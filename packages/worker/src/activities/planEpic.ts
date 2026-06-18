@@ -15,16 +15,23 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   heartbeat('fetching repo metadata');
 
   // Fetch repo metadata for the planner agent
-  const repos = await prisma.repository.findMany({
+  const repos = await prisma.connection.findMany({
     select: { description: true, id: true, language: true, repoName: true },
-    where: { id: { in: epicRequest.repoIds } },
+    // Defensive: the epic submit route already filters to git_repo, but keep
+    // the planner input git-only so a non-git id can never reach decomposition.
+    where: { id: { in: epicRequest.repoIds }, type: 'git_repo' },
   });
 
   const repoInfos: RepoInfo[] = repos.map(
-    (r: { id: string; repoName: string; language: string | null; description: string | null }) => ({
+    (r: {
+      id: string;
+      repoName: string | null;
+      language: string | null;
+      description: string | null;
+    }) => ({
       description: r.description ?? '',
       language: r.language ?? 'unknown',
-      name: r.repoName,
+      name: r.repoName ?? '',
       repoId: r.id,
     })
   );

@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const GRACEFUL_DEGRADATION_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'IMPLEMENTER', sortOrder: 90 }],
+  assignments: [{ role: 'implementer', sortOrder: 90 }],
   description:
     'Requires defining an explicit degraded path when non-critical dependencies fail, so partial failures do not cascade into full outages.',
   name: 'graceful-degradation',

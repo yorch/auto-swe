@@ -126,7 +126,7 @@ interface RepoMeta {
 }
 
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
     where: { id: request.repoId },
   });

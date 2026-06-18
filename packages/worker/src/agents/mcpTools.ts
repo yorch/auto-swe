@@ -19,17 +19,18 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
+import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 
 /**
- * Pseudo-tool key in `AgentToolConfig.enabledTools` that gates MCP tool loading.
- * Not part of `IMPLEMENTER_TOOL_IDS` — the gateway Zod enum does not accept it
- * yet (follow-up), so no existing config row can contain it.
+ * Pseudo tool-key that gates MCP tool loading. Re-exported from the shared
+ * canonical tool-key set (`AGENT_TOOL_KEYS`) so the gateway, worker, and web
+ * agree; an Agent's `toolKeys` may include it (P2/WS2).
  */
-export const MCP_TOOL_KEY = 'mcp';
+export { MCP_TOOL_KEY };
 
 /** Subset of AgentTracer used here — keeps tests free of the Prisma import chain. */
 export type McpTracer = Pick<AgentTracer, 'addToolCall' | 'addActivityEvent'>;
@@ -102,7 +103,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 }
 
 /** Tool keys must satisfy provider tool-name rules (`[A-Za-z0-9_-]`). */
-function sanitizeToolName(name: string): string {
+export function sanitizeToolName(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, '_');
 }
 

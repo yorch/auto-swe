@@ -95,6 +95,19 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         }
         return usd + walk(node.next);
       }
+      case 'agent': {
+        // Cost depends on the referenced Agent (dynamic); use the node's step
+        // metadata if it carries a cost hint, otherwise just walk onward.
+        const meta = options.stepLookup('runAgentNode');
+        const usd = stepUsd(meta, pricing);
+        if (usd > 0) {
+          perStep.push({ nodeId, step: 'runAgentNode', usd });
+        }
+        return usd + walk(node.next);
+      }
+      case 'mcp':
+        // External MCP tool call — no token-based cost modeled here.
+        return walk(node.next);
       case 'set':
         return walk(node.next);
       case 'cond':

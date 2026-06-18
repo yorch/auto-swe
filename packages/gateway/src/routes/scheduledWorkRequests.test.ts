@@ -94,8 +94,8 @@ describe('/api/v1/scheduled-work-requests', () => {
         },
         deleteMany: async () => ({ count: 1 }),
       },
-      repository: {
-        findUnique: async () => ({
+      connection: {
+        findFirst: async () => ({
           id: REPO_ID,
           isActive: true,
           organizationName: 'org',
@@ -105,7 +105,19 @@ describe('/api/v1/scheduled-work-requests', () => {
               membershipRole === 'NONE' ? [] : [{ role: membershipRole, userId: 'user-1' }],
           },
           teamId: 'team-1',
+          type: 'git_repo',
         }),
+      },
+      runInput: {
+        create: async (args: { data: Record<string, unknown> }) => {
+          createdWorkRequests.push(args.data);
+          return { ...args.data };
+        },
+        delete: async (args: { where: { id: string } }) => {
+          deletedWorkRequestIds.push(args.where.id);
+          return {};
+        },
+        update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
       scheduledWorkRequest: {
         create: async (args: { data: Record<string, unknown> }) => rowWithInclude({ ...args.data }),
@@ -129,17 +141,6 @@ describe('/api/v1/scheduled-work-requests', () => {
       },
       workflowTemplateVersion: {
         findUnique: async () => ({ id: 'tplv-1' }),
-      },
-      workRequest: {
-        create: async (args: { data: Record<string, unknown> }) => {
-          createdWorkRequests.push(args.data);
-          return { ...args.data };
-        },
-        delete: async (args: { where: { id: string } }) => {
-          deletedWorkRequestIds.push(args.where.id);
-          return {};
-        },
-        update: async (args: { data: Record<string, unknown> }) => ({ ...args.data }),
       },
     } as unknown as never);
 

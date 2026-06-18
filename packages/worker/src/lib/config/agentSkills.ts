@@ -1,92 +1,23 @@
-import { prisma } from '@auto-swe/shared/db';
-import { type AnySkillRole, type ResolveCtx, ROLE_TO_PRISMA } from './types.js';
+import { fetchActiveAgent, skillsFromAgent } from './agentResolver.js';
+import type { AnySkillRole, ResolveCtx, ResolvedSkill } from './types.js';
 
-// Future: CUSTOM_TOOL type would reference a sandboxed JS/Python function stored in the DB.
-// The worker would load and execute it within the Docker workspace, enforcing the same
-// input/output schema contract as built-in tools (Mastra createTool format).
-// Security model: custom tools run with the same Docker isolation as the workspace itself.
-
-export interface ResolvedSkill {
-  id: string;
-  name: string;
-  description: string;
-  promptText: string;
-  sortOrder: number;
-  isVerified: boolean;
-}
-
-const SKILL_ROLE_TO_PRISMA: Record<AnySkillRole, string> = {
-  ...ROLE_TO_PRISMA,
-  decomposer: 'DECOMPOSER',
-  domainLogicReviewer: 'DOMAIN_LOGIC_REVIEWER',
-  performanceReviewer: 'PERFORMANCE_REVIEWER',
-  securityReviewer: 'SECURITY_REVIEWER',
-};
+// `ResolvedSkill` now lives in ./types.js (shared by the resolver layers to
+// avoid an import cycle); re-exported here for back-compat with existing imports.
+export type { ResolvedSkill } from './types.js';
 
 /**
- * Loads the effective skill assignments (prompt fragments) for an agent role
- * using the same scope cascade as ModelRoleConfig:
- * WORKFLOW_TEMPLATE → TEAM → GLOBAL.
- * The first scope that has any assignments for the role wins — returning
- * an empty array means "no prompt fragments injected" for this role.
- *
- * Called per-activity-invocation (not cached at startup) so that admin
- * edits take effect on the next LLM call within an already-running workflow.
+ * Loads the effective skill fragments for an agent key from the first-class
+ * `Agent` entity (P1.5 — the Agent's `skillRefs`). Reads the Agent row directly
+ * (no model/credential resolution) so a skills-only caller can't fail on a
+ * missing credential. Returns an empty array when the agent or its skills are
+ * absent.
  */
 export async function loadAgentSkills(
   role: AnySkillRole,
   ctx?: ResolveCtx
 ): Promise<ResolvedSkill[]> {
-  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
-
-  // 1. Workflow template scope
-  if (ctx?.workflowTemplateId) {
-    const rows = await fetchSkillAssignments(prismaRole, 'WORKFLOW_TEMPLATE', {
-      workflowTemplateId: ctx.workflowTemplateId,
-    });
-    if (rows.length > 0) {
-      return rows;
-    }
-  }
-
-  // 2. Team scope
-  if (ctx?.teamId) {
-    const rows = await fetchSkillAssignments(prismaRole, 'TEAM', { teamId: ctx.teamId });
-    if (rows.length > 0) {
-      return rows;
-    }
-  }
-
-  // 3. Global scope
-  return fetchSkillAssignments(prismaRole, 'GLOBAL', {});
-}
-
-async function fetchSkillAssignments(
-  prismaRole: string,
-  scope: 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE',
-  scopeFilter: { teamId?: string; workflowTemplateId?: string }
-): Promise<ResolvedSkill[]> {
-  const assignments = await prisma.agentSkillAssignment.findMany({
-    include: { skill: true },
-    orderBy: { sortOrder: 'asc' },
-    // We cast `agentRole` and `scope` because the Prisma enum type and the
-    // string we pass are identical at runtime but TypeScript cannot narrow
-    // the imported enum to a narrower literal for the filter.
-    where: {
-      agentRole: prismaRole as 'IMPLEMENTER',
-      scope: scope as 'GLOBAL',
-      skill: { isActive: true },
-      ...scopeFilter,
-    },
-  });
-  return assignments.map((a) => ({
-    description: a.skill.description ?? '',
-    id: a.skill.id,
-    isVerified: a.skill.isVerified,
-    name: a.skill.name,
-    promptText: a.skill.promptText,
-    sortOrder: a.sortOrder,
-  }));
+  const agent = await fetchActiveAgent(role, ctx);
+  return agent ? skillsFromAgent(agent) : [];
 }
 
 /**
@@ -104,52 +35,19 @@ export function skillsToPromptSuffix(skills: ResolvedSkill[]): string | undefine
 }
 
 /**
- * Resolves the effective tool configuration for an agent role.
- * Returns the enabled tool keys, or null if no config exists (caller uses all tools).
- * Cascade: WORKFLOW_TEMPLATE → TEAM → GLOBAL → null (use all tools).
+ * Resolves the effective tool configuration for an agent key from the Agent's
+ * `toolKeys` (P1.5). Returns the enabled tool keys, or null when the agent has
+ * no tool override (caller uses all tools).
  */
 export async function loadAgentToolConfig(
   role: AnySkillRole,
   ctx?: ResolveCtx
 ): Promise<string[] | null> {
-  const prismaRole = SKILL_ROLE_TO_PRISMA[role];
-
-  // 1. Workflow template scope
-  if (ctx?.workflowTemplateId) {
-    const row = await prisma.agentToolConfig.findFirst({
-      where: {
-        agentRole: prismaRole as 'IMPLEMENTER',
-        scope: 'WORKFLOW_TEMPLATE',
-        workflowTemplateId: ctx.workflowTemplateId,
-      },
-    });
-    if (row) {
-      return row.enabledTools;
-    }
+  const agent = await fetchActiveAgent(role, ctx);
+  if (!agent || agent.toolKeys == null) {
+    return null;
   }
-
-  // 2. Team scope
-  if (ctx?.teamId) {
-    const row = await prisma.agentToolConfig.findFirst({
-      where: {
-        agentRole: prismaRole as 'IMPLEMENTER',
-        scope: 'TEAM',
-        teamId: ctx.teamId,
-      },
-    });
-    if (row) {
-      return row.enabledTools;
-    }
-  }
-
-  // 3. Global scope
-  const row = await prisma.agentToolConfig.findFirst({
-    where: {
-      agentRole: prismaRole as 'IMPLEMENTER',
-      scope: 'GLOBAL',
-      teamId: null,
-      workflowTemplateId: null,
-    },
-  });
-  return row?.enabledTools ?? null;
+  return Array.isArray(agent.toolKeys)
+    ? (agent.toolKeys as unknown[]).filter((v): v is string => typeof v === 'string')
+    : null;
 }

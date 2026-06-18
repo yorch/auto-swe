@@ -7,6 +7,7 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./agentKeys": "./dist/agentKeys.js",
     "./db": "./dist/db.js",
     "./types/workflow": "./dist/types/workflow.js",
     "./types/api": "./dist/types/api.js",
@@ -17,6 +18,9 @@
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
+    "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
+    "./lib/inputSchema": "./dist/lib/inputSchema.js",
+    "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
     "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",
     "./workflow": "./dist/workflow/index.js",
     "./workflow/spec": "./dist/workflow/spec.js",

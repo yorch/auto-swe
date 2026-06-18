@@ -38,10 +38,24 @@ export async function createWorkflowRun(
     return { error: err instanceof Error ? err.message : String(err) };
   }
 
+  // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
+  // fixed Agent version regardless of later library edits. One row per key
+  // today (version 1); kept as a { key: version } map for forward pins.
+  const agents = await prisma.agent.findMany({
+    select: { key: true, version: true },
+    where: { isActive: true, scope: 'GLOBAL' },
+  });
+  const agentVersions: Record<string, number> = {};
+  for (const a of agents) {
+    agentVersions[a.key] = Math.max(agentVersions[a.key] ?? 0, a.version);
+  }
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
-  // same workflowId should not create duplicate rows.
+  // same workflowId should not create duplicate rows. `update: {}` preserves the
+  // original spec + agentVersions snapshot across Temporal retries.
   const run = await prisma.workflowRun.upsert({
     create: {
+      agentVersions,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -150,7 +164,7 @@ export async function finalizeWorkflowRun(
 export async function resolveTemplateForRepo(
   repoId: string
 ): Promise<{ templateId: string; templateVersion: number }> {
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     select: { teamId: true },
     where: { id: repoId },
   });

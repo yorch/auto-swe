@@ -105,7 +105,7 @@ export class AgentTracer {
   async persist(
     runId: string | undefined,
     nodeId: string,
-    agentRole: string,
+    agentKey: string,
     attempt = 1
   ): Promise<void> {
     if (!runId || this.records.length === 0) {
@@ -114,7 +114,7 @@ export class AgentTracer {
     try {
       await prisma.agentTrace.createMany({
         data: this.records.map((r) => ({
-          agentRole,
+          agentKey,
           attempt,
           durationMs: r.durationMs,
           error: r.error ?? null,

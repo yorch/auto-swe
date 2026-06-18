@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const SUBTASK_DECOMPOSITION_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'DECOMPOSER', sortOrder: 10 }],
+  assignments: [{ role: 'decomposer', sortOrder: 10 }],
   description:
     'Guides the decomposer agent to split work along feature boundaries with self-contained, merge-safe subtasks.',
   name: 'subtask-decomposition',

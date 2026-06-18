@@ -1,23 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { Agent } from '@mastra/core/agent';
-import { trace } from '@opentelemetry/api';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
-import {
-  currentActivityType,
-  currentAttempt,
-  currentWorkflowId,
-  currentWorkflowRunId,
-} from '../lib/activityContext.js';
-import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
-
-const otelTracer = trace.getTracer('auto-swe-worker');
+import { runAgent } from './runAgent.js';
 
 // ── Zod schema for structured output ──
 
@@ -27,107 +15,46 @@ const ContextValidationSchema = z.object({
 
 // ── Context Validator Activity ──
 
+/**
+ * Proof-migration for the WS3 `AgentSpec`/`runAgent` foundation: this activity
+ * is the first caller of the normalized resolution + generic agent loop. It
+ * resolves a tool-free spec for the `validateContext` role and delegates the
+ * model call (tracing + cost) to `runAgent`, keeping only the snapshot upsert
+ * and the graceful-degradation behavior (an LLM failure yields empty criteria
+ * so the workflow can still proceed).
+ */
 export async function validateContext(
   workRequest: RepoWorkRequest,
   systemPromptOverride?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
-  const agentTracer = new AgentTracer();
-  let successCriteria: string[] = [];
-
-  const activityCtx = await currentRequestContext();
-  const skills = await loadAgentSkills('validateContext', activityCtx);
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
-
-  try {
-    successCriteria = await otelTracer.startActiveSpan('llm.context_validation', async (span) => {
-      const start = Date.now();
-      let systemPrompt = '';
-      let llmUserMessage = '';
-      try {
-        const modelSpec = await getModelSpec('validateContext');
-        const model = await getModel('validateContext');
-        span.setAttribute('llm.model', modelSpec);
-        const basePrompt = await resolveSystemPrompt(
-          'validateContext',
-          CONTEXT_VALIDATOR_PROMPT,
-          systemPromptOverride
-        );
-        systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
-        const agent = new Agent({
-          id: 'context-validator',
-          instructions: systemPrompt,
-          model,
-          name: 'context-validator',
-        });
-
-        llmUserMessage = JSON.stringify({
-          description: workRequest.description,
-          requestPayload: workRequest.requestPayload,
-          title: workRequest.externalTicketId,
-        });
-        const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
-          structuredOutput: { schema: ContextValidationSchema },
-        });
-
-        if (result.usage) {
-          await recordLlmUsage(
-            currentWorkflowId(),
-            'validateContext',
-            result.usage,
-            'llm.context_validation'
-          );
-        }
-
-        if (!result.object) {
-          agentTracer.addLlmResponse({
-            durationMs: Date.now() - start,
-            error: 'no structured output',
-            inputJson: { systemPrompt, userMessage: llmUserMessage },
-            role: 'validateContext',
-          });
-          return [];
-        }
-        const parsed = result.object as z.infer<typeof ContextValidationSchema>;
-
-        agentTracer.addLlmResponse({
-          durationMs: Date.now() - start,
-          inputJson: { systemPrompt, userMessage: llmUserMessage },
-          outputJson: {
-            criteriaCount: parsed.successCriteria.length,
-            successCriteria: parsed.successCriteria,
-          },
-          role: 'validateContext',
-        });
-
-        return parsed.successCriteria;
-      } catch (e) {
-        agentTracer.addLlmResponse({
-          durationMs: Date.now() - start,
-          error: (e as Error).message,
-          inputJson: { systemPrompt, userMessage: llmUserMessage },
-          role: 'validateContext',
-        });
-        span.recordException(e as Error);
-        throw e;
-      } finally {
-        span.end();
-      }
-    });
-  } catch {
-    // Graceful degradation: empty criteria still allows workflow to proceed
-  }
-
-  await agentTracer.persist(
-    await currentWorkflowRunId(),
-    currentActivityType(),
-    'validateContext',
-    currentAttempt()
+  const ctx = await currentRequestContext();
+  const spec = await resolveAgentSpec(
+    {
+      agentKey: 'validateContext',
+      basePrompt: CONTEXT_VALIDATOR_PROMPT,
+      outputSchema: ContextValidationSchema,
+      promptOverride: systemPromptOverride,
+    },
+    ctx
   );
+
+  const userMessage = JSON.stringify({
+    description: workRequest.description,
+    requestPayload: workRequest.requestPayload,
+    title: workRequest.externalTicketId,
+  });
+
+  let successCriteria: string[] = [];
+  try {
+    const result = await runAgent<z.infer<typeof ContextValidationSchema>>(spec, userMessage, {
+      spanName: 'llm.context_validation',
+    });
+    successCriteria = result.object?.successCriteria ?? [];
+  } catch {
+    // Graceful degradation: empty criteria still allows the workflow to proceed.
+  }
 
   heartbeat('persisting context snapshot');
 

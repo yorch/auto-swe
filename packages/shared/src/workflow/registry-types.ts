@@ -43,7 +43,7 @@ export interface StepMetadata {
 
 /** Canonical list of step names registered by the worker. Validated at startup. */
 export const BUILTIN_STEPS = [
-  // Phase 1 — agent + control + vcs
+  // Agent + control-flow + version-control steps
   'updateDomainState',
   'validateContext',
   'executeImplementation',
@@ -53,7 +53,7 @@ export const BUILTIN_STEPS = [
   'createOrUpdatePullRequest',
   'fetchCILogs',
   'commitToMemory',
-  // Phase 2 — quality gates + gate fix loop
+  // Quality gates + the gate-fix loop
   'runLint',
   'runTypecheck',
   'runTests',
@@ -61,10 +61,12 @@ export const BUILTIN_STEPS = [
   'runVulnScan',
   'runPerfBench',
   'executeGateFixImplementation',
-  // Phase 3 — feature decomposition + branch merging (fan-out uses these)
+  // Feature decomposition + branch merging (used by fan-out)
   'planDecomposition',
   'mergeBranches',
-  // Phase 3.5 — implementer-driven merge conflict resolution
+  // Implementer-driven merge-conflict resolution
   'resolveMergeConflict',
+  // Declarative agent node — runs a library Agent by reference
+  'runAgentNode',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

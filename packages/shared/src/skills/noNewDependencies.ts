@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const NO_NEW_DEPENDENCIES_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 40 },
-    { role: 'PLANNER', sortOrder: 30 },
+    { role: 'implementer', sortOrder: 40 },
+    { role: 'planner', sortOrder: 30 },
   ],
   description:
     'Requires checking existing dependencies and Node.js built-ins before adding any new packages to the project.',

@@ -29,6 +29,7 @@
       "!**/coverage",
       "!**/output",
       "!**/tmp",
+      "!**/mocks",
       "!**/.claude/worktrees",
       "!**/.claude",
       "!**/packages/shared/src/generated",

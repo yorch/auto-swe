@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    repository: {
+    connection: {
       findUniqueOrThrow: vi.fn(),
     },
     workflowRun: {
@@ -76,10 +76,11 @@ vi.mock('../lib/scm/index.js', () => ({
 
 const generateMock = vi.fn();
 vi.mock('../agents/implementer.js', () => ({
-  createImplementerAgent: vi.fn(() => ({
+  buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
-    mastra: {},
     promptSuffix: '',
+    skills: [],
+    toolKeys: null,
   })),
 }));
 
@@ -108,7 +109,7 @@ const baseRequest = {
   workRequestId: 'wr-1',
 } as unknown as RepoWorkRequest;
 
-const mockedFindUnique = vi.mocked(prisma.repository.findUniqueOrThrow);
+const mockedFindUnique = vi.mocked(prisma.connection.findUniqueOrThrow);
 
 const mockedRecordLesson = vi.mocked(recordLessonBackground);
 

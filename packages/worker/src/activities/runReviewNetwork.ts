@@ -3,9 +3,9 @@ import { heartbeat } from '@temporalio/activity';
 import { runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { loadAgentSkills, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
+import { resolveAgent } from '../lib/config/agentResolver.js';
+import { skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { resolveModelConfig } from '../lib/config/resolver.js';
 
 /**
  * Runs the review network (Security Auditor, Domain Logic, Performance Reviewer)
@@ -19,15 +19,19 @@ export async function runReviewNetwork(
   heartbeat('starting review network');
   const tracer = new AgentTracer();
 
-  // Resolve DB-level prompt and per-sub-role skills for the reviewer role.
+  // Resolve the reviewer Agent (for the shared base prompt) and each
+  // sub-reviewer Agent by key (each inherits the reviewer model via
+  // inheritsModelFrom and carries its own skills). With null-overlay seeded
+  // agents this is byte-identical to the legacy reviewer-model + per-sub-role
+  // skill resolution.
   const ctx = await currentRequestContext();
-  const [modelConfig, securitySkills, domainSkills, performanceSkills] = await Promise.all([
-    resolveModelConfig('reviewer', ctx),
-    loadAgentSkills('securityReviewer', ctx),
-    loadAgentSkills('domainLogicReviewer', ctx),
-    loadAgentSkills('performanceReviewer', ctx),
+  const [reviewerAgent, securityAgent, domainAgent, performanceAgent] = await Promise.all([
+    resolveAgent('reviewer', ctx),
+    resolveAgent('securityReviewer', ctx),
+    resolveAgent('domainLogicReviewer', ctx),
+    resolveAgent('performanceReviewer', ctx),
   ]);
-  const dbPrompt = modelConfig.systemPrompt ?? undefined;
+  const dbPrompt = reviewerAgent.model.systemPrompt ?? undefined;
 
   try {
     const result = await runReview(
@@ -35,9 +39,9 @@ export async function runReviewNetwork(
       successCriteria,
       tracer,
       systemPromptOverride ?? dbPrompt,
-      skillsToPromptSuffix(securitySkills),
-      skillsToPromptSuffix(domainSkills),
-      skillsToPromptSuffix(performanceSkills)
+      skillsToPromptSuffix(securityAgent.skills),
+      skillsToPromptSuffix(domainAgent.skills),
+      skillsToPromptSuffix(performanceAgent.skills)
     );
 
     heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);

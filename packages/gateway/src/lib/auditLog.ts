@@ -2,12 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
 export type AuditEntityType =
-  | 'AgentSkillAssignment'
-  | 'AgentToolConfig'
+  | 'Agent'
+  | 'Connection'
   | 'EmbeddingConfig'
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
-  | 'ModelRoleConfig'
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'Skill'

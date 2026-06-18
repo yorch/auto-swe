@@ -164,6 +164,32 @@ const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMe
   startToCloseTimeout: '5m',
 });
 
+// P2: declarative agent node. Tool-free single-shot agent run; same retry shape
+// as the other LLM activities.
+const agentNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentNode'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '10m',
+});
+
+// P2/WS4: declarative mcp node. Single external MCP tool call (network I/O in
+// the activity); heartbeat + retry like the other network activities.
+const mcpNodeActivities = proxyActivities<Pick<typeof activitiesType, 'mcpCallTool'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '10m',
+});
+
 // ── Inputs ──
 
 export interface RunnableWorkflowInput {
@@ -316,111 +342,180 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
 }
 
 // ── Step dispatch ──
+//
+// Steps are registered as executors in STEP_EXECUTORS, keyed by step name;
+// `dispatchStepImpl` does a single Map lookup with no `switch`. The map is
+// built once at module load — the `proxyActivities` stubs above are
+// deterministic (no I/O), so this is safe inside the V8 workflow isolate.
+// Adding a step = adding a map entry; control flow never changes.
+//
+// Each executor receives the same args; it derives `config.systemPrompt`
+// (toolsOverride is intentionally NOT passed to activities — tool selection is
+// DB-driven via AgentSkillAssignment, WORKFLOW_TEMPLATE → TEAM → GLOBAL).
 
-async function dispatchStepImpl(
-  step: string,
-  ctx: Context,
-  request: RepoWorkRequest,
-  config: Record<string, unknown>,
-  inputs: Record<string, unknown>
-): Promise<unknown> {
-  const systemPromptOverride = config.systemPrompt as string | undefined;
-  // config.tools (toolsOverride) is no longer passed to activity functions — tool selection
-  // is fully DB-driven via AgentSkillAssignment rows (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade).
-  switch (step) {
-    case 'updateDomainState': {
+interface StepExecutorArgs {
+  step: string;
+  ctx: Context;
+  request: RepoWorkRequest;
+  config: Record<string, unknown>;
+  inputs: Record<string, unknown>;
+}
+
+type StepExecutor = (args: StepExecutorArgs) => Promise<unknown>;
+
+// Shared executor for the six shell-bound quality gates — they differ only by
+// the activity name, which is the step name itself.
+const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
+  // Per-branch fan-out can override `branch` to point gates at the
+  // subtask branch instead of the parent ticket branch (phase 8).
+  const branchOverride =
+    (inputs.branch as string | undefined) ??
+    (config.branch as string | undefined) ??
+    (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
+  const gateInput = {
+    ...(branchOverride ? { branch: branchOverride } : {}),
+    command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
+    request,
+    timeoutMs: (inputs.timeoutMs as number | undefined) ?? (config.timeoutMs as number | undefined),
+  };
+  // All six gate activities share the same input/return shape; index by name.
+  return gateActivities[step as 'runLint'](gateInput);
+};
+
+const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepExecutor>([
+  [
+    'updateDomainState',
+    async ({ config, inputs }) => {
       const status = (inputs.status ?? config.status) as string;
       await stateActivities.updateDomainState(workflowInfo().workflowId, status);
       return { status };
-    }
-    case 'validateContext':
-      return await contextActivities.validateContext(request, systemPromptOverride);
-    case 'executeImplementation': {
+    },
+  ],
+  [
+    'validateContext',
+    ({ request, config }) =>
+      contextActivities.validateContext(request, config.systemPrompt as string | undefined),
+  ],
+  [
+    // P2 declarative agent node: run a library Agent by reference.
+    'runAgentNode',
+    ({ config, inputs }) =>
+      agentNodeActivities.runAgentNode({
+        agentRef: config.agentRef as string,
+        inputs,
+        spanName: config.spanName as string | undefined,
+        systemPrompt: config.systemPrompt as string | undefined,
+        userMessage: config.userMessage as string | undefined,
+      }),
+  ],
+  [
+    // P2/WS4 declarative mcp node: call one MCP tool as a workflow step.
+    'mcpCallTool',
+    ({ config, inputs }) =>
+      mcpNodeActivities.mcpCallTool({
+        connectionRef: config.connectionRef as string,
+        inputs,
+        spanName: config.spanName as string | undefined,
+        tool: config.tool as string,
+      }),
+  ],
+  [
+    'executeImplementation',
+    ({ ctx, request, config, inputs }) => {
+      const systemPromptOverride = config.systemPrompt as string | undefined;
       // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`.
       const subtask =
         (inputs.subtask as Subtask | undefined) ??
         (lookupPath(ctx, 'subtask') as Subtask | undefined);
       return subtask
-        ? await agentActivities.executeImplementation(request, subtask, systemPromptOverride)
-        : await agentActivities.executeImplementation(request, undefined, systemPromptOverride);
-    }
-    case 'runReviewNetwork': {
+        ? agentActivities.executeImplementation(request, subtask, systemPromptOverride)
+        : agentActivities.executeImplementation(request, undefined, systemPromptOverride);
+    },
+  ],
+  [
+    'runReviewNetwork',
+    ({ ctx, config, inputs }) => {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
       const successCriteria =
         (inputs.successCriteria as string[] | undefined) ??
         (lookupPath(ctx, 'context.successCriteria') as string[] | undefined);
-      return await agentActivities.runReviewNetwork(
+      return agentActivities.runReviewNetwork(
         codeResult,
         successCriteria,
-        systemPromptOverride
+        config.systemPrompt as string | undefined
       );
-    }
-    case 'executeReviewFixImplementation': {
+    },
+  ],
+  [
+    'executeReviewFixImplementation',
+    ({ ctx, config, inputs }) => {
       const rejection =
         (inputs.rejectionSummary as string | undefined) ??
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeReviewFixImplementation(
+      return agentActivities.executeReviewFixImplementation(
         rejection,
         prev,
-        systemPromptOverride
+        config.systemPrompt as string | undefined
       );
-    }
-    case 'executeCIFixImplementation': {
+    },
+  ],
+  [
+    'executeCIFixImplementation',
+    ({ ctx, config, inputs }) => {
       const failureContext =
         (inputs.failureContext as string | undefined) ??
         (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
         '';
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeCIFixImplementation(
+      return agentActivities.executeCIFixImplementation(
         failureContext,
         prev,
-        systemPromptOverride
+        config.systemPrompt as string | undefined
       );
-    }
-    case 'createOrUpdatePullRequest': {
+    },
+  ],
+  [
+    'createOrUpdatePullRequest',
+    ({ ctx, request, inputs }) => {
       const codeResult = pickCodeResult(inputs.codeResult, ctx);
-      return await githubActivities.createOrUpdatePullRequest(request, codeResult);
-    }
-    case 'fetchCILogs':
-      return await githubActivities.fetchCILogs(inputs.logsUrl as string | undefined);
-    case 'commitToMemory': {
+      return githubActivities.createOrUpdatePullRequest(request, codeResult);
+    },
+  ],
+  [
+    'fetchCILogs',
+    ({ inputs }) => githubActivities.fetchCILogs(inputs.logsUrl as string | undefined),
+  ],
+  [
+    'commitToMemory',
+    async ({ request, config, inputs }) => {
       const repoId = (inputs.repoId as string | undefined) ?? request.repoId;
       const lessonId = await memoryActivities.commitToMemory(
         workflowInfo().workflowId,
         repoId,
-        systemPromptOverride
+        config.systemPrompt as string | undefined
       );
       return { lessonId };
-    }
-    // ── Phase 2 quality gates ──────────────────────────────────────────────
-    case 'runLint':
-    case 'runTypecheck':
-    case 'runTests':
-    case 'runBuild':
-    case 'runVulnScan':
-    case 'runPerfBench': {
-      // Per-branch fan-out can override `branch` to point gates at the
-      // subtask branch instead of the parent ticket branch (phase 8).
-      const branchOverride =
-        (inputs.branch as string | undefined) ??
-        (config.branch as string | undefined) ??
-        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
-      const gateInput = {
-        ...(branchOverride ? { branch: branchOverride } : {}),
-        command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
-        request,
-        timeoutMs:
-          (inputs.timeoutMs as number | undefined) ?? (config.timeoutMs as number | undefined),
-      };
-      return await gateActivities[step](gateInput);
-    }
-    case 'planDecomposition':
-      return await agentActivities.planDecomposition(request, systemPromptOverride);
-    case 'mergeBranches': {
+    },
+  ],
+  // ── Phase 2 quality gates (all six share gateExecutor) ──────────────────────
+  ['runLint', gateExecutor],
+  ['runTypecheck', gateExecutor],
+  ['runTests', gateExecutor],
+  ['runBuild', gateExecutor],
+  ['runVulnScan', gateExecutor],
+  ['runPerfBench', gateExecutor],
+  [
+    'planDecomposition',
+    ({ request, config }) =>
+      agentActivities.planDecomposition(request, config.systemPrompt as string | undefined),
+  ],
+  [
+    'mergeBranches',
+    ({ step, request, config, inputs }) => {
       const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
-      return await mergeActivities.mergeBranches({
+      return mergeActivities.mergeBranches({
         ...(config.mergeMessagePrefix
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
@@ -428,15 +523,18 @@ async function dispatchStepImpl(
         sourceBranches,
         targetBranch,
       });
-    }
-    case 'resolveMergeConflict': {
+    },
+  ],
+  [
+    'resolveMergeConflict',
+    ({ step, request, config, inputs }) => {
       // Decision 17 symmetry: sourceBranches must be bound explicitly
       // (typically `{ from: 'nodes.merge.output.unmergedBranches' }`).
       const { targetBranch, sourceBranches } = resolveMergeBindings(step, request, config, inputs);
       const maxAttemptsPerBranch =
         (inputs.maxAttemptsPerBranch as number | undefined) ??
         (config.maxAttemptsPerBranch as number | undefined);
-      return await conflictActivities.resolveMergeConflict({
+      return conflictActivities.resolveMergeConflict({
         ...(config.mergeMessagePrefix
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
@@ -445,8 +543,11 @@ async function dispatchStepImpl(
         sourceBranches,
         targetBranch,
       });
-    }
-    case 'executeGateFixImplementation': {
+    },
+  ],
+  [
+    'executeGateFixImplementation',
+    ({ ctx, config, inputs }) => {
       const gateName =
         (inputs.gateName as string | undefined) ??
         (config.gateName as string | undefined) ??
@@ -460,16 +561,28 @@ async function dispatchStepImpl(
         );
       }
       const prev = pickCodeResult(inputs.previousCodeResult, ctx);
-      return await agentActivities.executeGateFixImplementation({
+      return agentActivities.executeGateFixImplementation({
         gateName,
         gateOutput,
         previousCodeResult: prev,
-        systemPromptOverride,
+        systemPromptOverride: config.systemPrompt as string | undefined,
       });
-    }
-    default:
-      throw new Error(`unknown step: ${step}`);
+    },
+  ],
+]);
+
+async function dispatchStepImpl(
+  step: string,
+  ctx: Context,
+  request: RepoWorkRequest,
+  config: Record<string, unknown>,
+  inputs: Record<string, unknown>
+): Promise<unknown> {
+  const executor = STEP_EXECUTORS.get(step);
+  if (!executor) {
+    throw new Error(`unknown step: ${step}`);
   }
+  return executor({ config, ctx, inputs, request, step });
 }
 
 // ── Helpers ──

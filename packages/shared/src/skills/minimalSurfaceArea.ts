@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const MINIMAL_SURFACE_AREA_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 130 },
-    { role: 'REVIEWER', sortOrder: 60 },
+    { role: 'implementer', sortOrder: 130 },
+    { role: 'reviewer', sortOrder: 60 },
   ],
   description:
     'Requires that only the minimum necessary surface area is exported or made public, keeping internals private to reduce coupling and future refactor cost.',

@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const IDEMPOTENCY_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'IMPLEMENTER', sortOrder: 80 },
-    { role: 'PLANNER', sortOrder: 50 },
+    { role: 'implementer', sortOrder: 80 },
+    { role: 'planner', sortOrder: 50 },
   ],
   description:
     'Requires designing operations to be safe to retry: unique keys, upserts, and check-then-act patterns for any mutating call.',

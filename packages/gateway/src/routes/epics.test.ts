@@ -101,7 +101,7 @@ describe('epic routes', () => {
             (w) => w.temporalWorkflowId === args.where.temporalWorkflowId
           ) ?? null,
       },
-      repository: {
+      connection: {
         findMany: async (args: { where: { id?: { in: string[] }; team?: unknown } }) => {
           // Membership-scoped query (accessibleRepoIds helper)
           if (args.where.team) {
@@ -122,7 +122,7 @@ describe('epic routes', () => {
             }));
         },
       },
-      workRequest: {
+      runInput: {
         create: async (args: { data: Record<string, unknown> }) => {
           createdWorkRequests.push(args.data);
           return { ...args.data };

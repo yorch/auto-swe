@@ -44,20 +44,10 @@ enum ConfigScope {
   WORKFLOW_TEMPLATE
 }
 
-enum AgentRole {
-  IMPLEMENTER
-  REVIEWER
-  PLANNER
-  SECURITY_REVIEW
-  VALIDATE_CONTEXT
-  COMMIT_TO_MEMORY
-  // Skill-only sub-roles — no ModelRoleConfig required; model resolution
-  // falls back to the parent role (reviewer / planner).
-  SECURITY_REVIEWER
-  DOMAIN_LOGIC_REVIEWER
-  PERFORMANCE_REVIEWER
-  DECOMPOSER
-}
+// NOTE: agent identity is a free-form string (camelCase, e.g. 'implementer',
+// 'securityReviewer'), not a DB enum. The platform pivot (P0) removed the
+// `AgentRole` enum so new agents can be added as data without a migration.
+// Canonical values are the worker's `AnySkillRole` union; the seed writes them.
 
 enum ConfigAuditAction {
   CREATE
@@ -84,9 +74,9 @@ model ActiveWorkflow {
   temporalWorkflowId String         @unique @map("temporal_workflow_id")
   parentWorkflowId   String?        @map("parent_workflow_id")
   workRequestId      String?        @map("work_request_id") @db.Uuid
-  workRequest        WorkRequest?   @relation(fields: [workRequestId], references: [id])
+  workRequest        RunInput?      @relation(fields: [workRequestId], references: [id])
   repoId             String?        @map("repo_id") @db.Uuid
-  repository         Repository?    @relation(fields: [repoId], references: [id])
+  repository         Connection?    @relation(fields: [repoId], references: [id])
   currentStatus      String         @map("current_status")
   assignedBranch     String?        @map("assigned_branch")
   budgetTier         String         @default("STANDARD") @map("budget_tier")
@@ -96,7 +86,7 @@ model ActiveWorkflow {
   updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   pullRequests       PullRequest[]
-  agentLessons       AgentLesson[]
+  memoryItems        MemoryItem[]
 
   @@index([workRequestId])
   @@index([repoId, assignedBranch])
@@ -108,12 +98,19 @@ model ActiveWorkflow {
 // Prisma's schema DSL cannot model pgvector index types, so `prisma migrate dev`
 // will report drift here. Use `yarn db:migrate` (= migrate deploy) for routine
 // application; run `yarn db:migrate:dev` only when authoring a new migration.
-model AgentLesson {
+/// Generic semantic-memory item (P3). Replaces the SWE-specific `AgentLesson`.
+/// `scope` is the generic partition key — SWE lessons use `'swe-lessons'`; other
+/// domains pick their own scope and stay isolated. The SWE-specific columns
+/// (repoId/workflowId FK, rationale, failureType, skillsActive) are retained for
+/// the SWE memory flow and migrate further in later P3 slices (repoId →
+/// Connection); `metadata` is the generic tags bag.
+model MemoryItem {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope           String          @default("swe-lessons")
   workflowId      String?         @map("workflow_id") @db.Uuid
   workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
   repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
+  repository      Connection?     @relation(fields: [repoId], references: [id])
   rationale       String
   lessonSummary   String          @map("lesson_summary")
   embedding       Unsupported("vector(1536)")?
@@ -125,18 +122,19 @@ model AgentLesson {
   metadata        Json?
   skillsActive    String[]        @default([]) @map("skills_active")
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
-  // Soft-delete: set when this lesson has been merged into a consolidated one.
-  // Active lessons always have consolidatedAt = null.
+  // Soft-delete: set when this item has been merged into a consolidated one.
+  // Active items always have consolidatedAt = null.
   consolidatedAt  DateTime?       @map("consolidated_at") @db.Timestamptz
 
   @@index([repoId, consolidatedAt])
-  @@map("agent_lessons")
+  @@index([scope, consolidatedAt])
+  @@map("memory_items")
 }
 
 model ContextSnapshot {
   id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workRequestId    String       @unique @map("work_request_id") @db.Uuid
-  workRequest      WorkRequest  @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
+  workRequest      RunInput     @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
   rawTicketData    Json?        @map("raw_jira_epic")
   rawDocumentation Json?        @map("raw_confluence")
   successCriteria  String[]     @map("success_criteria")
@@ -150,7 +148,7 @@ model PullRequest {
   workflowId      String?         @map("workflow_id") @db.Uuid
   workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
   repoId          String?         @map("repo_id") @db.Uuid
-  repository      Repository?     @relation(fields: [repoId], references: [id])
+  repository      Connection?     @relation(fields: [repoId], references: [id])
   prNumber        Int?            @map("pr_number")
   headSha         String          @map("head_sha")
   status          String
@@ -184,33 +182,51 @@ model PersonalAccessToken {
   @@map("personal_access_tokens")
 }
 
-model Repository {
+/// Generic integration target (P3). Replaces the SWE-specific `Repository`.
+/// `type` is the discriminator — SWE git repos use `'git_repo'`; other domains
+/// define their own connection types (e.g. `'http_api'`, `'database'`) and stash
+/// type-specific settings in the generic `config` bag. The engine treats `type`
+/// and `config` as opaque; only type-specific worker code reads them. The SWE
+/// `git_repo` specifics (GitHub coords, default branch, gate commands) stay as
+/// typed columns for parity and migrate further in later slices.
+model Connection {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationName String           @map("organization_name")
-  repoName         String           @map("repo_name")
+  /// Connection-type discriminator. Defaults to SWE's `'git_repo'`.
+  type             String           @default("git_repo")
+  /// Generic typed config for non-`git_repo` types. SWE `git_repo` connections
+  /// keep their specifics in the typed columns below; other types use this bag.
+  config           Json?
+  /// Human label for non-`git_repo` connections (e.g. an `mcp` server name).
+  /// git_repo connections identify by org/repo below and may leave this null.
+  name             String?
+  /// git_repo identity — nullable so non-git connection types (e.g. `mcp`) need
+  /// not supply them. Uniqueness is enforced by a partial unique index
+  /// (`WHERE type = 'git_repo'`) in the custom-constraints migration.
+  organizationName String?          @map("organization_name")
+  repoName         String?          @map("repo_name")
   defaultBranch    String           @default("main") @map("default_branch")
   language         String?          @map("language")
   description      String?          @map("description")
   githubUrl        String?          @map("github_url")
   githubApiUrl     String?          @map("github_api_url")
-  mcpServerRef     String?          @map("mcp_server_ref")
   teamId           String           @map("team_id") @db.Uuid
   team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
   executorImage    String?          @default("node:24-alpine") @map("executor_image")
   isActive         Boolean          @default(true) @map("is_active")
   consolidationEnabled Boolean      @default(true) @map("consolidation_enabled")
-  /// Optional per-repo overrides for phase-2 quality-gate commands. Shape:
+  /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:
   /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
   /// Resolution order: step config → this field → built-in defaults.
   gateCommands     Json?            @map("gate_commands")
 
   activeWorkflows  ActiveWorkflow[]
   pullRequests     PullRequest[]
-  agentLessons     AgentLesson[]
+  memoryItems      MemoryItem[]
+  runInputs        RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  mcpAgents        Agent[]          @relation("AgentMcpConnection")
 
-  @@unique([organizationName, repoName])
-  @@map("repositories")
+  @@map("connections")
 }
 
 model Team {
@@ -239,13 +255,11 @@ model Team {
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships            TeamMembership[]
-  repositories           Repository[]
+  repositories           Connection[]
   workflowTemplates      WorkflowTemplate[]
   shellAudits            WorkflowShellAudit[]
-  modelRoleConfigs       ModelRoleConfig[]
   providerCredentials    ProviderCredential[]
-  agentSkillAssignments  AgentSkillAssignment[]
-  agentToolConfigs       AgentToolConfig[]
+  agents                 Agent[]
 
   @@map("teams")
 }
@@ -289,7 +303,7 @@ model User {
   accounts              Account[]
   sessions              Session[]
   humanStepsResolved    WorkflowHumanStep[]
-  workRequests          WorkRequest[]
+  workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@map("users")
@@ -353,11 +367,26 @@ model Verification {
   @@map("verifications")
 }
 
-model WorkRequest {
+/// One run submission (P3 — generic; replaces the SWE-specific `WorkRequest`).
+/// `payload` is the generic run-input bag validated against the template's
+/// `inputSchema`; `connectionId` is the generic target Connection. The SWE
+/// specifics (`externalTicketId`, `requestPayload`) stay as typed columns for
+/// parity and are re-expressed through `payload` over the P3 slices. The
+/// relation field names on related models (`workRequest`/`workRequests`) and
+/// the scalar FK (`workRequestId`) are intentionally kept stable across the
+/// rename so the public API shape doesn't churn.
+model RunInput {
   id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId   String           @map("external_ticket_id")
   description        String           @default("")
   requestPayload     String           @map("request_payload")
+  /// Generic run-input payload (P3); validated against the template's
+  /// `inputSchema`. Null on rows created before this column existed.
+  payload            Json?
+  /// Generic target Connection (P3). Null = not connection-scoped (or legacy
+  /// rows where the linkage lives on requestPayload/ActiveWorkflow.repoId).
+  connectionId       String?          @map("connection_id") @db.Uuid
+  connection         Connection?      @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   slackMessageTs     String?          @map("slack_message_ts")
   /// Channel that originated the request (paired with slackMessageTs to thread
   /// per-step failure notifications back to the source conversation). Populated
@@ -379,7 +408,7 @@ model WorkRequest {
   workflowRuns       WorkflowRun[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
-  @@map("work_requests")
+  @@map("run_inputs")
 }
 
 /// A standing automation: a Temporal Schedule that fires RunnableWorkflow on a
@@ -402,7 +431,7 @@ model ScheduledWorkRequest {
   /// 5-field cron expression (validated conservatively at the API layer).
   cronExpression       String            @map("cron_expression")
   repoId               String            @map("repo_id") @db.Uuid
-  repository           Repository        @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repository           Connection        @relation(fields: [repoId], references: [id], onDelete: Cascade)
   /// Explicit template override; null → repo team default resolved at save time.
   templateId           String?           @map("template_id") @db.Uuid
   template             WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
@@ -416,7 +445,7 @@ model ScheduledWorkRequest {
   createdBy            User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   /// Standing WorkRequest that all scheduled fires attach their WorkflowRuns to.
   workRequestId        String?           @map("work_request_id") @db.Uuid
-  workRequest          WorkRequest?      @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  workRequest          RunInput?         @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
   /// Best-effort bookkeeping — authoritative fire history lives in Temporal.
   lastFiredAt          DateTime?         @map("last_fired_at") @db.Timestamptz
   nextFireAt           DateTime?         @map("next_fire_at") @db.Timestamptz
@@ -459,9 +488,15 @@ model WorkflowRun {
   template        WorkflowTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
   templateVersion Int                @map("template_version")
   workRequestId   String?            @map("work_request_id") @db.Uuid
-  workRequest     WorkRequest?       @relation(fields: [workRequestId], references: [id])
+  workRequest     RunInput?          @relation(fields: [workRequestId], references: [id])
   specSnapshot    Json               @map("spec_snapshot")
   contextSnapshot Json?              @map("context_snapshot")
+  /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`
+  /// map of the active GLOBAL Agent versions when the run began. resolveAgent
+  /// pins to these versions for the life of the run, so editing an Agent
+  /// (cutting a new version) does not change an in-flight run. Null for runs
+  /// created before this column existed (they resolve the latest version).
+  agentVersions   Json?              @map("agent_versions")
   status          WorkflowRunStatus  @default(RUNNING)
   startedAt       DateTime           @default(now()) @map("started_at") @db.Timestamptz
   endedAt         DateTime?          @map("ended_at") @db.Timestamptz
@@ -492,7 +527,8 @@ model AgentTrace {
   run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
   nodeId     String      @map("node_id")
-  agentRole  String      @map("agent_role")
+  /// The agent key (identity) that produced this trace, e.g. "implementer".
+  agentKey   String      @map("agent_key")
   /// Temporal activity attempt number (1-based). Lets the UI group traces by retry attempt.
   attempt    Int         @default(1)
   seq        Int
@@ -570,6 +606,14 @@ model WorkflowTemplate {
   team              Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   name              String
   description       String                    @default("")
+  /// P3: declarative input contract for run submission — a JSON-Schema-subset
+  /// object (`{ type:'object', properties, required }`) the gateway validates
+  /// the run-input payload against. Null = no declared schema (accept any
+  /// payload). SWE's default template declares `{ ticketId, connectionId,
+  /// description, budget }`.
+  inputSchema       Json?                     @map("input_schema")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin            String?
   status            WorkflowTemplateStatus    @default(DRAFT)
   isDefault         Boolean                   @default(false) @map("is_default")
   activeVersion     Int?                      @map("active_version")
@@ -582,9 +626,7 @@ model WorkflowTemplate {
 
   versions              WorkflowTemplateVersion[]
   workflowRuns          WorkflowRun[]
-  modelRoleConfigs      ModelRoleConfig[]
-  agentSkillAssignments AgentSkillAssignment[]
-  agentToolConfigs      AgentToolConfig[]
+  agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@unique([teamId, name])
@@ -606,39 +648,6 @@ model WorkflowTemplateVersion {
 
   @@unique([templateId, version])
   @@map("workflow_template_versions")
-}
-
-/// Per-role model spec (`<provider>/<model-id>`) at one of three scopes:
-/// GLOBAL (system-wide default), TEAM (overrides global for one team), or
-/// WORKFLOW_TEMPLATE (overrides team+global for one template). Resolution
-/// cascade is template → team → global; the first match wins. At most one
-/// row per (role, scope, scope-key) — enforced by partial unique indexes
-/// defined in raw SQL alongside this migration since Prisma's DSL can't
-/// express WHERE clauses on unique indexes.
-///
-/// `credentialId` is an optional override that points at a specific
-/// `ProviderCredential` row. When null the resolver looks up the credential
-/// by provider name using the same scope cascade. Typically set only at
-/// WORKFLOW_TEMPLATE scope to pin a template to a specific credential set.
-model ModelRoleConfig {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  role               AgentRole
-  scope              ConfigScope
-  teamId             String?             @map("team_id") @db.Uuid
-  team               Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
-  workflowTemplate   WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
-  modelSpec          String              @map("model_spec")
-  systemPrompt       String?             @map("system_prompt")
-  credentialId      String?              @map("credential_id") @db.Uuid
-  credential        ProviderCredential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
-  createdById       String?              @map("created_by_id") @db.Uuid
-  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  @@index([scope, teamId])
-  @@index([scope, workflowTemplateId])
-  @@map("model_role_configs")
 }
 
 /// Encrypted API credential for one LLM provider, scoped GLOBAL or TEAM.
@@ -664,8 +673,8 @@ model ProviderCredential {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  modelRoleConfigs ModelRoleConfig[]
   embeddingConfigs EmbeddingConfig[]
+  agents           Agent[]
 
   @@index([provider, scope, teamId])
   @@map("provider_credentials")
@@ -909,13 +918,15 @@ model Skill {
   name        String
   description String?
   promptText  String    @map("prompt_text")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
+  origin      String?
   isBuiltIn   Boolean   @default(false) @map("is_built_in")
   isVerified  Boolean   @default(false) @map("is_verified")
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  assignments AgentSkillAssignment[]
+  agentSkillRefs AgentSkillRef[]
 
   @@map("skills")
 }
@@ -934,6 +945,8 @@ model ScannerPattern {
   pattern   String
   flags     String             @default("")
   type      ScannerPatternType
+  // Provenance: null = core platform default; 'swe-starter' = SWE seed content.
+  origin    String?
   isActive  Boolean            @default(true) @map("is_active")
   isBuiltIn Boolean            @default(false) @map("is_built_in")
   createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
@@ -942,51 +955,77 @@ model ScannerPattern {
   @@map("scanner_patterns")
 }
 
-/// Assigns a Skill to an AgentRole at a specific scope. Partial unique indexes
-/// (defined in raw SQL in the migration) enforce one assignment per
-/// (role, skill, scope-key). Resolution cascade mirrors ModelRoleConfig:
-/// WORKFLOW_TEMPLATE → TEAM → GLOBAL. The first scope that has any
-/// assignments for the role wins.
-model AgentSkillAssignment {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          AgentRole         @map("agent_role")
-  skillId            String            @map("skill_id") @db.Uuid
+/// First-class, versioned Agent entity (P1). Consolidates an agent's identity +
+/// governance and OPTIONALLY overrides model / prompt / skills / tools. When an
+/// override field is null (no skillRefs / null toolKeys / null modelSpec / null
+/// systemPrompt), `resolveAgent` falls through to the legacy per-scope config
+/// tables (ModelRoleConfig / AgentSkillAssignment / AgentToolConfig) for `key`,
+/// preserving P0 behavior exactly. The override cascade GLOBAL → TEAM →
+/// WORKFLOW_TEMPLATE mirrors the other config tables (partial unique indexes
+/// live in raw SQL — Prisma can't express `WHERE scope = …`). `version` is
+/// bumped on base edits; the active row is the highest `version` with
+/// `isActive` at a scope, and runs snapshot the resolved version (P1 WS3).
+model Agent {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key                String
   scope              ConfigScope
-  teamId             String?           @map("team_id") @db.Uuid
-  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
-  sortOrder          Int               @default(0) @map("sort_order")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  teamId             String?             @map("team_id") @db.Uuid
+  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
+  version            Int                 @default(1)
+  name               String
+  description        String?
+  // Optional overrides — null means "inherit from the legacy config cascade".
+  modelSpec          String?             @map("model_spec")
+  systemPrompt       String?             @map("system_prompt")
+  // When set and `modelSpec` is null, resolve the model from this parent agent
+  // key instead of this key's own ModelRoleConfig. Lets sub-reviewer personas
+  // (e.g. securityReviewer → reviewer, decomposer → planner) inherit a model
+  // without their own ModelRoleConfig row. Replaces the implicit SkillOnlyRole
+  // inheritance (P1/WS2).
+  inheritsModelFrom  String?             @map("inherits_model_from")
+  credentialId       String?             @map("credential_id") @db.Uuid
+  // P2/WS3: when set AND `toolKeys` includes 'mcp', the run binds the tools
+  // from this `mcp`-type Connection (config.url) onto the agent. SetNull so
+  // deleting the connection degrades the agent to its non-MCP tools.
+  mcpConnectionId    String?             @map("mcp_connection_id") @db.Uuid
+  // Nullable JSON array of tool keys. null = no tool override (all workspace
+  // tools); [] = explicitly no tools; [...] = exactly these (may include 'mcp').
+  toolKeys           Json?               @map("tool_keys")
+  // Provenance: null = core platform; 'swe-starter' = SWE seed content.
+  origin             String?
+  isBuiltIn          Boolean             @default(false) @map("is_built_in")
+  isVerified         Boolean             @default(false) @map("is_verified")
+  isActive           Boolean             @default(true) @map("is_active")
+  createdById        String?             @map("created_by_id") @db.Uuid
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  skill              Skill             @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+  team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  workflowTemplate WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+  credential       ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  mcpConnection    Connection?         @relation("AgentMcpConnection", fields: [mcpConnectionId], references: [id], onDelete: SetNull)
+  skillRefs        AgentSkillRef[]
 
-  @@index([agentRole, scope, teamId])
-  @@index([agentRole, scope, workflowTemplateId])
-  @@map("agent_skill_assignments")
+  @@index([scope, teamId])
+  @@index([scope, workflowTemplateId])
+  @@map("agents")
 }
 
-/// Controls which built-in tools (readFile, writeFile, listDirectory, bash) are
-/// available to an agent role. Follows the same GLOBAL → TEAM → WORKFLOW_TEMPLATE
-/// scope cascade as ModelRoleConfig. A missing row at a scope means "no override
-/// at that scope" — the cascade falls through to the next level.
-/// An empty array is treated as "no tools" (maximum lockdown); the API enforces min(1).
-model AgentToolConfig {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agentRole          AgentRole         @map("agent_role")
-  scope              ConfigScope
-  teamId             String?           @map("team_id") @db.Uuid
-  workflowTemplateId String?           @map("workflow_template_id") @db.Uuid
-  enabledTools       String[]          @map("enabled_tools")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+/// Skill attached to an Agent (P1) with ordering. When an Agent has any
+/// skillRefs, `resolveAgent` uses them in place of the legacy
+/// AgentSkillAssignment cascade for that key.
+model AgentSkillRef {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId   String   @map("agent_id") @db.Uuid
+  skillId   String   @map("skill_id") @db.Uuid
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  team               Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  workflowTemplate   WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
-  @@index([agentRole, scope, teamId])
-  @@index([agentRole, scope, workflowTemplateId])
-  @@map("agent_tool_configs")
+  @@unique([agentId, skillId])
+  @@map("agent_skill_refs")
 }
 
 /// Phase-6 audit log: one row per shell node authored in a saved template

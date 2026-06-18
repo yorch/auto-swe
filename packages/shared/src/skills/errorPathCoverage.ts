@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const ERROR_PATH_COVERAGE_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'REVIEWER', sortOrder: 20 }],
+  assignments: [{ role: 'reviewer', sortOrder: 20 }],
   description:
     'Ensures reviewers verify that all error paths, 4xx/5xx responses, and not-found cases are explicitly handled and tested.',
   name: 'error-path-coverage',

@@ -176,6 +176,12 @@ export function nodeCategoryColor(node: Node): { fill: string; stroke: string; t
   switch (node.type) {
     case 'step':
       return { fill: '#dbeafe', stroke: '#2563eb', text: '#1e3a8a' };
+    case 'agent':
+      // Indigo to distinguish the declarative agent node from generic steps.
+      return { fill: '#e0e7ff', stroke: '#4f46e5', text: '#312e81' };
+    case 'mcp':
+      // Cyan/teal for the external MCP tool-call node.
+      return { fill: '#cffafe', stroke: '#0e7490', text: '#164e63' };
     case 'set':
       return { fill: '#fef3c7', stroke: '#d97706', text: '#78350f' };
     case 'cond':

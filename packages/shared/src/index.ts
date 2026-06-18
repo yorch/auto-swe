@@ -1,12 +1,7 @@
+export { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from './agentKeys.js';
 export { PrismaClient, prisma } from './db.js';
 export { Prisma } from './generated/prisma/client.js';
-export {
-  AgentRole,
-  ConfigAuditAction,
-  ConfigScope,
-  Role,
-} from './generated/prisma/enums.js';
-export type { AgentToolConfigModel as AgentToolConfig } from './generated/prisma/models.js';
+export { ConfigAuditAction, ConfigScope, Role } from './generated/prisma/enums.js';
 export {
   assertCredentialScope,
   type CredentialScope,

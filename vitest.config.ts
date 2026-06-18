@@ -8,6 +8,10 @@ export default defineConfig({
     // Maps subpaths to source .ts so vitest doesn't need a prior build.
     alias: [
       {
+        find: '@auto-swe/shared/agentKeys',
+        replacement: path.resolve(__dirname, 'packages/shared/src/agentKeys.ts'),
+      },
+      {
         find: '@auto-swe/shared/db',
         replacement: path.resolve(__dirname, 'packages/shared/src/db.ts'),
       },
@@ -34,6 +38,18 @@ export default defineConfig({
       {
         find: '@auto-swe/shared/lib/skillScanner',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/connectionGuards',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/inputSchema',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/inputSchema.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/triggerMapping',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/triggerMapping.ts'),
       },
       {
         find: '@auto-swe/shared/types/api',

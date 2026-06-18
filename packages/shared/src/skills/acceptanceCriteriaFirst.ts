@@ -2,8 +2,8 @@ import type { BuiltinSkillDef } from './index.js';
 
 export const ACCEPTANCE_CRITERIA_FIRST_SKILL: BuiltinSkillDef = {
   assignments: [
-    { role: 'VALIDATE_CONTEXT', sortOrder: 20 },
-    { role: 'PLANNER', sortOrder: 40 },
+    { role: 'validateContext', sortOrder: 20 },
+    { role: 'planner', sortOrder: 40 },
   ],
   description:
     'Requires deriving explicit, testable acceptance criteria from the ticket before any planning or implementation begins.',

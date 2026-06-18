@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const SUCCESS_CRITERIA_EXTRACTION_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'VALIDATE_CONTEXT', sortOrder: 10 }],
+  assignments: [{ role: 'validateContext', sortOrder: 10 }],
   description:
     'Guides extraction of concrete, testable success criteria from a work request description.',
   name: 'success-criteria-extraction',

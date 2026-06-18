@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { resolveTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -191,7 +193,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             }),
       };
       const [rows, total] = await Promise.all([
-        fastify.prisma.workRequest.findMany({
+        fastify.prisma.runInput.findMany({
           include: {
             activeWorkflows: {
               select: { currentStatus: true, id: true, temporalWorkflowId: true },
@@ -203,7 +205,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           take: limit,
           where,
         }),
-        fastify.prisma.workRequest.count({ where }),
+        fastify.prisma.runInput.count({ where }),
       ]);
       return {
         data: rows.map((wr) => ({
@@ -236,7 +238,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Verify repository exists and is accessible to the requesting user.
       // Include team membership so non-admins can only trigger work on their
       // own team's repos without a second round-trip query.
-      const repo = await fastify.prisma.repository.findUnique({
+      const repo = await fastify.prisma.connection.findUnique({
         include: {
           team: {
             select: {
@@ -261,6 +263,17 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
+        });
+      }
+
+      // A SWE work request targets a git_repo connection (org/repo are nullable
+      // on Connection since non-git types like `mcp` omit them).
+      if (!isGitRepoConnection(repo)) {
+        return reply.status(400).send({
+          error: {
+            code: 'NOT_A_GIT_REPO',
+            message: `Connection ${repo.id} is not a git_repo connection`,
+          },
         });
       }
 
@@ -308,6 +321,34 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // P3: build the generic run-input payload and validate it against the
+      // template's declared inputSchema (if any). SWE maps its request fields
+      // onto the seeded `{ ticketId, connectionId, description, budget }`
+      // contract; templates without a schema accept any payload. Validate
+      // before starting Temporal so a bad payload never leaves an orphan run.
+      const payload = {
+        budget: budgetTier,
+        connectionId: repo.id,
+        description,
+        ticketId: externalTicketId,
+      };
+      const tpl = await fastify.prisma.workflowTemplate.findUnique({
+        select: { inputSchema: true },
+        where: { id: resolvedTemplate.templateId },
+      });
+      if (tpl?.inputSchema && isInputSchema(tpl.inputSchema)) {
+        const result = validateInputPayload(tpl.inputSchema, payload);
+        if (!result.ok) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_INPUT',
+              details: result.errors,
+              message: `Run input does not satisfy the template's input schema: ${result.errors.join('; ')}`,
+            },
+          });
+        }
+      }
+
       // Start Temporal workflow FIRST — this is the idempotency gate.
       // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
       // and we haven't written any orphan DB rows yet.
@@ -340,11 +381,13 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Workflow started — now persist to DB.
       // If DB write fails, the Temporal workflow will eventually time out,
       // which is preferable to orphan DB rows that block future retries.
-      const workRequest = await fastify.prisma.workRequest.create({
+      const workRequest = await fastify.prisma.runInput.create({
         data: {
+          connectionId: repo.id,
           description,
           externalTicketId,
           id: workRequestId,
+          payload,
           requestedById: user.sub,
           requestPayload: JSON.stringify(request.body),
           templateId: resolvedTemplate.templateId,
@@ -393,7 +436,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const workRequest = await fastify.prisma.workRequest.findUnique({
+      const workRequest = await fastify.prisma.runInput.findUnique({
         include: {
           activeWorkflows: {
             include: {
@@ -435,6 +478,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      if (!isGitRepoConnection(repo)) {
+        return reply.status(400).send({
+          error: { code: 'NOT_A_GIT_REPO', message: 'Work request target is not a git_repo' },
+        });
+      }
       const baseWorkflowId = generateWorkflowId(
         workRequest.externalTicketId,
         repo.organizationName,

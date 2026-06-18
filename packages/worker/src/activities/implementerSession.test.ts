@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
-    repository: { findUniqueOrThrow: vi.fn() },
+    connection: { findUniqueOrThrow: vi.fn() },
   },
 }));
 
@@ -66,9 +66,11 @@ const generateMock = vi.fn(async () => ({
   usage: { inputTokens: 10, outputTokens: 5 },
 }));
 vi.mock('../agents/implementer.js', () => ({
-  createImplementerAgent: vi.fn(async () => ({
+  buildImplementerForActivity: vi.fn(async () => ({
     agent: { generate: generateMock },
     promptSuffix: '',
+    skills: [],
+    toolKeys: null,
   })),
 }));
 
@@ -104,6 +106,10 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));
 
+vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpUrl: vi.fn(async () => null),
+}));
+
 vi.mock('../lib/models.js', () => ({
   resolveSystemPrompt: vi.fn(async (_role: string, fallback: string) => fallback),
 }));
@@ -112,7 +118,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { runImplementerFixSession } from './implementerSession.js';
 
-const findRepo = vi.mocked(prisma.repository.findUniqueOrThrow);
+const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findWorkflow = vi.mocked(prisma.activeWorkflow.findFirst);
 
 const REPO = {

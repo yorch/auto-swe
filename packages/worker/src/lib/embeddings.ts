@@ -5,7 +5,7 @@ import { resolveEmbeddingConfig } from './config/resolver.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
 /**
- * pgvector column for AgentLesson is `vector(1536)` (see prisma schema). All
+ * pgvector column for MemoryItem is `vector(1536)` (see prisma schema). All
  * embeddings written to the DB MUST be exactly 1536 dimensions, otherwise the
  * insert will fail at the SQL layer. Switching to a model with different output
  * dimensions requires a schema migration first.
@@ -17,7 +17,7 @@ type EmbeddingModel = ReturnType<ReturnType<typeof createOpenAI>['embedding']>;
 interface CachedEmbeddingModel {
   cacheKey: string;
   provider: string;
-  /** Full `<provider>/<model>` spec — recorded on agent_lessons rows so
+  /** Full `<provider>/<model>` spec — recorded on memory_items rows so
    *  vectors from different embedding spaces are never compared. */
   spec: string;
   model: EmbeddingModel;
@@ -80,7 +80,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 
 /**
  * Like `generateEmbedding`, but also returns the `<provider>/<model>` spec the
- * vector was produced with. Writers persist the spec on agent_lessons so
+ * vector was produced with. Writers persist the spec on memory_items so
  * retrieval/consolidation can avoid comparing vectors across embedding spaces
  * after a model switch (EVOL-4): old lessons silently degrade retrieval
  * otherwise.
@@ -101,7 +101,7 @@ export async function generateEmbeddingWithSpec(
   });
   if (embedding.length !== REQUIRED_DIMENSIONS) {
     throw new Error(
-      `Embedding model returned ${embedding.length} dimensions but the agent_lessons.embedding column is vector(${REQUIRED_DIMENSIONS}). ` +
+      `Embedding model returned ${embedding.length} dimensions but the memory_items.embedding column is vector(${REQUIRED_DIMENSIONS}). ` +
         `Either pick a model that produces ${REQUIRED_DIMENSIONS}-dim vectors, or run a schema migration to update the column width.`
     );
   }

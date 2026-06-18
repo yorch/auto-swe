@@ -1,33 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findFirstMock, credFindFirstMock, resolveModelConfigOverride } = vi.hoisted(() => ({
-  credFindFirstMock: vi.fn().mockResolvedValue(null),
-  findFirstMock: vi.fn().mockResolvedValue(null),
-  // When set, resolveModelConfig returns this value; when null, the real impl runs.
-  resolveModelConfigOverride: { value: null as ((...args: unknown[]) => unknown) | null },
-}));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
-    embeddingConfig: { findUnique: vi.fn() },
-    modelRoleConfig: { findFirst: findFirstMock },
-    providerCredential: { findFirst: credFindFirstMock },
-  },
-}));
+// models.ts now resolves through the Agent entity. Mock resolveAgent.
+vi.mock('./config/agentResolver.js', () => ({ resolveAgent: vi.fn() }));
 
-vi.mock('./config/resolver.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./config/resolver.js')>();
-  return {
-    ...actual,
-    resolveModelConfig: (...args: Parameters<typeof actual.resolveModelConfig>) => {
-      if (resolveModelConfigOverride.value !== null) {
-        return (resolveModelConfigOverride.value as typeof actual.resolveModelConfig)(...args);
-      }
-      return actual.resolveModelConfig(...args);
-    },
-  };
-});
-
+import { resolveAgent } from './config/agentResolver.js';
 import { _resetConfigCacheForTests } from './config/cache.js';
 import { ConfigMissingError } from './config/resolver.js';
 import {
@@ -38,27 +16,50 @@ import {
   resolveSystemPrompt,
 } from './models.js';
 
+const mockedResolveAgent = vi.mocked(resolveAgent);
+
+type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
+
+function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAgent {
+  return {
+    isVerified: true,
+    key: 'implementer',
+    mcpConnectionId: null,
+    model: {
+      apiBase: undefined,
+      apiKey: 'sk-ant-x',
+      scope: 'GLOBAL',
+      spec: 'anthropic/claude-opus-4-6',
+      systemPrompt: undefined,
+      ...modelOverrides,
+    },
+    origin: null,
+    skills: [],
+    toolKeys: null,
+    version: 1,
+  };
+}
+
 beforeEach(() => {
   _resetConfigCacheForTests();
   _resetModelCacheForTests();
-  findFirstMock.mockReset().mockResolvedValue(null);
-  credFindFirstMock.mockReset().mockResolvedValue(null);
-  resolveModelConfigOverride.value = null;
+  mockedResolveAgent.mockReset();
 });
 
 afterEach(() => {
   _resetConfigCacheForTests();
-  resolveModelConfigOverride.value = null;
 });
 
 describe('getModelSpec', () => {
-  it('throws ConfigMissingError when no GLOBAL row exists', async () => {
-    findFirstMock.mockResolvedValue(null);
+  it('throws ConfigMissingError when the Agent does not resolve', async () => {
+    mockedResolveAgent.mockRejectedValue(new ConfigMissingError('no agent'));
     await expect(getModelSpec('implementer')).rejects.toThrow(ConfigMissingError);
   });
-  // Spec roundtrip with a real DB-decrypt path is covered end-to-end in
-  // resolver.test.ts (uses vi.hoisted + encryptSecret to produce valid
-  // ciphertext). No need to duplicate the setup here.
+
+  it('returns the resolved Agent model spec', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent());
+    await expect(getModelSpec('implementer')).resolves.toBe('anthropic/claude-opus-4-6');
+  });
 });
 
 describe('resolveModel', () => {
@@ -115,40 +116,33 @@ describe('resolveModel', () => {
 });
 
 describe('getModel', () => {
-  it('throws ConfigMissingError when no DB config exists', async () => {
-    findFirstMock.mockResolvedValue(null);
+  it('throws ConfigMissingError when the Agent does not resolve', async () => {
+    mockedResolveAgent.mockRejectedValue(new ConfigMissingError('no agent'));
     await expect(getModel('implementer')).rejects.toThrow(ConfigMissingError);
+  });
+
+  it('builds a model from the resolved Agent', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent());
+    const m = await getModel('implementer');
+    expect(m.modelId).toBe('claude-opus-4-6');
   });
 });
 
 describe('resolveSystemPrompt', () => {
-  const baseConfig = {
-    apiKey: 'sk-ant-x',
-    scope: 'GLOBAL' as const,
-    spec: 'anthropic/claude-opus-4-6',
-  };
-
-  it('returns configOverride immediately without touching DB', async () => {
-    let called = false;
-    resolveModelConfigOverride.value = () => {
-      called = true;
-      return Promise.resolve(baseConfig);
-    };
+  it('returns configOverride immediately without resolving the Agent', async () => {
     const result = await resolveSystemPrompt('implementer', 'default prompt', 'override prompt');
     expect(result).toBe('override prompt');
-    expect(called).toBe(false);
+    expect(mockedResolveAgent).not.toHaveBeenCalled();
   });
 
-  it('returns DB systemPrompt when no configOverride and DB row has one', async () => {
-    resolveModelConfigOverride.value = () =>
-      Promise.resolve({ ...baseConfig, systemPrompt: 'db prompt' });
+  it("returns the Agent's systemPrompt when set", async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: 'db prompt' }));
     const result = await resolveSystemPrompt('implementer', 'default prompt');
     expect(result).toBe('db prompt');
   });
 
-  it('falls back to hardcoded constant when DB returns no systemPrompt', async () => {
-    resolveModelConfigOverride.value = () =>
-      Promise.resolve({ ...baseConfig, systemPrompt: undefined });
+  it('falls back to the hardcoded constant when the Agent has no systemPrompt', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: undefined }));
     const result = await resolveSystemPrompt('implementer', 'default prompt');
     expect(result).toBe('default prompt');
   });

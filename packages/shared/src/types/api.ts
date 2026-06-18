@@ -366,7 +366,7 @@ export interface AgentTraceRecord {
   id: string;
   /** Temporal activity type, e.g. "executeImplementation". */
   nodeId: string;
-  agentRole: string;
+  agentKey: string;
   /** Temporal activity attempt number (1-based); separates retry attempts. */
   attempt: number;
   seq: number;

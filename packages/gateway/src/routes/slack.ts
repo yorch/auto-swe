@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -655,14 +656,15 @@ async function buildRunModalView(
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
   const tpls = await listVisibleTemplates(fastify, user);
-  const repos = await fastify.prisma.repository.findMany({
+  const repos = await fastify.prisma.connection.findMany({
     select: {
       id: true,
       organizationName: true,
       repoName: true,
       team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
     },
-    where: { isActive: true },
+    // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
+    where: { isActive: true, type: 'git_repo' },
   });
   const accessibleRepos =
     user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
@@ -784,7 +786,7 @@ async function handleRunModalSubmission(
     /* keep defaults */
   }
 
-  const repo = await fastify.prisma.repository.findUnique({
+  const repo = await fastify.prisma.connection.findUnique({
     include: { team: { select: { memberships: { where: { userId: user.id } } } } },
     where: { id: repoId },
   });
@@ -797,6 +799,12 @@ async function handleRunModalSubmission(
   if (user.role !== 'ADMIN' && repo.team.memberships.length === 0) {
     return {
       errors: { repo_block: 'You do not have access to this repository' },
+      response_action: 'errors',
+    };
+  }
+  if (!isGitRepoConnection(repo)) {
+    return {
+      errors: { repo_block: 'Selected connection is not a git repository' },
       response_action: 'errors',
     };
   }
@@ -852,7 +860,7 @@ async function handleRunModalSubmission(
     throw err;
   }
 
-  await fastify.prisma.workRequest.create({
+  await fastify.prisma.runInput.create({
     data: {
       description,
       externalTicketId: ticket,

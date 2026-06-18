@@ -13,7 +13,7 @@
  *
  * Command resolution order (highest precedence first):
  *   1. `config.command` on the step node (template-author override)
- *   2. `Repository.gateCommands[step]` (repo-level override)
+ *   2. `Connection.gateCommands[step]` (git_repo connection override)
  *   3. Built-in default in `DEFAULT_COMMANDS` below
  *
  * The first match always wins; we never silently merge.
@@ -114,7 +114,7 @@ export async function resolveCommand(
     return override;
   }
 
-  const repo = await prisma.repository.findUniqueOrThrow({
+  const repo = await prisma.connection.findUniqueOrThrow({
     select: { gateCommands: true },
     where: { id: request.repoId },
   });
@@ -140,7 +140,7 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.repository.findUniqueOrThrow({ where: { id: request.repoId } }),
+    prisma.connection.findUniqueOrThrow({ where: { id: request.repoId } }),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;

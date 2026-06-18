@@ -33,7 +33,7 @@ auto-swe deliberately does **not** target very early-stage codebases where the i
 |---|---|
 | **Throughput amplification** | Automates well-specified implementation work so a given headcount ships more |
 | **Quality by default** | Lint, typecheck, tests, build, a three-agent review network, and security scanning all run on every change — none are opt-in |
-| **Institutional learning** | Every run writes a semantic `AgentLesson` (pgvector); future runs on similar repos/failures get those lessons injected automatically — the system improves per-repo over time |
+| **Institutional learning** | Every run writes a semantic `MemoryItem` (pgvector); future runs on similar repos/failures get those lessons injected automatically — the system improves per-repo over time |
 | **Cost transparency** | Per-call / per-run / per-team USD tracking, budget tiers with hard caps, and per-template A/B analytics |
 | **Operator control** | Models, skills, tool access, workflow shape, and security policy are all DB-driven and overridable per team or per template — most changes need no restart |
 | **Operational safety** | Temporal makes runs durable (survive crashes, wait days for signals, replay deterministically); humans govern the merge |
@@ -48,7 +48,7 @@ flowchart TB
         WR[Work requests\nWeb / CLI / REST / Slack]
         SCHED[Scheduled work requests\nTemporal Schedules]
         EPIC[Multi-repo epics\ndependency-graph fan-out]
-        WF[Configurable workflow engine\n11 node types, versioned, A/B]
+        WF[Configurable workflow engine\n13 node types, versioned, A/B]
     end
 
     subgraph Agents["Agent Execution"]
@@ -83,7 +83,7 @@ flowchart TB
 | **Agent system** | 10 roles (6 model-backed + 4 skill-only sub-personas); multi-agent review network; TDD implementation loop. See [agents.md](./agents.md). |
 | **Skills** | 27 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
-| **Workflow engine** | 11 node types; versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
+| **Workflow engine** | 13 node types (incl. the declarative `agent` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 51 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
@@ -129,7 +129,7 @@ On a GitHub `check_run` failure webhook, the worker fetches the actual CI logs, 
 
 ### 5.5 Semantic memory / learning loop
 
-After every run, the memory agent writes a structured `AgentLesson` (failure type, rationale, 1536-dim embedding, active skills). On future runs, the context validator does a per-repo semantic similarity search and injects the top matches into the implementer's context — institutional knowledge accrues automatically. Browsable at `/lessons`.
+After every run, the memory agent writes a structured `MemoryItem` (failure type, rationale, 1536-dim embedding, active skills). On future runs, the context validator does a per-repo semantic similarity search and injects the top matches into the implementer's context — institutional knowledge accrues automatically. Browsable at `/lessons`.
 
 ### 5.6 Configurable + versioned workflow templates
 
@@ -177,7 +177,7 @@ By its own 9-phase build history, auto-swe is **feature-complete rather than asp
 
 - **Shipped-vs-planned matrix:** [STATUS.md](../STATUS.md)
 - **Design rationale (39 architecture decisions):** [configurable-workflows.md](./configurable-workflows.md)
-- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only; MCP implementer tool loading not yet opted in by activities (see [agents.md §3.5](./agents.md#35-mcp-tools-repositorymcpserverref-opt-in)).
+- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only. (MCP tool integration is now end-to-end — see [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in) — though the `mcp` workflow node (P2/WS4) and canvas authoring (WS5) are still pending.)
 
 ---
 

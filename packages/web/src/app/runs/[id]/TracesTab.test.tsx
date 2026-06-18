@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { TracesTab } from './TracesTab';
 
 const makeTrace = (nodeId: string, id = nodeId): AgentTraceRecord => ({
-  agentRole: 'implementer',
+  agentKey: 'implementer',
   attempt: 1,
   createdAt: '2026-01-01T00:00:00Z',
   durationMs: 100,

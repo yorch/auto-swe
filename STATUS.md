@@ -18,7 +18,7 @@
 | Team + TeamMembership tables (schema only, no enforcement)          | Done   |                                                                   |
 | Temporal server + single worker process                             | Done   |                                                                   |
 | `EngineeringWorkflow` (child workflow)                              | Done   | Full loop: Implement → Review → PR → CI → Merge → Memory. **Superseded** by `RunnableWorkflow` + the seeded `default-engineering@v1` spec (PR #13); the hardcoded class no longer exists. |
-| Implementer Agent (Mastra + `claude-opus-4-7`) with bash/file tools | Done   |                                                                   |
+| Implementer Agent (Mastra + `claude-opus-4-8`) with bash/file tools | Done   |                                                                   |
 | Local TDD loop (write tests, run in DinD, iterate)                  | Done   |                                                                   |
 | `createOrUpdatePullRequest` activity via GitHub API                 | Done   |                                                                   |
 | Human merge signal webhook (`POST /api/v1/webhooks/git`)            | Done   | HMAC signature verification                                       |
@@ -168,6 +168,20 @@ The early-June feature burst (PRs #48–#68 plus the post-review remediation pas
 | Run-detail split-panel + inline-expansion layouts                     | Done   | #67         | `/runs/[id]` bottom panel toggles between `SplitRunPanel` (steps + traces side-by-side) and inline trace accordions; preference persisted per user via `User.preferences` (`useUserPreferences`).                                       |
 | Full LLM request capture in agent traces                              | Done   | #65, #68    | `AgentTrace` LLM rows now capture the full request (system prompt + user message) alongside the response; trace persistence moved into `finally` blocks so failed attempts still show their events.                                    |
 | Repo-review remediation pass                                          | Done   | —           | CI-gated Docker image publishing (lint/typecheck/tests before push), effective dev-secret guards in shipped images (`NODE_ENV=production`), terminal run status written back to `ActiveWorkflow`, async workspace exec with heartbeat pumping + `WORKER_MAX_CONCURRENT_ACTIVITIES` cap, hot-FK indexes, unit tests for the four previously uncovered scanners. |
+
+---
+
+## Platform Pivot: SWE-system → generic durable-workflow platform (in progress)
+
+RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p3.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
+
+| Phase | Status | Notes |
+| ----- | ------ | ----- |
+| **P0 — de-domainify the engine** | Done | enum→string node kinds, step registry, `AgentSpec` + generic `runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams. |
+| **P1 — Agent library** | Done | First-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI (`/admin/agents/library`). All 6 work-streams. |
+| **P1.5 — retire the role tables** | Done | `Agent` is the sole source of truth; `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` deleted. All 4 slices. |
+| **P3 — generic Connections / inputs / triggers / memory** | Done | `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + generic `RunInput`←`WorkRequest` (with submit validation), config-driven trigger event→`RunInput` mappings. All 4 slices. |
+| **P2 — declarative `agent` node + MCP** | Done | WS1 (`agent` node + `runAgentNode`); WS2 (`'mcp'` tool key); WS3 (first-class `mcp` Connection; MCP binding across all three implementer activities + the generic `runAgentNode` path via `buildImplementerForActivity`; non-git read/submit paths filtered + guarded by `isGitRepoConnection`; admin write-path — `/api/v1/admin/mcp-connections` + `/admin/mcp-connections` UI + `mcpConnectionId` agent field with `validateMcpConnectionRef` tenancy check); WS4 (`mcp` workflow node — `McpNodeSchema` + interpreter dispatch → `mcpCallTool` activity); WS5 (canvas palette + `McpSection` inspector for the `agent`/`mcp` nodes). All 5 work-streams complete. |
 
 ---
 

@@ -30,6 +30,21 @@ const SYSTEM_PROMPT_FIELD = {
 
 export const IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
 
+/**
+ * Pseudo tool-key (P2/WS2) that grants an Agent its MCP tools at run time. Not a
+ * workspace tool — when present in an Agent's `toolKeys`, the run binds the tools
+ * exposed by the referenced `mcp` server/Connection (see worker `loadMcpTools`).
+ */
+export const MCP_TOOL_KEY = 'mcp' as const;
+
+/**
+ * The full set of tool keys an Agent's `toolKeys` may contain: the four workspace
+ * tools plus the `'mcp'` pseudo-key. Used to validate Agent tool config and to
+ * populate the tool picker in the Agent library UI.
+ */
+export const AGENT_TOOL_KEYS = [...IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY] as const;
+export type AgentToolKey = (typeof AGENT_TOOL_KEYS)[number];
+
 const IMPLEMENTER_TOOLS_FIELD = {
   description:
     'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
@@ -260,6 +275,30 @@ register({
     'Run the implementer agent against conflict markers to resolve a failed merge in-place, then push.',
   label: 'Resolve merge conflict',
   name: 'resolveMergeConflict',
+});
+
+register({
+  category: 'agent',
+  configFields: [
+    {
+      description: 'Library Agent to run: "<key>" (latest) or "<key>@<version>" (pinned).',
+      key: 'agentRef',
+      label: 'Agent reference',
+      required: true,
+      type: 'string',
+    },
+    {
+      description: 'Literal user message. Leave empty to pass the resolved node inputs as JSON.',
+      key: 'userMessage',
+      label: 'User message',
+      multiline: true,
+      type: 'string',
+    },
+    SYSTEM_PROMPT_FIELD,
+  ],
+  description: 'Run a library Agent by reference (the declarative agent node).',
+  label: 'Run agent',
+  name: 'runAgentNode',
 });
 
 /** Get metadata for a step name. Throws on unknown step. */

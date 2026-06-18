@@ -2,7 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
-import { type AgentRole, getModelSpec } from './models.js';
+import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -41,7 +41,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'anthropic/claude-opus-4-5': { input: 5, output: 25 },
   'anthropic/claude-opus-4-6': { input: 5, output: 25 },
   // Anthropic — Opus 4.5+ family ($5 / $25)
-  'anthropic/claude-opus-4-7': { input: 5, output: 25 },
+  'anthropic/claude-opus-4-8': { input: 5, output: 25 },
   'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
   'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
   // Anthropic — Sonnet 4.x family ($3 / $15)
@@ -141,13 +141,16 @@ interface TokenUsage {
  * - Throws non-retryable BUDGET_EXCEEDED if the tier limit is breached.
  *
  * @param temporalWorkflowId - The Temporal workflow ID (used to look up the ActiveWorkflow record).
- * @param role - The agent role that produced the usage; drives both model lookup and pricing.
+ * @param role - The agent identity that produced the usage. Identity-agnostic
+ *   (any string) — it is used only for OTel attribution and to resolve the
+ *   model spec. Pricing itself NEVER depends on the identity set: it is keyed
+ *   purely on the resolved `<provider>/<model>` spec (getModelSpec → getModelPrice).
  * @param usage - Token usage from result.usage (Vercel AI SDK shape).
  * @param spanName - OTel span name for attribution (e.g., 'llm.implementer.iteration_1').
  */
 export async function recordLlmUsage(
   temporalWorkflowId: string,
-  role: AgentRole,
+  role: string,
   usage: TokenUsage,
   spanName = 'llm.usage'
 ): Promise<void> {
@@ -160,7 +163,9 @@ export async function recordLlmUsage(
   let modelSpec: string;
   let specResolutionError: unknown;
   try {
-    modelSpec = await getModelSpec(role);
+    // `role` is identity-agnostic here; getModelSpec resolves the DB row by the
+    // role string. Pricing below is keyed on the resolved spec, not the role.
+    modelSpec = await getModelSpec(role as ModelBackedAgentKey);
   } catch (err) {
     modelSpec = 'unknown/unknown';
     specResolutionError = err;

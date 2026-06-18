@@ -2,53 +2,16 @@
  * Built-in codemods registered at module load.
  *
  * Importing this module has the side effect of registering every spec
- * migration in order. The package barrel (./index.ts) imports it so any
+ * migration in order; the package barrel (./index.ts) imports it so any
  * consumer that uses `migrateSpec` automatically picks up the chain.
  *
- * Tests in `codemod.test.ts` bypass this file via `vi.resetModules()` to
- * exercise the registration machinery in isolation; production code paths
- * pull in the barrel and get the registered chain.
+ * The schema is currently at its **v1 baseline**: the pre-deployment version
+ * history (v1→v5) was collapsed because nothing was ever deployed at an older
+ * `schemaVersion`, so there are no stored specs to migrate and no built-in
+ * codemods to register. When `SPEC_SCHEMA_VERSION` next bumps, register a
+ * `{ from, to, transform }` here via `registerCodemod` (see codemod.ts) and the
+ * barrel-imported chain is picked up automatically. The registration machinery
+ * itself is covered by `codemod.test.ts`.
  */
 
-import { registerCodemod } from './codemod.js';
-
-/**
- * v1 → v2: Phase 2 introduces the optional `onFail` field on step nodes
- * (block | warn | { retry: N }). v1 specs have no `onFail` field and behave
- * as `block` by default, so the migration only needs to bump the version.
- * Existing `onError: 'continue'` semantics are preserved by the interpreter.
- */
-registerCodemod({
-  from: 1,
-  to: 2,
-  transform: (spec) => {
-    const s = spec as Record<string, unknown>;
-    return { ...s, schemaVersion: 2 };
-  },
-});
-
-/**
- * v2 → v3: Phase 3 adds the `fanOut` node type. v2 specs without any `fanOut`
- * node are already valid under v3, so the transform only bumps the version.
- */
-registerCodemod({
-  from: 2,
-  to: 3,
-  transform: (spec) => {
-    const s = spec as Record<string, unknown>;
-    return { ...s, schemaVersion: 3 };
-  },
-});
-
-/**
- * v3 → v4: Phase 6 adds the `shell` node type. v3 specs without any `shell`
- * node remain valid under v4, so the transform only bumps the version.
- */
-registerCodemod({
-  from: 3,
-  to: 4,
-  transform: (spec) => {
-    const s = spec as Record<string, unknown>;
-    return { ...s, schemaVersion: 4 };
-  },
-});
+export {};

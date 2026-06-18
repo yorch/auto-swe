@@ -2,6 +2,7 @@ import {
   computeAnalytics,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
+  SPEC_SCHEMA_VERSION,
 } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -31,7 +32,7 @@ const VALID_SPEC = {
   entry: 'start',
   name: 'minimal',
   nodes: { start: { status: 'SUCCESS', type: 'terminate' } },
-  schemaVersion: 4,
+  schemaVersion: SPEC_SCHEMA_VERSION,
 };
 
 function buildApp(state: {
@@ -426,7 +427,7 @@ describe('workflow-templates routes', () => {
             done: { status: 'SUCCESS', type: 'terminate' },
             start: { next: 'done', step: 'runLint', type: 'step' },
           },
-          schemaVersion: 4,
+          schemaVersion: SPEC_SCHEMA_VERSION,
         },
       },
       url: `/api/v1/workflow-templates/${tpl.id}/versions`,
@@ -508,7 +509,7 @@ describe('workflow-templates shell-step RBAC', () => {
         type: 'shell',
       },
     },
-    schemaVersion: 4,
+    schemaVersion: SPEC_SCHEMA_VERSION,
   };
   const TEAM_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
 

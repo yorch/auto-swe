@@ -1,7 +1,7 @@
 import type { BuiltinSkillDef } from './index.js';
 
 export const REVIEW_FOCUS_SECURITY_SKILL: BuiltinSkillDef = {
-  assignments: [{ role: 'REVIEWER', sortOrder: 10 }],
+  assignments: [{ role: 'reviewer', sortOrder: 10 }],
   description:
     'Directs reviewers to prioritise security findings above all other issues, with mandatory rejection on CRITICAL severity.',
   name: 'review-focus-security',

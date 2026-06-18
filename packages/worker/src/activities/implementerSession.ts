@@ -6,12 +6,11 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
+import { buildImplementerForActivity } from '../agents/implementer.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
-import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
@@ -22,8 +21,8 @@ import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
 
-/** Repository row shape (the shared index doesn't export Prisma model types). */
-type Repository = Awaited<ReturnType<typeof prisma.repository.findUniqueOrThrow>>;
+/** Connection (git_repo) row shape (the shared index doesn't export Prisma model types). */
+type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>>;
 
 export interface FixSessionInput {
   mode: FixMode;
@@ -44,7 +43,7 @@ export interface FixSessionInput {
    * (e.g. gate-fix re-runs the failed gate). The returned string is passed to
    * `notes` as `extraNote`. Failures here are informational, never fatal.
    */
-  afterGenerate?: (workspace: Workspace, repo: Repository) => Promise<string | null>;
+  afterGenerate?: (workspace: Workspace, repo: Connection) => Promise<string | null>;
 }
 
 /**
@@ -54,9 +53,9 @@ export interface FixSessionInput {
  * The legacy lookup is unreliable by design (branch names repeat across repos
  * and epic-child rows have a null branch) — it exists only for in-flight runs.
  */
-async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Repository> {
+async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Connection> {
   if (previousCodeResult.repoId) {
-    return prisma.repository.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
+    return prisma.connection.findUniqueOrThrow({ where: { id: previousCodeResult.repoId } });
   }
   const workflow = await prisma.activeWorkflow.findFirst({
     include: { repository: true },
@@ -91,6 +90,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   );
 
   const tracer = new AgentTracer();
+  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
+  let closeMcp: (() => Promise<void>) | undefined;
 
   try {
     heartbeat(`${mode} workspace provisioned`);
@@ -112,16 +113,12 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     const testCommand = detectTestCommand(packageJson);
 
     const activityCtx = await currentRequestContext();
-    const [toolConfig, skills] = await Promise.all([
-      loadAgentToolConfig('implementer', activityCtx),
-      loadAgentSkills('implementer', activityCtx),
-    ]);
-    const { agent, promptSuffix } = await createImplementerAgent(
-      workspace,
-      tracer,
-      toolConfig,
-      skills
-    );
+    const {
+      agent,
+      promptSuffix,
+      closeMcp: cm,
+    } = await buildImplementerForActivity(workspace, tracer, activityCtx);
+    closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(
       'implementer',
@@ -268,6 +265,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       testResults: testResult,
     };
   } finally {
+    await closeMcp?.();
     const done = persistActivityTrace(tracer, 'implementer');
     await workspace.destroy();
     await done;

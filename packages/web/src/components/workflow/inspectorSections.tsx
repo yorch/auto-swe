@@ -395,3 +395,93 @@ export function SetSection({
     </div>
   );
 }
+
+export function AgentSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'agent' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  const textarea =
+    'h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-2 py-1 font-mono text-[11px] text-paper-100 outline-none focus:border-ember-400';
+  return (
+    <div className="space-y-4">
+      <Input
+        hint="library agent: <key> or <key>@<version>"
+        label="Agent reference"
+        onChange={(e) => onChange({ ...node, agentRef: e.target.value } as SpecNode)}
+        value={node.agentRef}
+      />
+      <div className="space-y-1">
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+          htmlFor="agent-user-message"
+        >
+          <span className="text-paper-200">userMessage</span>
+          <span className="ml-2 text-paper-500">— literal prompt (else node inputs as JSON)</span>
+        </label>
+        <textarea
+          className={textarea}
+          id="agent-user-message"
+          onChange={(e) =>
+            onChange({ ...node, userMessage: e.target.value || undefined } as SpecNode)
+          }
+          spellCheck={false}
+          value={node.userMessage ?? ''}
+        />
+      </div>
+      <div className="space-y-1">
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
+          htmlFor="agent-system-prompt"
+        >
+          <span className="text-paper-200">systemPrompt</span>
+          <span className="ml-2 text-paper-500">— per-node prompt override (optional)</span>
+        </label>
+        <textarea
+          className={textarea}
+          id="agent-system-prompt"
+          onChange={(e) =>
+            onChange({ ...node, systemPrompt: e.target.value || undefined } as SpecNode)
+          }
+          spellCheck={false}
+          value={node.systemPrompt ?? ''}
+        />
+      </div>
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}
+
+export function McpSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'mcp' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <Input
+        hint="id of an mcp-type Connection (manage at /admin/mcp-connections)"
+        label="Connection reference"
+        onChange={(e) => onChange({ ...node, connectionRef: e.target.value } as SpecNode)}
+        value={node.connectionRef}
+      />
+      <Input
+        hint="tool name exposed by the MCP server; its args come from Inputs below"
+        label="Tool"
+        onChange={(e) => onChange({ ...node, tool: e.target.value } as SpecNode)}
+        value={node.tool}
+      />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}

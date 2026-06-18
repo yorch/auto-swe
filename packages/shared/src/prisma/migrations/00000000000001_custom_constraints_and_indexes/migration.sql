@@ -3,33 +3,17 @@
 -- consolidated init that the Prisma generator produced.
 -- ----------------------------------------------------------------------------
 
--- Raw pgvector HNSW index on agent_lessons.embedding. Prisma 7's schema DSL
+-- Raw pgvector HNSW index on memory_items.embedding. Prisma 7's schema DSL
 -- cannot model HNSW/IVFFlat indexes, so it lives in its own migration kept
 -- separate from `init`. Routine application is `yarn db:migrate` (deploy);
 -- `prisma migrate dev` cannot see HNSW indexes and will try to re-drop this
 -- one on the next unrelated schema change — see the project skill
 -- `prisma-7-pgvector-hnsw-migrate-dev-drift` for the workflow.
-CREATE INDEX IF NOT EXISTS "idx_agent_lessons_embedding" ON "agent_lessons"
+CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
 
--- ── Scope-cascade integrity (model config + credentials) ────────────────────
--- Partial unique indexes for the ConfigScope cascade (Prisma DSL can't express
--- WHERE clauses on unique indexes). At most one row per (role, scope-key) —
--- NULLs are ignored on the inactive scope's discriminator.
-CREATE UNIQUE INDEX "model_role_configs_global_unique"
-    ON "model_role_configs" ("role")
-    WHERE "scope" = 'GLOBAL';
-
-CREATE UNIQUE INDEX "model_role_configs_team_unique"
-    ON "model_role_configs" ("role", "team_id")
-    WHERE "scope" = 'TEAM';
-
-CREATE UNIQUE INDEX "model_role_configs_template_unique"
-    ON "model_role_configs" ("role", "workflow_template_id")
-    WHERE "scope" = 'WORKFLOW_TEMPLATE';
-
--- Provider credentials are only GLOBAL or TEAM (no template scope by design).
+-- ── Provider credentials (GLOBAL or TEAM only; no template scope) ────────────
 ALTER TABLE "provider_credentials"
     ADD CONSTRAINT "provider_credentials_scope_check"
     CHECK ("scope" IN ('GLOBAL', 'TEAM'));
@@ -42,16 +26,6 @@ CREATE UNIQUE INDEX "provider_credentials_team_unique"
     ON "provider_credentials" ("provider", "team_id")
     WHERE "scope" = 'TEAM';
 
--- Scope-discriminator integrity: enforce that the right keys are populated
--- (or null) for each scope.
-ALTER TABLE "model_role_configs"
-    ADD CONSTRAINT "model_role_configs_scope_keys_check"
-    CHECK (
-        ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL AND "workflow_template_id" IS NOT NULL)
-    );
-
 ALTER TABLE "provider_credentials"
     ADD CONSTRAINT "provider_credentials_scope_keys_check"
     CHECK (
@@ -59,49 +33,27 @@ ALTER TABLE "provider_credentials"
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
 
--- ── Scope-cascade integrity (skills + tool configs) ─────────────────────────
-ALTER TABLE "agent_skill_assignments"
-    ADD CONSTRAINT "agent_skill_assignments_scope_keys_check"
-    CHECK (
-        ("scope" = 'GLOBAL'            AND "team_id" IS NULL     AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'TEAM'           AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL  AND "workflow_template_id" IS NOT NULL)
-    );
+-- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
+-- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
+-- them; uniqueness applies only to git_repo rows. Prisma can't express a
+-- partial `@@unique`, so it lives here.
+CREATE UNIQUE INDEX "connections_git_repo_org_repo_uidx"
+    ON "connections" ("organization_name", "repo_name")
+    WHERE "type" = 'git_repo';
 
-CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_global_uidx"
-    ON "agent_skill_assignments" ("agent_role", "skill_id")
+-- ── Agent library: one row per (key, version) at a scope ─────────────────────
+-- Partial uniques per scope; Prisma can't express `WHERE scope = …`. Postgres
+-- treats NULL discriminators as distinct, so each WHERE scopes its uniqueness.
+CREATE UNIQUE INDEX "agents_key_version_global_uidx"
+    ON "agents" ("key", "version")
     WHERE "scope" = 'GLOBAL';
 
-CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_team_uidx"
-    ON "agent_skill_assignments" ("agent_role", "skill_id", "team_id")
+CREATE UNIQUE INDEX "agents_key_version_team_uidx"
+    ON "agents" ("key", "version", "team_id")
     WHERE "scope" = 'TEAM';
 
-CREATE UNIQUE INDEX "agent_skill_assignments_role_skill_template_uidx"
-    ON "agent_skill_assignments" ("agent_role", "skill_id", "workflow_template_id")
-    WHERE "scope" = 'WORKFLOW_TEMPLATE';
-
-ALTER TABLE "agent_tool_configs"
-    ADD CONSTRAINT "agent_tool_configs_scope_keys_check"
-    CHECK (
-        ("scope" = 'GLOBAL'            AND "team_id" IS NULL     AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'TEAM'           AND "team_id" IS NOT NULL AND "workflow_template_id" IS NULL)
-        OR ("scope" = 'WORKFLOW_TEMPLATE' AND "team_id" IS NULL  AND "workflow_template_id" IS NOT NULL)
-    );
-
-ALTER TABLE "agent_tool_configs"
-    ADD CONSTRAINT "agent_tool_configs_tools_nonempty_check"
-    CHECK (cardinality("enabled_tools") >= 1);
-
-CREATE UNIQUE INDEX "agent_tool_configs_role_global_uidx"
-    ON "agent_tool_configs" ("agent_role")
-    WHERE "scope" = 'GLOBAL';
-
-CREATE UNIQUE INDEX "agent_tool_configs_role_team_uidx"
-    ON "agent_tool_configs" ("agent_role", "team_id")
-    WHERE "scope" = 'TEAM';
-
-CREATE UNIQUE INDEX "agent_tool_configs_role_template_uidx"
-    ON "agent_tool_configs" ("agent_role", "workflow_template_id")
+CREATE UNIQUE INDEX "agents_key_version_template_uidx"
+    ON "agents" ("key", "version", "workflow_template_id")
     WHERE "scope" = 'WORKFLOW_TEMPLATE';
 
 -- ── HITL idempotency ─────────────────────────────────────────────────────────
@@ -142,13 +94,6 @@ INSERT INTO "embedding_configs" ("id", "model_spec")
 VALUES ('default', 'openai/text-embedding-3-large')
 ON CONFLICT ("id") DO NOTHING;
 
--- Default GLOBAL tool config for IMPLEMENTER (all 4 workspace tools).
--- syncBuiltins() at gateway startup maintains this too; the seed keeps a
--- fresh DB correct even before the gateway's first boot.
-INSERT INTO "agent_tool_configs" ("agent_role", "scope", "enabled_tools")
-VALUES ('IMPLEMENTER', 'GLOBAL', ARRAY['readFile', 'writeFile', 'listDirectory', 'bash'])
-ON CONFLICT DO NOTHING;
-
 -- ── NOT NULL on array columns ────────────────────────────────────────────────
 -- Prisma 7's generator emits `String[]` columns as nullable at the DB level
 -- even though the client treats them as always-non-null — reinstate the
@@ -159,9 +104,5 @@ ALTER TABLE "teams"
 ALTER TABLE "workflow_shell_audit"
   ALTER COLUMN "egress_allowlist_snapshot" SET NOT NULL;
 
-ALTER TABLE "agent_lessons"
+ALTER TABLE "memory_items"
   ALTER COLUMN "skills_active" SET NOT NULL;
-
-ALTER TABLE "agent_tool_configs"
-  ALTER COLUMN "enabled_tools" SET DEFAULT '{}',
-  ALTER COLUMN "enabled_tools" SET NOT NULL;

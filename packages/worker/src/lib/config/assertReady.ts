@@ -1,64 +1,36 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
-import { ALL_ROLES, ROLE_TO_PRISMA } from './types.js';
+import { resolveAgent } from './agentResolver.js';
+import { requiredAgentKeys } from './stepRequiredAgents.js';
 
-/// Walks every required GLOBAL config row and confirms the worker has
-/// everything it needs to run an activity. Throws a single error listing
-/// EVERY missing piece so the operator doesn't have to fix them one at a
-/// time. Called at worker boot; if it throws, the process exits non-zero
-/// with the message visible.
+/// Walks every required Agent and confirms the worker has everything it needs
+/// to run an activity. Throws a single error listing EVERY missing piece so the
+/// operator doesn't have to fix them one at a time. Called at worker boot; if it
+/// throws, the process exits non-zero with the message visible.
 ///
 /// Checked invariants:
-///   - One GLOBAL `ModelRoleConfig` row per AgentRole (all 6).
-///   - For each role's `<provider>/...` spec, EITHER the row pins a
-///     specific `credentialId`, OR a GLOBAL `ProviderCredential` exists
-///     for that provider name.
+///   - Every agent key a registered step resolves (`requiredAgentKeys()`) has
+///     an active GLOBAL `Agent` whose model resolves — i.e. a `modelSpec` (or an
+///     `inheritsModelFrom` chain to one) AND a `ProviderCredential` for that
+///     provider. `resolveAgent` performs exactly this resolution, so we just run
+///     it and collect failures.
 ///   - The singleton `EmbeddingConfig` row exists, and its provider has a
-///     resolvable credential under the same rule.
+///     resolvable GLOBAL credential.
 export async function assertConfigReady(): Promise<void> {
   const missing: string[] = [];
 
-  // Per-role checks
-  for (const role of ALL_ROLES) {
-    const row = await prisma.modelRoleConfig.findFirst({
-      include: { credential: { select: { provider: true } } },
-      where: { role: ROLE_TO_PRISMA[role], scope: 'GLOBAL' },
-    });
-    if (!row) {
-      missing.push(`  - GLOBAL ModelRoleConfig for role '${role}'`);
-      continue;
-    }
-    let specProvider: string;
+  // Per-agent checks — only the keys some registered step needs. resolveAgent
+  // throws ConfigMissingError when the Agent, its model, or its credential is
+  // absent; collect the messages instead of failing on the first.
+  for (const role of requiredAgentKeys()) {
     try {
-      specProvider = parseProviderModelSpec(row.modelSpec).provider;
+      await resolveAgent(role);
     } catch (err) {
-      missing.push(
-        `  - ModelRoleConfig for '${role}' has invalid modelSpec '${row.modelSpec}': ${err instanceof Error ? err.message : err}`
-      );
-      continue;
-    }
-    if (row.credential) {
-      // A pinned credential must match the spec's provider; otherwise the
-      // worker uses the wrong API key at activity time and the request fails
-      // with an opaque 401 from the upstream LLM.
-      if (row.credential.provider !== specProvider) {
-        missing.push(
-          `  - ModelRoleConfig for '${role}' (spec '${row.modelSpec}', provider '${specProvider}') pins a credential for a different provider '${row.credential.provider}'. Either unpin or pin a matching one.`
-        );
-      }
-      continue;
-    }
-    const cred = await prisma.providerCredential.findFirst({
-      where: { provider: specProvider, scope: 'GLOBAL' },
-    });
-    if (!cred) {
-      missing.push(
-        `  - GLOBAL ProviderCredential for provider '${specProvider}' (needed by role '${role}')`
-      );
+      missing.push(`  - Agent '${role}': ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  // Embedding config check
+  // Embedding config check (separate singleton; not an Agent).
   const embedding = await prisma.embeddingConfig.findUnique({
     include: { credential: { select: { provider: true } } },
     where: { id: 'default' },
@@ -96,8 +68,8 @@ export async function assertConfigReady(): Promise<void> {
 
   if (missing.length > 0) {
     throw new Error(
-      `LLM configuration incomplete. The worker cannot start until the following rows exist in the database:\n${missing.join('\n')}\n\n` +
-        'Bring up the gateway + web dashboard first, sign in as an admin, and add the missing rows at /admin/model-config. See docs/model-configuration.md for the bootstrap flow.'
+      `LLM configuration incomplete. The worker cannot start until the following are resolvable:\n${missing.join('\n')}\n\n` +
+        'The built-in agents are created by the DB seed; add the missing ProviderCredential(s) and the EmbeddingConfig at /admin/model-config, and any custom agents at /admin/agents/library. See docs/model-configuration.md.'
     );
   }
 }

@@ -1409,3 +1409,52 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
     expect(result.status).toBe('TIMED_OUT');
   });
 });
+
+describe('agent node (P2)', () => {
+  it('dispatches an agent node to the runAgentNode step with its agentRef', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'done', type: 'agent', userMessage: 'review this' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runAgentNode: { text: 'looks good' } },
+    });
+    const result = await runSpec(spec, baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.map((c) => c.step)).toEqual(['runAgentNode']);
+    expect(calls[0].config.agentRef).toBe('reviewer');
+    expect(calls[0].config.userMessage).toBe('review this');
+  });
+
+  it('dispatches an mcp node to the mcpCallTool step with connectionRef + tool', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'mcp',
+      nodes: {
+        a: { connectionRef: 'conn-1', next: 'done', tool: 'search_docs', type: 'mcp' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { mcpCallTool: { result: { hits: 2 } } },
+    });
+    const ctx = baseCtx();
+    const result = await runSpec(spec, ctx, dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.map((c) => c.step)).toEqual(['mcpCallTool']);
+    expect(calls[0].config.connectionRef).toBe('conn-1');
+    expect(calls[0].config.tool).toBe('search_docs');
+    // Tool result binds at nodes.<id>.output like any step.
+    expect((ctx.nodes as Record<string, { output: unknown }>).a.output).toEqual({
+      result: { hits: 2 },
+    });
+  });
+});
