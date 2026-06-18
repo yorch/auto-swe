@@ -238,6 +238,13 @@ export interface TrackerConfig {
   baseUrl: string | null;
   email: string | null;
   apiToken: MaskedField | null;
+  instanceType: string | null;
+  storyPointsFieldId: string | null;
+  epicIssueType: string | null;
+  storyIssueType: string | null;
+  defaultProjectKey: string | null;
+  webhookSecret: MaskedField | null;
+  webhookTriggerStatus: string | null;
 }
 
 export interface TrackerConfigInput {
@@ -245,6 +252,13 @@ export interface TrackerConfigInput {
   baseUrl?: string | null;
   email?: string | null;
   apiToken?: string;
+  instanceType?: string | null;
+  storyPointsFieldId?: string | null;
+  epicIssueType?: string | null;
+  storyIssueType?: string | null;
+  defaultProjectKey?: string | null;
+  webhookSecret?: string;
+  webhookTriggerStatus?: string | null;
 }
 
 export function useTrackerConfig() {
@@ -267,6 +281,54 @@ export function testTrackerConnection(ticketId: string) {
   return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/tracker/test', {
     ticketId,
   });
+}
+
+// ── Knowledge base config ──
+
+export type KnowledgeBaseProvider = 'confluence' | 'notion';
+
+export interface KnowledgeBaseConfig {
+  provider: KnowledgeBaseProvider | null;
+  enabled: boolean;
+  baseUrl: string | null;
+  email: string | null;
+  apiToken: MaskedField | null;
+  spaces: string[];
+  maxPages: number | null;
+}
+
+export interface KnowledgeBaseConfigInput {
+  provider?: KnowledgeBaseProvider | null;
+  enabled?: boolean;
+  baseUrl?: string | null;
+  email?: string | null;
+  apiToken?: string;
+  spaces?: string[];
+  maxPages?: number | null;
+}
+
+export function useKnowledgeBaseConfig() {
+  return useQuery({
+    queryFn: () =>
+      api.get<ConfigResponse<KnowledgeBaseConfig>>('/api/v1/admin/config/knowledge-base'),
+    queryKey: ['admin-config-knowledge-base'],
+  });
+}
+
+export function useUpdateKnowledgeBaseConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: KnowledgeBaseConfigInput) =>
+      api.put<{ data: KnowledgeBaseConfig }>('/api/v1/admin/config/knowledge-base', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-knowledge-base'] }),
+  });
+}
+
+export function testKnowledgeBaseConnection(query: string) {
+  return api.post<{ ok: boolean; detail: string }>(
+    '/api/v1/admin/config/knowledge-base/test',
+    { query }
+  );
 }
 
 // ── Consolidation schedule config ──

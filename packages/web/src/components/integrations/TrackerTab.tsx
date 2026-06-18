@@ -46,6 +46,12 @@ export function TrackerTab() {
   const [baseUrl, setBaseUrl] = useState('');
   const [email, setEmail] = useState('');
   const [apiToken, setApiToken] = useState('');
+  const [storyPointsFieldId, setStoryPointsFieldId] = useState('');
+  const [epicIssueType, setEpicIssueType] = useState('');
+  const [storyIssueType, setStoryIssueType] = useState('');
+  const [defaultProjectKey, setDefaultProjectKey] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [webhookTriggerStatus, setWebhookTriggerStatus] = useState('');
 
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,11 +88,30 @@ export function TrackerTab() {
     if (apiToken) {
       body.apiToken = apiToken;
     }
+    if (storyPointsFieldId) {
+      body.storyPointsFieldId = storyPointsFieldId;
+    }
+    if (epicIssueType) {
+      body.epicIssueType = epicIssueType;
+    }
+    if (storyIssueType) {
+      body.storyIssueType = storyIssueType;
+    }
+    if (defaultProjectKey) {
+      body.defaultProjectKey = defaultProjectKey;
+    }
+    if (webhookSecret) {
+      body.webhookSecret = webhookSecret;
+    }
+    if (webhookTriggerStatus) {
+      body.webhookTriggerStatus = webhookTriggerStatus;
+    }
 
     try {
       await update.mutateAsync(body);
       setSaved(true);
       setApiToken('');
+      setWebhookSecret('');
     } catch (err) {
       setError(errMsg(err, 'Failed to save'));
     }
@@ -204,6 +229,149 @@ export function TrackerTab() {
           />
         </div>
       </Card>
+
+      {effectiveProvider === 'jira' && (
+        <Card>
+          <CardHeader>
+            <CardTitle eyebrow="Issue tracker">Jira field mapping</CardTitle>
+          </CardHeader>
+          <p className="mb-4 text-xs text-paper-500">
+            Customize field names for your Jira configuration. Defaults work for most cloud
+            instances.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="tracker-story-points"
+              >
+                Story Points Field ID
+                <SourceBadge source={sources.storyPointsFieldId} />
+                {data?.storyPointsFieldId && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                    current: {data.storyPointsFieldId}
+                  </span>
+                )}
+              </label>
+              <input
+                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                id="tracker-story-points"
+                onChange={(e) => setStoryPointsFieldId(e.target.value)}
+                placeholder="story_points"
+                value={storyPointsFieldId}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="tracker-epic-issue-type"
+              >
+                Epic Issue Type
+                <SourceBadge source={sources.epicIssueType} />
+                {data?.epicIssueType && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                    current: {data.epicIssueType}
+                  </span>
+                )}
+              </label>
+              <input
+                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                id="tracker-epic-issue-type"
+                onChange={(e) => setEpicIssueType(e.target.value)}
+                placeholder="Epic"
+                value={epicIssueType}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="tracker-story-issue-type"
+              >
+                Story Issue Type
+                <SourceBadge source={sources.storyIssueType} />
+                {data?.storyIssueType && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                    current: {data.storyIssueType}
+                  </span>
+                )}
+              </label>
+              <input
+                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                id="tracker-story-issue-type"
+                onChange={(e) => setStoryIssueType(e.target.value)}
+                placeholder="Story"
+                value={storyIssueType}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="tracker-default-project-key"
+              >
+                Default Project Key
+                <SourceBadge source={sources.defaultProjectKey} />
+                {data?.defaultProjectKey && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                    current: {data.defaultProjectKey}
+                  </span>
+                )}
+              </label>
+              <input
+                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                id="tracker-default-project-key"
+                onChange={(e) => setDefaultProjectKey(e.target.value)}
+                placeholder="PROJ"
+                value={defaultProjectKey}
+              />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {effectiveProvider === 'jira' && (
+        <Card>
+          <CardHeader>
+            <CardTitle eyebrow="Issue tracker">Inbound webhooks</CardTitle>
+          </CardHeader>
+          <p className="mb-4 text-xs text-paper-500">
+            Configure a webhook in Jira pointing to your gateway&apos;s{' '}
+            <span className="font-mono text-paper-300">/api/v1/webhooks/tracker</span> endpoint.
+            Enter the shared secret below and set it as the webhook secret in Jira.
+          </p>
+          <div className="space-y-4">
+            <SecretInput
+              current={data?.webhookSecret ?? null}
+              id="tracker-webhook-secret"
+              label="Webhook secret"
+              onChange={setWebhookSecret}
+              placeholder="Shared secret for HMAC verification"
+              source={sources.webhookSecret}
+              value={webhookSecret}
+            />
+            <div>
+              <label
+                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
+                htmlFor="tracker-webhook-trigger-status"
+              >
+                Trigger status
+                <SourceBadge source={sources.webhookTriggerStatus} />
+                {data?.webhookTriggerStatus && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
+                    current: {data.webhookTriggerStatus}
+                  </span>
+                )}
+              </label>
+              <input
+                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                id="tracker-webhook-trigger-status"
+                onChange={(e) => setWebhookTriggerStatus(e.target.value)}
+                placeholder="Ready for Dev"
+                value={webhookTriggerStatus}
+              />
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
