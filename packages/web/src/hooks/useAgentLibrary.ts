@@ -3,6 +3,13 @@ import { api } from '@/lib/api';
 
 export type AgentScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
 
+export interface AgentSkillRef {
+  id: string;
+  skillId: string;
+  sortOrder: number;
+  skill: { id: string; name: string };
+}
+
 export interface AgentRow {
   id: string;
   key: string;
@@ -17,11 +24,18 @@ export interface AgentRow {
   inheritsModelFrom: string | null;
   toolKeys: string[] | null;
   mcpConnectionId: string | null;
+  credentialId: string | null;
   origin: string | null;
   isBuiltIn: boolean;
   isVerified: boolean;
   isActive: boolean;
   createdAt: string;
+  skillRefs: AgentSkillRef[];
+}
+
+export interface SkillRefInput {
+  skillId: string;
+  sortOrder: number;
 }
 
 export interface CreateAgentBody {
@@ -36,6 +50,8 @@ export interface CreateAgentBody {
   inheritsModelFrom?: string | null;
   toolKeys?: string[] | null;
   mcpConnectionId?: string | null;
+  skillRefs?: SkillRefInput[] | null;
+  credentialId?: string | null;
 }
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;

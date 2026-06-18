@@ -22,6 +22,11 @@ export interface AgentScopeKey {
   workflowTemplateId?: string | null;
 }
 
+export interface SkillRefInput {
+  skillId: string;
+  sortOrder: number;
+}
+
 export interface AgentBaseInput {
   name?: string;
   description?: string | null;
@@ -33,6 +38,8 @@ export interface AgentBaseInput {
   credentialId?: string | null;
   /** P2/WS3: the `mcp` Connection whose tools bind when toolKeys includes 'mcp'. */
   mcpConnectionId?: string | null;
+  /** Ordered list of skills to attach. undefined = keep current; null/[] = clear. */
+  skillRefs?: SkillRefInput[] | null;
 }
 
 function scopeWhere(key: AgentScopeKey) {
@@ -150,7 +157,7 @@ export async function createAgent(
     throw new AgentLineageExistsError(key.key, key.scope);
   }
   const scan = base.systemPrompt ? await scanSkillContent(base.systemPrompt) : { warnings: [] };
-  const agent = await prisma.agent.create({
+  const agentBase = await prisma.agent.create({
     data: {
       createdById: actorId,
       credentialId: base.credentialId ?? null,
@@ -171,7 +178,15 @@ export async function createAgent(
       version: 1,
       workflowTemplateId: scopeWhere(key).workflowTemplateId,
     },
+  });
+  for (const ref of base.skillRefs ?? []) {
+    await prisma.agentSkillRef.create({
+      data: { agentId: agentBase.id, skillId: ref.skillId, sortOrder: ref.sortOrder },
+    });
+  }
+  const agent = await prisma.agent.findUniqueOrThrow({
     include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+    where: { id: agentBase.id },
   });
   return { agent, scanWarnings: scan.warnings };
 }
@@ -202,7 +217,20 @@ export async function updateAgent(
 
   const pick = <T>(next: T | undefined, prev: T): T => (next === undefined ? prev : next);
 
-  const agent = await prisma.agent.create({
+  // Determine skill refs for the new version: caller-supplied list, or copy from current.
+  let refsToCreate: SkillRefInput[];
+  if (base.skillRefs !== undefined) {
+    refsToCreate = base.skillRefs ?? [];
+  } else {
+    const currentRefs = await prisma.agentSkillRef.findMany({
+      orderBy: { sortOrder: 'asc' },
+      select: { skillId: true, sortOrder: true },
+      where: { agentId: current.id },
+    });
+    refsToCreate = currentRefs;
+  }
+
+  const agentBase = await prisma.agent.create({
     data: {
       createdById: actorId,
       credentialId: pick(base.credentialId, current.credentialId),
@@ -228,7 +256,15 @@ export async function updateAgent(
       version: nextVersion,
       workflowTemplateId: current.workflowTemplateId,
     },
+  });
+  for (const ref of refsToCreate) {
+    await prisma.agentSkillRef.create({
+      data: { agentId: agentBase.id, skillId: ref.skillId, sortOrder: ref.sortOrder },
+    });
+  }
+  const agent = await prisma.agent.findUniqueOrThrow({
     include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+    where: { id: agentBase.id },
   });
   return { agent, scanWarnings: scan.warnings };
 }
