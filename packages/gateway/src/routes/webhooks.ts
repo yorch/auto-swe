@@ -279,7 +279,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (wr?.externalTicketId) {
         const trackerConfig = await resolveIssueTrackerConfig();
         await syncTrackerOnEvent(
-          { type: 'workflow_completed', issueId: wr.externalTicketId },
+          { issueId: wr.externalTicketId, type: 'workflow_completed' },
           trackerConfig
         ).catch(() => null);
       }
@@ -392,8 +392,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         if (ticketId) {
           await syncTrackerOnEvent(
             passed
-              ? { type: 'ci_passed', issueId: ticketId }
-              : { type: 'ci_failed', issueId: ticketId, summary: `CI ${conclusion}` },
+              ? { issueId: ticketId, type: 'ci_passed' }
+              : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
             trackerConfig
           ).catch(() => null);
         }

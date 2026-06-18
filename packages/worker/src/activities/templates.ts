@@ -171,11 +171,11 @@ export async function finalizeWorkflowRun(
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
       status === 'SUCCESS'
-        ? { type: 'workflow_completed', issueId: externalTicketId }
+        ? { issueId: externalTicketId, type: 'workflow_completed' }
         : {
-            type: 'workflow_failed',
             issueId: externalTicketId,
             summary: `Workflow ended with status: ${status}`,
+            type: 'workflow_failed',
           },
       trackerConfig
     ).catch(() => null);

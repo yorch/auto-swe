@@ -116,10 +116,10 @@ async function doCreateOrUpdatePullRequest(
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
       {
-        type: 'pr_opened',
         issueId: request.externalTicketId,
-        prUrl,
         prTitle: `PR #${prNumber}`,
+        prUrl,
+        type: 'pr_opened',
       },
       trackerConfig
     ).catch(() => null);
