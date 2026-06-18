@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { resolveGitHubConfig, resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveGitHubConfig,
+  resolveIssueTrackerConfig,
+  resolveSlackConfig,
+} from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -270,6 +275,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         ).catch(() => null);
       }
 
+      // Best-effort tracker sync on PR merge.
+      if (wr?.externalTicketId) {
+        const trackerConfig = await resolveIssueTrackerConfig();
+        await syncTrackerOnEvent(
+          { type: 'workflow_completed', issueId: wr.externalTicketId },
+          trackerConfig
+        ).catch(() => null);
+      }
+
       return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };
     }
   );
@@ -298,7 +312,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
-        include: { workflow: true },
+        include: {
+          workflow: {
+            include: {
+              workRequest: { select: { externalTicketId: true } },
+            },
+          },
+        },
         where: {
           headSha,
           repository: { organizationName: org, repoName },
@@ -362,6 +382,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       for (const r of results) {
         if (r.status === 'rejected') {
           request.log.error({ err: r.reason }, 'Failed to signal workflow');
+        }
+      }
+
+      // Best-effort tracker sync on CI result.
+      const trackerConfig = await resolveIssueTrackerConfig();
+      for (const pr of pullRequests) {
+        const ticketId = pr.workflow?.workRequest?.externalTicketId;
+        if (ticketId) {
+          await syncTrackerOnEvent(
+            passed
+              ? { type: 'ci_passed', issueId: ticketId }
+              : { type: 'ci_failed', issueId: ticketId, summary: `CI ${conclusion}` },
+            trackerConfig
+          ).catch(() => null);
         }
       }
 

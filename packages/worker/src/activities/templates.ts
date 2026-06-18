@@ -1,4 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
@@ -124,6 +126,7 @@ export async function finalizeWorkflowRun(
           activeWorkflows: {
             select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
           },
+          externalTicketId: true,
         },
       },
     },
@@ -161,6 +164,22 @@ export async function finalizeWorkflowRun(
 
   // Team must have opted in via `Team.slackNotifySuccess`; otherwise no-op.
   await notifySlackRunComplete({ runId, status });
+
+  // Best-effort tracker sync on workflow terminal status.
+  const externalTicketId = run?.workRequest?.externalTicketId;
+  if (externalTicketId && (status === 'SUCCESS' || status === 'FAILED' || status === 'TIMED_OUT')) {
+    const trackerConfig = await resolveIssueTrackerConfig();
+    await syncTrackerOnEvent(
+      status === 'SUCCESS'
+        ? { type: 'workflow_completed', issueId: externalTicketId }
+        : {
+            type: 'workflow_failed',
+            issueId: externalTicketId,
+            summary: `Workflow ended with status: ${status}`,
+          },
+      trackerConfig
+    ).catch(() => null);
+  }
 }
 
 /**

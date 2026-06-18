@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveIssueTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -104,6 +105,20 @@ async function doCreateOrUpdatePullRequest(
     prUrl,
     workRequestId: request.workRequestId,
   });
+
+  // Best-effort tracker sync on PR opened.
+  if (request.externalTicketId) {
+    const trackerConfig = await resolveIssueTrackerConfig();
+    await syncTrackerOnEvent(
+      {
+        type: 'pr_opened',
+        issueId: request.externalTicketId,
+        prUrl,
+        prTitle: `PR #${prNumber}`,
+      },
+      trackerConfig
+    ).catch(() => null);
+  }
 
   tracer.addActivityEvent({
     name: 'pr.created',
