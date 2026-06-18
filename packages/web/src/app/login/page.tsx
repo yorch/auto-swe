@@ -221,7 +221,7 @@ function LoginPageInner() {
   // in the app works yet.
   if (pendingEmail) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-ink-900 px-6 py-12">
+      <div className="flex min-h-screen items-center justify-center bg-ink-800 px-6 py-12">
         <div className="w-full max-w-sm">
           <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-400">
             ¶ § auth/pending
@@ -287,42 +287,25 @@ function LoginPageInner() {
               <span className="display-italic text-3xl leading-none text-ember-400">·swe</span>
             </div>
             <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-              engineering · telemetry · v{APP_VERSION}
+              autonomous workflows
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              control plane online
+              gateway online
             </span>
           </div>
         </header>
 
-        <div className="relative z-10 max-w-xl space-y-8">
-          <div className="fade-up">
-            <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
-              ¶ Manifesto
-            </div>
-            <p className="font-display text-[44px] font-light leading-[1.1] tracking-tight text-paper-50">
-              A workshop for{' '}
-              <span className="display-italic text-ember-300">software at scale</span>
-              <span className="text-ember-400">.</span>
-            </p>
-          </div>
-          <p className="fade-up stagger-2 max-w-md text-base leading-relaxed text-paper-300">
-            Coordinate fleets of engineering agents, observe every workflow run, and ship code with
-            the rigor of an instrument — not a gamble.
-          </p>
-        </div>
-
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
           <span>© {new Date().getFullYear()} · brnby</span>
-          <span>oauth + magic link + password</span>
+          <span>v{APP_VERSION} · oauth + magic link + password</span>
         </footer>
       </aside>
 
       {/* RIGHT — sign-in panel */}
-      <section className="relative flex items-center justify-center bg-ink-900 px-6 py-12 lg:px-16">
+      <section className="relative flex items-center justify-center bg-ink-800 px-6 py-12 lg:px-16">
         <div className="w-full max-w-sm">
           <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
             <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
@@ -331,32 +314,31 @@ function LoginPageInner() {
             <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
           </div>
 
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
-            ¶ § auth/01
-          </div>
-          <h1 className="mb-2 font-display text-4xl font-light tracking-tight text-paper-50">
+          <h1 className="mb-8 font-display text-4xl font-light tracking-tight text-paper-50">
             Sign in.
           </h1>
-          <p className="mb-8 text-sm text-paper-400">
-            Pick a sign-in method. New email addresses join a pending-approval queue.
-          </p>
 
           {gatewayDown && (
             <div className="mb-6 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-brick-200">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-brick-400">
-                ! Gateway unreachable
+                ! Service unavailable
               </div>
               <p className="leading-relaxed">
-                Can't reach the auto-swe gateway at{' '}
-                <code className="text-brick-100" suppressHydrationWarning>
-                  {API_BASE}
-                </code>
-                . Sign-in won't work until the gateway is running and CORS_ORIGIN includes this
-                page's origin (
-                <code className="text-brick-100">
-                  {typeof window !== 'undefined' ? window.location.origin : ''}
-                </code>
-                ).
+                {IS_DEV ? (
+                  <>
+                    Can't reach the gateway at{' '}
+                    <code className="text-brick-100" suppressHydrationWarning>
+                      {API_BASE}
+                    </code>
+                    . Check that it's running and that CORS_ORIGIN includes{' '}
+                    <code className="text-brick-100">
+                      {typeof window !== 'undefined' ? window.location.origin : ''}
+                    </code>
+                    .
+                  </>
+                ) : (
+                  'Sign-in is temporarily unavailable. Try again in a moment.'
+                )}
               </p>
             </div>
           )}
