@@ -132,10 +132,7 @@ async function doCreateOrUpdatePullRequest(
       const kbConfig = await resolveKnowledgeBaseConfig();
       const kbProvider = createKnowledgeBaseProvider(kbConfig);
       if (kbProvider) {
-        const pages = await kbProvider.searchPages(
-          request.externalTicketId,
-          kbConfig.spaces,
-        );
+        const pages = await kbProvider.searchPages(request.externalTicketId, kbConfig.spaces);
         if (pages.length > 0 && pages[0]) {
           await kbProvider.updatePageWithPrLink(pages[0].id, prUrl, `PR #${prNumber}`);
           tracer.addActivityEvent({

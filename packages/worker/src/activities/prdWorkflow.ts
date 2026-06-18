@@ -10,7 +10,10 @@
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
-import { resolveIssueTrackerConfig, resolveKnowledgeBaseConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
+} from '@auto-swe/shared/lib/systemConfig';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,

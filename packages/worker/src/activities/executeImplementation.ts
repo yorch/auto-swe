@@ -1,6 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
-import { resolveIssueTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveIssueTrackerConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type {
   CodeResult,
@@ -118,11 +121,11 @@ export async function executeImplementation(
     resolveIssueTrackerConfig().then((trackerConfig) =>
       syncTrackerOnEvent(
         {
-          type: 'workflow_started',
           issueId: request.externalTicketId,
+          type: 'workflow_started',
         },
-        trackerConfig,
-      ).catch(() => null),
+        trackerConfig
+      ).catch(() => null)
     );
 
     let testResult: TestRunResult = {
