@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
+import { initTemporalClient } from './lib/temporalClient.js';
 
 async function run() {
   // Install Temporal runtime with OTel metrics if endpoint is available
@@ -34,6 +35,7 @@ async function run() {
   const connection = await NativeConnection.connect({
     address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
   });
+  await initTemporalClient();
 
   // Resolve workflow path relative to this file (ESM-compatible). Prefer
   // the TypeScript source so tsx-watch dev runs work; fall back to the

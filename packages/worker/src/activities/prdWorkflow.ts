@@ -301,7 +301,7 @@ export async function submitPrdWorkRequests(
     }
   }
 
-  const client = await getTemporalClient();
+  const client = getTemporalClient();
   const workRequestIds: string[] = [];
   const prdPrefix = `PRD-${Date.now()}`;
   let storyIndex = 0;
