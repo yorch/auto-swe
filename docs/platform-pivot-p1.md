@@ -7,7 +7,7 @@
 > three disconnected per-role config tables. It supersedes the `SkillOnlyRole` concept.
 >
 > Parent RFC: [`platform-pivot.md`](./platform-pivot.md) §P1 · diagrams:
-> [`platform-pivot-diagrams.md`](./platform-pivot-diagrams.md) §5 (agent resolution snapshot).
+> [`platform-pivot.md` → Architecture & flow diagrams](./platform-pivot.md#architecture--flow-diagrams) §5 (agent resolution snapshot).
 > Predecessor: [`platform-pivot-p0.md`](./platform-pivot-p0.md) (the `AgentSpec`/`runAgent`
 > foundation P1 plugs into).
 

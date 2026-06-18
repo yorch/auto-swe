@@ -24,11 +24,13 @@ agent-workflow platform (SWE becomes seed content). **P0 + P1 are implemented; P
 | Doc | Status | Purpose |
 |-----|--------|---------|
 | [platform-pivot.md](./platform-pivot.md) | In progress | RFC + roadmap (phases P0–P5) |
-| [platform-pivot-p0.md](./platform-pivot-p0.md) | ✅ Done | De-domainify the engine (enum→string, step registry, `AgentSpec`/`runAgent`, …) |
-| [platform-pivot-p1.md](./platform-pivot-p1.md) | ✅ Done | Agent library (first-class `Agent` entity, versioning, governed API + UI) |
-| [platform-pivot-p1.5.md](./platform-pivot-p1.5.md) | ✅ Done | Retire the role tables — `Agent` is the sole source of truth |
-| [platform-pivot-p2.md](./platform-pivot-p2.md) | 🔄 In progress | Declarative `agent` node (done) + MCP (pending) |
-| [platform-pivot-diagrams.md](./platform-pivot-diagrams.md) | Reference | Diagrams for the pivot |
+| [platform-pivot-p0.md](./platform-pivot-p0.md) | ✅ Done (archived) | De-domainify the engine (enum→string, step registry, `AgentSpec`/`runAgent`, …) |
+| [platform-pivot-p1.md](./platform-pivot-p1.md) | ✅ Done (archived) | Agent library (first-class `Agent` entity, versioning, governed API + UI) |
+| [platform-pivot-p1.5.md](./platform-pivot-p1.5.md) | ✅ Done (archived) | Retire the role tables — `Agent` is the sole source of truth |
+| [platform-pivot-p2.md](./platform-pivot-p2.md) | ✅ Done | Declarative `agent` node + MCP (all 5 work-streams) |
+| [platform-pivot-p3.md](./platform-pivot-p3.md) | ✅ Done (archived) | Generic Connections / inputs / triggers / memory |
+
+Diagrams for the pivot are folded into [platform-pivot.md → Architecture & flow diagrams](./platform-pivot.md#architecture--flow-diagrams).
 
 Top-level files:
 
