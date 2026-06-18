@@ -123,7 +123,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(
-      input.agentKey,
+      'implementer',
       input.defaultSystemPrompt,
       input.systemPromptOverride
     );
@@ -145,8 +145,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
 
     heartbeat(`${mode} agent completed`);
 
+    let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
     if (genResult.usage) {
-      await recordLlmUsage(
+      attribution = await recordLlmUsage(
         currentWorkflowId(),
         'implementer',
         genResult.usage,
@@ -154,9 +155,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       );
     }
 
+    // LLM output scanner — advisory, non-blocking; mirrors the initial
+    // implementation path. A DB failure here must not abort the activity.
     if (genResult.text) {
-      // LLM output scanner — advisory, non-blocking; mirrors the initial
-      // implementation path. A DB failure here must not abort the activity.
       try {
         const outputScan = await scanSkillContent(genResult.text);
         if (!outputScan.safe) {
@@ -169,13 +170,22 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       } catch {
         // Scan failure is non-fatal — the fix continues without the advisory check
       }
-      tracer.addLlmResponse({
-        durationMs: Date.now() - agentStart,
-        inputJson: { systemPrompt: fullSystemPrompt, userMessage },
-        outputJson: { text: genResult.text },
-        role: 'implementer',
-      });
     }
+
+    // Always record the LLM call, even when the model only makes tool calls
+    // and produces no text output.
+    tracer.addLlmResponse({
+      costUsd: attribution.costUsd,
+      durationMs: Date.now() - agentStart,
+      inputJson: { systemPrompt: fullSystemPrompt, userMessage },
+      inputTokens: attribution.inputTokens,
+      model: attribution.modelSpec || undefined,
+      outputJson: genResult.text
+        ? { text: genResult.text }
+        : { toolCallCount: genResult.steps?.length ?? 0 },
+      outputTokens: attribution.outputTokens,
+      role: 'implementer',
+    });
 
     let extraNote: string | null = null;
     if (input.afterGenerate) {

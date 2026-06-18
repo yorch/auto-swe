@@ -11,7 +11,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
-import { getModel, resolveSystemPrompt } from '../lib/models.js';
+import { getModel } from '../lib/models.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -154,19 +154,16 @@ export async function consolidateLessons(
     };
   }
 
-  // Resolve prompt + skills for the lessonConsolidator role (no ctx — this is a
-  // scheduled job unbound from any workflow run, so GLOBAL scope only).
-  const [consolidatorSkills, resolvedBasePrompt] = await Promise.all([
-    loadAgentSkills('lessonConsolidator'),
-    resolveSystemPrompt('lessonConsolidator', LESSON_CONSOLIDATOR_PROMPT),
-  ]);
+  // Load skills for the commitToMemory role (no ctx — consolidateLessons is
+  // a scheduled job unbound from any specific workflow run, so GLOBAL scope only).
+  const consolidatorSkills = await loadAgentSkills('commitToMemory');
   const consolidatorSkillSuffix = consolidatorSkills
     .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
   const consolidatorPrompt = consolidatorSkillSuffix
-    ? `${resolvedBasePrompt}\n\n${consolidatorSkillSuffix}`
-    : resolvedBasePrompt;
+    ? `${LESSON_CONSOLIDATOR_PROMPT}\n\n${consolidatorSkillSuffix}`
+    : LESSON_CONSOLIDATOR_PROMPT;
 
   const agent = new Agent({
     id: 'lesson-consolidator',
@@ -198,8 +195,9 @@ export async function consolidateLessons(
           structuredOutput: { schema: ConsolidatorOutputSchema },
         });
 
+        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          await recordLlmUsage(
+          attribution = await recordLlmUsage(
             'consolidateLessons',
             'commitToMemory',
             result.usage,
@@ -214,9 +212,13 @@ export async function consolidateLessons(
         const { lessons } = ConsolidatorOutputSchema.parse(result.object);
 
         tracer.addLlmResponse({
+          costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: consolidatorPrompt, userMessage: prompt },
+          inputTokens: attribution.inputTokens,
+          model: attribution.modelSpec || undefined,
           outputJson: { lessonsOut: lessons.length, sourceIds },
+          outputTokens: attribution.outputTokens,
           role: 'commitToMemory',
         });
 

@@ -1,6 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 
-const MAX_JSON_CHARS = 4_000;
+// Raised from 4 KB — a single bash output or file read commonly exceeds the
+// old limit and was silently destroyed. 32 KB preserves almost all real
+// payloads while keeping individual rows manageable.
+const MAX_JSON_CHARS = 32_000;
 
 function truncateStr(s: string, max = MAX_JSON_CHARS): string {
   if (s.length <= max) {
@@ -34,17 +37,36 @@ export interface TraceRecord {
   outputJson?: unknown;
   durationMs: number;
   error?: string;
+  /** `<provider>/<model>` spec — only set on llm_response records. */
+  model?: string;
+  /** Input token count — only set on llm_response records. */
+  inputTokens?: number;
+  /** Output token count — only set on llm_response records. */
+  outputTokens?: number;
+  /** USD cost rounded to micro-dollars — only set on llm_response records. */
+  costUsd?: number;
 }
 
 /**
  * Collects tool-call, LLM-response, and activity events during a single agent
  * activity execution and persists them to `agent_traces` when done.
  *
+ * Call `setSpanContext()` before `persist()` to attach W3C OTel trace/span IDs
+ * so trace rows can be correlated with Grafana/Tempo spans.
+ *
  * Best-effort: `persist()` swallows DB errors so tracing never breaks runs.
  */
 export class AgentTracer {
   private records: TraceRecord[] = [];
   private seq = 0;
+  private otelTraceId?: string;
+  private otelSpanId?: string;
+
+  /** Associate the OTel span active at activity completion with all records in this batch. */
+  setSpanContext(traceId: string, spanId: string): void {
+    this.otelTraceId = traceId;
+    this.otelSpanId = spanId;
+  }
 
   addToolCall(opts: {
     toolName: string;
@@ -64,19 +86,31 @@ export class AgentTracer {
     });
   }
 
-  /** Record a structured LLM response (non-tool-calling agents: reviewers, security, planner, etc.). */
+  /**
+   * Record an LLM call — both the request (systemPrompt + userMessage) and the
+   * response. Pass `model`, `inputTokens`, `outputTokens`, `costUsd` from the
+   * return value of `recordLlmUsage()` to attach per-call attribution.
+   */
   addLlmResponse(opts: {
     role?: string;
     inputJson?: unknown;
     outputJson?: unknown;
     durationMs: number;
     error?: string;
+    model?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
   }): void {
     this.records.push({
+      costUsd: opts.costUsd,
       durationMs: opts.durationMs,
       error: opts.error,
       inputJson: opts.inputJson !== undefined ? truncateJsonValues(opts.inputJson) : undefined,
+      inputTokens: opts.inputTokens,
+      model: opts.model,
       outputJson: opts.outputJson !== undefined ? truncateJsonValues(opts.outputJson) : undefined,
+      outputTokens: opts.outputTokens,
       seq: this.seq++,
       toolName: opts.role,
       type: 'llm_response',
@@ -116,11 +150,17 @@ export class AgentTracer {
         data: this.records.map((r) => ({
           agentKey,
           attempt,
+          costUsd: r.costUsd ?? null,
           durationMs: r.durationMs,
           error: r.error ?? null,
           inputJson: r.inputJson as object | undefined,
+          inputTokens: r.inputTokens ?? null,
+          model: r.model ?? null,
           nodeId,
+          otelSpanId: this.otelSpanId ?? null,
+          otelTraceId: this.otelTraceId ?? null,
           outputJson: r.outputJson as object | undefined,
+          outputTokens: r.outputTokens ?? null,
           runId,
           seq: r.seq,
           toolName: r.toolName ?? null,

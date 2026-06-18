@@ -114,19 +114,25 @@ export async function finalizeWorkflowRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   contextSnapshot?: unknown
 ): Promise<void> {
-  // Phase-8 denormalize the run's cost onto workflow_runs at finalize time.
-  // Read the workRequest → activeWorkflows join once, sum, then write it back.
+  // Phase-8 denormalize the run's cost + token totals onto workflow_runs at finalize
+  // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
     select: {
       workflowId: true,
-      workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
+      workRequest: {
+        select: {
+          activeWorkflows: {
+            select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
+          },
+        },
+      },
     },
     where: { id: runId },
   });
-  const costUsdAccrued = (run?.workRequest?.activeWorkflows ?? []).reduce(
-    (sum, aw) => sum + aw.costUsdAccrued,
-    0
-  );
+  const workflows = run?.workRequest?.activeWorkflows ?? [];
+  const costUsdAccrued = workflows.reduce((sum, aw) => sum + aw.costUsdAccrued, 0);
+  const tokensInputTotal = workflows.reduce((sum, aw) => sum + aw.tokensInputUsed, 0);
+  const tokensOutputTotal = workflows.reduce((sum, aw) => sum + aw.tokensOutputUsed, 0);
 
   await prisma.workflowRun.update({
     data: {
@@ -134,6 +140,8 @@ export async function finalizeWorkflowRun(
       costUsdAccrued,
       endedAt: new Date(),
       status,
+      tokensInputTotal,
+      tokensOutputTotal,
     },
     where: { id: runId },
   });

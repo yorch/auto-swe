@@ -24,12 +24,21 @@ const TYPE_GLYPH: Record<string, { label: string; color: string; bg: string }> =
   tool_call: { bg: 'oklch(0.66 0 0 / 0.12)', color: 'var(--color-paper-500)', label: 'tool' },
 };
 
+/** Strip provider prefix from a model spec: `anthropic/claude-opus-4-8` → `claude-opus-4-8` */
+function modelShortName(model: string): string {
+  return model.split('/').at(-1) ?? model;
+}
+
 function traceSummary(trace: AgentTraceRecord): { label: string; detail: string } {
   const input = trace.inputJson as Record<string, unknown> | null;
   const name = trace.toolName ?? '';
 
   if (trace.type === 'llm_response') {
-    return { detail: trace.agentKey, label: name || trace.agentKey };
+    const modelLabel = trace.model ? modelShortName(trace.model) : null;
+    return {
+      detail: modelLabel ?? trace.agentKey,
+      label: name || trace.agentKey,
+    };
   }
 
   if (trace.type === 'activity_event') {
@@ -67,8 +76,238 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
 
 const OUTPUT_TEXT_FIELDS = ['text', 'output', 'content', 'listing', 'result'] as const;
 
+// ── CollapsibleSection ────────────────────────────────────────────────────────
+
+function CollapsibleSection({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        className="flex items-center gap-1 text-paper-500 hover:text-paper-300 transition-colors mb-1"
+        onClick={() => setOpen((v) => !v)}
+        style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}
+        type="button"
+      >
+        <span style={{ fontSize: '7px' }}>{open ? '▼' : '▶'}</span>
+        {label.toUpperCase()}
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+// ── TruncatedText ─────────────────────────────────────────────────────────────
+
+const TRUNCATE_LIMIT = 2000;
+
+function TruncatedText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isTruncated = text.length > TRUNCATE_LIMIT;
+  const displayed = isTruncated && !expanded ? text.slice(0, TRUNCATE_LIMIT) : text;
+
+  return (
+    <>
+      <pre
+        className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+        style={{
+          background: 'var(--color-ink-900)',
+          border: '1px solid var(--color-ink-500)',
+          borderRadius: '2px',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '10px',
+          lineHeight: 1.5,
+        }}
+      >
+        {displayed}
+        {isTruncated && !expanded ? '…' : ''}
+      </pre>
+      {isTruncated && (
+        <button
+          className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
+          onClick={() => setExpanded((v) => !v)}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+          type="button"
+        >
+          {expanded ? 'show less' : `show more (${text.length - TRUNCATE_LIMIT} more chars)`}
+        </button>
+      )}
+    </>
+  );
+}
+
+// ── TraceOutput ───────────────────────────────────────────────────────────────
+
 function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
   const output = trace.outputJson as Record<string, unknown> | null;
+  const input = trace.inputJson as Record<string, unknown> | null;
+
+  // For llm_response records with systemPrompt/userMessage in inputJson: show
+  // a collapsible "Request" section (system + user) and a "Response" section.
+  if (trace.type === 'llm_response' && input && 'systemPrompt' in input) {
+    const systemPrompt = typeof input.systemPrompt === 'string' ? input.systemPrompt : null;
+    const userMessage = typeof input.userMessage === 'string' ? input.userMessage : null;
+    const outputText = output
+      ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
+          | string
+          | undefined) ?? JSON.stringify(output, null, 2))
+      : null;
+
+    const hasRequest = systemPrompt !== null || userMessage !== null;
+    const hasResponse = Boolean(outputText) || Boolean(trace.error);
+
+    if (!hasRequest && !hasResponse) {
+      return null;
+    }
+
+    return (
+      <div className="mt-2 space-y-2">
+        {trace.error && (
+          <div
+            className="text-brick-400 px-2 py-1.5"
+            style={{
+              background: 'oklch(0.64 0.17 28 / 0.09)',
+              border: '1px solid oklch(0.64 0.17 28 / 0.3)',
+              borderRadius: '2px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+            }}
+          >
+            {trace.error}
+          </div>
+        )}
+        {hasRequest && (
+          <CollapsibleSection defaultOpen={false} label="Request">
+            <div className="space-y-1.5">
+              {systemPrompt !== null && (
+                <div>
+                  <div
+                    className="text-paper-600 mb-0.5"
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+                  >
+                    system
+                  </div>
+                  <TruncatedText text={systemPrompt} />
+                </div>
+              )}
+              {userMessage !== null && (
+                <div>
+                  <div
+                    className="text-paper-600 mb-0.5"
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+                  >
+                    user
+                  </div>
+                  <TruncatedText text={userMessage} />
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+        )}
+        {outputText && (
+          <CollapsibleSection defaultOpen={true} label="Response">
+            <pre
+              className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+              style={{
+                background: 'var(--color-ink-900)',
+                border: '1px solid var(--color-ink-500)',
+                borderRadius: '2px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                lineHeight: 1.5,
+              }}
+            >
+              {outputText.slice(0, 3000)}
+              {outputText.length > 3000 ? '\n…' : ''}
+            </pre>
+          </CollapsibleSection>
+        )}
+      </div>
+    );
+  }
+
+  // For activity_event records: show inputJson (if present) above the output.
+  if (trace.type === 'activity_event') {
+    const inputText = input ? JSON.stringify(input, null, 2) : null;
+    const outputText = output
+      ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
+          | string
+          | undefined) ?? JSON.stringify(output, null, 2))
+      : null;
+
+    const hasContent = Boolean(trace.error) || inputText !== null || outputText !== null;
+    if (!hasContent) {
+      return null;
+    }
+
+    return (
+      <div className="mt-2 space-y-1.5">
+        {trace.error && (
+          <div
+            className="text-brick-400 px-2 py-1.5"
+            style={{
+              background: 'oklch(0.64 0.17 28 / 0.09)',
+              border: '1px solid oklch(0.64 0.17 28 / 0.3)',
+              borderRadius: '2px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+            }}
+          >
+            {trace.error}
+          </div>
+        )}
+        {inputText && (
+          <div>
+            <div
+              className="text-paper-600 mb-0.5"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+            >
+              INPUT
+            </div>
+            <pre
+              className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+              style={{
+                background: 'var(--color-ink-900)',
+                border: '1px solid var(--color-ink-500)',
+                borderRadius: '2px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                lineHeight: 1.5,
+              }}
+            >
+              {inputText.slice(0, 3000)}
+              {inputText.length > 3000 ? '\n…' : ''}
+            </pre>
+          </div>
+        )}
+        {outputText && (
+          <pre
+            className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
+            style={{
+              background: 'var(--color-ink-900)',
+              border: '1px solid var(--color-ink-500)',
+              borderRadius: '2px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              lineHeight: 1.5,
+            }}
+          >
+            {outputText.slice(0, 3000)}
+            {outputText.length > 3000 ? '\n…' : ''}
+          </pre>
+        )}
+      </div>
+    );
+  }
+
+  // Default: show outputJson only (tool_call and fallback)
   const text = output
     ? ((OUTPUT_TEXT_FIELDS.map((k) => output[k]).find((v) => typeof v === 'string') as
         | string
@@ -112,6 +351,35 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         </pre>
       )}
     </div>
+  );
+}
+
+// ── TokenCostChip ─────────────────────────────────────────────────────────────
+
+function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
+  if (trace.type !== 'llm_response') {
+    return null;
+  }
+  const hasTokens = trace.inputTokens != null || trace.outputTokens != null;
+  const hasCost = trace.costUsd != null;
+  if (!hasTokens && !hasCost) {
+    return null;
+  }
+
+  const tokenLabel = hasTokens
+    ? `↑${(trace.inputTokens ?? 0).toLocaleString()} ↓${(trace.outputTokens ?? 0).toLocaleString()}`
+    : null;
+  const costLabel = hasCost ? `$${(trace.costUsd as number).toFixed(4)}` : null;
+
+  return (
+    <span
+      className="text-paper-500 shrink-0"
+      style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}
+    >
+      {tokenLabel}
+      {tokenLabel && costLabel ? ' ' : ''}
+      {costLabel}
+    </span>
   );
 }
 
@@ -181,8 +449,9 @@ function EventRow({
             </span>
           )}
 
-          {/* Right: duration + error chip */}
+          {/* Right: token/cost chip + duration + error chip */}
           <div className="flex items-center gap-2 ml-auto shrink-0">
+            <TokenCostChip trace={trace} />
             {durationLabel && (
               <span className="text-paper-600 num" style={{ fontSize: '10px' }}>
                 {durationLabel}

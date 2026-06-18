@@ -2,7 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { MEMORY_SUMMARIZER_PROMPT } from '../agents/prompts.js';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
@@ -35,11 +35,19 @@ async function writeMemoryItemRow(input: {
   failureType: FailureType;
   metadata: Record<string, unknown> | null;
   skillsActive?: string[];
+  workflowRunId?: string;
+  agentKey?: string;
+  model?: string;
+  costUsd?: number;
 }): Promise<string> {
   const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
   const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO memory_items (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, skills_active, created_at)
-     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7, $8::jsonb, $9::text[], now())
+    `INSERT INTO memory_items
+       (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model,
+        failure_type, metadata, skills_active, workflow_run_id, agent_key, model, cost_usd, created_at)
+     VALUES
+       (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7, $8::jsonb, $9::text[],
+        $10::uuid, $11, $12, $13, now())
      RETURNING id`,
     input.workflowId,
     input.repoId,
@@ -49,7 +57,11 @@ async function writeMemoryItemRow(input: {
     spec,
     input.failureType,
     JSON.stringify(input.metadata ?? {}),
-    input.skillsActive ?? []
+    input.skillsActive ?? [],
+    input.workflowRunId ?? null,
+    input.agentKey ?? null,
+    input.model ?? null,
+    input.costUsd ?? null
   );
   return rows[0]?.id ?? '';
 }
@@ -74,6 +86,8 @@ export async function commitToMemory(
   if (!workflow) {
     throw new Error(`Workflow not found: ${temporalWorkflowId}`);
   }
+
+  const workflowRunId = await currentWorkflowRunId();
 
   const agentTracer = new AgentTracer();
   const start = Date.now();
@@ -117,8 +131,9 @@ export async function commitToMemory(
       structuredOutput: { schema: LessonOutputSchema },
     });
 
+    let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
     if (result.usage) {
-      await recordLlmUsage(
+      attribution = await recordLlmUsage(
         temporalWorkflowId,
         'commitToMemory',
         result.usage,
@@ -132,24 +147,32 @@ export async function commitToMemory(
     const lesson = result.object as z.infer<typeof LessonOutputSchema>;
 
     agentTracer.addLlmResponse({
+      costUsd: attribution.costUsd,
       durationMs: Date.now() - start,
       inputJson: { systemPrompt, userMessage: llmUserMessage },
+      inputTokens: attribution.inputTokens,
+      model: attribution.modelSpec || undefined,
       outputJson: {
         failureType: lesson.failureType,
         lessonSummary: lesson.lessonSummary,
         rationale: lesson.rationale,
       },
+      outputTokens: attribution.outputTokens,
       role: 'commitToMemory',
     });
 
     const lessonId = await writeMemoryItemRow({
+      agentKey: 'commitToMemory',
+      costUsd: attribution.costUsd,
       failureType: lesson.failureType,
       lessonSummary: lesson.lessonSummary,
       metadata: lesson.metadata,
+      model: attribution.modelSpec || undefined,
       rationale: lesson.rationale,
       repoId,
       skillsActive: skills.map((s) => s.name),
       workflowId: workflow.id,
+      workflowRunId,
     });
 
     agentTracer.addActivityEvent({

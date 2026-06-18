@@ -66,17 +66,27 @@ export async function runAgent<T = unknown>(
             })
           : await agent.generate([{ content: userMessage, role: 'user' }]);
 
+        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (genResult.usage) {
-          await recordLlmUsage(currentWorkflowId(), spec.agentKey, genResult.usage, spanName);
+          attribution = await recordLlmUsage(
+            currentWorkflowId(),
+            spec.agentKey,
+            genResult.usage,
+            spanName
+          );
         }
 
         const object = (genResult.object ?? undefined) as T | undefined;
         const text = genResult.text || undefined;
 
         tracer.addLlmResponse({
+          costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: spec.systemPrompt, userMessage },
+          inputTokens: attribution.inputTokens,
+          model: attribution.modelSpec || undefined,
           outputJson: object !== undefined ? { object } : { text },
+          outputTokens: attribution.outputTokens,
           role: spec.agentKey,
         });
 

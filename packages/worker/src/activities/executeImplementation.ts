@@ -156,8 +156,9 @@ export async function executeImplementation(
         { toolChoice: 'auto' }
       );
 
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
       if (genResult.usage) {
-        await recordLlmUsage(
+        attribution = await recordLlmUsage(
           currentWorkflowId(),
           'implementer',
           genResult.usage,
@@ -165,10 +166,9 @@ export async function executeImplementation(
         );
       }
 
-      // Record implementer's reasoning text (the LLM response between tool calls)
+      // LLM output scanner — advisory, non-blocking. A DB/network failure here
+      // must not abort the implementation activity.
       if (genResult.text) {
-        // LLM output scanner — advisory, non-blocking. A DB/network failure here
-        // must not abort the implementation activity.
         try {
           const outputScan = await scanSkillContent(genResult.text);
           if (!outputScan.safe) {
@@ -181,13 +181,22 @@ export async function executeImplementation(
         } catch {
           // Scan failure is non-fatal — implementation continues without the advisory check
         }
-        tracer.addLlmResponse({
-          durationMs: 0,
-          inputJson: { iteration, systemPrompt: llmSystemPrompt, userMessage: llmUserMessage },
-          outputJson: { text: genResult.text },
-          role: 'implementer',
-        });
       }
+
+      // Always record the LLM call per TDD iteration, even when the model only
+      // makes tool calls and produces no text output.
+      tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
+        durationMs: 0,
+        inputJson: { iteration, systemPrompt: llmSystemPrompt, userMessage: llmUserMessage },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
+        outputJson: genResult.text
+          ? { text: genResult.text }
+          : { toolCallCount: genResult.steps?.length ?? 0 },
+        outputTokens: attribution.outputTokens,
+        role: 'implementer',
+      });
 
       // Run tests
       const testStart = Date.now();

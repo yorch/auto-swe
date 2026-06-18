@@ -55,8 +55,14 @@ export async function decomposeEpic(
           structuredOutput: { schema: PlannerOutputSchema },
         });
 
+        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          await recordLlmUsage(currentWorkflowId(), 'planner', result.usage, 'llm.epic_planner');
+          attribution = await recordLlmUsage(
+            currentWorkflowId(),
+            'planner',
+            result.usage,
+            'llm.epic_planner'
+          );
         }
 
         if (!result.object) {
@@ -76,12 +82,16 @@ export async function decomposeEpic(
         }));
 
         tracer?.addLlmResponse({
+          costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt, userMessage: llmUserMessage },
+          inputTokens: attribution.inputTokens,
+          model: attribution.modelSpec || undefined,
           outputJson: {
             repoCount: finalRepos.length,
             repos: finalRepos.map((r) => ({ dependsOn: r.dependsOn, repoId: r.repoId })),
           },
+          outputTokens: attribution.outputTokens,
           role: 'planner',
         });
 
