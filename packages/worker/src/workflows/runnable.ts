@@ -201,6 +201,28 @@ const mcpNodeActivities = proxyActivities<Pick<typeof activitiesType, 'mcpCallTo
   startToCloseTimeout: '10m',
 });
 
+// CI-wait config resolution — a quick DB read, same shape as the other config
+// activities.
+const ciConfigActivities = proxyActivities<Pick<typeof activitiesType, 'resolveCiWaitConfig'>>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '1m',
+});
+
+// CI polling — a long-running activity that self-bounds by its `deadlineSec`
+// input and heartbeats each tick. `startToCloseTimeout` must exceed the largest
+// configurable deadline (default 4h); no Temporal-level retry — the poll loop
+// already tolerates transient fetch errors, and a deadline is terminal.
+const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'waitForCiByPolling'>>({
+  heartbeatTimeout: '2m',
+  retry: { maximumAttempts: 1 },
+  startToCloseTimeout: '6h',
+});
+
 // ── Inputs ──
 
 export interface RunnableWorkflowInput {
@@ -512,6 +534,27 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     'fetchCILogs',
     ({ inputs }) => githubActivities.fetchCILogs(inputs.logsUrl as string | undefined),
+  ],
+  ['resolveCiWaitConfig', () => ciConfigActivities.resolveCiWaitConfig()],
+  [
+    'waitForCiByPolling',
+    ({ ctx, request, inputs }) => {
+      const ref =
+        (inputs.ref as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
+      if (!ref) {
+        throw new Error(
+          'waitForCiByPolling requires inputs.ref or context.currentCodeResult.branch'
+        );
+      }
+      return ciPollActivities.waitForCiByPolling({
+        deadlineSec: inputs.deadlineSec as number,
+        graceSec: inputs.graceSec as number,
+        intervalSec: inputs.intervalSec as number,
+        ref,
+        repoId: request.repoId,
+      });
+    },
   ],
   [
     'commitToMemory',

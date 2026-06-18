@@ -59,3 +59,5 @@ export {
   resolveTemplateForRepo,
 } from './templates.js';
 export { validateContext } from './validateContext.js';
+export type { CiWaitConfig, WaitForCiByPollingInput } from './waitForCiByPolling.js';
+export { resolveCiWaitConfig, waitForCiByPolling } from './waitForCiByPolling.js';

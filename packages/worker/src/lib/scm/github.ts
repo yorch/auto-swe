@@ -13,7 +13,9 @@
 
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
+import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import type {
+  CiStatusResult,
   CloneCredentials,
   CreatePullRequestInput,
   PullRequestRef,
@@ -86,6 +88,41 @@ export class GitHubScmProvider implements ScmProvider {
     const ghConfig = await resolveGitHubConfig();
     const baseUrl = repo.baseUrl ?? ghConfig.baseUrl;
     return `${baseUrl}/${repo.organizationName}/${repo.repoName}/pull/${prNumber}`;
+  }
+
+  async fetchCiStatus(repo: RepoRef, ref: string): Promise<CiStatusResult> {
+    const { Octokit } = await import('@octokit/rest');
+    const ghConfig = await resolveGitHubConfig();
+    const token = await requireGitHubToken(ghConfig);
+    const apiUrl =
+      repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
+    const octokit = new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
+
+    const owner = repo.organizationName;
+    const repoName = repo.repoName;
+
+    // Query both surfaces: check-runs (Checks API) + the combined commit status
+    // (legacy Statuses API). Either may be empty depending on how the repo runs CI.
+    const [checksResp, combinedResp] = await Promise.all([
+      octokit.checks.listForRef({ owner, ref, repo: repoName }),
+      octokit.repos.getCombinedStatusForRef({ owner, ref, repo: repoName }),
+    ]);
+
+    const checkRuns = checksResp.data.check_runs.map((r) => ({
+      conclusion: r.conclusion,
+      htmlUrl: r.html_url,
+      status: r.status,
+    }));
+    const combined = {
+      state: combinedResp.data.state,
+      targetUrl: combinedResp.data.statuses[0]?.target_url ?? null,
+      totalCount: combinedResp.data.total_count,
+    };
+
+    return {
+      logsUrl: pickLogsUrl(checkRuns, combined),
+      verdict: normalizeCiStatus(checkRuns, combined),
+    };
   }
 
   async fetchCiLogs(logsUrl: string): Promise<string> {

@@ -106,12 +106,30 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
         'context.reviewRetries': { literal: 0 },
       },
     },
+    // ── CI wait: signal (webhook, default) vs poll (active GitHub query) ──
+    loadCiWaitConfig: {
+      next: 'routeCiWait',
+      step: 'resolveCiWaitConfig',
+      type: 'step',
+    },
     openPR: {
       inputs: {
         codeResult: { from: 'context.currentCodeResult' },
       },
       next: 'savePrInfo',
       step: 'createOrUpdatePullRequest',
+      type: 'step',
+    },
+    pollForCI: {
+      inputs: {
+        deadlineSec: { from: 'nodes.loadCiWaitConfig.output.deadlineSec' },
+        graceSec: { from: 'nodes.loadCiWaitConfig.output.graceSec' },
+        intervalSec: { from: 'nodes.loadCiWaitConfig.output.intervalSec' },
+        ref: { from: 'context.currentCodeResult.branch' },
+      },
+      next: 'storePollResult',
+      onError: 'fail',
+      step: 'waitForCiByPolling',
       type: 'step',
     },
     review: {
@@ -132,8 +150,14 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       step: 'executeReviewFixImplementation',
       type: 'step',
     },
+    routeCiWait: {
+      expr: "nodes.loadCiWaitConfig.output.mode == 'poll'",
+      onFalse: 'waitForCI',
+      onTrue: 'pollForCI',
+      type: 'cond',
+    },
     savePrInfo: {
-      next: 'waitForCI',
+      next: 'loadCiWaitConfig',
       type: 'set',
       values: {
         'context.prNumber': { from: 'nodes.openPR.output.prNumber' },
@@ -189,6 +213,17 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       type: 'set',
       values: {
         'context.lastCILogs': { from: 'nodes.fetchLogs.output' },
+      },
+    },
+    storePollResult: {
+      next: 'checkCI',
+      type: 'set',
+      values: {
+        // The poll activity returns `ciPassed` (not `passed`) so its raw step
+        // output is never mistaken for a failed quality gate; remap it here into
+        // the same `ciResultPayload` shape the webhook signal stores.
+        'context.ciResultPayload.logsUrl': { from: 'nodes.pollForCI.output.logsUrl' },
+        'context.ciResultPayload.passed': { from: 'nodes.pollForCI.output.ciPassed' },
       },
     },
     storeRejection: {

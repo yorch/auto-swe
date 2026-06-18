@@ -245,12 +245,32 @@ export async function resolveStorageConfig(_opts?: ResolveOpts): Promise<Resolve
 
 // ─── Workflow defaults ────────────────────────────────────────────────────────
 
+/** How the engineering workflow waits for CI after opening a PR. */
+export type CiWaitMode = 'signal' | 'poll';
+
 export interface ResolvedWorkflowDefaults {
   branchPrefix: string;
   prTitleTemplate: string;
   /// Empty string means use the worker's baked-in default body template.
   prBodyTemplate: string;
   defaultTeamSlug: string;
+  /**
+   * CI-wait strategy. `signal` (default) blocks for a GitHub webhook; `poll`
+   * actively queries the GitHub CI APIs — use it where no inbound webhook can
+   * reach the gateway (local dev, air-gapped). Env-driven for now (`CI_WAIT_MODE`);
+   * a DB-backed admin toggle is a follow-up.
+   */
+  ciWaitMode: CiWaitMode;
+  ciPollIntervalSec: number;
+  /// After this long with no CI checks present, the poller concludes "passed".
+  ciPollGraceSec: number;
+  ciPollDeadlineSec: number;
+}
+
+/** Parse a positive-integer env var, falling back to `fallback` when unset/invalid. */
+function envPositiveInt(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 export async function resolveWorkflowDefaults(
@@ -259,6 +279,10 @@ export async function resolveWorkflowDefaults(
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     branchPrefix: row?.branchPrefix ?? process.env.BRANCH_PREFIX ?? 'auto',
+    ciPollDeadlineSec: envPositiveInt(process.env.CI_POLL_DEADLINE_SEC, 14_400),
+    ciPollGraceSec: envPositiveInt(process.env.CI_POLL_GRACE_SEC, 60),
+    ciPollIntervalSec: envPositiveInt(process.env.CI_POLL_INTERVAL_SEC, 15),
+    ciWaitMode: process.env.CI_WAIT_MODE === 'poll' ? 'poll' : 'signal',
     defaultTeamSlug: row?.defaultTeamSlug ?? process.env.DEFAULT_TEAM_SLUG ?? 'default',
     prBodyTemplate: row?.prBodyTemplate ?? process.env.PR_BODY_TEMPLATE ?? '',
     prTitleTemplate:
