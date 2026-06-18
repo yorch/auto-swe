@@ -305,7 +305,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'planner', tokensIn: 8000, tokensOut: 1500 },
   description:
     'Analyse a PRD document for engineering readiness: gaps, ambiguities, missing NFRs. ' +
@@ -316,7 +316,7 @@ register({
 
 register({
   category: 'agent',
-  configFields: [],
+  configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'planner', tokensIn: 12000, tokensOut: 3000 },
   description:
     'Decompose a PRD (plus optional PM feedback) into epics and stories with acceptance criteria. ' +
