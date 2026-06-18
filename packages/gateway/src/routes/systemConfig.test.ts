@@ -30,14 +30,15 @@ vi.mock('../lib/systemConfigService.js', () => ({
   })),
   getGitHubConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getGoogleOAuthConfig: vi.fn(async () => ({ data: {}, sources: {} })),
+  getIssueTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
+  getKnowledgeBaseConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getSlackConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getStorageConfig: vi.fn(async () => ({ data: {}, sources: {} })),
-  // Worktree uses getTrackerConfig (not getIssueTrackerConfig)
-  getTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   listConfigAuditEntries: vi.fn(async () => []),
   SYSTEM_CONFIG_IDS: {
     github: '00000000-0000-0000-0001-000000000001',
     googleOAuth: '00000000-0000-0000-0001-000000000005',
+    knowledgeBase: '00000000-0000-0000-0001-000000000007',
     slack: '00000000-0000-0000-0001-000000000002',
     storage: '00000000-0000-0000-0001-000000000003',
     tracker: '00000000-0000-0000-0001-000000000006',
@@ -45,17 +46,17 @@ vi.mock('../lib/systemConfigService.js', () => ({
   },
   testDecryptSecrets: vi.fn(async () => ({})),
   testGitHubConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
+  testIssueTrackerConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
+  testKnowledgeBaseConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testSlackConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testStorageConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
-  // Worktree uses testTrackerConnection (not testIssueTrackerConnection)
-  testTrackerConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   updateConsolidationConfig: vi.fn(async () => {}),
   updateGitHubConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateGoogleOAuthConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
+  updateIssueTrackerConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
+  updateKnowledgeBaseConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateSlackConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateStorageConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
-  // Worktree uses updateTrackerConfig (not updateIssueTrackerConfig)
-  updateTrackerConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   writeSystemConfigAudit: vi.fn(async () => {}),
 }));
 
