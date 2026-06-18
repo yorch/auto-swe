@@ -1,5 +1,6 @@
 'use client';
 
+import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type {
   GlobalAnalyticsResponse,
   SpecDiffResponse,
@@ -124,7 +125,7 @@ export function useUpdateWorkflowTemplate(templateId: string) {
         status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
         experimentVersion: number | null;
         experimentSplit: number | null;
-        inputSchema: unknown;
+        inputSchema: InputSchema | null;
       }>
     ) =>
       api.patch<{ data: WorkflowTemplateSummary }>(
@@ -176,6 +177,28 @@ export function useGlobalAnalytics(windowDays = 30) {
         .then((r) => r.data),
     queryKey: ['global-analytics', windowDays],
     refetchInterval: 30_000,
+  });
+}
+
+export function useRegenerateWebhook(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post<{ data: { webhookToken: string } }>(
+          `/api/v1/workflow-templates/${templateId}/webhook/regenerate`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+  });
+}
+
+export function useRevokeWebhook(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<void>(`/api/v1/workflow-templates/${templateId}/webhook`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
   });
 }
 

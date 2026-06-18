@@ -92,14 +92,8 @@ export interface TeamDetail extends TeamSummary {
 /** Shape returned by GET /api/v1/repositories */
 export interface RepositorySummary {
   id: string;
-  /** Connection type discriminator: 'git_repo' | 'api_endpoint' | 'generic' */
-  type: string;
-  /** Human label for non-git_repo connections; null for git_repo (use org/repo instead) */
-  name: string | null;
-  /** Type-specific config JSON (for non-git_repo connections) */
-  config: unknown;
-  organizationName: string | null;
-  repoName: string | null;
+  organizationName: string;
+  repoName: string;
   defaultBranch: string;
   isActive: boolean;
   consolidationEnabled: boolean;
@@ -227,6 +221,7 @@ export interface WorkflowTemplateSummary {
   activeVersion: number | null;
   experimentVersion: number | null;
   experimentSplit: number | null;
+  webhookToken: string | null;
   versionCount: number;
   inputSchema?: InputSchema | null;
   team: TeamRef | null;

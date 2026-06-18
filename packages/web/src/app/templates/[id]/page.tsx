@@ -1,6 +1,7 @@
 'use client';
 
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
+import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
@@ -25,12 +26,15 @@ import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
   usePromoteWorkflowVersion,
+  useRegenerateWebhook,
+  useRevokeWebhook,
   useStepRegistry,
   useUpdateWorkflowTemplate,
   useWorkflowTemplate,
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
+import { useAuthStore } from '@/stores/authStore';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
@@ -312,6 +316,101 @@ function ExperimentCard({
   );
 }
 
+function WebhookCard({
+  template,
+  canManage,
+}: {
+  template: WorkflowTemplateSummary;
+  canManage: boolean;
+}) {
+  const regenerate = useRegenerateWebhook(template.id);
+  const revoke = useRevokeWebhook(template.id);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const webhookUrl = template.webhookToken
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/${template.webhookToken}`
+    : null;
+
+  const handleCopy = async () => {
+    if (!webhookUrl) return;
+    await navigator.clipboard.writeText(webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleRegenerate = async () => {
+    setError(null);
+    try {
+      await regenerate.mutateAsync();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'regenerate failed');
+    }
+  };
+
+  const handleRevoke = async () => {
+    setError(null);
+    try {
+      await revoke.mutateAsync();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'revoke failed');
+    }
+  };
+
+  return (
+    <Card variant="inset">
+      <SectionHeader hint="HTTP" number="04" title="Webhook trigger" />
+      {error && <Alert className="mb-3 text-xs">{error}</Alert>}
+      {webhookUrl ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <code className="flex-1 truncate rounded bg-ink-800 px-2 py-1 font-mono text-[10px] text-paper-300">
+              {webhookUrl}
+            </code>
+            <Button onClick={handleCopy} size="sm" variant="ghost">
+              {copied ? 'Copied!' : 'Copy'}
+            </Button>
+          </div>
+          {canManage && (
+            <div className="flex gap-2">
+              <Button
+                disabled={regenerate.isPending}
+                onClick={handleRegenerate}
+                size="sm"
+                variant="secondary"
+              >
+                {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
+              </Button>
+              <Button
+                disabled={revoke.isPending}
+                onClick={handleRevoke}
+                size="sm"
+                variant="secondary"
+              >
+                {revoke.isPending ? 'Revoking…' : 'Revoke'}
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-paper-500">No webhook configured.</p>
+          {canManage && (
+            <Button
+              disabled={regenerate.isPending}
+              onClick={handleRegenerate}
+              size="sm"
+              variant="secondary"
+            >
+              {regenerate.isPending ? 'Generating…' : 'Generate webhook URL'}
+            </Button>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function TemplateDetailPage({ params }: PageProps) {
   const router = useRouter();
   const { id } = use(params);
@@ -323,6 +422,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const { data: analytics } = useWorkflowTemplateAnalytics(id, 30);
   const createVersion = useCreateWorkflowVersion(id);
   const promoteVersion = usePromoteWorkflowVersion(id);
+  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
+  const canManage = role === 'ADMIN' || role === 'LEAD';
 
   const [mode, setMode] = useState<ViewMode>('view');
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
@@ -726,6 +827,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 versions={template.versions}
               />
             )}
+
+            {/* Webhook trigger */}
+            <WebhookCard canManage={canManage} template={template} />
           </aside>
         </div>
       )}

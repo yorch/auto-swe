@@ -13,7 +13,7 @@
  * allowed (additive — like JSON Schema's default `additionalProperties: true`).
  */
 
-export type InputFieldType = 'string' | 'number' | 'boolean' | 'array';
+export type InputFieldType = 'string' | 'number' | 'boolean' | 'array' | 'connection';
 
 export interface InputSchemaProperty {
   type: InputFieldType;
@@ -23,7 +23,7 @@ export interface InputSchemaProperty {
   /** Extra string constraint. */
   format?: 'uuid';
   /** Element type when `type === 'array'`. */
-  items?: { type: Exclude<InputFieldType, 'array'>; format?: 'uuid' };
+  items?: { type: Exclude<InputFieldType, 'array' | 'connection'>; format?: 'uuid' };
 }
 
 export interface InputSchema {
@@ -67,12 +67,18 @@ function checkScalar(
   errors: string[]
 ): void {
   const actual = typeOf(value);
-  if (actual !== prop.type) {
+  // `connection` is a UUID under the hood — treat it as a string for the type check.
+  const expectedType = prop.type === 'connection' ? 'string' : prop.type;
+  if (actual !== expectedType) {
     errors.push(`'${key}' must be a ${prop.type} (got ${actual})`);
     return;
   }
-  if (prop.format === 'uuid' && typeof value === 'string' && !UUID_RE.test(value)) {
-    errors.push(`'${key}' must be a UUID`);
+  if (
+    ((prop.type === 'string' && prop.format === 'uuid') || prop.type === 'connection') &&
+    typeof value === 'string' &&
+    !UUID_RE.test(value)
+  ) {
+    errors.push(`'${key}' must be a valid connection ID (UUID)`);
   }
   if (prop.enum && !prop.enum.includes(value as string | number)) {
     errors.push(`'${key}' must be one of: ${prop.enum.join(', ')}`);

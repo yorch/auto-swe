@@ -174,29 +174,10 @@ const CreateTemplateBody = z.object({
   teamId: z.string().uuid().nullable().optional(),
 });
 
-const InputSchemaPropertyZ = z.object({
-  type: z.enum(['string', 'number', 'boolean', 'array']),
-  description: z.string().optional(),
-  enum: z.array(z.union([z.string(), z.number()])).optional(),
-  format: z.literal('uuid').optional(),
-  items: z
-    .object({ format: z.literal('uuid').optional(), type: z.enum(['string', 'number', 'boolean']) })
-    .optional(),
-});
-
-const InputSchemaBodyZ = z
-  .object({
-    properties: z.record(z.string(), InputSchemaPropertyZ),
-    required: z.array(z.string()).optional(),
-    type: z.literal('object'),
-  })
-  .nullable();
-
 const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
-  inputSchema: InputSchemaBodyZ.optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -276,6 +257,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     team: tpl.team ? { id: tpl.team.id, name: tpl.team.name, slug: tpl.team.slug } : null,
     updatedAt: tpl.updatedAt,
     versionCount: tpl._count.versions,
+    webhookToken: tpl.webhookToken ?? null,
   };
 }
 
@@ -609,12 +591,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const { inputSchema, ...restBody } = request.body;
       const updated = await fastify.prisma.workflowTemplate.update({
-        data: {
-          ...restBody,
-          ...(inputSchema !== undefined ? { inputSchema: inputSchema as object } : {}),
-        },
+        data: request.body,
         include: TEMPLATE_INCLUDE,
         where: { id: existing.id },
       });
@@ -963,6 +941,59 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: rows.map(projectRunSummary),
         meta: { limit, offset, total },
       };
+    }
+  );
+
+  // ── Webhook: generate a new token ──
+  // POST /:id/webhook/regenerate — LEAD+, generates a new random webhook token.
+  app.post(
+    '/:id/webhook/regenerate',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await fastify.prisma.workflowTemplate.findFirst({
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+      }
+      const token = crypto.randomUUID();
+      await fastify.prisma.workflowTemplate.update({
+        data: { webhookToken: token },
+        where: { id: existing.id },
+      });
+      return reply.status(200).send({ data: { webhookToken: token } });
+    }
+  );
+
+  // ── Webhook: revoke token ──
+  // DELETE /:id/webhook — LEAD+, removes the webhook token.
+  app.delete(
+    '/:id/webhook',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await fastify.prisma.workflowTemplate.findFirst({
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+      }
+      await fastify.prisma.workflowTemplate.update({
+        data: { webhookToken: null },
+        where: { id: existing.id },
+      });
+      return reply.status(204).send();
     }
   );
 
