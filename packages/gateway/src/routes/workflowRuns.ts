@@ -175,6 +175,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           contextSnapshot: run.contextSnapshot,
+          costUsdAccrued: run.costUsdAccrued,
           endedAt: run.endedAt,
           id: run.id,
           specSnapshot: run.specSnapshot,
@@ -194,6 +195,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: run.templateId,
           templateName: run.template.name,
           templateVersion: run.templateVersion,
+          tokensInputTotal: run.tokensInputTotal,
+          tokensOutputTotal: run.tokensOutputTotal,
           traces: traces.map((t) => ({
             agentKey: t.agentKey,
             attempt: t.attempt,

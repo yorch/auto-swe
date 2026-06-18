@@ -383,6 +383,43 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
   );
 }
 
+// ── OtelLink ──────────────────────────────────────────────────────────────────
+
+const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL ?? '';
+
+function OtelLink({ trace }: { trace: AgentTraceRecord }) {
+  if (trace.type !== 'llm_response' || !trace.otelTraceId) {
+    return null;
+  }
+  const shortId = trace.otelTraceId.slice(0, 16);
+  const titleText = trace.otelSpanId
+    ? `trace: ${trace.otelTraceId}  span: ${trace.otelSpanId}`
+    : `trace: ${trace.otelTraceId}`;
+  const href = GRAFANA_URL
+    ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
+    : null;
+
+  const innerStyle = { fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' };
+
+  return href ? (
+    <a
+      className="text-paper-600 hover:text-dust-400 shrink-0 transition-colors"
+      href={href}
+      onClick={(e) => e.stopPropagation()}
+      rel="noopener noreferrer"
+      style={innerStyle}
+      target="_blank"
+      title={titleText}
+    >
+      {shortId}…
+    </a>
+  ) : (
+    <span className="text-paper-600 shrink-0" style={innerStyle} title={titleText}>
+      {shortId}…
+    </span>
+  );
+}
+
 // ── EventRow ──────────────────────────────────────────────────────────────────
 
 function EventRow({
@@ -449,9 +486,10 @@ function EventRow({
             </span>
           )}
 
-          {/* Right: token/cost chip + duration + error chip */}
+          {/* Right: token/cost chip + otel link + duration + error chip */}
           <div className="flex items-center gap-2 ml-auto shrink-0">
             <TokenCostChip trace={trace} />
+            <OtelLink trace={trace} />
             {durationLabel && (
               <span className="text-paper-600 num" style={{ fontSize: '10px' }}>
                 {durationLabel}
