@@ -1049,3 +1049,22 @@ model WorkflowShellAudit {
   @@index([teamId])
   @@map("workflow_shell_audit")
 }
+
+/// Registry of installed distribution bundles (P4/WS3). One row per bundle name
+/// (re-install upserts: version + hash + trust update). `trustState` is VERIFIED
+/// when the bundle's detached signature matched a deployment-trusted key at
+/// install time, else UNVERIFIED (community / unsigned — still installable).
+model InstalledBundle {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @unique
+  version       String
+  source        String?
+  contentHash   String   @map("content_hash")
+  trustState    String   @default("UNVERIFIED") @map("trust_state")
+  signedBy      String?  @map("signed_by")
+  installedById String?  @map("installed_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("installed_bundles")
+}

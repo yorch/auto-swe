@@ -1,4 +1,7 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
+import { BUILTIN_SKILLS } from '../skills/index.js';
+import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
   CI_FIX_SYSTEM_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
@@ -15,9 +18,6 @@ import {
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
 } from './agentPrompts.js';
-import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
-import { BUILTIN_SKILLS } from '../skills/index.js';
-import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 
 /** Provenance tag for all SWE seed content. */
 const SWE_ORIGIN = 'swe-starter';

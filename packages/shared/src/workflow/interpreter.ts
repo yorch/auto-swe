@@ -280,6 +280,16 @@ async function walk(
           currentNodeId = await runMcpNode(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
+        case 'containerStep': {
+          currentNodeId = await runContainerStep(
+            recordingId,
+            node,
+            ctx,
+            dispatcher,
+            cancellationSink
+          );
+          break;
+        }
         case 'set': {
           currentNodeId = runSet(node, ctx);
           break;
@@ -442,6 +452,53 @@ async function runMcpNode(
         inputs,
         nodeId,
         step: 'mcpCallTool',
+      }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
+
+async function runContainerStep(
+  nodeId: string,
+  node: import('./spec.js').ContainerStepNode,
+  ctx: Context,
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
+): Promise<string | undefined> {
+  const inputs = resolveInputs(node.inputs, ctx);
+  // Pack the container-contract fields into the step config; the worker's
+  // `runContainerStep` executor runs the image (ephemeral sandbox) with the
+  // inputs as JSON env and binds parsed stdout JSON at `nodes.<id>.output`.
+  const config: Record<string, unknown> = { image: node.image };
+  if (node.command !== undefined) {
+    config.command = node.command;
+  }
+  if (node.network !== undefined) {
+    config.network = node.network;
+  }
+  if (node.memory !== undefined) {
+    config.memory = node.memory;
+  }
+  if (node.cpus !== undefined) {
+    config.cpus = node.cpus;
+  }
+  if (node.timeoutMs !== undefined) {
+    config.timeoutMs = node.timeoutMs;
+  }
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () =>
+      dispatcher.dispatchStep({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: 'runContainerStep',
       }),
     next: node.next,
     nodeId,

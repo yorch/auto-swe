@@ -1457,4 +1457,34 @@ describe('agent node (P2)', () => {
       result: { hits: 2 },
     });
   });
+
+  it('dispatches a containerStep node to the runContainerStep step with image + command', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'container',
+      nodes: {
+        a: {
+          command: 'node run.js',
+          image: 'ghcr.io/acme/cap:1',
+          next: 'done',
+          type: 'containerStep',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runContainerStep: { result: { done: true } } },
+    });
+    const ctx = baseCtx();
+    const result = await runSpec(spec, ctx, dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.map((c) => c.step)).toEqual(['runContainerStep']);
+    expect(calls[0].config.image).toBe('ghcr.io/acme/cap:1');
+    expect(calls[0].config.command).toBe('node run.js');
+    expect((ctx.nodes as Record<string, { output: unknown }>).a.output).toEqual({
+      result: { done: true },
+    });
+  });
 });

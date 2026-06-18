@@ -55,6 +55,7 @@ export { SignalSlots } from './signalSlots.js';
 export type {
   Binding,
   CondNode,
+  ContainerStepNode,
   FanOutNode,
   HumanApprovalNode,
   HumanDecisionNode,

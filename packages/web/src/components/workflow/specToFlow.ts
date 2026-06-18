@@ -47,6 +47,8 @@ function subLabelFor(node: SpecNode): string | undefined {
       return `shell · ${node.image}`;
     case 'mcp':
       return `mcp · ${node.tool}`;
+    case 'containerStep':
+      return `container · ${node.image}`;
     case 'humanApproval':
     case 'humanDecision':
     case 'humanInput':

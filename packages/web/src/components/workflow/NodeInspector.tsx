@@ -17,6 +17,7 @@ import { type Binding, InputsBindingsSection } from './inspectorFields';
 import {
   AgentSection,
   CondSection,
+  ContainerStepSection,
   FanOutSection,
   McpSection,
   SetSection,
@@ -141,10 +142,14 @@ export function NodeInspector({
         {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
         {node.type === 'agent' && <AgentSection node={node} onChange={onChangeNode} />}
         {node.type === 'mcp' && <McpSection node={node} onChange={onChangeNode} />}
+        {node.type === 'containerStep' && (
+          <ContainerStepSection node={node} onChange={onChangeNode} />
+        )}
         {(node.type === 'step' ||
           node.type === 'shell' ||
           node.type === 'agent' ||
-          node.type === 'mcp') && (
+          node.type === 'mcp' ||
+          node.type === 'containerStep') && (
           <InputsBindingsSection
             inputs={(node as { inputs?: Record<string, Binding> }).inputs}
             onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}

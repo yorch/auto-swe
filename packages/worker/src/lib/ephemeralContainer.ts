@@ -47,7 +47,15 @@ export interface EphemeralRunInput {
   timeoutMs?: number;
   /** Optional override of the container working directory. Defaults to /workspace. */
   workdir?: string;
+  /**
+   * Extra environment variables (`-e KEY=VALUE`). Keys must match
+   * `[A-Za-z_][A-Za-z0-9_]*`. Used by container-contract steps (P4/WS4) to pass
+   * the JSON input payload (the value is shell-quoted by the caller).
+   */
+  env?: Record<string, string>;
 }
+
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const MEMORY_RE = /^\d+[bkmg]?$/i;
 // Docker volume names: [a-zA-Z0-9][a-zA-Z0-9_.-]+. Host absolute paths start
@@ -88,6 +96,14 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
       ? ['--dns=127.0.0.2']
       : [];
 
+  const envArgs: string[] = [];
+  for (const [k, v] of Object.entries(input.env ?? {})) {
+    if (!ENV_KEY_RE.test(k)) {
+      throw new Error(`Invalid environment variable name: ${k}`);
+    }
+    envArgs.push('-e', `${k}=${v}`);
+  }
+
   return [
     'run',
     '--rm',
@@ -102,6 +118,7 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
     '--tmpfs=/tmp:size=64m,mode=1777',
     '--security-opt=no-new-privileges',
     '--cap-drop=ALL',
+    ...envArgs,
     '-v',
     `${input.workspaceMount}:/workspace:rw`,
     '-w',

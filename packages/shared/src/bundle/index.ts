@@ -1,0 +1,229 @@
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from 'node:crypto';
+import { z } from 'zod';
+
+/**
+ * Bundle format (P4/WS1) — a versioned, self-describing export of a *tagged set*
+ * of library entities, portable across deployments.
+ *
+ * Only secret-free, deployment-portable library content travels in a bundle:
+ * Agents, Skills, scanner patterns, and Templates. Connection **instances**
+ * (which hold URLs/credentials and team bindings) are NEVER exported — a bundle
+ * only *declares* the connection types its content requires, via `dependencies`.
+ * Deployment-local fields (ids, team/credential/mcp bindings, timestamps,
+ * versions) are stripped on export and re-established on install.
+ */
+export const BUNDLE_SCHEMA_VERSION = 1 as const;
+
+export const SCANNER_PATTERN_TYPES = [
+  'INJECTION',
+  'EXFILTRATION',
+  'SHELL_COMMAND',
+  'CODE_SECURITY',
+  'SENSITIVE_FILE',
+] as const;
+
+export const BundleSkillSchema = z.object({
+  description: z.string().nullable().optional(),
+  isVerified: z.boolean().optional(),
+  name: z.string().min(1),
+  origin: z.string().nullable().optional(),
+  promptText: z.string(),
+});
+
+/** A skill attachment on an exported Agent, referenced by skill name. */
+export const BundleAgentSkillSchema = z.object({
+  skill: z.string().min(1),
+  sortOrder: z.number().int().optional(),
+});
+
+export const BundleAgentSchema = z.object({
+  description: z.string().nullable().optional(),
+  inheritsModelFrom: z.string().nullable().optional(),
+  isVerified: z.boolean().optional(),
+  key: z.string().min(1),
+  modelSpec: z.string().nullable().optional(),
+  name: z.string().min(1),
+  origin: z.string().nullable().optional(),
+  skills: z.array(BundleAgentSkillSchema).optional(),
+  systemPrompt: z.string().nullable().optional(),
+  toolKeys: z.array(z.string()).nullable().optional(),
+});
+
+export const BundleScannerPatternSchema = z.object({
+  // Safe flag subset only (i,m,s,u,v) — `g`/`y` are rejected to prevent the
+  // stateful-lastIndex bug in cached RegExps, mirroring the scanner-pattern API.
+  flags: z
+    .string()
+    .regex(/^[imsuv]*$/, 'flags may only contain i, m, s, u, v')
+    .optional(),
+  label: z.string().min(1),
+  origin: z.string().nullable().optional(),
+  pattern: z.string(),
+  type: z.enum(SCANNER_PATTERN_TYPES),
+});
+
+export const BundleTemplateSchema = z.object({
+  description: z.string().optional(),
+  inputSchema: z.unknown().nullable().optional(),
+  name: z.string().min(1),
+  origin: z.string().nullable().optional(),
+  /**
+   * The active version's WorkflowSpec, exported verbatim. NOTE: a spec may embed
+   * deployment-local references — e.g. an `mcp` node's `connectionRef` (a local
+   * Connection id) — which won't resolve on another deployment; the `dependencies`
+   * manifest flags the required connection types so the installer can re-wire them.
+   */
+  spec: z.unknown(),
+});
+
+export const BundleEntitiesSchema = z.object({
+  agents: z.array(BundleAgentSchema).default([]),
+  scannerPatterns: z.array(BundleScannerPatternSchema).default([]),
+  skills: z.array(BundleSkillSchema).default([]),
+  templates: z.array(BundleTemplateSchema).default([]),
+});
+
+/** A connector/connection type the bundle's content needs present in the target. */
+export const BundleDependencySchema = z.object({ connectionType: z.string().min(1) });
+
+export const BundleMetadataSchema = z.object({
+  /** sha256 over the canonicalized { entities, dependencies } — integrity check on install. */
+  contentHash: z.string(),
+  createdAt: z.string(),
+  description: z.string().optional(),
+  name: z.string().min(1),
+  /** Detached base64 signature over `contentHash` (P4/WS3); absent = unsigned. */
+  signature: z.string().optional(),
+  /** Label/id of the key that signed it (informational; verified against trusted keys). */
+  signedBy: z.string().optional(),
+  /** Free-form provenance, e.g. the origin tag or source deployment. */
+  source: z.string().optional(),
+  version: z.string().min(1),
+});
+
+export const BundleManifestSchema = z.object({
+  bundleSchemaVersion: z.literal(BUNDLE_SCHEMA_VERSION),
+  dependencies: z.array(BundleDependencySchema).default([]),
+  entities: BundleEntitiesSchema,
+  metadata: BundleMetadataSchema,
+});
+
+export type BundleSkill = z.infer<typeof BundleSkillSchema>;
+export type BundleAgent = z.infer<typeof BundleAgentSchema>;
+export type BundleScannerPattern = z.infer<typeof BundleScannerPatternSchema>;
+export type BundleTemplate = z.infer<typeof BundleTemplateSchema>;
+export type BundleEntities = z.infer<typeof BundleEntitiesSchema>;
+export type BundleDependency = z.infer<typeof BundleDependencySchema>;
+export type BundleManifest = z.infer<typeof BundleManifestSchema>;
+
+/** Deterministic JSON: object keys sorted recursively so the hash is stable. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? 'null';
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  // Skip `undefined`-valued keys so the hash matches a JSON round-trip (JSON
+  // and Zod `.optional()` reparse both DROP undefined keys — emitting them
+  // would make an in-memory manifest hash differently from its posted form).
+  const keys = Object.keys(obj)
+    .filter((k) => obj[k] !== undefined)
+    .sort();
+  const entries = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+  return `{${entries.join(',')}}`;
+}
+
+/**
+ * sha256 over the canonicalized content (entities + dependencies only — NOT the
+ * metadata, which carries the hash itself). Stable across key ordering, so the
+ * same content always hashes identically regardless of export iteration order.
+ */
+export function computeContentHash(payload: {
+  entities: BundleEntities;
+  dependencies: BundleDependency[];
+}): string {
+  return createHash('sha256')
+    .update(stableStringify({ dependencies: payload.dependencies, entities: payload.entities }))
+    .digest('hex');
+}
+
+/** Parse + validate a raw object into a BundleManifest (throws on malformed input). */
+export function parseBundle(input: unknown): BundleManifest {
+  return BundleManifestSchema.parse(input);
+}
+
+/**
+ * Re-derive the content hash and compare it to the manifest's declared
+ * `metadata.contentHash`. The single integrity gate shared by `installBundle`
+ * (server) and the SDK's `validateBundle` (authoring) so they can't drift.
+ */
+export function verifyContentHash(manifest: BundleManifest): {
+  ok: boolean;
+  expected: string;
+} {
+  const expected = computeContentHash({
+    dependencies: manifest.dependencies,
+    entities: manifest.entities,
+  });
+  return { expected, ok: expected === manifest.metadata.contentHash };
+}
+
+/** A deployment-trusted signing key (the trust anchor for VERIFIED bundles). */
+export interface TrustedKey {
+  id: string;
+  publicKeyPem: string;
+}
+
+/**
+ * Produce a detached base64 signature over a bundle's `contentHash` (P4/WS3).
+ * ed25519 (algorithm `null` per Node's API for Ed25519). Used by signing tooling
+ * and tests; the platform only ever *verifies*.
+ */
+export function signContentHash(privateKeyPem: string, contentHash: string): string {
+  return cryptoSign(
+    null,
+    Buffer.from(contentHash, 'utf8'),
+    createPrivateKey(privateKeyPem)
+  ).toString('base64');
+}
+
+/**
+ * Verify a bundle's detached signature against the deployment's trusted keys.
+ * Returns `{ verified: true, signedBy }` for the first trusted key whose public
+ * half validates the signature over `contentHash`; otherwise `{ verified: false }`.
+ * Unsigned bundles and bad keys never throw — they're simply not verified.
+ */
+export function verifyBundleSignature(
+  manifest: BundleManifest,
+  trustedKeys: TrustedKey[]
+): { verified: boolean; signedBy: string | null } {
+  const sig = manifest.metadata.signature;
+  if (!sig) {
+    return { signedBy: null, verified: false };
+  }
+  let signature: Buffer;
+  try {
+    signature = Buffer.from(sig, 'base64');
+  } catch {
+    return { signedBy: null, verified: false };
+  }
+  const data = Buffer.from(manifest.metadata.contentHash, 'utf8');
+  for (const key of trustedKeys) {
+    try {
+      if (cryptoVerify(null, data, createPublicKey(key.publicKeyPem), signature)) {
+        return { signedBy: key.id, verified: true };
+      }
+    } catch {
+      // ignore malformed trusted key; try the next
+    }
+  }
+  return { signedBy: null, verified: false };
+}

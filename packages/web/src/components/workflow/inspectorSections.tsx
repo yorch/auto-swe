@@ -320,6 +320,65 @@ export function ShellSection({
   );
 }
 
+export function ContainerStepSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'containerStep' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-brick-400">
+        ⚠ container step — coded capability · team-admin authoring only
+      </div>
+      <Input
+        hint="Must be on the team's image allowlist"
+        label="Container image"
+        onChange={(e) => onChange({ ...node, image: e.target.value } as SpecNode)}
+        placeholder="ghcr.io/acme/my-capability:1.0"
+        value={node.image ?? ''}
+      />
+      <div>
+        <label
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+          htmlFor="container-command"
+        >
+          Command
+          <span className="ml-2 text-paper-500">
+            — reads JSON from $CONTAINER_STEP_INPUT, prints a JSON result to stdout
+          </span>
+        </label>
+        <textarea
+          className="mt-1.5 h-20 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 font-mono text-xs text-paper-100 outline-none placeholder:text-paper-600 focus:border-ember-400"
+          id="container-command"
+          onChange={(e) => onChange({ ...node, command: e.target.value || undefined } as SpecNode)}
+          placeholder="node /app/run.js"
+          spellCheck={false}
+          value={node.command ?? ''}
+        />
+      </div>
+      <Select
+        className="h-9 px-2 font-mono text-xs"
+        id="container-network"
+        label="Network"
+        onChange={(e) => {
+          const v = e.target.value as 'none' | 'egress';
+          onChange({ ...node, network: v === 'none' ? undefined : v } as SpecNode);
+        }}
+        value={node.network ?? 'none'}
+      >
+        <option value="none">None (default) — no outbound access</option>
+        <option value="egress">Egress — outbound via team allowlist</option>
+      </Select>
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}
+
 type TerminateStatus = 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
 
 export function TerminateSection({
