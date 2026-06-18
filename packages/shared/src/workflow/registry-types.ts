@@ -68,5 +68,10 @@ export const BUILTIN_STEPS = [
   'resolveMergeConflict',
   // Declarative agent node — runs a library Agent by reference
   'runAgentNode',
+  // PRD decomposition workflow steps
+  'analyzePrd',
+  'decomposePrd',
+  'createTrackerItems',
+  'submitPrdWorkRequests',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

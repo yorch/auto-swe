@@ -223,6 +223,25 @@ const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'waitForCiB
   startToCloseTimeout: '6h',
 });
 
+// PRD decomposition workflow steps. analyzePrd + decomposePrd call LLM agents
+// (heartbeat + generous timeout); createTrackerItems + submitPrdWorkRequests
+// make external HTTP calls (shorter timeout; no heartbeat needed).
+const prdActivities = proxyActivities<
+  Pick<
+    typeof activitiesType,
+    'analyzePrd' | 'decomposePrd' | 'createTrackerItems' | 'submitPrdWorkRequests'
+  >
+>({
+  heartbeatTimeout: '5m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '10s',
+    maximumAttempts: 2,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '15m',
+});
+
 // ── Inputs ──
 
 export interface RunnableWorkflowInput {
@@ -613,6 +632,31 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         targetBranch,
       });
     },
+  ],
+  // ── PRD decomposition workflow ───────────────────────────────────────────────
+  ['analyzePrd', ({ request }) => prdActivities.analyzePrd(request)],
+  [
+    'decomposePrd',
+    ({ request, inputs }) =>
+      prdActivities.decomposePrd(request, {
+        analysis: inputs.analysis,
+        pmFeedback: inputs.pmFeedback,
+      }),
+  ],
+  [
+    'createTrackerItems',
+    ({ request, inputs }) =>
+      prdActivities.createTrackerItems(request, {
+        decomposition: inputs.decomposition,
+      }),
+  ],
+  [
+    'submitPrdWorkRequests',
+    ({ request, inputs }) =>
+      prdActivities.submitPrdWorkRequests(request, {
+        decomposition: inputs.decomposition,
+        trackerItems: inputs.trackerItems,
+      }),
   ],
   [
     'executeGateFixImplementation',

@@ -25,6 +25,7 @@ import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
+import { prdRunRoutes } from './routes/prdRuns.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
@@ -217,6 +218,7 @@ async function start() {
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
+  await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });

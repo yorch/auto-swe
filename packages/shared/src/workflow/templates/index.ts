@@ -12,6 +12,7 @@ import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { MIGRATION_SPEC } from './migration.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
+import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 import { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
@@ -130,6 +131,23 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     name: FULL_SUPERVISED_SPEC.name,
     spec: FULL_SUPERVISED_SPEC,
   },
+
+  // ── PRD workflow ─────────────────────────────────────────────────────────
+  {
+    description: PRD_DECOMPOSITION_SPEC.description,
+    inputSchema: {
+      properties: {
+        prdContent: { type: 'string' },
+        prdTitle: { type: 'string' },
+        projectKey: { type: 'string' },
+        repoIds: { items: { format: 'uuid', type: 'string' }, type: 'array' },
+      },
+      required: ['prdTitle', 'prdContent', 'repoIds'],
+      type: 'object',
+    },
+    name: PRD_DECOMPOSITION_SPEC.name,
+    spec: PRD_DECOMPOSITION_SPEC,
+  },
 ];
 
 // Re-export individual specs so callers can import from this module directly.
@@ -145,6 +163,7 @@ export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { MIGRATION_SPEC } from './migration.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
+export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 export { REVIEW_AND_MERGE_SPEC } from './reviewAndMerge.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';

@@ -23,6 +23,7 @@
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
     "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",
     "./bundle": "./dist/bundle/index.js",
+    "./lib/trackerWrite": "./dist/lib/trackerWrite.js",
     "./workflow": "./dist/workflow/index.js",
     "./workflow/spec": "./dist/workflow/spec.js",
     "./workflow/expr": "./dist/workflow/expr.js",

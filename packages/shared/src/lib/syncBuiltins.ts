@@ -14,6 +14,8 @@ import {
   MERGE_CONFLICT_RESOLVER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
   PLANNER_AGENT_PROMPT,
+  PRD_ANALYST_PROMPT,
+  PRD_DECOMPOSER_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
@@ -192,6 +194,21 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     name: 'Merge Conflict Resolver',
     systemPrompt: MERGE_CONFLICT_RESOLVER_PROMPT,
     toolKeys: IMPLEMENTER_TOOLS,
+  },
+  // ── PRD workflow agents ────────────────────────────────────────────────────
+  {
+    description: 'Analyzes a PRD for engineering readiness: gaps, ambiguities, missing NFRs.',
+    inheritsModelFrom: 'planner',
+    key: 'prdAnalyst',
+    name: 'PRD Analyst',
+    systemPrompt: PRD_ANALYST_PROMPT,
+  },
+  {
+    description: 'Decomposes a PRD into epics and stories with acceptance criteria.',
+    inheritsModelFrom: 'planner',
+    key: 'prdDecomposer',
+    name: 'PRD Decomposer',
+    systemPrompt: PRD_DECOMPOSER_PROMPT,
   },
 ];
 
