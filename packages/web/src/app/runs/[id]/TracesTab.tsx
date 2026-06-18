@@ -93,8 +93,8 @@ function CollapsibleSection({
       <button
         className="flex items-center gap-1 text-paper-500 hover:text-paper-300 transition-colors mb-1"
         onClick={() => setOpen((v) => !v)}
-        type="button"
         style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}
+        type="button"
       >
         <span style={{ fontSize: '7px' }}>{open ? '▼' : '▶'}</span>
         {label.toUpperCase()}
@@ -133,8 +133,8 @@ function TruncatedText({ text }: { text: string }) {
         <button
           className="text-dust-400 hover:text-dust-300 transition-colors mt-0.5"
           onClick={() => setExpanded((v) => !v)}
-          type="button"
           style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}
+          type="button"
         >
           {expanded ? 'show less' : `show more (${text.length - TRUNCATE_LIMIT} more chars)`}
         </button>
@@ -163,7 +163,9 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
     const hasRequest = systemPrompt !== null || userMessage !== null;
     const hasResponse = Boolean(outputText) || Boolean(trace.error);
 
-    if (!hasRequest && !hasResponse) return null;
+    if (!hasRequest && !hasResponse) {
+      return null;
+    }
 
     return (
       <div className="mt-2 space-y-2">
@@ -182,7 +184,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
           </div>
         )}
         {hasRequest && (
-          <CollapsibleSection label="Request" defaultOpen={false}>
+          <CollapsibleSection defaultOpen={false} label="Request">
             <div className="space-y-1.5">
               {systemPrompt !== null && (
                 <div>
@@ -210,7 +212,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
           </CollapsibleSection>
         )}
         {outputText && (
-          <CollapsibleSection label="Response" defaultOpen={true}>
+          <CollapsibleSection defaultOpen={true} label="Response">
             <pre
               className="overflow-x-auto max-h-48 whitespace-pre-wrap break-all text-paper-400 p-2.5"
               style={{
@@ -241,7 +243,9 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
       : null;
 
     const hasContent = Boolean(trace.error) || inputText !== null || outputText !== null;
-    if (!hasContent) return null;
+    if (!hasContent) {
+      return null;
+    }
 
     return (
       <div className="mt-2 space-y-1.5">
@@ -353,10 +357,14 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
 // ── TokenCostChip ─────────────────────────────────────────────────────────────
 
 function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
-  if (trace.type !== 'llm_response') return null;
+  if (trace.type !== 'llm_response') {
+    return null;
+  }
   const hasTokens = trace.inputTokens != null || trace.outputTokens != null;
   const hasCost = trace.costUsd != null;
-  if (!hasTokens && !hasCost) return null;
+  if (!hasTokens && !hasCost) {
+    return null;
+  }
 
   const tokenLabel = hasTokens
     ? `↑${(trace.inputTokens ?? 0).toLocaleString()} ↓${(trace.outputTokens ?? 0).toLocaleString()}`

@@ -138,10 +138,10 @@ export async function finalizeWorkflowRun(
     data: {
       contextSnapshot: contextSnapshot as object | undefined,
       costUsdAccrued,
-      tokensInputTotal,
-      tokensOutputTotal,
       endedAt: new Date(),
       status,
+      tokensInputTotal,
+      tokensOutputTotal,
     },
     where: { id: runId },
   });
