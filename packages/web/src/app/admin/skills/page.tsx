@@ -115,12 +115,14 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     return null;
   }
 
+  const sk = skill;
+
   function startEdit() {
     setForm({
-      description: skill.description ?? '',
-      isActive: skill.isActive,
-      name: skill.name,
-      promptText: skill.promptText,
+      description: sk.description ?? '',
+      isActive: sk.isActive,
+      name: sk.name,
+      promptText: sk.promptText,
     });
     setError(null);
     setEditing(true);
@@ -135,17 +137,17 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     e.preventDefault();
     setError(null);
     try {
-      const patch: Parameters<typeof update.mutateAsync>[0] = { id: skill.id };
-      if (form.name !== skill.name) {
+      const patch: Parameters<typeof update.mutateAsync>[0] = { id: sk.id };
+      if (form.name !== sk.name) {
         patch.name = form.name;
       }
-      if (form.description !== (skill.description ?? '')) {
+      if (form.description !== (sk.description ?? '')) {
         patch.description = form.description;
       }
-      if (form.isActive !== skill.isActive) {
+      if (form.isActive !== sk.isActive) {
         patch.isActive = form.isActive;
       }
-      if (!skill.isBuiltIn && form.promptText !== skill.promptText) {
+      if (!sk.isBuiltIn && form.promptText !== sk.promptText) {
         patch.promptText = form.promptText;
       }
       await update.mutateAsync(patch);

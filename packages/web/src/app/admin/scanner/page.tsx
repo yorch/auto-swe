@@ -141,12 +141,14 @@ function PatternDetailModal({
     return null;
   }
 
+  const pat = pattern;
+
   function startEdit() {
     setForm({
-      flags: pattern.flags,
-      label: pattern.label,
-      pattern: pattern.pattern,
-      type: pattern.type as PatternType,
+      flags: pat.flags,
+      label: pat.label,
+      pattern: pat.pattern,
+      type: pat.type as PatternType,
     });
     setError(null);
     setEditing(true);
@@ -161,7 +163,7 @@ function PatternDetailModal({
     e.preventDefault();
     setError(null);
     try {
-      await update.mutateAsync({ id: pattern.id, ...form });
+      await update.mutateAsync({ id: pat.id, ...form });
       setEditing(false);
       onClose();
     } catch (err) {

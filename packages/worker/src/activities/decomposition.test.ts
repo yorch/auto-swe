@@ -89,6 +89,11 @@ vi.mock('../lib/config/agentSkills.js', () => ({
   loadAgentToolConfig: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('../lib/models.js', () => ({
+  getModel: vi.fn(),
+  resolveSystemPrompt: vi.fn().mockResolvedValue(''),
+}));
+
 vi.mock('../lib/costTracking.js', () => ({
   recordLlmUsage: vi.fn(),
 }));

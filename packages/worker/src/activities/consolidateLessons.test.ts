@@ -15,7 +15,10 @@ vi.mock('../lib/embeddings.js', () => ({
     spec: 'openai/text-embedding-3-large',
   })),
 }));
-vi.mock('../lib/models.js', () => ({ getModel: vi.fn() }));
+vi.mock('../lib/models.js', () => ({
+  getModel: vi.fn(),
+  resolveSystemPrompt: vi.fn().mockResolvedValue(''),
+}));
 vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
 vi.mock('../lib/agentTracer.js', () => ({

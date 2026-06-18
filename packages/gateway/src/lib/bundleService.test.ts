@@ -1,4 +1,10 @@
 import { generateKeyPairSync } from 'node:crypto';
+
+vi.mock('@auto-swe/shared/db', () => ({
+  PrismaClient: vi.fn(),
+  prisma: {},
+}));
+
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleEntities,

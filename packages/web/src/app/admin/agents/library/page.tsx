@@ -22,8 +22,8 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
-import { useAdminCredentials } from '@/hooks/useModelConfig';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
+import { useAdminCredentials } from '@/hooks/useModelConfig';
 import { type SkillOption, useSkills } from '@/hooks/useSkills';
 
 const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
@@ -41,14 +41,22 @@ const EMPTY_CREATE: CreateAgentBody = {
 };
 
 function modelLabel(a: AgentRow): string {
-  if (a.modelSpec) return a.modelSpec;
-  if (a.inheritsModelFrom) return `↳ inherits ${a.inheritsModelFrom}`;
+  if (a.modelSpec) {
+    return a.modelSpec;
+  }
+  if (a.inheritsModelFrom) {
+    return `↳ inherits ${a.inheritsModelFrom}`;
+  }
   return '— (role default)';
 }
 
 function toolKeysLabel(toolKeys: string[] | null): string {
-  if (toolKeys === null) return 'all';
-  if (toolKeys.length === 0) return 'none';
+  if (toolKeys === null) {
+    return 'all';
+  }
+  if (toolKeys.length === 0) {
+    return 'none';
+  }
   return toolKeys.join(', ');
 }
 
@@ -77,7 +85,9 @@ function SkillRefEditor({
 
   function move(i: number, dir: -1 | 1) {
     const j = i + dir;
-    if (j < 0 || j >= refs.length) return;
+    if (j < 0 || j >= refs.length) {
+      return;
+    }
     const next = [...refs];
     [next[i], next[j]] = [next[j], next[i]];
     onChange(next.map((r, k) => ({ ...r, sortOrder: k })));
@@ -128,7 +138,9 @@ function SkillRefEditor({
         <Select
           label={refs.length === 0 ? 'Skills' : undefined}
           onChange={(e) => {
-            if (e.target.value) add(e.target.value);
+            if (e.target.value) {
+              add(e.target.value);
+            }
           }}
           value=""
         >
@@ -178,7 +190,10 @@ function ToolKeysEditor({
         {isCustom && (
           <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-1">
             {ALL_TOOL_KEYS.map((key) => (
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300" key={key}>
+              <label
+                className="flex cursor-pointer items-center gap-2 text-sm text-paper-300"
+                key={key}
+              >
                 <input
                   checked={value?.includes(key) ?? false}
                   className="accent-ember-400"
@@ -233,7 +248,9 @@ export default function AgentLibraryPage() {
   }
 
   async function submitEdit() {
-    if (!editing) return;
+    if (!editing) {
+      return;
+    }
     setError(null);
     setWarnings([]);
     try {
@@ -269,12 +286,14 @@ export default function AgentLibraryPage() {
   }
 
   function setEditSkillRefs(refs: SkillRefInput[]) {
-    if (!editing) return;
+    if (!editing) {
+      return;
+    }
     const asAgentRefs: AgentSkillRef[] = refs.map((r, i) => ({
       id: `${r.skillId}-${i}`,
+      skill: { id: r.skillId, name: skills?.find((s) => s.id === r.skillId)?.name ?? r.skillId },
       skillId: r.skillId,
       sortOrder: r.sortOrder,
-      skill: { id: r.skillId, name: skills?.find((s) => s.id === r.skillId)?.name ?? r.skillId },
     }));
     setEditing({ ...editing, skillRefs: asAgentRefs });
   }
@@ -285,8 +304,8 @@ export default function AgentLibraryPage() {
         <div>
           <h2 className="text-2xl font-bold">Agent Library</h2>
           <p className="mt-1 text-sm text-paper-400">
-            First-class, versioned Agents. Editing cuts a new version; running workflows stay
-            pinned to the version they started with.
+            First-class, versioned Agents. Editing cuts a new version; running workflows stay pinned
+            to the version they started with.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} variant="primary">
@@ -404,9 +423,7 @@ export default function AgentLibraryPage() {
             <Input
               hint="Parent agent key for sub-roles"
               label="Inherits model from (optional)"
-              onChange={(e) =>
-                setCreateForm({ ...createForm, inheritsModelFrom: e.target.value })
-              }
+              onChange={(e) => setCreateForm({ ...createForm, inheritsModelFrom: e.target.value })}
               placeholder="reviewer"
               value={createForm.inheritsModelFrom ?? ''}
             />
@@ -423,7 +440,10 @@ export default function AgentLibraryPage() {
             onChange={(v) => setCreateForm({ ...createForm, toolKeys: v })}
             value={createForm.toolKeys ?? null}
           />
-          <FieldWrapper hint="Ordered list of skills injected into the system prompt" label="Skills">
+          <FieldWrapper
+            hint="Ordered list of skills injected into the system prompt"
+            label="Skills"
+          >
             <SkillRefEditor
               onChange={(refs) => setCreateForm({ ...createForm, skillRefs: refs })}
               refs={createForm.skillRefs ?? []}
@@ -448,9 +468,7 @@ export default function AgentLibraryPage() {
           <Select
             hint="Use a specific provider credential instead of the system default"
             label="Credential override (optional)"
-            onChange={(e) =>
-              setCreateForm({ ...createForm, credentialId: e.target.value || null })
-            }
+            onChange={(e) => setCreateForm({ ...createForm, credentialId: e.target.value || null })}
             value={createForm.credentialId ?? ''}
           >
             <option value="">None (system default)</option>
@@ -507,9 +525,7 @@ export default function AgentLibraryPage() {
                 />
                 <Input
                   label="Inherits model from"
-                  onChange={(e) =>
-                    setEditing({ ...editing, inheritsModelFrom: e.target.value })
-                  }
+                  onChange={(e) => setEditing({ ...editing, inheritsModelFrom: e.target.value })}
                   value={editing.inheritsModelFrom ?? ''}
                 />
               </div>
@@ -554,9 +570,7 @@ export default function AgentLibraryPage() {
               </Select>
               <Select
                 label="Credential override"
-                onChange={(e) =>
-                  setEditing({ ...editing, credentialId: e.target.value || null })
-                }
+                onChange={(e) => setEditing({ ...editing, credentialId: e.target.value || null })}
                 value={editing.credentialId ?? ''}
               >
                 <option value="">None (system default)</option>

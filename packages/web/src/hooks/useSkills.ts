@@ -10,8 +10,7 @@ export interface SkillOption {
 
 export function useSkills() {
   return useQuery({
-    queryFn: () =>
-      api.get<{ data: SkillOption[] }>('/api/v1/admin/skills').then((r) => r.data),
+    queryFn: () => api.get<{ data: SkillOption[] }>('/api/v1/admin/skills').then((r) => r.data),
     queryKey: ['admin-skills'],
   });
 }

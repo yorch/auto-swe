@@ -15,7 +15,12 @@ function newMockPrisma() {
       findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ skillRefs: [] }),
       updateMany: vi.fn(),
+    },
+    agentSkillRef: {
+      create: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
@@ -99,6 +104,14 @@ describe('agentLibraryRoutes — admin', () => {
       key: 'myAgent',
       name: 'My Agent',
       scope: 'GLOBAL',
+      version: 1,
+    });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'new-1',
+      key: 'myAgent',
+      name: 'My Agent',
+      scope: 'GLOBAL',
+      skillRefs: [],
       version: 1,
     });
     const res = await app.inject({
@@ -242,6 +255,12 @@ describe('agentLibraryRoutes — admin', () => {
     });
     mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      key: 'reviewer',
+      skillRefs: [],
+      version: 2,
+    });
     const res = await app.inject({
       body: { modelSpec: 'anthropic/claude-opus-4-8' },
       headers: AUTH,
