@@ -100,9 +100,7 @@ export default function ConnectionsPage() {
               {(!r.type || r.type === 'git_repo') && <p>Branch: {r.defaultBranch}</p>}
               <p>Team: {r.team?.name ?? 'None'}</p>
               <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
-              {(!r.type || r.type === 'git_repo') && (
-                <p>Image: {r.executorImage ?? 'default'}</p>
-              )}
+              {(!r.type || r.type === 'git_repo') && <p>Image: {r.executorImage ?? 'default'}</p>}
               {r.description && <p className="truncate text-xs">{r.description}</p>}
             </div>
             <div className="mt-3 flex items-center justify-between">

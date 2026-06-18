@@ -2,12 +2,12 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useState } from 'react';
-import { connectionLabel } from '@/lib/connectionDisplay';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
+import { connectionLabel } from '@/lib/connectionDisplay';
 
 export interface ConnectionPrefill {
   organizationName?: string;
@@ -80,7 +80,9 @@ export function ConnectionFormModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     const t = (initial?.type as ConnectionType) ?? 'git_repo';
     setConnType(t);
     setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
@@ -97,7 +99,9 @@ export function ConnectionFormModal({
   }, [open, initial, prefill]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     setTeamId((prev) => prev || initial?.team?.id || teams[0]?.id || '');
   }, [open, initial, teams]);
 
@@ -268,9 +272,7 @@ export function ConnectionFormModal({
             <Input
               label="Name"
               onChange={(e) => setName(e.target.value)}
-              placeholder={
-                connType === 'api_endpoint' ? 'Payments API (prod)' : 'My integration'
-              }
+              placeholder={connType === 'api_endpoint' ? 'Payments API (prod)' : 'My integration'}
               required
               value={name}
             />
@@ -291,7 +293,10 @@ export function ConnectionFormModal({
               ))}
             </Select>
             <div className="space-y-1">
-              <label className="block text-xs font-medium uppercase tracking-wider text-paper-400">
+              <label
+                className="block text-xs font-medium uppercase tracking-wider text-paper-400"
+                htmlFor="conn-config-json"
+              >
                 Config (JSON)
                 <span className="ml-1 font-normal normal-case text-paper-500">
                   {connType === 'api_endpoint'
@@ -301,6 +306,7 @@ export function ConnectionFormModal({
               </label>
               <textarea
                 className="w-full rounded border border-ink-600 bg-ink-800 p-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
+                id="conn-config-json"
                 onChange={(e) => setConfigJson(e.target.value)}
                 placeholder="{}"
                 rows={5}

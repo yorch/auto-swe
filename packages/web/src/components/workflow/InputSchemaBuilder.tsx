@@ -67,7 +67,7 @@ function toSchema(fields: FieldDraft[]): InputSchema | null {
     if (d.required) required.push(k);
   }
   if (Object.keys(properties).length === 0) return null;
-  return { type: 'object', properties, ...(required.length ? { required } : {}) };
+  return { properties, type: 'object', ...(required.length ? { required } : {}) };
 }
 
 export function InputSchemaBuilder({
@@ -121,7 +121,7 @@ export function InputSchemaBuilder({
         </p>
       )}
       {fields.map((f, i) => (
-        <div key={f.id} className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3">
+        <div className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3" key={f.id}>
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
             <Input
               hint={!f.key.trim() ? 'Key required — this field will not be saved' : undefined}
@@ -183,7 +183,9 @@ export function InputSchemaBuilder({
               id={`item-type-${i}`}
               label="Item type"
               onChange={(e) =>
-                updateField(i, { itemType: e.target.value as Exclude<InputFieldType, 'array' | 'connection'> })
+                updateField(i, {
+                  itemType: e.target.value as Exclude<InputFieldType, 'array' | 'connection'>,
+                })
               }
               value={f.itemType}
             >

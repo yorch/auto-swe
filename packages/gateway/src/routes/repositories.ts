@@ -233,11 +233,37 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const { config, consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId } = request.body;
+      const {
+        config,
+        consolidationEnabled,
+        defaultBranch,
+        description,
+        executorImage,
+        githubApiUrl,
+        githubUrl,
+        isActive,
+        language,
+        name,
+        teamId,
+      } = request.body;
       const updated = await fastify.prisma.connection.update({
         data: {
-          config: config === undefined ? undefined : (config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull),
-          consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId,
+          config:
+            config === undefined
+              ? undefined
+              : config != null
+                ? (config as unknown as Prisma.InputJsonValue)
+                : Prisma.DbNull,
+          consolidationEnabled,
+          defaultBranch,
+          description,
+          executorImage,
+          githubApiUrl,
+          githubUrl,
+          isActive,
+          language,
+          name,
+          teamId,
         },
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: request.params.id },
