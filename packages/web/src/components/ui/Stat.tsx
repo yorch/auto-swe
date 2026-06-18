@@ -27,11 +27,11 @@ export function Stat({
   className?: string;
 }) {
   return (
-    <div className={cn('border-l border-ink-500 pl-5 py-1', className)}>
+    <div className={cn('border-l border-ink-400 pl-5 py-1', className)}>
       <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">{label}</div>
       <div className="mt-3 flex items-baseline gap-1.5">
         <span
-          className={cn('tabular font-display text-[44px] leading-none font-light', TONE[tone])}
+          className={cn('tabular text-[40px] leading-none font-bold tracking-tight', TONE[tone])}
         >
           {value}
         </span>

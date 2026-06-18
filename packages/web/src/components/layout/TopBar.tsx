@@ -1,15 +1,53 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
 import { useInbox, useTeams } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 
+// Derive a readable page title from the pathname
+function pageTitle(pathname: string): string {
+  const prefixes: [string, string][] = [
+    ['/', 'Dashboard'],
+    ['/runs/', 'Run'],
+    ['/runs', 'Runs'],
+    ['/inbox', 'Inbox'],
+    ['/workflows', 'Canvas'],
+    ['/templates', 'Templates'],
+    ['/epics', 'Epics'],
+    ['/analytics', 'Analytics'],
+    ['/lessons', 'Memory'],
+    ['/repositories', 'Connections'],
+    ['/admin/agents', 'Agents'],
+    ['/admin/skills', 'Skills'],
+    ['/admin/security', 'Security'],
+    ['/admin/mcp-connections', 'MCP Connections'],
+    ['/admin/model-config', 'Model Config'],
+    ['/admin/integrations', 'Integrations'],
+    ['/admin/scanner', 'Scanner'],
+    ['/admin/workflow', 'Workflow Defaults'],
+    ['/admin/schedules', 'Schedules'],
+    ['/admin/sessions', 'Sessions'],
+    ['/admin/access-tokens', 'API Tokens'],
+    ['/admin', 'Admin'],
+    ['/teams', 'Teams'],
+    ['/users', 'Users'],
+    ['/settings', 'Settings'],
+    ['/docs', 'Docs'],
+  ];
+  for (const [prefix, title] of prefixes) {
+    if (prefix === '/' ? pathname === '/' : pathname.startsWith(prefix)) {
+      return title;
+    }
+  }
+  return 'Conductor';
+}
+
 export function TopBar() {
+  const pathname = usePathname();
   const router = useRouter();
-  const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const { selectedTeamId, setSelectedTeamId } = useTeamStore();
   const { data: teams } = useTeams();
@@ -22,22 +60,127 @@ export function TopBar() {
   const teamLabel = teams?.find((t) => t.id === selectedTeamId)?.name ?? 'all teams';
   const { data: inboxSteps } = useInbox();
   const inboxCount = (inboxSteps ?? []).length;
-  const isAdmin = user?.role === 'ADMIN';
+  const title = pageTitle(pathname);
 
   return (
     <header
-      className="flex items-center justify-between border-b border-ink-600/60 px-6"
-      style={{ background: 'var(--color-ink-900)', height: '46px' }}
+      className="flex items-center gap-[14px] px-[26px]"
+      style={{
+        backdropFilter: 'blur(12px)',
+        background: 'rgba(10, 12, 18, 0.72)',
+        borderBottom: '1px solid var(--color-ink-400)',
+        height: 60,
+        position: 'sticky',
+        top: 0,
+        zIndex: 20,
+      }}
     >
-      <div className="flex items-center gap-4">
-        {/* Online status */}
-        <div className="flex items-center gap-2">
-          <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
+      {/* Page title */}
+      <h2
+        style={{
+          color: 'var(--color-paper-100)',
+          fontSize: 17,
+          fontWeight: 650,
+          letterSpacing: '-0.02em',
+          margin: 0,
+        }}
+      >
+        {title}
+      </h2>
+
+      {/* Team context selector */}
+      <label
+        className="relative flex cursor-pointer items-center gap-[6px]"
+        htmlFor="topbar-team-select"
+        style={{ marginLeft: 8 }}
+      >
+        <span
+          style={{
+            alignItems: 'center',
+            background: 'var(--color-ink-700)',
+            border: '1px solid var(--color-ink-400)',
+            borderRadius: 8,
+            color: 'var(--color-paper-400)',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            fontSize: 12.5,
+            gap: 6,
+            padding: '5px 10px',
+          }}
+        >
+          team:{' '}
+          <span style={{ color: 'var(--color-ember-400)', fontWeight: 600 }}>{teamLabel}</span>
+          <span style={{ color: 'var(--color-paper-500)', fontSize: 10 }}>▾</span>
+        </span>
+        <Select
+          aria-label="Select team"
+          className="absolute inset-0 cursor-pointer opacity-0"
+          id="topbar-team-select"
+          onChange={(e) => setSelectedTeamId(e.target.value || null)}
+          value={selectedTeamId ?? ''}
+        >
+          <option value="">all teams</option>
+          {(teams ?? []).map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </Select>
+      </label>
+
+      {/* Inbox badge */}
+      {inboxCount > 0 && (
+        <Link
+          href="/inbox"
+          style={{
+            alignItems: 'center',
+            background: 'rgba(246, 181, 69, 0.1)',
+            border: '1px solid rgba(246, 181, 69, 0.4)',
+            borderRadius: 8,
+            color: 'var(--color-amber-400)',
+            display: 'inline-flex',
+            fontSize: 12.5,
+            fontWeight: 600,
+            gap: 6,
+            padding: '5px 10px',
+            textDecoration: 'none',
+          }}
+        >
           <span
-            className="text-paper-500"
             style={{
+              background: 'var(--color-amber-400)',
+              borderRadius: '50%',
+              display: 'inline-block',
+              height: 7,
+              width: 7,
+            }}
+          />
+          {inboxCount} pending
+        </Link>
+      )}
+
+      {/* Spacer */}
+      <div style={{ flex: 1 }} />
+
+      {/* Right side */}
+      <div className="flex items-center gap-3">
+        {/* Online dot */}
+        <div className="flex items-center gap-2">
+          <span
+            className="pulse-dot"
+            style={{
+              background: 'var(--color-moss-400)',
+              borderRadius: '50%',
+              display: 'inline-block',
+              height: 6,
+              width: 6,
+            }}
+          />
+          <span
+            style={{
+              color: 'var(--color-paper-500)',
               fontFamily: 'var(--font-mono)',
-              fontSize: '10.5px',
+              fontSize: 10,
               letterSpacing: '0.18em',
               textTransform: 'uppercase',
             }}
@@ -46,116 +189,31 @@ export function TopBar() {
           </span>
         </div>
 
-        <span className="h-3.5 w-px bg-ink-500" />
+        <span
+          style={{
+            background: 'var(--color-ink-400)',
+            display: 'inline-block',
+            height: 14,
+            width: 1,
+          }}
+        />
 
-        {/* Team context selector */}
-        <label
-          className="relative flex items-center gap-1.5 cursor-pointer"
-          htmlFor="topbar-team-select"
-        >
-          <span
-            className="text-paper-500"
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10.5px',
-              letterSpacing: '0.18em',
-              textTransform: 'uppercase',
-            }}
-          >
-            context
-          </span>
-          <span
-            className="text-paper-500"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-          >
-            [
-          </span>
-          <span
-            className="flex items-center gap-1 text-paper-300"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-          >
-            team:
-            <span className="text-ember-400">{teamLabel}</span>
-            <Select
-              aria-label="Select team"
-              className="absolute inset-0 cursor-pointer opacity-0"
-              id="topbar-team-select"
-              onChange={(e) => setSelectedTeamId(e.target.value || null)}
-              value={selectedTeamId ?? ''}
-            >
-              <option value="">all teams</option>
-              {(teams ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-            <span className="text-paper-500">▾</span>
-          </span>
-          <span
-            className="text-paper-500"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}
-          >
-            ]
-          </span>
-        </label>
-
-        {inboxCount > 0 && (
-          <>
-            <span className="h-3.5 w-px bg-ink-500" />
-            <Link
-              className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors"
-              href="/inbox"
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10.5px',
-                letterSpacing: '0.18em',
-                textTransform: 'uppercase',
-              }}
-            >
-              inbox
-              <span
-                className="bg-amber-400 text-ink-950 rounded-full leading-5 px-1.5 font-bold"
-                style={{ fontSize: '9px' }}
-              >
-                {inboxCount}
-              </span>
-            </Link>
-          </>
-        )}
-      </div>
-
-      <div className="flex items-center gap-4">
-        {isAdmin && (
-          <>
-            <Link
-              className="text-paper-500 hover:text-paper-300 transition-colors"
-              href="/admin/model-config"
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10.5px',
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-              }}
-            >
-              Admin
-            </Link>
-            <span className="h-3.5 w-px bg-ink-500" />
-          </>
-        )}
         <button
-          className="flex items-center gap-1 text-paper-500 hover:text-ember-400 transition-colors"
           onClick={handleLogout}
           style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--color-paper-500)',
+            cursor: 'pointer',
             fontFamily: 'var(--font-mono)',
-            fontSize: '10.5px',
+            fontSize: 10,
             letterSpacing: '0.14em',
+            padding: 0,
             textTransform: 'uppercase',
           }}
           type="button"
         >
-          Logout
-          <span className="text-xs">↗</span>
+          Logout ↗
         </button>
       </div>
     </header>
