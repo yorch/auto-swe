@@ -47,10 +47,12 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]
  * step. `assertConfigReady` requires a GLOBAL `Agent` (with a `modelSpec`) +
  * resolvable credential for each of these. Keys no registered step needs are ignored.
  *
- * Forward note (degrade-don't-crash): this is the static, executor-declared
- * hard-fail set. When P1/P2 let templates reference arbitrary `agentRef`s,
- * those template-referenced agents must be validated as a *separate, non-fatal*
- * surface — a bad template edit should fail that template, not block worker boot.
+ * Degrade-don't-crash: this is the static, executor-declared hard-fail set.
+ * Templates that reference arbitrary `agentRef`s / `mcp` `connectionRef`s (P1/P2)
+ * are NOT validated here — they're checked on a *separate, non-fatal* surface at
+ * template save (`gateway/lib/specRefValidation.ts`, returns warnings) and finally
+ * resolved at run time per node (`resolveAgent` throws `ConfigMissingError` for
+ * that node only). A bad template edit fails that template/node, never worker boot.
  */
 export function requiredAgentKeys(): ModelBackedAgentKey[] {
   return [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];

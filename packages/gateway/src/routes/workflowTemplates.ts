@@ -14,6 +14,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
@@ -452,7 +453,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           }
           return created;
         });
-        return reply.status(201).send({ data: projectTemplate(tpl, undefined) });
+        // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
+        const warnings = await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec);
+        return reply.status(201).send({
+          data: projectTemplate(tpl, undefined),
+          ...(warnings.length > 0 ? { warnings } : {}),
+        });
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
         if (e.code === 'P2002') {
@@ -707,6 +713,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
         });
       }
+      const warnings = await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec);
       return reply.status(201).send({
         data: {
           createdAt: created.createdAt,
@@ -715,6 +722,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           spec: created.spec,
           version: created.version,
         },
+        ...(warnings.length > 0 ? { warnings } : {}),
       });
     }
   );
