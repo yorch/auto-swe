@@ -1,5 +1,7 @@
 # Platform Pivot — P1.5 Epic (✅ complete): Retire the role tables (Agent as single source of truth)
 
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [agents.md](./agents.md) and [STATUS.md](../STATUS.md).
+
 > Finishes the role→Agent migration started in P1. P1 made `Agent` a first-class entity that
 > **overlays** the three legacy config tables; P1.5 makes `Agent` the **sole** source and **deletes**
 > `ModelRoleConfig`, `AgentSkillAssignment`, `AgentToolConfig`. Since nothing is deployed there is

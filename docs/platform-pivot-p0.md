@@ -1,5 +1,7 @@
 # P0 — De-domainify the engine (implementation epic)
 
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](./architecture.md), [agents.md](./agents.md), and [STATUS.md](../STATUS.md).
+
 Companion to [`platform-pivot.md`](./platform-pivot.md) (rev. 2). This is the build plan for
 **Phase P0**: remove every hardcoded SWE assumption from the engine so it is domain-agnostic,
 **with no behavior change**. SWE survives as *seed content* tagged `origin='swe-starter'`.

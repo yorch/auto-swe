@@ -1,5 +1,7 @@
 # Platform Pivot — P1 Epic: Agent Library (first-class, reusable, governed)
 
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [agents.md](./agents.md) and [STATUS.md](../STATUS.md).
+
 > Build plan for **Phase P1** of the [platform pivot](./platform-pivot.md). P1 makes Agents
 > **real, reusable objects** users create, version, govern, and share across templates — instead of
 > three disconnected per-role config tables. It supersedes the `SkillOnlyRole` concept.

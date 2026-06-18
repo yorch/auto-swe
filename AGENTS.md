@@ -17,11 +17,7 @@
 | Document                         | Status  | Covers                                                                                     |
 | -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
 | `docs/platform-pivot.md`         | In progress | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **P0 + P1 + P1.5 + P2 + P3 done (all committed-for-build phases). P2 in full: agent node (WS1) + `'mcp'` tool key (WS2) + full MCP integration — `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path (WS3) + `mcp` workflow node (WS4) + canvas palette/inspector (WS5). P4–P5 deferred.** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p1.5.md`, `-p2.md`, `-p3.md` |
-| `docs/platform-pivot-p0.md`      | Done       | P0 build plan (de-domainify the engine): enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams complete |
-| `docs/platform-pivot-p1.md`      | Done       | P1 build plan (Agent library): first-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI. All 6 work-streams complete |
-| `docs/platform-pivot-p1.5.md`    | Done       | P1.5: retire the role tables — `Agent` is the **sole** source of truth; `ModelRoleConfig`/`AgentSkillAssignment`/`AgentToolConfig` deleted. All 4 slices complete (worker, gateway, web, drop tables) |
 | `docs/platform-pivot-p2.md`      | Done       | P2 build plan (declarative `agent` node + MCP): WS1 (agent node) + WS2 (`'mcp'` tool key) + WS3 (full MCP: `mcp` Connection, binding across all implementer activities + the generic `runAgentNode`, admin write-path at `/admin/mcp-connections` + `mcpConnectionId` agent field) + WS4 (`mcp` workflow node → `mcpCallTool`) + WS5 (canvas palette + `McpSection` inspector). All 5 work-streams complete |
-| `docs/platform-pivot-p3.md`      | Done       | P3 build plan (generic Connections/inputs/triggers/memory): `MemoryItem`←`AgentLesson` (slice 1), `Connection`←`Repository` (slice 2), template `inputSchema` + generic `RunInput`←`WorkRequest` with submit validation (slice 3), config-driven trigger event→`RunInput` mappings (slice 4). All 4 slices complete; surface polish deferred |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
 | `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (13 node types), runtime security scanners, budget tiers, auth, data model, infra   |
 | `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
@@ -42,6 +38,10 @@
 | `docs/data-and-infra.md`          | Schema section outdated (actual: 35 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
 | `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
 | `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
+| `docs/platform-pivot-p0.md`       | Completed build plan (P0 — de-domainify the engine: enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`). Current state lives in `architecture.md`/`agents.md`           |
+| `docs/platform-pivot-p1.md`       | Completed build plan (P1 — Agent library: first-class `Agent` + `resolveAgent`, versioning + run snapshot, governed CRUD API + UI). Current state in `agents.md`                                       |
+| `docs/platform-pivot-p1.5.md`     | Completed build plan (P1.5 — retire the role tables; `Agent` is the sole source of truth). Current state in `agents.md`                                                                                 |
+| `docs/platform-pivot-p3.md`       | Completed build plan (P3 — generic Connections/inputs/triggers/memory: `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + `RunInput`, trigger mappings). Current state in `architecture.md` |
 
 ---
 

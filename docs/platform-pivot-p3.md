@@ -1,5 +1,7 @@
 # Platform Pivot — P3 Epic: Generic Connections, inputs, triggers, memory
 
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](./architecture.md), [agents.md](./agents.md), and [STATUS.md](../STATUS.md).
+
 > Build plan for **Phase P3** of the [platform pivot](./platform-pivot.md). P3 decouples the
 > remaining SWE-shaped schema so the engine is domain-generic; SWE specializes via seed/config.
 > This is the largest phase — four independent decouplings, each its own slice(s).
