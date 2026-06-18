@@ -28,6 +28,18 @@ export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 export { mcpCallTool } from './mcpCallTool.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
+export type {
+  PrdAnalysis,
+  PrdDecomposition,
+  SubmitResult,
+  TrackerItemsResult,
+} from './prdWorkflow.js';
+export {
+  analyzePrd,
+  createTrackerItems,
+  decomposePrd,
+  submitPrdWorkRequests,
+} from './prdWorkflow.js';
 // Phase 2 quality gates
 export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
 export {

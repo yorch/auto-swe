@@ -301,6 +301,50 @@ register({
   name: 'runAgentNode',
 });
 
+// ── PRD decomposition workflow ───────────────────────────────────────────────
+
+register({
+  category: 'agent',
+  configFields: [],
+  costHint: { role: 'planner', tokensIn: 8000, tokensOut: 1500 },
+  description:
+    'Analyse a PRD document for engineering readiness: gaps, ambiguities, missing NFRs. ' +
+    'Returns { summary, readiness, gaps }.',
+  label: 'Analyse PRD',
+  name: 'analyzePrd',
+});
+
+register({
+  category: 'agent',
+  configFields: [],
+  costHint: { role: 'planner', tokensIn: 12000, tokensOut: 3000 },
+  description:
+    'Decompose a PRD (plus optional PM feedback) into epics and stories with acceptance criteria. ' +
+    'Returns { rationale, epics }.',
+  label: 'Decompose PRD',
+  name: 'decomposePrd',
+});
+
+register({
+  category: 'control',
+  configFields: [],
+  description:
+    'Best-effort creation of epics and stories in the configured tracker (Jira / Linear / GitHub Issues). ' +
+    'Uses onFail: warn so a tracker outage never blocks the implementation queue.',
+  label: 'Create tracker items',
+  name: 'createTrackerItems',
+});
+
+register({
+  category: 'control',
+  configFields: [],
+  description:
+    'Submit each approved story as a separate implementation work request, ' +
+    'starting a RunnableWorkflow per story. Returns { workRequestIds }.',
+  label: 'Submit PRD work requests',
+  name: 'submitPrdWorkRequests',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);
