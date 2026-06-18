@@ -17,19 +17,21 @@ function errMsg(err: unknown, fallback = 'Request failed'): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-const PROVIDER_HINTS: Record<KnowledgeBaseProvider, { baseUrl: string; token: string; spaces: string }> =
-  {
-    confluence: {
-      baseUrl: 'Atlassian site URL, e.g. https://acme.atlassian.net',
-      spaces: 'Space keys, e.g. ENG, ARCH, RUNBOOKS',
-      token: 'Atlassian API token (same as Issue Tracker if Jira is configured)',
-    },
-    notion: {
-      baseUrl: 'Leave empty — Notion API is fixed (api.notion.com)',
-      spaces: 'Database IDs to search (comma-separated)',
-      token: 'Notion integration token',
-    },
-  };
+const PROVIDER_HINTS: Record<
+  KnowledgeBaseProvider,
+  { baseUrl: string; token: string; spaces: string }
+> = {
+  confluence: {
+    baseUrl: 'Atlassian site URL, e.g. https://acme.atlassian.net',
+    spaces: 'Space keys, e.g. ENG, ARCH, RUNBOOKS',
+    token: 'Atlassian API token (same as Issue Tracker if Jira is configured)',
+  },
+  notion: {
+    baseUrl: 'Leave empty — Notion API is fixed (api.notion.com)',
+    spaces: 'Database IDs to search (comma-separated)',
+    token: 'Notion integration token',
+  },
+};
 
 export function KnowledgeBaseTab() {
   const { data: resp, isLoading } = useKnowledgeBaseConfig();
@@ -296,10 +298,7 @@ export function KnowledgeBaseTab() {
         </p>
         <div className="flex items-end gap-3">
           <div className="flex-1">
-            <label
-              className="mb-1 block text-xs uppercase text-paper-500"
-              htmlFor="kb-test-query"
-            >
+            <label className="mb-1 block text-xs uppercase text-paper-500" htmlFor="kb-test-query">
               Search query
             </label>
             <input

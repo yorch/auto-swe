@@ -325,10 +325,9 @@ export function useUpdateKnowledgeBaseConfig() {
 }
 
 export function testKnowledgeBaseConnection(query: string) {
-  return api.post<{ ok: boolean; detail: string }>(
-    '/api/v1/admin/config/knowledge-base/test',
-    { query }
-  );
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/knowledge-base/test', {
+    query,
+  });
 }
 
 // ── Consolidation schedule config ──
