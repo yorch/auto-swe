@@ -56,7 +56,12 @@ export const BundleAgentSchema = z.object({
 });
 
 export const BundleScannerPatternSchema = z.object({
-  flags: z.string().optional(),
+  // Safe flag subset only (i,m,s,u,v) — `g`/`y` are rejected to prevent the
+  // stateful-lastIndex bug in cached RegExps, mirroring the scanner-pattern API.
+  flags: z
+    .string()
+    .regex(/^[imsuv]*$/, 'flags may only contain i, m, s, u, v')
+    .optional(),
   label: z.string().min(1),
   origin: z.string().nullable().optional(),
   pattern: z.string(),
@@ -68,7 +73,12 @@ export const BundleTemplateSchema = z.object({
   inputSchema: z.unknown().nullable().optional(),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),
-  /** The active version's WorkflowSpec (validated structurally by the engine on install/run). */
+  /**
+   * The active version's WorkflowSpec, exported verbatim. NOTE: a spec may embed
+   * deployment-local references — e.g. an `mcp` node's `connectionRef` (a local
+   * Connection id) — which won't resolve on another deployment; the `dependencies`
+   * manifest flags the required connection types so the installer can re-wire them.
+   */
   spec: z.unknown(),
 });
 
@@ -120,10 +130,14 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
   }
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  const entries = keys.map(
-    (k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`
-  );
+  const obj = value as Record<string, unknown>;
+  // Skip `undefined`-valued keys so the hash matches a JSON round-trip (JSON
+  // and Zod `.optional()` reparse both DROP undefined keys — emitting them
+  // would make an in-memory manifest hash differently from its posted form).
+  const keys = Object.keys(obj)
+    .filter((k) => obj[k] !== undefined)
+    .sort();
+  const entries = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
   return `{${entries.join(',')}}`;
 }
 
@@ -144,6 +158,22 @@ export function computeContentHash(payload: {
 /** Parse + validate a raw object into a BundleManifest (throws on malformed input). */
 export function parseBundle(input: unknown): BundleManifest {
   return BundleManifestSchema.parse(input);
+}
+
+/**
+ * Re-derive the content hash and compare it to the manifest's declared
+ * `metadata.contentHash`. The single integrity gate shared by `installBundle`
+ * (server) and the SDK's `validateBundle` (authoring) so they can't drift.
+ */
+export function verifyContentHash(manifest: BundleManifest): {
+  ok: boolean;
+  expected: string;
+} {
+  const expected = computeContentHash({
+    dependencies: manifest.dependencies,
+    entities: manifest.entities,
+  });
+  return { expected, ok: expected === manifest.metadata.contentHash };
 }
 
 /** A deployment-trusted signing key (the trust anchor for VERIFIED bundles). */

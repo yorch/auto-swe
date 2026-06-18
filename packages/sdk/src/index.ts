@@ -18,6 +18,7 @@ import {
   computeContentHash,
   parseBundle,
   signContentHash,
+  verifyContentHash,
 } from '@auto-swe/shared/bundle';
 import type { ContainerStepNode } from '@auto-swe/shared/workflow';
 
@@ -107,11 +108,8 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
   } catch (err) {
     return { errors: [err instanceof Error ? err.message : String(err)], ok: false };
   }
-  const expected = computeContentHash({
-    dependencies: bundle.dependencies,
-    entities: bundle.entities,
-  });
-  if (expected !== bundle.metadata.contentHash) {
+  const { ok, expected } = verifyContentHash(bundle);
+  if (!ok) {
     return {
       errors: [
         `content hash mismatch (declared ${bundle.metadata.contentHash}, computed ${expected})`,

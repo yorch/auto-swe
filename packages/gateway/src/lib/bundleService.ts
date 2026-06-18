@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@auto-swe/shared';
+import { Prisma, type PrismaClient } from '@auto-swe/shared';
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleAgent,
@@ -12,6 +12,7 @@ import {
   parseBundle,
   type TrustedKey,
   verifyBundleSignature,
+  verifyContentHash,
 } from '@auto-swe/shared/bundle';
 
 /**
@@ -166,15 +167,17 @@ export async function exportBundle(
   }));
 
   const templateRows = await prisma.workflowTemplate.findMany({
-    include: { versions: true },
     orderBy: { name: 'asc' },
     where: { teamId: null, ...originWhere },
   });
   const templates: BundleTemplate[] = [];
   for (const t of templateRows) {
-    const active =
-      t.versions.find((v) => v.version === (t.activeVersion ?? 1)) ??
-      [...t.versions].sort((a, b) => b.version - a.version)[0];
+    // Fetch only the active version's spec (pinned if set, else the highest) —
+    // not the whole version history.
+    const active = await prisma.workflowTemplateVersion.findFirst({
+      orderBy: { version: 'desc' },
+      where: { templateId: t.id, ...(t.activeVersion != null ? { version: t.activeVersion } : {}) },
+    });
     if (!active) {
       continue;
     }
@@ -221,13 +224,10 @@ export async function installBundle(
 ): Promise<InstallResult> {
   const manifest = parseBundle(raw); // throws ZodError on malformed input
 
-  const recomputed = computeContentHash({
-    dependencies: manifest.dependencies,
-    entities: manifest.entities,
-  });
-  if (recomputed !== manifest.metadata.contentHash) {
+  const hash = verifyContentHash(manifest);
+  if (!hash.ok) {
     throw new BundleIntegrityError(
-      `bundle content hash mismatch (declared ${manifest.metadata.contentHash}, computed ${recomputed})`
+      `bundle content hash mismatch (declared ${manifest.metadata.contentHash}, computed ${hash.expected})`
     );
   }
 
@@ -260,7 +260,9 @@ export async function installBundle(
         data: {
           description: s.description ?? null,
           isBuiltIn: true,
-          isVerified: s.isVerified ?? false,
+          // Never trust the bundle's verification flag — installed content starts
+          // UNVERIFIED; verification is a local human step regardless of trust state.
+          isVerified: false,
           name: s.name,
           origin,
           promptText: s.promptText,
@@ -294,7 +296,9 @@ export async function installBundle(
       name: a.name,
       origin,
       systemPrompt: a.systemPrompt ?? null,
-      toolKeys: a.toolKeys ?? undefined,
+      // DbNull (not undefined) so a re-install clears a stale toolKeys override
+      // rather than leaving the prior value on the managed base-layer row.
+      toolKeys: a.toolKeys ?? Prisma.DbNull,
     };
     const existing = await prisma.agent.findFirst({
       where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
@@ -305,7 +309,8 @@ export async function installBundle(
           data: {
             ...base,
             isBuiltIn: true,
-            isVerified: a.isVerified ?? false,
+            // Bundle's verification flag is not trusted (see skills above).
+            isVerified: false,
             key: a.key,
             scope: 'GLOBAL',
             version: 1,

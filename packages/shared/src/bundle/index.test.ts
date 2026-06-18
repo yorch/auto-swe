@@ -43,6 +43,21 @@ describe('computeContentHash', () => {
     });
     expect(base).not.toBe(changed);
   });
+
+  it('ignores undefined-valued keys (matches a JSON round-trip)', () => {
+    const withUndef = {
+      dependencies: [],
+      entities: {
+        ...emptyEntities,
+        skills: [{ description: undefined, name: 's', promptText: 'p' }],
+      } as unknown as BundleEntities,
+    };
+    const without = {
+      dependencies: [],
+      entities: { ...emptyEntities, skills: [{ name: 's', promptText: 'p' }] },
+    };
+    expect(computeContentHash(withUndef)).toBe(computeContentHash(without));
+  });
 });
 
 describe('parseBundle', () => {
@@ -79,5 +94,18 @@ describe('parseBundle', () => {
 
   it('rejects a non-object', () => {
     expect(() => parseBundle(null)).toThrow();
+  });
+
+  it('rejects a scanner pattern with an unsafe flag (g/y)', () => {
+    // The flags regex fails at parse time, before any hash check.
+    expect(() =>
+      parseBundle({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        entities: {
+          scannerPatterns: [{ flags: 'gi', label: 'p', pattern: 'x', type: 'INJECTION' }],
+        },
+        metadata: { contentHash: 'x', createdAt: 'now', name: 'n', version: '1' },
+      })
+    ).toThrow();
   });
 });

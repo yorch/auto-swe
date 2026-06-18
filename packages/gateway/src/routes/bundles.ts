@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { fetchBundleJson } from '../lib/bundleFetch.js';
 import {
   BundleDependencyError,
   BundleIntegrityError,
@@ -99,13 +100,7 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
       const { url } = request.body;
       let raw: unknown;
       try {
-        const res = await fetch(url);
-        if (!res.ok) {
-          return reply.status(400).send({
-            error: { code: 'BUNDLE_FETCH_FAILED', message: `fetch ${url}: HTTP ${res.status}` },
-          });
-        }
-        raw = await res.json();
+        raw = await fetchBundleJson(url);
       } catch (err) {
         return reply.status(400).send({
           error: {
