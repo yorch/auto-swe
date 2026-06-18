@@ -392,25 +392,31 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     return null;
   }
   const shortId = trace.otelTraceId.slice(0, 16);
+  const titleText = trace.otelSpanId
+    ? `trace: ${trace.otelTraceId}  span: ${trace.otelSpanId}`
+    : `trace: ${trace.otelTraceId}`;
   const href = GRAFANA_URL
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const content = (
-    <span
-      className="text-paper-600 hover:text-paper-400 transition-colors"
-      style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' }}
-    >
-      {shortId}…
-    </span>
-  );
+  const innerStyle = { fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' };
 
   return href ? (
-    <a href={href} onClick={(e) => e.stopPropagation()} rel="noreferrer" target="_blank">
-      {content}
+    <a
+      className="text-paper-600 hover:text-dust-400 shrink-0 transition-colors"
+      href={href}
+      onClick={(e) => e.stopPropagation()}
+      rel="noopener noreferrer"
+      style={innerStyle}
+      target="_blank"
+      title={titleText}
+    >
+      {shortId}…
     </a>
   ) : (
-    content
+    <span className="text-paper-600 shrink-0" style={innerStyle} title={titleText}>
+      {shortId}…
+    </span>
   );
 }
 
