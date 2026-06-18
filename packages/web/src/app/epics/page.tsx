@@ -162,7 +162,7 @@ export default function EpicsPage() {
               Description
             </label>
             <textarea
-              className="min-h-[120px] w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 py-2 text-sm text-paper-100 outline-none focus:border-ember-400"
+              className="min-h-[120px] w-full rounded-[9px] border border-ink-500 bg-ink-900/60 px-3 py-2 text-sm text-paper-100 outline-none focus:border-ember-400"
               id="epic-description"
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Migrate all services from the legacy /v1 auth endpoint to /v2 and deprecate the legacy gateway plugin."
@@ -179,7 +179,7 @@ export default function EpicsPage() {
                 pick 2 or more
               </span>
             </div>
-            <div className="max-h-64 overflow-y-auto rounded-sm border border-ink-500">
+            <div className="max-h-64 overflow-y-auto rounded-[9px] border border-ink-500">
               {repos.map((r) => {
                 const checked = repoIds.includes(r.id);
                 return (

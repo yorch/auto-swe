@@ -92,12 +92,12 @@ export default function UsersPage() {
         />
         <Card variant="inset">
           {inviteError && (
-            <div className="mb-3 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+            <div className="mb-3 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
               ! {inviteError}
             </div>
           )}
           {inviteInfo && (
-            <div className="mb-3 rounded-sm border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
+            <div className="mb-3 rounded-[9px] border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
               ✓ {inviteInfo}
             </div>
           )}
@@ -207,7 +207,7 @@ export default function UsersPage() {
                 <tr className="border-b border-ink-600 last:border-b-0" key={u.id}>
                   <td className="px-4 py-3 text-sm text-paper-100">{u.email}</td>
                   <td className="px-4 py-3">
-                    <span className="rounded-sm border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+                    <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
                       {u.role}
                     </span>
                   </td>

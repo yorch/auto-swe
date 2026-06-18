@@ -6,7 +6,7 @@
 @source '../../src/components/**/*.{ts,tsx}';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Design tokens — "Conductor Platform"
+   Design tokens — "auto·swe"
    Deep navy/indigo backgrounds · violet+teal accent · Inter sans · IBM Plex Mono
    ──────────────────────────────────────────────────────────────────────── */
 @theme {
@@ -327,17 +327,17 @@
    React Flow theme overrides — dark surface, violet accents.
    ──────────────────────────────────────────────────────────────────────── */
 .react-flow__controls {
-  background: var(--color-ink-700);
-  border: 1px solid var(--color-ink-500);
-  border-radius: 2px;
+  background: var(--color-ink-600);
+  border: 1px solid var(--color-ink-400);
+  border-radius: 8px;
   box-shadow: none;
 }
 .react-flow__controls-button {
   width: 28px;
   height: 28px;
   color: var(--color-paper-400);
-  background: var(--color-ink-700);
-  border-bottom: 1px solid var(--color-ink-500);
+  background: var(--color-ink-600);
+  border-bottom: 1px solid var(--color-ink-400);
   fill: var(--color-paper-400);
 }
 .react-flow__controls-button:hover {
@@ -370,5 +370,5 @@
   stroke-width: 2.5 !important;
 }
 .react-flow__minimap-mask {
-  fill: oklch(0.13 0.005 235 / 0.85);
+  fill: rgba(14, 17, 26, 0.85);
 }

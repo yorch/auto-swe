@@ -21,7 +21,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   description: 'Durable agent workflow platform',
-  title: 'Conductor',
+  title: 'auto·swe',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

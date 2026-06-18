@@ -49,7 +49,7 @@ function ConsoleModeToggle({
   onChange: (v: 'split' | 'stream') => void;
 }) {
   return (
-    <div className="flex items-center border border-ink-400" style={{ borderRadius: '2px' }}>
+    <div className="flex items-center border border-ink-400" style={{ borderRadius: '8px' }}>
       {(
         [
           { id: 'split' as const, label: '◧ Split' },
@@ -61,7 +61,7 @@ function ConsoleModeToggle({
           key={opt.id}
           onClick={() => onChange(opt.id)}
           style={{
-            background: value === opt.id ? 'oklch(0.70 0.145 28 / 0.14)' : 'transparent',
+            background: value === opt.id ? 'rgba(124, 108, 255, 0.14)' : 'transparent',
             borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
             color: value === opt.id ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
             fontFamily: 'var(--font-mono)',
@@ -496,7 +496,7 @@ function WaterfallBar({
       </span>
       <div
         className="flex-1 relative h-4"
-        style={{ background: 'var(--color-ink-600)', borderRadius: '2px' }}
+        style={{ background: 'var(--color-ink-600)', borderRadius: '4px' }}
       >
         <div
           className={cn(isFailed ? 'hatch-fail' : isSkipped ? 'opacity-30' : '')}
@@ -506,7 +506,7 @@ function WaterfallBar({
               : isSkipped
                 ? 'var(--color-paper-600)'
                 : 'var(--color-dust-400)',
-            borderRadius: '2px',
+            borderRadius: '4px',
             height: '100%',
             left: 0,
             position: 'absolute',
@@ -681,7 +681,7 @@ function LayoutC({
           {/* Speed control */}
           <div
             className="flex items-center border border-ink-400 ml-auto"
-            style={{ borderRadius: '2px' }}
+            style={{ borderRadius: '8px' }}
           >
             {([1, 4, 16] as const).map((s, i) => (
               <button
@@ -689,7 +689,7 @@ function LayoutC({
                 key={s}
                 onClick={() => setSpeed(s)}
                 style={{
-                  background: speed === s ? 'oklch(0.70 0.145 28 / 0.14)' : 'transparent',
+                  background: speed === s ? 'rgba(124, 108, 255, 0.14)' : 'transparent',
                   borderLeft: i > 0 ? '1px solid var(--color-ink-400)' : 'none',
                   color: speed === s ? 'var(--color-ember-400)' : 'var(--color-paper-500)',
                   fontFamily: 'var(--font-mono)',
@@ -717,7 +717,7 @@ function LayoutC({
             style={{
               accentColor: 'var(--color-ember-400)',
               background: `linear-gradient(to right, var(--color-ember-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
-              borderRadius: '2px',
+              borderRadius: '3px',
               height: '6px',
               outline: 'none',
             }}

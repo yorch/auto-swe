@@ -186,12 +186,12 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           </FieldWrapper>
           <FieldWrapper label="Prompt Text">
             {skill.isBuiltIn ? (
-              <pre className="w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
+              <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
                 {skill.promptText}
               </pre>
             ) : (
               <textarea
-                className="w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
+                className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
                 onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
                 required
                 rows={12}
@@ -273,7 +273,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-paper-500">
               Prompt Text
             </div>
-            <pre className="max-h-96 overflow-auto rounded-sm border border-ink-600 bg-ink-800 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
+            <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-800 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {skill.promptText}
             </pre>
           </div>
@@ -339,7 +339,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
         </FieldWrapper>
         <FieldWrapper label="Prompt Text">
           <textarea
-            className="w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
+            className="w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-100 placeholder-paper-500 focus:border-ember-400 focus:outline-none"
             onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
             required
             rows={8}

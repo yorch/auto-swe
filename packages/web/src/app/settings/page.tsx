@@ -155,7 +155,7 @@ export default function SettingsPage() {
               Role
             </dt>
             <dd className="font-mono text-xs">
-              <span className="rounded-sm border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 uppercase tracking-wider text-ember-400">
+              <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 uppercase tracking-wider text-ember-400">
                 {user?.role ?? 'guest'}
               </span>
             </dd>
@@ -172,12 +172,12 @@ export default function SettingsPage() {
         <SectionHeader hint="link / unlink sign-in providers" number="02" title="Linked accounts" />
 
         {error && (
-          <div className="mb-4 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+          <div className="mb-4 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
             ! {error}
           </div>
         )}
         {info && (
-          <div className="mb-4 rounded-sm border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
+          <div className="mb-4 rounded-[9px] border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
             ✓ {info}
           </div>
         )}
@@ -265,7 +265,7 @@ export default function SettingsPage() {
                 </span>
               ) : (
                 <a
-                  className="inline-flex h-7 items-center justify-center gap-2 rounded-sm border border-ink-500 bg-transparent px-4 font-mono text-[11px] uppercase tracking-[0.12em] text-paper-100 transition-colors hover:border-ember-400 hover:text-ember-400"
+                  className="inline-flex h-7 items-center justify-center gap-2 rounded-lg border border-ink-500 bg-transparent px-4 font-mono text-[11px] uppercase tracking-[0.12em] text-paper-100 transition-colors hover:border-ember-400 hover:text-ember-400"
                   href={`${API_BASE}/api/v1/auth/slack/connect`}
                 >
                   Connect

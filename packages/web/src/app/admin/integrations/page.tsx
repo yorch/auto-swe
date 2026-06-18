@@ -30,7 +30,7 @@ export default function AdminIntegrationsPage() {
         <p className="mt-1 text-sm text-paper-400">
           Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
           Masked fields show only the last four characters — enter a new value to rotate. An{' '}
-          <span className="rounded-sm bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">
+          <span className="rounded bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">
             env
           </span>{' '}
           badge means the value is currently read from an environment variable.

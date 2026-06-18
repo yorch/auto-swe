@@ -262,15 +262,28 @@ export function Sidebar() {
             <circle cx={7} cy={17} fill="#fff" r={2.4} />
           </svg>
         </span>
-        <span
-          style={{
-            color: 'var(--color-paper-100)',
-            fontSize: 16,
-            fontWeight: 700,
-            letterSpacing: '-0.02em',
-          }}
-        >
-          Conductor
+        <span className="flex items-baseline gap-[3px]">
+          <span
+            style={{
+              color: 'var(--color-paper-100)',
+              fontSize: 15,
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            auto
+          </span>
+          <span
+            style={{
+              color: 'var(--color-ember-400)',
+              fontFamily: 'var(--font-display)',
+              fontSize: 15,
+              fontStyle: 'italic',
+              fontWeight: 600,
+            }}
+          >
+            ·swe
+          </span>
         </span>
       </Link>
 

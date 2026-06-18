@@ -74,7 +74,7 @@ export default function TemplatesPage() {
             return (
               <article
                 className={cn(
-                  'group relative flex flex-col rounded-sm border border-ink-600 bg-ink-800 p-5 transition-colors hover:border-ember-400',
+                  'group relative flex flex-col rounded-xl border border-ink-600 bg-ink-800 p-5 transition-colors hover:border-ember-400',
                   'border-l-[3px]',
                   TONE_CLASS[s.tone]
                 )}
@@ -150,7 +150,7 @@ export default function TemplatesPage() {
                         {t.name}
                       </Link>
                       {t.isDefault && (
-                        <span className="ml-2 rounded-sm border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+                        <span className="ml-2 rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
                           default
                         </span>
                       )}
