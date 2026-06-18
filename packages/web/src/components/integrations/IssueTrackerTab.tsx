@@ -292,9 +292,7 @@ export function IssueTrackerTab() {
                   {detectFields.isPending ? 'Detecting…' : 'Auto-detect'}
                 </Button>
               </div>
-              {detectResult && (
-                <p className="mt-1 text-[11px] text-paper-400">{detectResult}</p>
-              )}
+              {detectResult && <p className="mt-1 text-[11px] text-paper-400">{detectResult}</p>}
             </div>
             <div>
               <label

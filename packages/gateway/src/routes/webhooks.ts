@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { prisma } from '@auto-swe/shared/db';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
   resolveGitHubConfig,
@@ -6,7 +7,6 @@ import {
   resolveSlackConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
-import { prisma } from '@auto-swe/shared/db';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -564,7 +564,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         where: { isActive: true, type: 'git_repo' },
       });
       if (!defaultRepo) {
-        return reply.code(200).send({ skipped: true, reason: 'no active repos' });
+        return reply.code(200).send({ reason: 'no active repos', skipped: true });
       }
 
       await prisma.runInput.create({
@@ -572,7 +572,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           connectionId: defaultRepo.id,
           description: summary,
           externalTicketId: ticketId,
-          requestPayload: JSON.stringify({ source: 'jira_webhook', ticketId, summary }),
+          requestPayload: JSON.stringify({ source: 'jira_webhook', summary, ticketId }),
         },
       });
 
