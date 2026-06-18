@@ -12,7 +12,7 @@ export interface ScannerPattern {
   isBuiltIn: boolean;
   label: string;
   pattern: string;
-  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+  type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
   updatedAt: string;
 }
 
@@ -31,7 +31,7 @@ export function useCreateScannerPattern() {
       flags: string;
       label: string;
       pattern: string;
-      type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+      type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
     }) =>
       api
         .post<{ data: ScannerPattern }>('/api/v1/admin/scanner-patterns', body)
@@ -52,7 +52,7 @@ export function useUpdateScannerPattern() {
       isActive?: boolean;
       label?: string;
       pattern?: string;
-      type?: 'INJECTION' | 'EXFILTRATION';
+      type?: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
     }) =>
       api
         .put<{ data: ScannerPattern }>(`/api/v1/admin/scanner-patterns/${id}`, body)
