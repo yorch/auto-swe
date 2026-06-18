@@ -276,6 +276,10 @@ async function walk(
           currentNodeId = await runAgentNode(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
+        case 'mcp': {
+          currentNodeId = await runMcpNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          break;
+        }
         case 'set': {
           currentNodeId = runSet(node, ctx);
           break;
@@ -402,6 +406,42 @@ async function runAgentNode(
         inputs,
         nodeId,
         step: 'runAgentNode',
+      }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
+
+async function runMcpNode(
+  nodeId: string,
+  node: import('./spec.js').McpNode,
+  ctx: Context,
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
+): Promise<string | undefined> {
+  const inputs = resolveInputs(node.inputs, ctx);
+  // Pack the mcp-node fields into the step config; the worker's `mcpCallTool`
+  // executor resolves connectionRef → mcp server URL, loads the named tool, and
+  // calls it with the resolved inputs. Dispatching through the same step path
+  // gives identical retry/onFail/recording; the result lands at `nodes.<id>.output`.
+  const config: Record<string, unknown> = { connectionRef: node.connectionRef, tool: node.tool };
+  if (node.spanName !== undefined) {
+    config.spanName = node.spanName;
+  }
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () =>
+      dispatcher.dispatchStep({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: 'mcpCallTool',
       }),
     next: node.next,
     nodeId,

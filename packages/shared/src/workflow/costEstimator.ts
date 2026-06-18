@@ -105,6 +105,9 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         }
         return usd + walk(node.next);
       }
+      case 'mcp':
+        // External MCP tool call — no token-based cost modeled here.
+        return walk(node.next);
       case 'set':
         return walk(node.next);
       case 'cond':

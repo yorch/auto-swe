@@ -177,6 +177,19 @@ const agentNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runAgen
   startToCloseTimeout: '10m',
 });
 
+// P2/WS4: declarative mcp node. Single external MCP tool call (network I/O in
+// the activity); heartbeat + retry like the other network activities.
+const mcpNodeActivities = proxyActivities<Pick<typeof activitiesType, 'mcpCallTool'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '10m',
+});
+
 // ── Inputs ──
 
 export interface RunnableWorkflowInput {
@@ -393,6 +406,17 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         spanName: config.spanName as string | undefined,
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
+      }),
+  ],
+  [
+    // P2/WS4 declarative mcp node: call one MCP tool as a workflow step.
+    'mcpCallTool',
+    ({ config, inputs }) =>
+      mcpNodeActivities.mcpCallTool({
+        connectionRef: config.connectionRef as string,
+        inputs,
+        spanName: config.spanName as string | undefined,
+        tool: config.tool as string,
       }),
   ],
   [

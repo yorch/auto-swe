@@ -112,6 +112,28 @@ const AgentNodeSchema = z.object({
   userMessage: z.string().optional(),
 });
 
+/**
+ * Declarative MCP node (P2/WS4). Calls a single tool on an `mcp` Connection as a
+ * workflow step: `connectionRef` is the `mcp` Connection id, `tool` is the tool
+ * name on that server, and `inputs` map to the tool's arguments. The tool result
+ * is recorded at `nodes.<id>.output.result` like any step output.
+ */
+const McpNodeSchema = z.object({
+  /** Id of an `mcp`-type Connection (its `config.url` is the server). */
+  connectionRef: z.string().min(1),
+  heartbeatTimeout: z.string().optional(),
+  inputs: InputMapSchema.optional(),
+  next: NodeIdSchema.optional(),
+  onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
+  retry: RetryPolicySchema,
+  spanName: z.string().optional(),
+  startToCloseTimeout: z.string().optional(),
+  /** Name of the MCP tool to invoke on the server. */
+  tool: z.string().min(1),
+  type: z.literal('mcp'),
+});
+
 const SetNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   type: z.literal('set'),
@@ -330,6 +352,7 @@ const HumanReviewNodeSchema = z.object({
 export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
   AgentNodeSchema,
+  McpNodeSchema,
   SetNodeSchema,
   CondNodeSchema,
   SignalNodeSchema,
@@ -344,6 +367,7 @@ export const NodeSchema = z.discriminatedUnion('type', [
 export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
 export type AgentNode = z.infer<typeof AgentNodeSchema>;
+export type McpNode = z.infer<typeof McpNodeSchema>;
 export type SetNode = z.infer<typeof SetNodeSchema>;
 export type CondNode = z.infer<typeof CondNodeSchema>;
 export type SignalNode = z.infer<typeof SignalNodeSchema>;

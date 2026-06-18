@@ -103,7 +103,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 }
 
 /** Tool keys must satisfy provider tool-name rules (`[A-Za-z0-9_-]`). */
-function sanitizeToolName(name: string): string {
+export function sanitizeToolName(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
