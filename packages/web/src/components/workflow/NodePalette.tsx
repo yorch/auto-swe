@@ -4,6 +4,8 @@
  * NodePalette — left rail in the TemplateEditor. Lists the available primitive
  * node types and registered step implementations. Each item is HTML5-draggable;
  * the TemplateEditor canvas listens for `onDrop` to actually mutate the spec.
+ *
+ * Primitives are grouped into collapsible sections to reduce visual noise.
  */
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
@@ -21,67 +23,100 @@ type PrimitiveDef = {
   label: string;
   hint: string;
   swatch: string;
+  elevated?: boolean;
 };
 
-const PRIMITIVES: PrimitiveDef[] = [
-  { hint: 'Run a registered step', label: 'Step', swatch: 'bg-ember-400', type: 'step' },
+type PrimitiveGroup = {
+  label: string;
+  items: PrimitiveDef[];
+};
+
+const PRIMITIVE_GROUPS: PrimitiveGroup[] = [
   {
-    hint: 'Run a library Agent by reference',
-    label: 'Agent',
-    swatch: 'bg-indigo-400',
-    type: 'agent',
+    items: [
+      { hint: 'Run a registered step', label: 'Step', swatch: 'bg-ember-400', type: 'step' },
+      {
+        hint: 'Run a library Agent by reference',
+        label: 'Agent',
+        swatch: 'bg-indigo-400',
+        type: 'agent',
+      },
+      {
+        hint: 'Call one tool on an MCP server',
+        label: 'MCP tool',
+        swatch: 'bg-dust-400',
+        type: 'mcp',
+      },
+    ],
+    label: 'Execution',
   },
   {
-    hint: 'Call one tool on an MCP server',
-    label: 'MCP tool',
-    swatch: 'bg-dust-400',
-    type: 'mcp',
-  },
-  { hint: 'Branch on an expression', label: 'Conditional', swatch: 'bg-violet-400', type: 'cond' },
-  { hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400', type: 'set' },
-  { hint: 'Wait for an external signal', label: 'Signal', swatch: 'bg-dust-400', type: 'signal' },
-  {
-    hint: 'Fan out into parallel subtasks',
-    label: 'Fan-out',
-    swatch: 'bg-moss-400',
-    type: 'fanOut',
-  },
-  {
-    hint: 'Run a shell command (⚠ elevated)',
-    label: 'Shell',
-    swatch: 'bg-brick-400',
-    type: 'shell',
-  },
-  {
-    hint: 'Run a coded capability container — JSON in/out (⚠ elevated)',
-    label: 'Container step',
-    swatch: 'bg-brick-400',
-    type: 'containerStep',
-  },
-  { hint: 'End the workflow', label: 'Terminate', swatch: 'bg-paper-500', type: 'terminate' },
-  {
-    hint: 'Pause for human approval',
-    label: 'Human approval',
-    swatch: 'bg-amber-500',
-    type: 'humanApproval',
+    items: [
+      {
+        hint: 'Branch on an expression',
+        label: 'Conditional',
+        swatch: 'bg-violet-400',
+        type: 'cond',
+      },
+      {
+        hint: 'Fan out into parallel subtasks',
+        label: 'Fan-out',
+        swatch: 'bg-moss-400',
+        type: 'fanOut',
+      },
+      { hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400', type: 'set' },
+      {
+        hint: 'Wait for an external signal',
+        label: 'Signal',
+        swatch: 'bg-dust-400',
+        type: 'signal',
+      },
+      { hint: 'End the workflow', label: 'Terminate', swatch: 'bg-paper-500', type: 'terminate' },
+    ],
+    label: 'Control flow',
   },
   {
-    hint: 'Pause for human decision',
-    label: 'Human decision',
-    swatch: 'bg-amber-500',
-    type: 'humanDecision',
+    items: [
+      {
+        hint: 'Pause for human approval',
+        label: 'Approval',
+        swatch: 'bg-amber-500',
+        type: 'humanApproval',
+      },
+      {
+        hint: 'Pause for human decision',
+        label: 'Decision',
+        swatch: 'bg-amber-500',
+        type: 'humanDecision',
+      },
+      { hint: 'Pause for human input', label: 'Input', swatch: 'bg-amber-500', type: 'humanInput' },
+      {
+        hint: 'Pause for human review',
+        label: 'Review',
+        swatch: 'bg-amber-500',
+        type: 'humanReview',
+      },
+    ],
+    label: 'Human-in-loop',
   },
   {
-    hint: 'Pause for human input',
-    label: 'Human input',
-    swatch: 'bg-amber-500',
-    type: 'humanInput',
-  },
-  {
-    hint: 'Pause for human review',
-    label: 'Human review',
-    swatch: 'bg-amber-500',
-    type: 'humanReview',
+    items: [
+      {
+        elevated: true,
+        hint: 'Run a shell command (⚠ elevated)',
+        label: 'Shell',
+        swatch: 'bg-brick-400',
+        type: 'shell',
+      },
+      {
+        elevated: true,
+        hint: 'Coded capability container — JSON in/out (⚠ elevated)',
+        label: 'Container step',
+        swatch: 'bg-brick-400',
+        type: 'containerStep',
+      },
+    ],
+    label: 'Advanced',
   },
 ];
 
@@ -94,6 +129,36 @@ interface StepEntry {
 
 interface Props {
   steps: StepEntry[];
+}
+
+function PrimitiveGroup({ group }: { group: PrimitiveGroup }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="mb-1">
+      <button
+        className="flex w-full items-center justify-between px-1 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <span>{group.label}</span>
+        <span className="text-[8px]">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <ul className="space-y-1">
+          {group.items.map((p) => (
+            <PaletteItem
+              dragPayload={{ kind: 'primitive', nodeType: p.type }}
+              elevated={p.elevated}
+              hint={p.hint}
+              key={p.type}
+              label={p.label}
+              swatch={p.swatch}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 export function NodePalette({ steps }: Props) {
@@ -133,22 +198,14 @@ export function NodePalette({ steps }: Props) {
         </p>
       </div>
 
-      {/* Primitives */}
+      {/* Primitives — grouped */}
       <div className="border-b border-ink-600 px-3 py-3">
-        <div className="mb-2 px-1 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
+        <div className="mb-1 px-1 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
           Primitives
         </div>
-        <ul className="space-y-1">
-          {PRIMITIVES.map((p) => (
-            <PaletteItem
-              dragPayload={{ kind: 'primitive', nodeType: p.type }}
-              hint={p.hint}
-              key={p.type}
-              label={p.label}
-              swatch={p.swatch}
-            />
-          ))}
-        </ul>
+        {PRIMITIVE_GROUPS.map((g) => (
+          <PrimitiveGroup group={g} key={g.label} />
+        ))}
       </div>
 
       {/* Steps */}
@@ -202,18 +259,23 @@ function PaletteItem({
   swatch,
   dragPayload,
   title,
+  elevated,
 }: {
   label: string;
   hint?: string;
   swatch: string;
   dragPayload: PaletteDragKind;
   title?: string;
+  elevated?: boolean;
 }) {
   return (
     <li>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: HTML5 drag source needs to be a div with draggable + onDragStart; <button draggable> doesn't fire the drag events reliably across browsers. */}
       <div
-        className="group flex cursor-grab items-center gap-2 rounded-sm border border-ink-600 bg-ink-800/50 px-2 py-1.5 text-xs transition-colors hover:border-ember-400 hover:bg-ink-700 active:cursor-grabbing"
+        className={cn(
+          'group flex cursor-grab items-center gap-2 rounded-sm border px-2 py-1.5 text-xs transition-colors hover:border-ember-400 hover:bg-ink-700 active:cursor-grabbing',
+          elevated ? 'border-brick-400/40 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
+        )}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData(PALETTE_MIME, JSON.stringify(dragPayload));
@@ -226,6 +288,11 @@ function PaletteItem({
           <div className="truncate font-mono text-[11px] text-paper-100">{label}</div>
           {hint && <div className="truncate text-[10px] text-paper-500">{hint}</div>}
         </div>
+        {elevated && (
+          <span className="text-[9px] text-brick-400" title="Requires team-admin authoring">
+            ⚠
+          </span>
+        )}
       </div>
     </li>
   );

@@ -3,31 +3,46 @@
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { TabBar } from '@/components/ui/TabBar';
+import { Textarea } from '@/components/ui/Textarea';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
   usePromoteWorkflowVersion,
   useStepRegistry,
+  useUpdateWorkflowTemplate,
   useWorkflowTemplate,
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatPercent, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 type ViewMode = 'view' | 'edit' | 'json';
+type SubTab = 'editor' | 'analytics' | 'runs' | 'compare';
+
+const SUB_TABS: { id: SubTab; label: string }[] = [
+  { id: 'editor', label: 'Editor' },
+  { id: 'analytics', label: 'Analytics' },
+  { id: 'runs', label: 'Run history' },
+  { id: 'compare', label: 'Compare versions' },
+];
 
 function tryParseSpec(
   json: string
@@ -39,7 +54,204 @@ function tryParseSpec(
   }
 }
 
+function EditMetadataModal({
+  open,
+  onClose,
+  templateId,
+  initialName,
+  initialDescription,
+  isDefault,
+}: {
+  open: boolean;
+  onClose: () => void;
+  templateId: string;
+  initialName: string;
+  initialDescription: string;
+  isDefault: boolean;
+}) {
+  const updateTemplate = useUpdateWorkflowTemplate(templateId);
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const [defaultChecked, setDefaultChecked] = useState(isDefault);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName(initialName);
+      setDescription(initialDescription);
+      setDefaultChecked(isDefault);
+      setError(null);
+    }
+  }, [open, initialName, initialDescription, isDefault]);
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Name is required');
+      return;
+    }
+    setError(null);
+    try {
+      await updateTemplate.mutateAsync({
+        description: description.trim() || undefined,
+        isDefault: defaultChecked,
+        name: trimmed,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'save failed');
+    }
+  };
+
+  return (
+    <Modal eyebrow="§ Template" onClose={onClose} open={open} title="Edit metadata">
+      <div className="space-y-4">
+        {error && <Alert>{error}</Alert>}
+        <Input label="Name" onChange={(e) => setName(e.target.value)} value={name} />
+        <Textarea
+          hint="Optional"
+          label="Description"
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          value={description}
+        />
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300">
+          <input
+            checked={defaultChecked}
+            className="rounded border-ink-400 bg-ink-900 text-ember-400 focus:ring-ember-400"
+            onChange={(e) => setDefaultChecked(e.target.checked)}
+            type="checkbox"
+          />
+          Set as default template
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button onClick={onClose} variant="secondary">
+            Cancel
+          </Button>
+          <Button disabled={updateTemplate.isPending} onClick={handleSave} variant="primary">
+            {updateTemplate.isPending ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ExperimentCard({
+  templateId,
+  versions,
+  activeVersion,
+  experimentVersion,
+  experimentSplit,
+}: {
+  templateId: string;
+  versions: { id: string; version: number }[];
+  activeVersion: number | null;
+  experimentVersion: number | null;
+  experimentSplit: number | null;
+}) {
+  const updateTemplate = useUpdateWorkflowTemplate(templateId);
+  const [expVer, setExpVer] = useState<number | null>(experimentVersion);
+  const [split, setSplit] = useState<number>(experimentSplit ?? 10);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const nonActive = versions.filter((v) => v.version !== activeVersion);
+
+  const handleSave = async () => {
+    setError(null);
+    try {
+      await updateTemplate.mutateAsync({
+        experimentSplit: expVer ? split : null,
+        experimentVersion: expVer,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'save failed');
+    }
+  };
+
+  const handleClear = async () => {
+    setError(null);
+    setExpVer(null);
+    setSplit(10);
+    try {
+      await updateTemplate.mutateAsync({ experimentSplit: null, experimentVersion: null });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'clear failed');
+    }
+  };
+
+  if (nonActive.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card variant="inset">
+      <SectionHeader hint="A/B" number="03" title="Experiment" />
+      {error && <Alert className="mb-3 text-xs">{error}</Alert>}
+      <div className="space-y-3">
+        <Select
+          className="h-9 px-2 font-mono text-xs"
+          label="Experiment version"
+          onChange={(e) => setExpVer(e.target.value ? Number(e.target.value) : null)}
+          value={expVer ?? ''}
+        >
+          <option value="">— none —</option>
+          {nonActive.map((v) => (
+            <option key={v.id} value={v.version}>
+              v{v.version}
+            </option>
+          ))}
+        </Select>
+        {expVer && (
+          <div className="space-y-1">
+            <label
+              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+              htmlFor="exp-split"
+            >
+              Traffic split (% to experiment)
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                className="h-1.5 flex-1 cursor-pointer accent-ember-400"
+                id="exp-split"
+                max={50}
+                min={1}
+                onChange={(e) => setSplit(Number(e.target.value))}
+                type="range"
+                value={split}
+              />
+              <span className="w-10 text-right font-mono text-sm text-paper-100">{split}%</span>
+            </div>
+            <div className="font-mono text-[10px] text-paper-500">
+              v{activeVersion} gets {100 - split}% · v{expVer} gets {split}%
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <Button
+            disabled={updateTemplate.isPending}
+            onClick={handleSave}
+            size="sm"
+            variant="primary"
+          >
+            {saved ? 'Saved ✓' : updateTemplate.isPending ? 'Saving…' : 'Save'}
+          </Button>
+          {(experimentVersion || expVer) && (
+            <Button onClick={handleClear} size="sm" variant="secondary">
+              Clear
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function TemplateDetailPage({ params }: PageProps) {
+  const router = useRouter();
   const { id } = use(params);
   const { data: template, isLoading } = useWorkflowTemplate(id);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
@@ -56,6 +268,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
+  const [editMetaOpen, setEditMetaOpen] = useState(false);
 
   useEffect(() => {
     if (versionDetail) {
@@ -65,7 +278,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
   }, [versionDetail]);
 
-  // In JSON mode, the textarea is the source of truth and we re-parse on every change.
   const jsonParsed = useMemo(
     () => (mode === 'json' && editorJson ? tryParseSpec(editorJson) : null),
     [mode, editorJson]
@@ -144,8 +356,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
     if (parsed.ok) {
       setEditorSpec(parsed.spec);
     }
-    // Stay in 'json' mode while editing the textarea — isDirty already tracks
-    // the JSON-mode dirty state via the editorJson !== storedJson comparison.
   };
 
   const isDirty =
@@ -154,7 +364,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
       versionDetail !== undefined &&
       editorJson !== JSON.stringify(versionDetail.spec, null, 2));
 
-  // Action bar — Edit / Save / Cancel / View JSON / View visual
   const editorActions = (
     <>
       {mode === 'view' && (
@@ -198,7 +407,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
   );
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
+      {/* Back + header */}
       <div className="fade-up">
         <Link
           className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
@@ -206,36 +416,19 @@ export default function TemplateDetailPage({ params }: PageProps) {
         >
           <span>←</span> templates
         </Link>
-        <div className="mt-4">
-          <PageHeader
-            actions={
-              <>
-                <Link
-                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
-                  href={`/templates/${id}/analytics`}
-                >
-                  Analytics →
-                </Link>
-                <Link
-                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
-                  href={`/templates/${id}/diff`}
-                >
-                  Compare →
-                </Link>
-                <Link
-                  className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-400 transition-colors hover:text-ember-400"
-                  href={`/templates/${id}/runs`}
-                >
-                  Run history →
-                </Link>
-              </>
-            }
-            chapter={`§ Template · v${effectiveVersion ?? '?'}`}
-            subtitle={template.description ?? undefined}
-            title={template.name}
-          />
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+          <div className="flex-1">
+            <PageHeader
+              chapter={`§ Template · v${effectiveVersion ?? '?'}`}
+              subtitle={template.description ?? undefined}
+              title={template.name}
+            />
+          </div>
+          <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
+            Edit metadata
+          </Button>
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <StatusBadge status={template.status} />
           {template.isDefault && (
             <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
@@ -247,18 +440,32 @@ export default function TemplateDetailPage({ params }: PageProps) {
               active
             </span>
           )}
+          {template.experimentVersion && (
+            <span className="rounded border border-violet-400/40 bg-violet-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400">
+              A/B: v{template.experimentVersion} ({template.experimentSplit ?? 0}%)
+            </span>
+          )}
         </div>
       </div>
 
+      {/* Sub-page tab bar */}
+      <TabBar
+        active="editor"
+        className="fade-up"
+        onChange={(tab: SubTab) => {
+          if (tab === 'editor') {
+            return;
+          }
+          router.push(
+            `/templates/${id}/${tab === 'analytics' ? 'analytics' : tab === 'runs' ? 'runs' : 'diff'}`
+          );
+        }}
+        tabs={SUB_TABS}
+      />
+
       {saveError && <Alert>{saveError}</Alert>}
 
-      {/* Edit mode: drops the right side rail and escapes the page's `px-10`
-          padding so the editor fills the available main-content area. We can't
-          use `w-screen` / `ml-[calc(50%-50vw)]` because the sidebar isn't part
-          of the viewport-relative content area, so a viewport-relative bleed
-          would overflow past the right edge. The `-mx-10` here just neutralises
-          the AppShell's content padding, which is enough on typical laptop /
-          desktop viewports to fill the visual main area. */}
+      {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
         <div className="fade-up stagger-1 -mx-10">
           <TemplateEditor
@@ -275,7 +482,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* View / JSON mode: keep the side versions rail for quick navigation. */}
+      {/* View / JSON mode with versions + analytics rail */}
       {mode !== 'edit' && (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
           <div className="fade-up stagger-1 min-w-0 space-y-4">
@@ -315,10 +522,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
             )}
           </div>
 
-          {/* Right rail — versions. Compact single-line layout when the
-              template only has one version (no picker needed), full list
-              otherwise. */}
+          {/* Right rail */}
           <aside className="fade-up stagger-2 space-y-4">
+            {/* Versions */}
             {template.versions.length === 1 ? (
               <Card variant="inset">
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
@@ -340,14 +546,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
                       active
                     </span>
                   )}
-                  {template.versions[0]?.version === template.experimentVersion && (
-                    <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
-                      experiment
-                    </span>
-                  )}
                 </div>
                 <p className="mt-3 text-[11px] leading-snug text-paper-500">
-                  Save changes to create a second version and unlock version switching.
+                  Save changes to create a second version and unlock A/B testing.
                 </p>
               </Card>
             ) : (
@@ -390,23 +591,52 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             )}
 
+            {/* Observed analytics summary */}
             {analytics && analytics.totalRuns > 0 && (
               <Card variant="inset">
-                <SectionHeader hint={`${analytics.windowDays}d`} number="02" title="Observed" />
+                <SectionHeader hint="30d" number="02" title="Observed" />
                 <dl className="space-y-3 text-sm">
                   <VersionStat label="Runs" value={analytics.totalRuns} />
+                  <VersionStat label="Success rate" value={formatPercent(analytics.successRate)} />
                   {analytics.avgCostPerRun != null && (
                     <VersionStat
                       label="Avg cost / run"
                       value={`$${analytics.avgCostPerRun.toFixed(2)}`}
                     />
                   )}
+                  {analytics.p50DurationMs != null && (
+                    <VersionStat
+                      label="p50 duration"
+                      value={`${Math.round(analytics.p50DurationMs / 1000)}s`}
+                    />
+                  )}
                 </dl>
               </Card>
+            )}
+
+            {/* A/B experiment config */}
+            {template.versions.length > 1 && (
+              <ExperimentCard
+                activeVersion={template.activeVersion}
+                experimentSplit={template.experimentSplit ?? null}
+                experimentVersion={template.experimentVersion ?? null}
+                templateId={id}
+                versions={template.versions}
+              />
             )}
           </aside>
         </div>
       )}
+
+      <EditMetadataModal
+        initialDescription={template.description ?? ''}
+        initialName={template.name}
+        isDefault={template.isDefault}
+        onClose={() => setEditMetaOpen(false)}
+        open={editMetaOpen}
+        templateId={id}
+      />
+
       <ConfirmModal
         confirmLabel="Save"
         message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run user-authored commands in an ephemeral container and require team-admin authoring. Save?`}

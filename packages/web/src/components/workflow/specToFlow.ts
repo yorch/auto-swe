@@ -12,6 +12,16 @@ import type { Edge as RFEdge, Node as RFNode } from '@xyflow/react';
 import { type DiffKind, type EdgeKind, layoutSpec } from '@/lib/workflowLayout';
 import type { DagNodeData } from './dagNode';
 
+const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
+  onApprove: 'approve',
+  onFalse: 'false',
+  onReceive: 'signal',
+  onReject: 'reject',
+  onSubmit: 'submit',
+  onTimeout: 'timeout',
+  onTrue: 'true',
+};
+
 const EDGE_STROKE: Record<EdgeKind, string> = {
   join: '#e26b3c', // ember-400
   next: '#a8a395', // paper-400
@@ -85,9 +95,23 @@ export function specToFlow(
   const edges: RFEdge[] = layout.edges.map((e) => {
     const color = EDGE_STROKE[e.kind];
     const dashed = opts.diffMarkers?.[e.from] === 'removed';
+    const label = EDGE_LABEL[e.kind];
     return {
       animated: opts.statuses?.byNodeId[e.from]?.status === 'RUNNING',
       id: `${e.from}-${e.kind}-${e.to}`,
+      ...(label && {
+        label,
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgStyle: { fill: '#0b0e13', fillOpacity: 0.85 },
+        labelStyle: {
+          fill: color,
+          fontFamily: 'monospace',
+          fontSize: 9,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+        },
+      }),
       markerEnd: {
         color,
         height: 16,
