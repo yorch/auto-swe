@@ -342,12 +342,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       },
     },
     async (_req, reply) => {
-      try {
-        const result = await detectJiraFields();
-        return reply.send(result);
-      } catch (err) {
-        return reply.code(500).send({ error: String(err) });
-      }
+      const result = await detectJiraFields();
+      return reply.send(result);
     }
   );
 
