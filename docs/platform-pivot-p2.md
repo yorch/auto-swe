@@ -144,7 +144,7 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 
 ## Sequencing checklist
 
-**Status: 🔄 in progress (WS1 + WS2 + WS3 + WS4 done; WS5 — canvas authoring — remains).**
+**Status: ✅ done (WS1–WS5 complete).**
 
 - [x] WS1 — `agent` node + interpreter dispatch + `runAgentNode` activity (parity); spec
   `SPEC_SCHEMA_VERSION 4→5` + codemod; per-node `systemPrompt` override; canvas rendering. The
@@ -160,6 +160,6 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 - [x] WS4 — `mcp` node (single-tool step): `McpNodeSchema` + interpreter `runMcpNode`
   dispatch → `mcpCallTool` activity (resolve connection → load tool → call → bind result);
   registered in `STEP_EXECUTORS`; cost-estimator + canvas node rendering handle the type.
-- [ ] WS5 — canvas palette + inspector for `agent`/`mcp` (the `mcp` node renders + has a
-  default-node factory, but the palette entry + inspector form to edit `connectionRef`/`tool`
-  are still pending)
+- [x] WS5 — canvas palette + inspector for `agent`/`mcp`: "MCP tool" palette primitive +
+  `McpSection` inspector (connectionRef + tool + onFail) + shared inputs-bindings for tool args +
+  `mcp · <tool>` canvas sublabel. Nodes add + configure on the canvas; the saved spec round-trips.
