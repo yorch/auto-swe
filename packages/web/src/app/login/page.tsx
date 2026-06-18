@@ -221,7 +221,7 @@ function LoginPageInner() {
   // in the app works yet.
   if (pendingEmail) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-ink-900 px-6 py-12">
+      <div className="flex min-h-screen items-center justify-center bg-ink-800 px-6 py-12">
         <div className="w-full max-w-sm">
           <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-400">
             ¶ § auth/pending
@@ -287,13 +287,13 @@ function LoginPageInner() {
               <span className="display-italic text-3xl leading-none text-ember-400">·swe</span>
             </div>
             <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-              engineering · telemetry · v{APP_VERSION}
+              autonomous workflows
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              control plane online
+              gateway online
             </span>
           </div>
         </header>
@@ -317,12 +317,12 @@ function LoginPageInner() {
 
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
           <span>© {new Date().getFullYear()} · brnby</span>
-          <span>oauth + magic link + password</span>
+          <span>v{APP_VERSION} · oauth + magic link + password</span>
         </footer>
       </aside>
 
       {/* RIGHT — sign-in panel */}
-      <section className="relative flex items-center justify-center bg-ink-900 px-6 py-12 lg:px-16">
+      <section className="relative flex items-center justify-center bg-ink-800 px-6 py-12 lg:px-16">
         <div className="w-full max-w-sm">
           <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
             <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
