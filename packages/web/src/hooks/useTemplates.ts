@@ -183,7 +183,7 @@ export function useRunTemplate(templateId: string) {
   return useMutation({
     mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) =>
       api
-        .post<{ data: { temporalWorkflowId: string; workRequestId: string } }>(
+        .post<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(
           `/api/v1/workflow-templates/${templateId}/runs`,
           body
         )

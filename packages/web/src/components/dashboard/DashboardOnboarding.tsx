@@ -98,7 +98,7 @@ export function DashboardOnboarding({
                   {canManageRepos && (
                     <>
                       {' '}
-                      <Link className="text-ember-400 hover:underline" href="/repositories">
+                      <Link className="text-ember-400 hover:underline" href="/connections">
                         Manage
                       </Link>
                       .
@@ -108,8 +108,8 @@ export function DashboardOnboarding({
               ) : canManageRepos ? (
                 <p>
                   Add the GitHub repo auto-swe should send pull requests to.{' '}
-                  <Link className="text-ember-400 hover:underline" href="/repositories">
-                    Open repositories →
+                  <Link className="text-ember-400 hover:underline" href="/connections">
+                    Open connections →
                   </Link>
                 </p>
               ) : (

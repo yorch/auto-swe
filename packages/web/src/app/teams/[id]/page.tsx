@@ -164,8 +164,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             {(team.repositories ?? []).length === 0 && (
               <p className="py-4 text-center text-xs text-paper-500">
                 No repositories yet. Add one from{' '}
-                <Link className="text-ember-400 hover:underline" href="/repositories">
-                  Repositories
+                <Link className="text-ember-400 hover:underline" href="/connections">
+                  Connections
                 </Link>
                 .
               </p>

@@ -19,7 +19,7 @@ function pageTitle(pathname: string): string {
     ['/epics', 'Epics'],
     ['/analytics', 'Analytics'],
     ['/lessons', 'Memory'],
-    ['/repositories', 'Connections'],
+    ['/connections', 'Connections'],
     ['/admin/agents', 'Agents'],
     ['/admin/skills', 'Skills'],
     ['/admin/security', 'Security'],

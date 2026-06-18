@@ -127,7 +127,7 @@ export function RunTemplateModal({
     try {
       const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
       handleClose();
-      router.push(`/runs/${result.workRequestId}`);
+      router.push(`/workflows/${result.workflowId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Run failed';
       setError(msg);

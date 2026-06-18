@@ -887,8 +887,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+        data: {
+          budgetTier,
+          currentStatus: 'IMPLEMENTING',
+          repoId: connectionId ?? null,
+          temporalWorkflowId,
+          workRequestId,
+        },
+      });
+
       return reply.status(201).send({
-        data: { temporalWorkflowId, workRequestId },
+        data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId },
       });
     }
   );
