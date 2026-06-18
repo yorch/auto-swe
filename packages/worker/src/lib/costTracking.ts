@@ -185,87 +185,92 @@ export async function recordLlmUsage(
   const outputTokens = usage.outputTokens ?? 0;
   const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
 
-  const attribution = await tracer.startActiveSpan(spanName, async (span): Promise<LlmAttribution> => {
-    try {
-      if (specResolutionError) {
-        span.setAttribute('llm.spec_resolution_failed', true);
-        span.recordException(specResolutionError as Error);
-      }
-      const workflow = await prisma.activeWorkflow.findFirst({
-        select: {
-          budgetTier: true,
-          costUsdAccrued: true,
-          id: true,
-          tokensInputUsed: true,
-          tokensOutputUsed: true,
-        },
-        where: { temporalWorkflowId },
-      });
+  const attribution = await tracer.startActiveSpan(
+    spanName,
+    async (span): Promise<LlmAttribution> => {
+      try {
+        if (specResolutionError) {
+          span.setAttribute('llm.spec_resolution_failed', true);
+          span.recordException(specResolutionError as Error);
+        }
+        const workflow = await prisma.activeWorkflow.findFirst({
+          select: {
+            budgetTier: true,
+            costUsdAccrued: true,
+            id: true,
+            tokensInputUsed: true,
+            tokensOutputUsed: true,
+          },
+          where: { temporalWorkflowId },
+        });
 
-      if (!workflow) {
-        // Non-fatal: workflow record may not exist in test/dev scenarios
-        span.setAttribute('llm.workflow_found', false);
+        if (!workflow) {
+          // Non-fatal: workflow record may not exist in test/dev scenarios
+          span.setAttribute('llm.workflow_found', false);
+          return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+        }
+
+        const newInput = workflow.tokensInputUsed + inputTokens;
+        const newOutput = workflow.tokensOutputUsed + outputTokens;
+        // ARCH-8: cost is a Float column accumulated incrementally; round each
+        // accumulation to micro-dollars so FP representation error can't drift
+        // across thousands of increments. (A Decimal column was considered and
+        // rejected: Prisma Decimal serializes as a string, silently changing
+        // the wire format of every endpoint that returns raw rows.)
+        const newCost = Math.round((workflow.costUsdAccrued + callCost) * 1e6) / 1e6;
+
+        span.setAttributes({
+          'llm.cost_pricing_known': known,
+          'llm.cost_usd': callCost,
+          'llm.input_tokens': inputTokens,
+          'llm.model': modelSpec,
+          'llm.output_tokens': outputTokens,
+          'llm.role': role,
+          'workflow.budget_tier': workflow.budgetTier,
+          'workflow.cost_usd_cumulative': newCost,
+          'workflow.tokens_input_cumulative': newInput,
+          'workflow.tokens_output_cumulative': newOutput,
+        });
+
+        // Write usage to DB before checking the budget limit.
+        // This is intentional: we record actual consumption even when the limit
+        // is breached, so the UI shows the real overage rather than the last
+        // value before the limit was hit.
+        await prisma.activeWorkflow.update({
+          data: { costUsdAccrued: newCost, tokensInputUsed: newInput, tokensOutputUsed: newOutput },
+          where: { id: workflow.id },
+        });
+
+        const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
+        const limits = BUDGET_LIMITS[tier];
+        if (!limits) {
+          throw new Error(
+            `Unknown budget tier "${tier}" — update BUDGET_LIMITS in costTracking.ts`
+          );
+        }
+
+        span.setAttributes({
+          'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,
+          'workflow.budget_remaining_output_tokens': limits.outputTokens - newOutput,
+        });
+
+        if (newInput > limits.inputTokens || newOutput > limits.outputTokens) {
+          throw ApplicationFailure.nonRetryable(
+            `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
+            'BUDGET_EXCEEDED',
+            { newCost, newInput, newOutput, tier }
+          );
+        }
+
         return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+      } catch (e) {
+        span.recordException(e as Error);
+        throw e;
+      } finally {
+        span.end();
       }
-
-      const newInput = workflow.tokensInputUsed + inputTokens;
-      const newOutput = workflow.tokensOutputUsed + outputTokens;
-      // ARCH-8: cost is a Float column accumulated incrementally; round each
-      // accumulation to micro-dollars so FP representation error can't drift
-      // across thousands of increments. (A Decimal column was considered and
-      // rejected: Prisma Decimal serializes as a string, silently changing
-      // the wire format of every endpoint that returns raw rows.)
-      const newCost = Math.round((workflow.costUsdAccrued + callCost) * 1e6) / 1e6;
-
-      span.setAttributes({
-        'llm.cost_pricing_known': known,
-        'llm.cost_usd': callCost,
-        'llm.input_tokens': inputTokens,
-        'llm.model': modelSpec,
-        'llm.output_tokens': outputTokens,
-        'llm.role': role,
-        'workflow.budget_tier': workflow.budgetTier,
-        'workflow.cost_usd_cumulative': newCost,
-        'workflow.tokens_input_cumulative': newInput,
-        'workflow.tokens_output_cumulative': newOutput,
-      });
-
-      // Write usage to DB before checking the budget limit.
-      // This is intentional: we record actual consumption even when the limit
-      // is breached, so the UI shows the real overage rather than the last
-      // value before the limit was hit.
-      await prisma.activeWorkflow.update({
-        data: { costUsdAccrued: newCost, tokensInputUsed: newInput, tokensOutputUsed: newOutput },
-        where: { id: workflow.id },
-      });
-
-      const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
-      const limits = BUDGET_LIMITS[tier];
-      if (!limits) {
-        throw new Error(`Unknown budget tier "${tier}" — update BUDGET_LIMITS in costTracking.ts`);
-      }
-
-      span.setAttributes({
-        'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,
-        'workflow.budget_remaining_output_tokens': limits.outputTokens - newOutput,
-      });
-
-      if (newInput > limits.inputTokens || newOutput > limits.outputTokens) {
-        throw ApplicationFailure.nonRetryable(
-          `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
-          'BUDGET_EXCEEDED',
-          { newCost, newInput, newOutput, tier }
-        );
-      }
-
-      return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
-    } catch (e) {
-      span.recordException(e as Error);
-      throw e;
-    } finally {
-      span.end();
     }
-  });
+  );
 
   return attribution;
 }
