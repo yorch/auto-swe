@@ -73,6 +73,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           run: s.run,
           runId: s.runId,
           status: s.status,
+          timeoutAt: s.timeoutAt,
           title: s.title,
         })),
       };
