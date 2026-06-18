@@ -6,6 +6,7 @@ import {
   resolveSlackConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { prisma } from '@auto-swe/shared/db';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -506,6 +507,76 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       return reply
         .status(201)
         .send({ data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId } });
+    }
+  );
+
+  // POST /api/v1/webhooks/jira — receives Jira issue transition events and auto-creates work requests
+  fastify.post(
+    '/jira',
+    {
+      config: { skipAuth: true },
+      schema: { body: z.object({}).passthrough() },
+    },
+    async (request, reply) => {
+      // 1. Verify HMAC-SHA256 signature (if webhookSecret is configured)
+      const config = await resolveIssueTrackerConfig();
+      if (config.webhookSecret) {
+        const signature = request.headers['x-hub-signature-256'] as string | undefined;
+        if (!signature) {
+          return reply.code(401).send({ error: 'Missing signature' });
+        }
+        const expected = `sha256=${crypto.createHmac('sha256', config.webhookSecret)
+          .update(JSON.stringify(request.body))
+          .digest('hex')}`;
+        // Use equal-length buffers to avoid timing attacks
+        const sigBuf = Buffer.from(signature);
+        const expBuf = Buffer.from(expected);
+        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+          return reply.code(401).send({ error: 'Invalid signature' });
+        }
+      }
+
+      // 2. Parse the Jira webhook payload
+      const payload = request.body as Record<string, unknown>;
+      const issue = payload?.issue as Record<string, unknown> | undefined;
+      const transition = payload?.transition as Record<string, unknown> | undefined;
+      if (!issue || !transition) {
+        return reply.code(200).send({ skipped: true }); // not an issue transition event
+      }
+
+      // 3. Check if the transition matches webhookTriggerStatus
+      const triggerStatus = config.webhookTriggerStatus;
+      const toStatus = (transition?.to as Record<string, unknown> | undefined)?.name as
+        | string
+        | undefined;
+      if (!triggerStatus || !toStatus) {
+        return reply.code(200).send({ skipped: true });
+      }
+      if (toStatus.toLowerCase() !== triggerStatus.toLowerCase()) {
+        return reply.code(200).send({ skipped: true });
+      }
+
+      // 4. Auto-create a work request — find the first active git_repo connection
+      const ticketId = issue.key as string;
+      const fields = issue.fields as Record<string, unknown> | undefined;
+      const summary = (fields?.summary as string | undefined) ?? ticketId;
+      const defaultRepo = await prisma.connection.findFirst({
+        where: { isActive: true, type: 'git_repo' },
+      });
+      if (!defaultRepo) {
+        return reply.code(200).send({ skipped: true, reason: 'no active repos' });
+      }
+
+      await prisma.runInput.create({
+        data: {
+          connectionId: defaultRepo.id,
+          description: summary,
+          externalTicketId: ticketId,
+          requestPayload: JSON.stringify({ source: 'jira_webhook', ticketId, summary }),
+        },
+      });
+
+      return reply.code(200).send({ ok: true, ticketId });
     }
   );
 };

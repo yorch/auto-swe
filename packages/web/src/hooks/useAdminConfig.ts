@@ -284,6 +284,21 @@ export function testIssueTrackerConnection(ticketId: string) {
   });
 }
 
+export function useDetectJiraFields() {
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/v1/admin/config/issue-tracker/detect-fields', {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json() as Promise<{
+        fields: { id: string; name: string }[];
+        storyPointsFieldId: string | null;
+      }>;
+    },
+  });
+}
+
 // ── Knowledge base config ──
 
 export type KnowledgeBaseProvider = 'confluence' | 'notion';

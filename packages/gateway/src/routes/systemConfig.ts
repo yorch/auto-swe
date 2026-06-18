@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  detectJiraFields,
   getGitHubConfig,
   getGoogleOAuthConfig,
   getIssueTrackerConfig,
@@ -326,6 +327,28 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/issue-tracker/test',
     { schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
     async (req, reply) => reply.send(await testIssueTrackerConnection(req.body.ticketId))
+  );
+
+  f.post(
+    '/config/issue-tracker/detect-fields',
+    {
+      schema: {
+        response: {
+          200: z.object({
+            fields: z.array(z.object({ id: z.string(), name: z.string() })),
+            storyPointsFieldId: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        const result = await detectJiraFields();
+        return reply.send(result);
+      } catch (err) {
+        return reply.code(500).send({ error: String(err) });
+      }
+    }
   );
 
   // ── Knowledge base ───────────────────────────────────────────────────────────

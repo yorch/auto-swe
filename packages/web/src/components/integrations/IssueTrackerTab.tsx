@@ -7,6 +7,7 @@ import {
   type IssueTrackerConfigInput,
   type IssueTrackerProvider,
   testIssueTrackerConnection,
+  useDetectJiraFields,
   useIssueTrackerConfig,
   useUpdateIssueTrackerConfig,
 } from '@/hooks/useAdminConfig';
@@ -55,11 +56,14 @@ export function IssueTrackerTab() {
   const [webhookSecret, setWebhookSecret] = useState('');
   const [webhookTriggerStatus, setWebhookTriggerStatus] = useState('');
 
+  const detectFields = useDetectJiraFields();
+
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testTicketId, setTestTicketId] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [detectResult, setDetectResult] = useState<string | null>(null);
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
     | IssueTrackerProvider
@@ -257,13 +261,40 @@ export function IssueTrackerTab() {
                   </span>
                 )}
               </label>
-              <input
-                className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
-                id="tracker-story-points"
-                onChange={(e) => setStoryPointsFieldId(e.target.value)}
-                placeholder="story_points"
-                value={storyPointsFieldId}
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  className="flex-1 rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                  id="tracker-story-points"
+                  onChange={(e) => setStoryPointsFieldId(e.target.value)}
+                  placeholder="story_points"
+                  value={storyPointsFieldId}
+                />
+                <Button
+                  disabled={detectFields.isPending}
+                  onClick={async () => {
+                    setDetectResult(null);
+                    try {
+                      const result = await detectFields.mutateAsync();
+                      if (result.storyPointsFieldId) {
+                        setStoryPointsFieldId(result.storyPointsFieldId);
+                        setDetectResult(`Detected: ${result.storyPointsFieldId}`);
+                      } else {
+                        setDetectResult('No story points field found');
+                      }
+                    } catch (err) {
+                      setDetectResult(errMsg(err, 'Detection failed'));
+                    }
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  {detectFields.isPending ? 'Detecting…' : 'Auto-detect'}
+                </Button>
+              </div>
+              {detectResult && (
+                <p className="mt-1 text-[11px] text-paper-400">{detectResult}</p>
+              )}
             </div>
             <div>
               <label
