@@ -124,6 +124,7 @@ export function useUpdateWorkflowTemplate(templateId: string) {
         status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
         experimentVersion: number | null;
         experimentSplit: number | null;
+        inputSchema: unknown;
       }>
     ) =>
       api.patch<{ data: WorkflowTemplateSummary }>(

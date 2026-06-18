@@ -1,5 +1,6 @@
 'use client';
 
+import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { estimateSpecCost } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
@@ -17,6 +18,7 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
+import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
@@ -131,6 +133,63 @@ function EditMetadataModal({
           </Button>
           <Button disabled={updateTemplate.isPending} onClick={handleSave} variant="primary">
             {updateTemplate.isPending ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function EditSchemaModal({
+  open,
+  onClose,
+  templateId,
+  initialSchema,
+}: {
+  open: boolean;
+  onClose: () => void;
+  templateId: string;
+  initialSchema: InputSchema | null | undefined;
+}) {
+  const updateTemplate = useUpdateWorkflowTemplate(templateId);
+  const [schema, setSchema] = useState<InputSchema | null>(initialSchema ?? null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setSchema(initialSchema ?? null);
+      setError(null);
+    }
+  }, [open, initialSchema]);
+
+  const handleSave = async () => {
+    setError(null);
+    try {
+      await updateTemplate.mutateAsync({ inputSchema: schema ?? null });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'save failed');
+    }
+  };
+
+  return (
+    <Modal
+      eyebrow="§ Template"
+      onClose={onClose}
+      open={open}
+      size="lg"
+      subtitle="Define the fields users fill in when running this template. Leave empty for no required inputs."
+      title="Run schema"
+    >
+      <div className="space-y-4">
+        {error && <Alert>{error}</Alert>}
+        <InputSchemaBuilder onChange={setSchema} value={schema ?? undefined} />
+        <div className="flex justify-end gap-2 border-t border-ink-600 pt-4">
+          <Button onClick={onClose} variant="secondary">
+            Cancel
+          </Button>
+          <Button disabled={updateTemplate.isPending} onClick={handleSave} variant="primary">
+            {updateTemplate.isPending ? 'Saving…' : 'Save schema'}
           </Button>
         </div>
       </div>
@@ -270,6 +329,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
+  const [editSchemaOpen, setEditSchemaOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
 
   useEffect(() => {
@@ -625,6 +685,35 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </Card>
             )}
 
+            {/* Run schema */}
+            <Card variant="inset">
+              <div className="flex items-center justify-between">
+                <SectionHeader number="03" title="Run schema" />
+                <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
+                  Edit
+                </Button>
+              </div>
+              {template.inputSchema &&
+              typeof template.inputSchema === 'object' &&
+              'properties' in (template.inputSchema as object) ? (
+                <ul className="mt-2 space-y-1">
+                  {Object.entries(
+                    (template.inputSchema as InputSchema).properties
+                  ).map(([key, prop]) => (
+                    <li key={key} className="flex items-baseline gap-2 text-xs">
+                      <span className="font-mono text-paper-200">{key}</span>
+                      <span className="text-paper-500">{prop.type}</span>
+                      {(template.inputSchema as InputSchema).required?.includes(key) && (
+                        <span className="text-brick-400">required</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-paper-500">No schema — runs accept any input</p>
+              )}
+            </Card>
+
             {/* A/B experiment config */}
             {template.versions.length > 1 && (
               <ExperimentCard
@@ -645,6 +734,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
         isDefault={template.isDefault}
         onClose={() => setEditMetaOpen(false)}
         open={editMetaOpen}
+        templateId={id}
+      />
+
+      <EditSchemaModal
+        initialSchema={template.inputSchema as InputSchema | null | undefined}
+        onClose={() => setEditSchemaOpen(false)}
+        open={editSchemaOpen}
         templateId={id}
       />
 

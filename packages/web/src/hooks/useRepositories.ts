@@ -16,6 +16,20 @@ export interface CreateRepoBody {
   githubApiUrl?: string;
 }
 
+export interface CreateConnectionBody {
+  type: string;
+  name?: string;
+  teamId: string;
+  description?: string;
+  config?: unknown;
+  // git_repo only
+  organizationName?: string;
+  repoName?: string;
+  defaultBranch?: string;
+  executorImage?: string;
+  language?: string;
+}
+
 export interface UpdateRepoBody {
   consolidationEnabled?: boolean;
   defaultBranch?: string;
@@ -26,6 +40,8 @@ export interface UpdateRepoBody {
   teamId?: string;
   githubUrl?: string | null;
   githubApiUrl?: string | null;
+  name?: string | null;
+  config?: unknown;
 }
 
 export function useRepositories() {
@@ -39,7 +55,7 @@ export function useRepositories() {
 export function useCreateRepository() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateRepoBody) =>
+    mutationFn: (body: CreateRepoBody | CreateConnectionBody) =>
       api.post<{ data: RepositorySummary }>('/api/v1/repositories', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
   });

@@ -58,6 +58,7 @@ describe('RepositoryFormModal — edit', () => {
     const onClose = vi.fn();
     const repo = {
       _count: { activeWorkflows: 0 },
+      config: null,
       consolidationEnabled: true,
       defaultBranch: 'main',
       description: 'old description',
@@ -65,9 +66,11 @@ describe('RepositoryFormModal — edit', () => {
       id: 'r1',
       isActive: true,
       language: 'typescript',
+      name: null,
       organizationName: 'acme',
       repoName: 'payments-api',
       team: { id: 't1', name: 'platform', slug: 'platform' },
+      type: 'git_repo',
     };
     const spy = setupFetchMock({
       '/api/v1/repositories/r1': () => ({ data: { ...repo, language: null } }),
