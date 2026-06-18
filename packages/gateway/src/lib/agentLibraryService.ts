@@ -95,7 +95,7 @@ export async function validateMcpConnectionRef(
     select: { id: true, isActive: true, teamId: true, type: true },
     where: { id: mcpConnectionId },
   });
-  if (!conn || !conn.isActive) {
+  if (!conn?.isActive) {
     return 'MCP connection not found or inactive';
   }
   if (conn.type !== 'mcp') {

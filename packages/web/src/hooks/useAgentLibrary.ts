@@ -16,6 +16,7 @@ export interface AgentRow {
   systemPrompt: string | null;
   inheritsModelFrom: string | null;
   toolKeys: string[] | null;
+  mcpConnectionId: string | null;
   origin: string | null;
   isBuiltIn: boolean;
   isVerified: boolean;
@@ -34,6 +35,7 @@ export interface CreateAgentBody {
   systemPrompt?: string | null;
   inheritsModelFrom?: string | null;
   toolKeys?: string[] | null;
+  mcpConnectionId?: string | null;
 }
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;

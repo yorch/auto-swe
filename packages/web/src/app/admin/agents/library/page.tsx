@@ -8,6 +8,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import {
   type AgentRow,
   type CreateAgentBody,
@@ -17,6 +18,7 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
+import { useMcpConnections } from '@/hooks/useMcpConnections';
 
 const EMPTY_CREATE: CreateAgentBody = {
   description: '',
@@ -40,6 +42,7 @@ function modelLabel(a: AgentRow): string {
 
 export default function AgentLibraryPage() {
   const { data: agents, isLoading } = useAgentLibrary({ scope: 'GLOBAL' });
+  const { data: mcpConnections } = useMcpConnections();
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
@@ -79,13 +82,17 @@ export default function AgentLibraryPage() {
     setWarnings([]);
     try {
       const res = await updateAgent.mutateAsync({
-        body: clean({
-          description: editing.description ?? '',
-          inheritsModelFrom: editing.inheritsModelFrom ?? '',
-          modelSpec: editing.modelSpec ?? '',
-          name: editing.name,
-          systemPrompt: editing.systemPrompt ?? '',
-        }) as unknown as UpdateAgentBody,
+        body: {
+          ...(clean({
+            description: editing.description ?? '',
+            inheritsModelFrom: editing.inheritsModelFrom ?? '',
+            modelSpec: editing.modelSpec ?? '',
+            name: editing.name,
+            systemPrompt: editing.systemPrompt ?? '',
+          }) as unknown as UpdateAgentBody),
+          // Always sent (outside clean) so an explicit "None" clears it.
+          mcpConnectionId: editing.mcpConnectionId ?? null,
+        },
         id: editing.id,
       });
       setWarnings(res.scanWarnings ?? []);
@@ -196,6 +203,21 @@ export default function AgentLibraryPage() {
             placeholder="reviewer"
             value={createForm.inheritsModelFrom ?? ''}
           />
+          <Select
+            hint="Bind this MCP server's tools at run time (also add 'mcp' to the agent's tool keys)"
+            label="MCP connection (optional)"
+            onChange={(e) =>
+              setCreateForm({ ...createForm, mcpConnectionId: e.target.value || null })
+            }
+            value={createForm.mcpConnectionId ?? ''}
+          >
+            <option value="">None</option>
+            {mcpConnections?.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {c.config?.url}
+              </option>
+            ))}
+          </Select>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setCreateOpen(false)} variant="secondary">
               Cancel
@@ -236,6 +258,19 @@ export default function AgentLibraryPage() {
               onChange={(e) => setEditing({ ...editing, inheritsModelFrom: e.target.value })}
               value={editing.inheritsModelFrom ?? ''}
             />
+            <Select
+              hint="Bind this MCP server's tools at run time (also add 'mcp' to the agent's tool keys)"
+              label="MCP connection"
+              onChange={(e) => setEditing({ ...editing, mcpConnectionId: e.target.value || null })}
+              value={editing.mcpConnectionId ?? ''}
+            >
+              <option value="">None</option>
+              {mcpConnections?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} — {c.config?.url}
+                </option>
+              ))}
+            </Select>
             <p className="text-xs text-paper-500">
               Saving cuts a new version. A system-prompt change resets verification and is content-
               scanned.
