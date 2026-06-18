@@ -492,6 +492,9 @@ async function runContainerStep(
   if (node.transport !== undefined) {
     config.transport = node.transport;
   }
+  if (node.sidecar !== undefined) {
+    config.sidecar = node.sidecar;
+  }
   return runRetryable({
     ctx,
     dispatcher,

@@ -6,16 +6,20 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 vi.mock('@auto-swe/shared/workflow', () => ({ assertShellImageAllowed: vi.fn() }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
-vi.mock('../lib/ephemeralContainer.js', () => ({ runEphemeralContainer: vi.fn() }));
+vi.mock('../lib/ephemeralContainer.js', () => ({
+  runEphemeralContainer: vi.fn(),
+  runSidecarContainer: vi.fn(),
+}));
 vi.mock('../lib/execUtils.js', () => ({ execShellAsync: vi.fn().mockResolvedValue({}) }));
 
 import { prisma } from '@auto-swe/shared/db';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
-import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
+import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
 import { runContainerStep } from './containerStep.js';
 
 const findUnique = vi.mocked(prisma.connection.findUnique);
 const mockedRun = vi.mocked(runEphemeralContainer);
+const mockedSidecar = vi.mocked(runSidecarContainer);
 const mockedAssert = vi.mocked(assertShellImageAllowed);
 
 const REQUEST = { repoId: 'r1' } as unknown as RepoWorkRequest;
@@ -94,6 +98,35 @@ describe('runContainerStep', () => {
       const res = await runContainerStep({ ...base, command: 'x', transport: 'ndjson' });
       expect(res.result).toBe(7);
       expect(res.events?.[0]).toEqual({ log: 'plain text progress', type: 'log' });
+    });
+  });
+
+  describe('sidecar transport', () => {
+    it('POSTs inputs to the sidecar and binds the JSON response as the result', async () => {
+      mockedSidecar.mockResolvedValue({ result: { ok: true }, status: 200 } as never);
+      const res = await runContainerStep({
+        ...base,
+        inputs: { q: 'x' },
+        sidecar: { port: 8080, requestPath: '/run' },
+        transport: 'sidecar',
+      });
+      expect(res.result).toEqual({ ok: true });
+      expect(mockedSidecar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: { q: 'x' },
+          network: 'egress',
+          port: 8080,
+          requestPath: '/run',
+        })
+      );
+      // No command is required for a sidecar.
+      expect(mockedRun).not.toHaveBeenCalled();
+    });
+
+    it('throws when transport is sidecar but no sidecar config is given', async () => {
+      await expect(runContainerStep({ ...base, transport: 'sidecar' })).rejects.toThrow(
+        /requires a sidecar config/
+      );
     });
   });
 });

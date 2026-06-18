@@ -304,6 +304,15 @@ const ContainerStepNodeSchema = z.object({
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
   retry: RetryPolicySchema,
+  /** Sidecar HTTP contract (required when transport === 'sidecar'). */
+  sidecar: z
+    .object({
+      port: z.number().int().min(1).max(65535),
+      readinessPath: z.string().max(512).optional(),
+      readyTimeoutMs: z.number().int().min(1000).max(300_000).optional(),
+      requestPath: z.string().max(512).optional(),
+    })
+    .optional(),
   startToCloseTimeout: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
   /**
@@ -312,8 +321,11 @@ const ContainerStepNodeSchema = z.object({
    *  - `'ndjson'`: a stream of newline-delimited JSON events; the result is the
    *    last `{ type: 'result', result }` event (or last bare JSON line), and all
    *    events are exposed at `nodes.<id>.output.events`.
+   *  - `'sidecar'`: the image runs as a detached HTTP server (loopback-only
+   *    published port); the worker POSTs the inputs and binds the JSON response.
+   *    Requires `sidecar.port`; implies bridge networking (egress allowlist applies).
    */
-  transport: z.enum(['stdout', 'ndjson']).optional(),
+  transport: z.enum(['stdout', 'ndjson', 'sidecar']).optional(),
   type: z.literal('containerStep'),
 });
 
