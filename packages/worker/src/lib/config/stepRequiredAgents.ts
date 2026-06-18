@@ -21,6 +21,14 @@ import type { ModelBackedAgentKey } from './types.js';
  *     so they need both `implementer` and `securityReview`.
  *   - `runReviewNetwork`'s three sub-reviewers all bind the `reviewer` model.
  *   - `planDecomposition` binds `planner`.
+ *
+ * Worked example: a template whose steps are `executeImplementation` →
+ * `runReviewNetwork` → `runLint` → `createOrUpdatePullRequest`. `requiredAgentKeys()`
+ * returns `['implementer', 'securityReview', 'reviewer']` (the last two steps resolve
+ * no model). At boot, `assertConfigReady` calls `resolveAgent` for each; if the GLOBAL
+ * `reviewer` Agent has a `modelSpec` but no `ProviderCredential` for its provider, boot
+ * throws `ConfigMissingError` naming `reviewer` and the worker never starts polling —
+ * instead of failing the review step mid-run.
  */
 export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]> = {
   commitToMemory: ['commitToMemory'],
