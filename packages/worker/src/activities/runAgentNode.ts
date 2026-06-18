@@ -1,6 +1,9 @@
+import { loadMcpTools } from '../agents/mcpTools.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
+import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { runAgent } from './runAgent.js';
 
@@ -28,8 +31,9 @@ export interface RunAgentNodeResult {
  * (`resolveAgentSpec` → `resolveAgent`, honoring the run-start version snapshot
  * and any explicit `@version` pin) and runs it via the P0 `runAgent` loop.
  *
- * The agent runs tool-free here (no workspace is attached to a generic agent
- * node); MCP/tool binding for agent nodes lands in later P2 work-streams.
+ * No workspace tools are attached to a generic agent node, but MCP tools bind
+ * when the resolved Agent enables them (`'mcp'` toolKey + `mcpConnectionId`) —
+ * the generic counterpart to the implementer's `buildImplementerForActivity`.
  */
 export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
   const ctx = await currentRequestContext();
@@ -49,9 +53,24 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
     resolveCtx
   );
 
-  const userMessage = input.userMessage ?? JSON.stringify(input.inputs ?? {});
-  const result = await runAgent(spec, userMessage, {
-    spanName: input.spanName ?? 'llm.agent_node',
-  });
-  return { object: result.object, text: result.text };
+  // P2/WS3: bind MCP tools when the Agent enables them; closed in finally.
+  // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
+  const mcpServerRef = await resolveAgentMcpUrl(key, resolveCtx);
+  let closeMcp: (() => Promise<void>) | undefined;
+  if (mcpServerRef) {
+    const loaded = await loadMcpTools(mcpServerRef);
+    closeMcp = loaded.close;
+    // Built-in/spec tools win over MCP tools on key collision.
+    spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
+  }
+
+  try {
+    const userMessage = input.userMessage ?? JSON.stringify(input.inputs ?? {});
+    const result = await runAgent(spec, userMessage, {
+      spanName: input.spanName ?? 'llm.agent_node',
+    });
+    return { object: result.object, text: result.text };
+  } finally {
+    await closeMcp?.();
+  }
 }

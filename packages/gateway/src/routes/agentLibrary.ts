@@ -11,6 +11,7 @@ import {
   listAgents,
   updateAgent,
   validateAgentScopeRefs,
+  validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
@@ -29,6 +30,7 @@ const AgentBaseFields = {
   credentialId: z.string().uuid().nullable().optional(),
   description: z.string().max(2_000).nullable().optional(),
   inheritsModelFrom: z.string().max(100).nullable().optional(),
+  mcpConnectionId: z.string().uuid().nullable().optional(),
   modelSpec: z.string().max(200).nullable().optional(),
   name: z.string().min(1).max(200),
   systemPrompt: z.string().max(50_000).nullable().optional(),
@@ -120,6 +122,15 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (refError) {
         return reply.status(400).send({ error: { code: 'NOT_FOUND', message: refError } });
       }
+      const mcpError = await validateMcpConnectionRef(fastify.prisma, body.mcpConnectionId, {
+        scope: body.scope,
+        teamId: body.teamId,
+      });
+      if (mcpError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+      }
       const key: AgentScopeKey = {
         key: body.key,
         scope: body.scope,
@@ -155,6 +166,19 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const current = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!current) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+      }
+      const mcpError = await validateMcpConnectionRef(
+        fastify.prisma,
+        request.body.mcpConnectionId,
+        {
+          scope: current.scope as AgentScope,
+          teamId: current.teamId,
+        }
+      );
+      if (mcpError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
       const { agent, scanWarnings } = await updateAgent(
         fastify.prisma,
@@ -233,6 +257,19 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: teamAdmin, schema: { body: TeamCreate, params: TeamParams } },
     async (request, reply) => {
       const actor = requireUser(request);
+      const mcpError = await validateMcpConnectionRef(
+        fastify.prisma,
+        request.body.mcpConnectionId,
+        {
+          scope: 'TEAM',
+          teamId: request.params.id,
+        }
+      );
+      if (mcpError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+      }
       const key: AgentScopeKey = {
         key: request.body.key,
         scope: 'TEAM',
@@ -284,6 +321,19 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!access.ok) {
         return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+      }
+      const mcpError = await validateMcpConnectionRef(
+        fastify.prisma,
+        request.body.mcpConnectionId,
+        {
+          scope: 'TEAM',
+          teamId: request.params.id,
+        }
+      );
+      if (mcpError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
       const { agent, scanWarnings } = await updateAgent(
         fastify.prisma,

@@ -18,6 +18,7 @@ function newMockPrisma() {
       updateMany: vi.fn(),
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    connection: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },
@@ -135,6 +136,61 @@ describe('agentLibraryRoutes — admin', () => {
       url: '/api/v1/admin/agent-library',
     });
     expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('creates an agent with a valid mcpConnectionId (P2/WS3)', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.connection.findUnique.mockResolvedValue({
+      id: 'mcp-conn',
+      isActive: true,
+      teamId: 'team-x',
+      type: 'mcp',
+    });
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'mcpA', version: 1 });
+    const res = await app.inject({
+      body: {
+        key: 'mcpA',
+        mcpConnectionId: '22222222-2222-4222-8222-222222222222',
+        name: 'MCP A',
+        scope: 'GLOBAL',
+        toolKeys: ['bash', 'mcp'],
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ mcpConnectionId: '22222222-2222-4222-8222-222222222222' }),
+      })
+    );
+    await app.close();
+  });
+
+  it('400s when mcpConnectionId points at a non-mcp connection', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.connection.findUnique.mockResolvedValue({
+      id: 'git-conn',
+      isActive: true,
+      teamId: 'team-x',
+      type: 'git_repo',
+    });
+    const res = await app.inject({
+      body: {
+        key: 'badMcp',
+        mcpConnectionId: '22222222-2222-4222-8222-222222222222',
+        name: 'Bad',
+        scope: 'GLOBAL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_MCP_CONNECTION');
     await app.close();
   });
 

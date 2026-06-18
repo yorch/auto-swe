@@ -14,12 +14,22 @@ vi.mock('./runAgent.js', () => ({
   runAgent: vi.fn().mockResolvedValue({ object: undefined, text: 'verdict' }),
 }));
 
+vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpUrl: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
+
+import { loadMcpTools } from '../agents/mcpTools.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { runAgent } from './runAgent.js';
 import { runAgentNode } from './runAgentNode.js';
 
 const mockedResolveSpec = vi.mocked(resolveAgentSpec);
 const mockedRunAgent = vi.mocked(runAgent);
+const mockedResolveMcpUrl = vi.mocked(resolveAgentMcpUrl);
+const mockedLoadMcpTools = vi.mocked(loadMcpTools);
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -62,5 +72,31 @@ describe('runAgentNode', () => {
       expect.objectContaining({ promptOverride: 'be terse' }),
       expect.anything()
     );
+  });
+
+  it('binds MCP tools when the agent enables them and closes the client after', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedResolveSpec.mockResolvedValueOnce({
+      agentKey: 'reviewer',
+      tools: { existing: 't' },
+    } as never);
+    mockedResolveMcpUrl.mockResolvedValueOnce('https://mcp.example.com/mcp');
+    mockedLoadMcpTools.mockResolvedValueOnce({ close, tools: { mcp_x: 'mt' } } as never);
+
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
+
+    expect(mockedLoadMcpTools).toHaveBeenCalledWith('https://mcp.example.com/mcp');
+    // Spec/built-in tools win over MCP tools on key collision.
+    expect(mockedRunAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: { existing: 't', mcp_x: 'mt' } }),
+      'hi',
+      { spanName: 'llm.agent_node' }
+    );
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips MCP loading when the agent has no mcp server', async () => {
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
+    expect(mockedLoadMcpTools).not.toHaveBeenCalled();
   });
 });

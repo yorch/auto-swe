@@ -31,6 +31,8 @@ export interface AgentBaseInput {
   /** null = no tool override (use AgentToolConfig); [] = explicitly no tools. */
   toolKeys?: string[] | null;
   credentialId?: string | null;
+  /** P2/WS3: the `mcp` Connection whose tools bind when toolKeys includes 'mcp'. */
+  mcpConnectionId?: string | null;
 }
 
 function scopeWhere(key: AgentScopeKey) {
@@ -76,9 +78,34 @@ export async function validateAgentScopeRefs(
 }
 
 /**
- * List Agents. When `latestOnly` (default), returns just the highest version per
- * key+scope lineage; otherwise every version row. Optional scope filter.
+ * Validate an Agent's `mcpConnectionId` reference (P2/WS3): it must point at an
+ * active `mcp`-type Connection. TEAM-scoped agents may only reference their own
+ * team's connection (tenancy); GLOBAL / WORKFLOW_TEMPLATE agents are admin-owned
+ * and may reference any. Returns an error message or null.
  */
+export async function validateMcpConnectionRef(
+  prisma: PrismaClient,
+  mcpConnectionId: string | null | undefined,
+  scopeKey: { scope: AgentScope; teamId?: string | null }
+): Promise<string | null> {
+  if (!mcpConnectionId) {
+    return null;
+  }
+  const conn = await prisma.connection.findUnique({
+    select: { id: true, isActive: true, teamId: true, type: true },
+    where: { id: mcpConnectionId },
+  });
+  if (!conn || !conn.isActive) {
+    return 'MCP connection not found or inactive';
+  }
+  if (conn.type !== 'mcp') {
+    return 'Referenced connection is not an mcp connection';
+  }
+  if (scopeKey.scope === 'TEAM' && scopeKey.teamId && conn.teamId !== scopeKey.teamId) {
+    return 'MCP connection belongs to a different team';
+  }
+  return null;
+}
 export async function listAgents(
   prisma: PrismaClient,
   filter: { scope?: AgentScope; teamId?: string; workflowTemplateId?: string; latestOnly?: boolean }
@@ -133,6 +160,7 @@ export async function createAgent(
       isBuiltIn: false,
       isVerified: false,
       key: key.key,
+      mcpConnectionId: base.mcpConnectionId ?? null,
       modelSpec: base.modelSpec ?? null,
       name: base.name,
       origin: null,
@@ -186,6 +214,7 @@ export async function updateAgent(
       // unchanged prompt keeps the prior verification state.
       isVerified: promptChanged ? false : current.isVerified,
       key: current.key,
+      mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
       modelSpec: pick(base.modelSpec, current.modelSpec),
       name: pick(base.name, current.name),
       origin: current.origin,

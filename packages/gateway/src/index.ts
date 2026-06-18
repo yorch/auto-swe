@@ -21,6 +21,7 @@ import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrar
 import { epicRoutes } from './routes/epics.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
+import { mcpConnectionRoutes } from './routes/mcpConnections.js';
 import { meRoutes } from './routes/me.js';
 import { modelConfigRoutes } from './routes/modelConfig.js';
 import { repositoryRoutes } from './routes/repositories.js';
@@ -219,6 +220,7 @@ async function start() {
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
