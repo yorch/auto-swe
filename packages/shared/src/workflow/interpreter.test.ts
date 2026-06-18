@@ -37,7 +37,15 @@ function makeDispatcher(opts: {
     async dispatchStep({ step, inputs, config, cancellation }) {
       const merged = { ...config, ...inputs };
       calls.push({ config: { ...config }, inputs: merged, step });
-      const out = opts.stepOutputs[step];
+      // The engineering spec resolves CI-wait config before the CI gate. Parity
+      // tests exercise the default webhook (signal) path, so default this config
+      // step to signal mode unless a test overrides it (poll-mode routing is
+      // covered in defaultEngineeringSpec.ciwait.test.ts).
+      const out =
+        opts.stepOutputs[step] ??
+        (step === 'resolveCiWaitConfig'
+          ? { deadlineSec: 600, graceSec: 60, intervalSec: 15, mode: 'signal' }
+          : undefined);
       if (out === undefined) {
         throw new Error(`no canned output for step ${step}`);
       }

@@ -59,6 +59,12 @@ export interface PullRequestRef {
   prUrl: string;
 }
 
+/** A normalized CI verdict for a ref, plus an optional link to failing logs. */
+export interface CiStatusResult {
+  verdict: import('./ciStatus.js').CiVerdict;
+  logsUrl?: string;
+}
+
 /**
  * The seam between auto-swe's execution path and a source-control host.
  *
@@ -75,4 +81,10 @@ export interface ScmProvider {
   prUrl(repo: RepoRef, prNumber: number): Promise<string>;
   /** Fetch CI logs for the fix loop (provider-specific URL/auth handling). */
   fetchCiLogs(logsUrl: string): Promise<string>;
+  /**
+   * Fetch the current CI verdict for a ref (branch or SHA) by combining the
+   * Checks API and the legacy Statuses API. Used by the poll-based CI wait when
+   * no webhook is available. Returns `none` when the repo has no CI at all.
+   */
+  fetchCiStatus(repo: RepoRef, ref: string): Promise<CiStatusResult>;
 }
