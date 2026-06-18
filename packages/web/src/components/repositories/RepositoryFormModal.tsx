@@ -91,6 +91,8 @@ export function RepositoryFormModal({
           defaultBranch,
           description: description.trim() || undefined,
           executorImage: executorImage.trim() || undefined,
+          githubApiUrl: prefill?.githubApiUrl || undefined,
+          githubUrl: prefill?.githubUrl || undefined,
           language: language.trim() || undefined,
           organizationName: organizationName.trim(),
           repoName: repoName.trim(),
