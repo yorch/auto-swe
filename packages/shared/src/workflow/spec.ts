@@ -306,6 +306,14 @@ const ContainerStepNodeSchema = z.object({
   retry: RetryPolicySchema,
   startToCloseTimeout: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
+  /**
+   * How the container returns its result (P5):
+   *  - `'stdout'` (default): one JSON object printed to stdout.
+   *  - `'ndjson'`: a stream of newline-delimited JSON events; the result is the
+   *    last `{ type: 'result', result }` event (or last bare JSON line), and all
+   *    events are exposed at `nodes.<id>.output.events`.
+   */
+  transport: z.enum(['stdout', 'ndjson']).optional(),
   type: z.literal('containerStep'),
 });
 

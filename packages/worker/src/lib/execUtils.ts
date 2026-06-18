@@ -78,15 +78,28 @@ export async function execShellAsync(
 export function spawnCaptureAsync(
   file: string,
   args: string[],
-  options?: { timeoutMs?: number; maxBuffer?: number; heartbeatLabel?: string }
+  options?: {
+    timeoutMs?: number;
+    maxBuffer?: number;
+    heartbeatLabel?: string;
+    /**
+     * Invoked once per complete newline-terminated stdout line as it arrives
+     * (the trailing partial line is flushed on close). Enables streaming
+     * transports (e.g. containerStep NDJSON) to react to output incrementally
+     * while stdout is still also buffered into the final result.
+     */
+    onStdoutLine?: (line: string) => void;
+  }
 ): Promise<CapturedResult> {
   const timeoutMs = options?.timeoutMs ?? 600_000;
   const maxBuffer = options?.maxBuffer ?? 10 * 1024 * 1024;
+  const onStdoutLine = options?.onStdoutLine;
 
   const work = new Promise<CapturedResult>((resolve) => {
     const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let lineBuf = '';
     let timedOut = false;
     let settled = false;
 
@@ -95,8 +108,23 @@ export function spawnCaptureAsync(
         return;
       }
       settled = true;
+      // Flush any trailing partial line (output not newline-terminated).
+      if (onStdoutLine && lineBuf.length > 0) {
+        emitLine(lineBuf);
+        lineBuf = '';
+      }
       clearTimeout(killTimer);
       resolve(result);
+    };
+
+    // Guard the consumer callback: a throwing line handler must not crash the
+    // child's data pump or leave the promise unsettled.
+    const emitLine = (line: string) => {
+      try {
+        onStdoutLine?.(line);
+      } catch {
+        /* consumer error is non-fatal to capture */
+      }
     };
 
     const killTimer = setTimeout(() => {
@@ -109,6 +137,15 @@ export function spawnCaptureAsync(
       current.length >= maxBuffer ? current : current + chunk.toString('utf-8');
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout = cap(stdout, chunk);
+      if (onStdoutLine) {
+        lineBuf += chunk.toString('utf-8');
+        let nl = lineBuf.indexOf('\n');
+        while (nl !== -1) {
+          emitLine(lineBuf.slice(0, nl));
+          lineBuf = lineBuf.slice(nl + 1);
+          nl = lineBuf.indexOf('\n');
+        }
+      }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = cap(stderr, chunk);

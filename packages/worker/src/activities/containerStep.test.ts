@@ -5,6 +5,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: { connection: { findUnique: vi.fn() } },
 }));
 vi.mock('@auto-swe/shared/workflow', () => ({ assertShellImageAllowed: vi.fn() }));
+vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 vi.mock('../lib/ephemeralContainer.js', () => ({ runEphemeralContainer: vi.fn() }));
 vi.mock('../lib/execUtils.js', () => ({ execShellAsync: vi.fn().mockResolvedValue({}) }));
 
@@ -58,5 +59,41 @@ describe('runContainerStep', () => {
   it('throws when stdout is not valid JSON', async () => {
     mockedRun.mockResolvedValue({ exitCode: 0, stderr: '', stdout: 'not json' } as never);
     await expect(runContainerStep({ ...base, command: 'x' })).rejects.toThrow(/valid JSON/);
+  });
+
+  describe('ndjson transport', () => {
+    // Drive the streaming callback with the given lines, then resolve cleanly.
+    function streamLines(lines: string[]) {
+      mockedRun.mockImplementation(async (inp: { onStdoutLine?: (l: string) => void }) => {
+        for (const l of lines) {
+          inp.onStdoutLine?.(l);
+        }
+        return { exitCode: 0, stderr: '', stdout: lines.join('\n') } as never;
+      });
+    }
+
+    it('collects streamed events and returns the last result event', async () => {
+      streamLines([
+        '{"type":"log","msg":"starting"}',
+        '{"type":"progress","pct":50}',
+        '{"type":"result","result":{"ok":true}}',
+      ]);
+      const res = await runContainerStep({ ...base, command: 'x', transport: 'ndjson' });
+      expect(res.result).toEqual({ ok: true });
+      expect(res.events).toHaveLength(3);
+    });
+
+    it('falls back to the last bare JSON line when no result event is present', async () => {
+      streamLines(['{"type":"log","msg":"hi"}', '{"value":42}']);
+      const res = await runContainerStep({ ...base, command: 'x', transport: 'ndjson' });
+      expect(res.result).toEqual({ value: 42 });
+    });
+
+    it('keeps non-JSON lines as log events without failing', async () => {
+      streamLines(['plain text progress', '{"type":"result","result":7}']);
+      const res = await runContainerStep({ ...base, command: 'x', transport: 'ndjson' });
+      expect(res.result).toBe(7);
+      expect(res.events?.[0]).toEqual({ log: 'plain text progress', type: 'log' });
+    });
   });
 });

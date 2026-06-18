@@ -484,6 +484,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         network: config.network as 'none' | 'egress' | undefined,
         request,
         timeoutMs: config.timeoutMs as number | undefined,
+        transport: config.transport as 'stdout' | 'ndjson' | undefined,
       }),
   ],
   [

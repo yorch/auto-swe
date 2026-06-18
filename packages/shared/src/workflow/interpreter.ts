@@ -489,6 +489,9 @@ async function runContainerStep(
   if (node.timeoutMs !== undefined) {
     config.timeoutMs = node.timeoutMs;
   }
+  if (node.transport !== undefined) {
+    config.transport = node.transport;
+  }
   return runRetryable({
     ctx,
     dispatcher,

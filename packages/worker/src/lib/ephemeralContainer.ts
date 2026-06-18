@@ -53,6 +53,12 @@ export interface EphemeralRunInput {
    * the JSON input payload (the value is shell-quoted by the caller).
    */
   env?: Record<string, string>;
+  /**
+   * Optional per-line stdout callback (P5): the NDJSON containerStep transport
+   * consumes the container's output line-by-line as it streams. stdout is still
+   * fully buffered into the result regardless.
+   */
+  onStdoutLine?: (line: string) => void;
 }
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -164,6 +170,7 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
   try {
     return await spawnCaptureAsync('docker', args, {
       heartbeatLabel: 'shell-step: command running',
+      ...(input.onStdoutLine ? { onStdoutLine: input.onStdoutLine } : {}),
       timeoutMs,
     });
   } finally {
