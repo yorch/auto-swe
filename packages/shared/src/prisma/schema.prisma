@@ -654,6 +654,9 @@ model WorkflowTemplate {
   /// instead of `activeVersion`. 0 or NULL disables the experiment.
   experimentVersion Int?                      @map("experiment_version")
   experimentSplit   Int?                      @map("experiment_split")
+  /// Random token used to trigger this template via the public webhook endpoint.
+  /// Null = no webhook configured. Treated as a secret — only shown to LEADs/ADMINs.
+  webhookToken      String?                   @unique @map("webhook_token")
   createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

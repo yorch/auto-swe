@@ -257,6 +257,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     team: tpl.team ? { id: tpl.team.id, name: tpl.team.name, slug: tpl.team.slug } : null,
     updatedAt: tpl.updatedAt,
     versionCount: tpl._count.versions,
+    webhookToken: tpl.webhookToken ?? null,
   };
 }
 
@@ -940,6 +941,59 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: rows.map(projectRunSummary),
         meta: { limit, offset, total },
       };
+    }
+  );
+
+  // ── Webhook: generate a new token ──
+  // POST /:id/webhook/regenerate — LEAD+, generates a new random webhook token.
+  app.post(
+    '/:id/webhook/regenerate',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await fastify.prisma.workflowTemplate.findFirst({
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+      }
+      const token = crypto.randomUUID();
+      await fastify.prisma.workflowTemplate.update({
+        data: { webhookToken: token },
+        where: { id: existing.id },
+      });
+      return reply.status(200).send({ data: { webhookToken: token } });
+    }
+  );
+
+  // ── Webhook: revoke token ──
+  // DELETE /:id/webhook — LEAD+, removes the webhook token.
+  app.delete(
+    '/:id/webhook',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await fastify.prisma.workflowTemplate.findFirst({
+        where: { id: request.params.id, ...teamMembershipFilter(user) },
+      });
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+      }
+      await fastify.prisma.workflowTemplate.update({
+        data: { webhookToken: null },
+        where: { id: existing.id },
+      });
+      return reply.status(204).send();
     }
   );
 

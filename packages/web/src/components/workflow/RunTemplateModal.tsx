@@ -9,7 +9,32 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { useRepositories } from '@/hooks/useWorkflows';
 import { useRunTemplate } from '@/hooks/useTemplates';
+
+function ConnectionPicker({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: unknown) => void;
+}) {
+  const { data: connections = [] } = useRepositories();
+  return (
+    <Select hint={hint} label={label} onChange={(e) => onChange(e.target.value)} value={value}>
+      <option value="">— select connection —</option>
+      {connections.map((c) => (
+        <option key={c.id} value={c.id}>
+          {`${c.organizationName}/${c.repoName}`}
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 function FieldInput({
   name,
@@ -24,6 +49,17 @@ function FieldInput({
 }) {
   const label = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
   const hint = prop.description;
+
+  if (prop.type === 'connection') {
+    return (
+      <ConnectionPicker
+        hint={hint}
+        label={label}
+        onChange={onChange}
+        value={typeof value === 'string' ? value : ''}
+      />
+    );
+  }
 
   if (prop.type === 'boolean') {
     return (
@@ -97,6 +133,9 @@ function buildInitialPayload(schema: InputSchema): Record<string, unknown> {
   }
   return payload;
 }
+
+// Note: `connection` type defaults to '' (empty string) which is handled by
+// the else branch above — no special case needed.
 
 export function RunTemplateModal({
   template,

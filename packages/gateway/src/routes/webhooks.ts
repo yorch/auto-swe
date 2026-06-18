@@ -1,7 +1,11 @@
+import crypto from 'node:crypto';
+import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { resolveGitHubConfig, resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { verifyGitHubSignature } from '../lib/github.js';
+import { getErrorName } from '../plugins/auth.js';
 import { postSlackMessage } from '../lib/slack.js';
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
@@ -189,6 +193,8 @@ async function aggregateCheckRuns(
   }
 }
 
+const TriggerParams = z.object({ token: z.string().min(1) });
+
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/webhooks/git
   fastify.post(
@@ -360,6 +366,113 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return { data: { conclusion, signaled } };
+    }
+  );
+
+  // ── Public webhook trigger ──
+  // POST /api/v1/webhooks/:token — no auth, secured by opaque token.
+  // Looks up the template by webhookToken, validates the payload against its
+  // inputSchema (if any), then starts a RunnableWorkflow.
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.post(
+    '/:token',
+    { schema: { body: z.record(z.string(), z.unknown()).optional(), params: TriggerParams } },
+    async (request, reply) => {
+      const { token } = request.params;
+      const template = await fastify.prisma.workflowTemplate.findUnique({
+        include: { team: { select: { slug: true } } },
+        where: { webhookToken: token },
+      });
+      if (!template) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'WEBHOOK_NOT_FOUND', message: 'Webhook not found' } });
+      }
+      if (template.status !== 'ACTIVE') {
+        return reply
+          .status(409)
+          .send({ error: { code: 'TEMPLATE_NOT_ACTIVE', message: 'Template is not active' } });
+      }
+      if (template.activeVersion === null) {
+        return reply
+          .status(409)
+          .send({ error: { code: 'NO_ACTIVE_VERSION', message: 'Template has no active version' } });
+      }
+
+      const payload = request.body ?? {};
+
+      if (template.inputSchema && isInputSchema(template.inputSchema)) {
+        const result = validateInputPayload(template.inputSchema, payload);
+        if (!result.ok) {
+          return reply
+            .status(422)
+            .send({ error: { code: 'VALIDATION_ERROR', errors: result.errors } });
+        }
+      }
+
+      // Extract well-known fields from the payload (same as POST /:id/runs).
+      const connectionId =
+        typeof payload.connectionId === 'string' ? payload.connectionId : null;
+      const description =
+        typeof payload.description === 'string' ? payload.description : '';
+      const externalTicketId =
+        typeof payload.ticketId === 'string'
+          ? payload.ticketId
+          : `webhook-${Date.now()}`;
+
+      const workRequestId = crypto.randomUUID();
+      const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
+      const temporalWorkflowId = `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+      try {
+        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+          request: {
+            budgetTier: 'STANDARD',
+            description,
+            externalTicketId,
+            repoId: connectionId ?? '',
+            requestPayload: JSON.stringify(payload),
+            workRequestId,
+          },
+          templateId: template.id,
+          templateVersion: template.activeVersion,
+        });
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply
+            .status(409)
+            .send({ error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' } });
+        }
+        throw err;
+      }
+
+      await fastify.prisma.runInput.create({
+        data: {
+          connectionId,
+          description,
+          externalTicketId,
+          id: workRequestId,
+          payload: payload as object,
+          requestedById: null,
+          requestPayload: JSON.stringify(payload),
+          templateId: template.id,
+          templateVersion: template.activeVersion,
+        },
+      });
+
+      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+        data: {
+          budgetTier: 'STANDARD',
+          currentStatus: 'IMPLEMENTING',
+          repoId: connectionId ?? null,
+          temporalWorkflowId,
+          workRequestId,
+        },
+      });
+
+      return reply
+        .status(201)
+        .send({ data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId } });
     }
   );
 };
