@@ -655,7 +655,7 @@ type IssueTrackerConfigRow = NonNullable<
   Awaited<ReturnType<PrismaClient['issueTrackerConfig']['findUnique']>>
 >;
 
-export type TrackerConfigInput = {
+export type IssueTrackerConfigInput = {
   apiToken?: string;
   baseUrl?: string | null;
   defaultProjectKey?: string | null;
@@ -671,7 +671,7 @@ export type TrackerConfigInput = {
   webhookTriggerStatus?: string | null;
 };
 
-function trackerData(row: IssueTrackerConfigRow | null) {
+function issueTrackerData(row: IssueTrackerConfigRow | null) {
   return {
     apiToken: maskedSecret(row?.apiTokenLastFour),
     baseUrl: row?.baseUrl ?? null,
@@ -689,10 +689,10 @@ function trackerData(row: IssueTrackerConfigRow | null) {
   };
 }
 
-export async function getTrackerConfig(prisma: PrismaClient) {
+export async function getIssueTrackerConfig(prisma: PrismaClient) {
   const row = await prisma.issueTrackerConfig.findUnique({ where: { id: 'default' } });
   return {
-    data: trackerData(row),
+    data: issueTrackerData(row),
     sources: {
       apiToken: src(!!row?.apiTokenCiphertext, 'TRACKER_API_TOKEN'),
       baseUrl: src(!!row?.baseUrl, 'TRACKER_BASE_URL'),
@@ -702,9 +702,9 @@ export async function getTrackerConfig(prisma: PrismaClient) {
   };
 }
 
-export async function updateTrackerConfig(
+export async function updateIssueTrackerConfig(
   prisma: PrismaClient,
-  body: TrackerConfigInput
+  body: IssueTrackerConfigInput
 ): Promise<ConfigUpdateResult> {
   const {
     apiToken,
@@ -799,14 +799,14 @@ export async function updateTrackerConfig(
       webhookTriggerStatus: row.webhookTriggerStatus,
     },
     changedFields,
-    data: trackerData(row),
+    data: issueTrackerData(row),
     existed: !!existing,
   };
 }
 
 /// Live connection test: fetches a caller-supplied ticket ID through the
 /// configured connector and reports its title/status (or the failure).
-export async function testTrackerConnection(
+export async function testIssueTrackerConnection(
   ticketId: string
 ): Promise<{ detail: string; ok: boolean }> {
   const config = await resolveIssueTrackerConfig();
@@ -814,7 +814,7 @@ export async function testTrackerConnection(
     return { detail: 'No tracker provider configured.', ok: false };
   }
   // Imported lazily so unit tests can mock the connector module.
-  const { fetchTicket } = await import('./ticketTracker.js');
+  const { fetchTicket } = await import('./issueTrackerClient.js');
   const warnings: string[] = [];
   const ticket = await fetchTicket(config, ticketId, {
     log: { warn: (_obj, msg) => warnings.push(msg ?? 'unknown failure') },

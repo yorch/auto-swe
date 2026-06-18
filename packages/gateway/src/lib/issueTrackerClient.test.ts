@@ -1,6 +1,6 @@
-import type { ResolvedTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import type { ResolvedIssueTrackerConfig } from '@auto-swe/shared/lib/integrations/registry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adfToPlainText, fetchTicket, parseGitHubTicketId } from './ticketTracker.js';
+import { adfToPlainText, fetchTicket, parseGitHubTicketId } from './issueTrackerClient.js';
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -10,21 +10,21 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response;
 }
 
-const jiraConfig: ResolvedTrackerConfig = {
+const jiraConfig: ResolvedIssueTrackerConfig = {
   apiToken: 'jira-token',
   baseUrl: 'https://acme.atlassian.net',
   email: 'bot@acme.com',
   provider: 'jira',
 };
 
-const linearConfig: ResolvedTrackerConfig = {
+const linearConfig: ResolvedIssueTrackerConfig = {
   apiToken: 'lin_api_key',
   baseUrl: null,
   email: null,
   provider: 'linear',
 };
 
-const githubConfig: ResolvedTrackerConfig = {
+const githubConfig: ResolvedIssueTrackerConfig = {
   apiToken: 'ghp_token',
   baseUrl: null,
   email: null,

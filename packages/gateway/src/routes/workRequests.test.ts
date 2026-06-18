@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveTrackerConfig: vi.fn(async () => ({
+  resolveIssueTrackerConfig: vi.fn(async () => ({
     apiToken: null,
     baseUrl: null,
     email: null,
@@ -17,15 +17,15 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
-vi.mock('../lib/ticketTracker.js', () => ({
+vi.mock('../lib/issueTrackerClient.js', () => ({
   fetchTicket: vi.fn(async () => null),
 }));
 
-import { resolveTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
-import { fetchTicket } from '../lib/ticketTracker.js';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { experimentBucket, resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
-const resolveTrackerConfigMock = vi.mocked(resolveTrackerConfig);
+const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
 const fetchTicketMock = vi.mocked(fetchTicket);
 
 describe('POST /api/v1/work-requests', () => {
@@ -248,7 +248,7 @@ describe('POST /api/v1/work-requests', () => {
   it('enriches the context snapshot when a tracker is configured and the fetch succeeds', async () => {
     existingWorkflows = [];
     snapshotUpserts.length = 0;
-    resolveTrackerConfigMock.mockResolvedValueOnce({
+    resolveIssueTrackerConfigMock.mockResolvedValueOnce({
       apiToken: 'tok',
       baseUrl: 'https://acme.atlassian.net',
       email: 'bot@acme.com',
@@ -291,7 +291,7 @@ describe('POST /api/v1/work-requests', () => {
   it('still returns 201 and writes no snapshot when the tracker fetch fails', async () => {
     existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2' }];
     snapshotUpserts.length = 0;
-    resolveTrackerConfigMock.mockResolvedValueOnce({
+    resolveIssueTrackerConfigMock.mockResolvedValueOnce({
       apiToken: 'tok',
       baseUrl: 'https://acme.atlassian.net',
       email: 'bot@acme.com',
@@ -319,7 +319,7 @@ describe('POST /api/v1/work-requests', () => {
       { currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2-r2' },
     ];
     snapshotUpserts.length = 0;
-    resolveTrackerConfigMock.mockRejectedValueOnce(new Error('db unreachable'));
+    resolveIssueTrackerConfigMock.mockRejectedValueOnce(new Error('db unreachable'));
 
     const res = await app.inject({
       headers: { authorization: 'Bearer test-token' },

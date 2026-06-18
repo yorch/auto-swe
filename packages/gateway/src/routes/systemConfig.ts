@@ -9,25 +9,25 @@ import { z } from 'zod';
 import {
   getGitHubConfig,
   getGoogleOAuthConfig,
+  getIssueTrackerConfig,
   getKnowledgeBaseConfig,
   getSlackConfig,
   getStorageConfig,
-  getTrackerConfig,
   listConfigAuditEntries,
   SYSTEM_CONFIG_IDS,
   testDecryptSecrets,
   testGitHubConnection,
+  testIssueTrackerConnection,
   testKnowledgeBaseConnection,
   testSlackConnection,
   testStorageConnection,
-  testTrackerConnection,
   updateConsolidationConfig,
   updateGitHubConfig,
   updateGoogleOAuthConfig,
+  updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
   updateSlackConfig,
   updateStorageConfig,
-  updateTrackerConfig,
   writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -38,14 +38,14 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 ///   GET/PUT /api/v1/admin/config/storage
 ///   GET/PUT /api/v1/admin/config/workflow-defaults
 ///   GET/PUT /api/v1/admin/config/oauth/google
-///   GET/PUT /api/v1/admin/config/tracker
+///   GET/PUT /api/v1/admin/config/issue-tracker
 ///   GET/PUT /api/v1/admin/config/knowledge-base
 ///
 /// Also:
 ///   POST /api/v1/admin/config/github/test          — live connection test
 ///   POST /api/v1/admin/config/slack/test           — live connection test
 ///   POST /api/v1/admin/config/storage/test         — connectivity test
-///   POST /api/v1/admin/config/tracker/test         — fetch a sample ticket
+///   POST /api/v1/admin/config/issue-tracker/test   — fetch a sample ticket
 ///   POST /api/v1/admin/config/knowledge-base/test  — knowledge base connectivity test
 ///   GET  /api/v1/admin/config/audit-log            — config change history
 ///
@@ -122,7 +122,7 @@ const GoogleOAuthPutBody = z.object({
   clientSecret: z.string().min(1).max(500).optional(),
 });
 
-const TrackerPutBody = z.object({
+const IssueTrackerPutBody = z.object({
   apiToken: z.string().min(1).max(500).optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   defaultProjectKey: z.string().max(100).nullable().optional(),
@@ -138,7 +138,7 @@ const TrackerPutBody = z.object({
   webhookTriggerStatus: z.string().max(200).nullable().optional(),
 });
 
-const TrackerTestBody = z.object({
+const IssueTrackerTestBody = z.object({
   ticketId: z.string().min(1).max(200),
 });
 
@@ -299,15 +299,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Issue tracker ────────────────────────────────────────────────────────────
 
-  f.get('/config/tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getTrackerConfig(prisma))
+  f.get('/config/issue-tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getIssueTrackerConfig(prisma))
   );
 
   f.put(
-    '/config/tracker',
-    { schema: { body: TrackerPutBody, response: { 200: z.any() } } },
+    '/config/issue-tracker',
+    { schema: { body: IssueTrackerPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateTrackerConfig(prisma, req.body);
+      const result = await updateIssueTrackerConfig(prisma, req.body);
       if (result.changedFields.length > 0) {
         const actor = requireUser(req);
         await writeSystemConfigAudit(prisma, fastify.log, {
@@ -315,7 +315,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
           entityId: SYSTEM_CONFIG_IDS.tracker,
-          entityType: 'TrackerConfig',
+          entityType: 'IssueTrackerConfig',
         });
       }
       return reply.send({ data: result.data });
@@ -323,9 +323,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   );
 
   f.post(
-    '/config/tracker/test',
-    { schema: { body: TrackerTestBody, response: { 200: z.any() } } },
-    async (req, reply) => reply.send(await testTrackerConnection(req.body.ticketId))
+    '/config/issue-tracker/test',
+    { schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testIssueTrackerConnection(req.body.ticketId))
   );
 
   // ── Knowledge base ───────────────────────────────────────────────────────────

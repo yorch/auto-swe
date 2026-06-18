@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
-  type TrackerConfigInput,
-  type TrackerProvider,
-  testTrackerConnection,
-  useTrackerConfig,
-  useUpdateTrackerConfig,
+  type IssueTrackerConfigInput,
+  type IssueTrackerProvider,
+  testIssueTrackerConnection,
+  useIssueTrackerConfig,
+  useUpdateIssueTrackerConfig,
 } from '@/hooks/useAdminConfig';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
@@ -17,32 +17,34 @@ function errMsg(err: unknown, fallback = 'Request failed'): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-const PROVIDER_HINTS: Record<TrackerProvider, { baseUrl: string; ticket: string; token: string }> =
-  {
-    github: {
-      baseUrl: 'API base — leave empty for https://api.github.com (set for GHE)',
-      ticket: 'owner/repo#123 (or a bare issue number — resolves to the target repo)',
-      token: 'GitHub token with repo read access',
-    },
-    jira: {
-      baseUrl: 'Jira site URL, e.g. https://acme.atlassian.net',
-      ticket: 'Issue key, e.g. PROJ-123',
-      token: 'Jira API token (used with the email below as basic auth)',
-    },
-    linear: {
-      baseUrl: 'Not used — Linear endpoint is fixed (api.linear.app)',
-      ticket: 'Issue identifier, e.g. ENG-123',
-      token: 'Linear API key',
-    },
-  };
+const PROVIDER_HINTS: Record<
+  IssueTrackerProvider,
+  { baseUrl: string; ticket: string; token: string }
+> = {
+  github: {
+    baseUrl: 'API base — leave empty for https://api.github.com (set for GHE)',
+    ticket: 'owner/repo#123 (or a bare issue number — resolves to the target repo)',
+    token: 'GitHub token with repo read access',
+  },
+  jira: {
+    baseUrl: 'Jira site URL, e.g. https://acme.atlassian.net',
+    ticket: 'Issue key, e.g. PROJ-123',
+    token: 'Jira API token (used with the email below as basic auth)',
+  },
+  linear: {
+    baseUrl: 'Not used — Linear endpoint is fixed (api.linear.app)',
+    ticket: 'Issue identifier, e.g. ENG-123',
+    token: 'Linear API key',
+  },
+};
 
-export function TrackerTab() {
-  const { data: resp, isLoading } = useTrackerConfig();
+export function IssueTrackerTab() {
+  const { data: resp, isLoading } = useIssueTrackerConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
-  const update = useUpdateTrackerConfig();
+  const update = useUpdateIssueTrackerConfig();
 
-  const [provider, setProvider] = useState<'' | 'disabled' | TrackerProvider>('');
+  const [provider, setProvider] = useState<'' | 'disabled' | IssueTrackerProvider>('');
   const [baseUrl, setBaseUrl] = useState('');
   const [email, setEmail] = useState('');
   const [apiToken, setApiToken] = useState('');
@@ -60,7 +62,7 @@ export function TrackerTab() {
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
-    | TrackerProvider
+    | IssueTrackerProvider
     | 'disabled'
     | null
     | undefined;
@@ -75,7 +77,7 @@ export function TrackerTab() {
     setSaved(false);
     setTestResult(null);
 
-    const body: TrackerConfigInput = {};
+    const body: IssueTrackerConfigInput = {};
     if (provider) {
       body.provider = provider === 'disabled' ? null : provider;
     }
@@ -121,7 +123,7 @@ export function TrackerTab() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await testTrackerConnection(testTicketId.trim());
+      const res = await testIssueTrackerConnection(testTicketId.trim());
       setTestResult(res);
     } catch (err) {
       setTestResult({ detail: errMsg(err), ok: false });
@@ -163,7 +165,9 @@ export function TrackerTab() {
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
               id="tracker-provider"
-              onChange={(e) => setProvider(e.target.value as '' | 'disabled' | TrackerProvider)}
+              onChange={(e) =>
+                setProvider(e.target.value as '' | 'disabled' | IssueTrackerProvider)
+              }
               value={provider}
             >
               <option value="">(keep current)</option>

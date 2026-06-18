@@ -4,7 +4,6 @@ import {
   createIssueTrackerProvider,
   type ResolvedIssueTrackerConfig,
 } from '@auto-swe/shared/lib/integrations/registry';
-import type { ResolvedTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 
 /**
  * Backwards-compatible thin wrapper over the provider abstraction layer.
@@ -33,18 +32,18 @@ export interface FetchTicketOptions {
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
-/// Re-export for backwards compat — tests import this from ticketTracker.ts.
-/// Re-export for backwards compat — tests import this from ticketTracker.ts.
+/// Re-export for backwards compat — tests import this from issueTrackerClient.ts.
+/// Re-export for backwards compat — tests import this from issueTrackerClient.ts.
 export { _adfToPlainText as adfToPlainText, _parseGitHubTicketId as parseGitHubTicketId };
 
 /// Thin delegation wrapper — delegates to the provider abstraction layer.
 export async function fetchTicket(
-  config: ResolvedTrackerConfig | ResolvedIssueTrackerConfig,
+  config: ResolvedIssueTrackerConfig,
   externalTicketId: string,
   opts?: FetchTicketOptions
 ): Promise<FetchedTicket | null> {
   try {
-    const provider = createIssueTrackerProvider(config as ResolvedIssueTrackerConfig, {
+    const provider = createIssueTrackerProvider(config, {
       log: opts?.log,
     });
     if (!provider) {

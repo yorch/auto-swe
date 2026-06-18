@@ -13,7 +13,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { fetchTicket } from '../lib/ticketTracker.js';
+import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**

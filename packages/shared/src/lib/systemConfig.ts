@@ -327,14 +327,6 @@ import type {
 
 export type { ResolvedIssueTrackerConfig, ResolvedKnowledgeBaseConfig };
 
-/** @deprecated Use `ResolvedIssueTrackerConfig` instead. Kept for backwards compat. */
-export interface ResolvedTrackerConfig {
-  provider: TrackerProvider | null;
-  baseUrl: string | null;
-  apiToken: string | null;
-  email: string | null;
-}
-
 function asTrackerProvider(value: string | null | undefined): TrackerProvider | null {
   return value === 'jira' || value === 'linear' || value === 'github' ? value : null;
 }
@@ -370,17 +362,6 @@ export async function resolveIssueTrackerConfig(
     timeoutMs: row?.timeoutMs ?? undefined,
     webhookSecret: row?.webhookSecret ?? undefined,
     webhookTriggerStatus: row?.webhookTriggerStatus ?? undefined,
-  };
-}
-
-/** @deprecated Use `resolveIssueTrackerConfig` instead. Kept for backwards compat. */
-export async function resolveTrackerConfig(_opts?: ResolveOpts): Promise<ResolvedTrackerConfig> {
-  const resolved = await resolveIssueTrackerConfig(_opts);
-  return {
-    apiToken: resolved.apiToken,
-    baseUrl: resolved.baseUrl,
-    email: resolved.email,
-    provider: resolved.provider,
   };
 }
 
