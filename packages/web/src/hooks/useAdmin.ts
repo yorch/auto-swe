@@ -11,6 +11,7 @@ export interface ScannerPattern {
   isActive: boolean;
   isBuiltIn: boolean;
   label: string;
+  origin: string | null;
   pattern: string;
   type: 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
   updatedAt: string;

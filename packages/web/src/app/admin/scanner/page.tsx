@@ -16,7 +16,22 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 
-type PatternType = 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
+type PatternType =
+  | 'INJECTION'
+  | 'EXFILTRATION'
+  | 'SHELL_COMMAND'
+  | 'CODE_SECURITY'
+  | 'SENSITIVE_FILE';
+
+const patternTypeOptions: Array<{ label: string; value: PatternType }> = [
+  { label: 'Injection (skill content)', value: 'INJECTION' },
+  { label: 'Exfiltration (skill content)', value: 'EXFILTRATION' },
+  { label: 'Shell Command (bash tool)', value: 'SHELL_COMMAND' },
+  { label: 'Code Security (diff review)', value: 'CODE_SECURITY' },
+  { label: 'Sensitive File (writeFile block)', value: 'SENSITIVE_FILE' },
+];
+
+// ── Create Modal ─────────────────────────────────────────────────────────────
 
 type PatternForm = {
   flags: string;
@@ -32,13 +47,6 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
     pattern: '',
     type: 'INJECTION',
   });
-  const patternTypeOptions: Array<{ label: string; value: PatternType }> = [
-    { label: 'Injection (skill content)', value: 'INJECTION' },
-    { label: 'Exfiltration (skill content)', value: 'EXFILTRATION' },
-    { label: 'Shell Command (bash tool)', value: 'SHELL_COMMAND' },
-    { label: 'Code Security (diff review)', value: 'CODE_SECURITY' },
-    { label: 'Sensitive File (writeFile block)', value: 'SENSITIVE_FILE' },
-  ];
   const [error, setError] = useState<string | null>(null);
   const create = useCreateScannerPattern();
 
@@ -110,6 +118,171 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
   );
 }
 
+// ── Pattern Detail / Edit Modal ───────────────────────────────────────────────
+
+function PatternDetailModal({
+  onClose,
+  pattern,
+}: {
+  onClose: () => void;
+  pattern: ScannerPattern | null;
+}) {
+  const update = useUpdateScannerPattern();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    flags: '',
+    label: '',
+    pattern: '',
+    type: 'INJECTION' as PatternType,
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  if (!pattern) {
+    return null;
+  }
+
+  function startEdit() {
+    setForm({
+      flags: pattern.flags,
+      label: pattern.label,
+      pattern: pattern.pattern,
+      type: pattern.type as PatternType,
+    });
+    setError(null);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setError(null);
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await update.mutateAsync({ id: pattern.id, ...form });
+      setEditing(false);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save pattern');
+    }
+  }
+
+  const title = editing ? `Edit "${pattern.label}"` : pattern.label;
+
+  return (
+    <Modal
+      eyebrow="Admin / Scanner"
+      onClose={() => {
+        setEditing(false);
+        onClose();
+      }}
+      open={!!pattern}
+      size="lg"
+      title={title}
+    >
+      {editing ? (
+        <form className="space-y-4" onSubmit={handleSave}>
+          <FieldWrapper label="Label">
+            <Input
+              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+              required
+              value={form.label}
+            />
+          </FieldWrapper>
+          <FieldWrapper label="Type">
+            <Select
+              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as PatternType }))}
+              value={form.type}
+            >
+              {patternTypeOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </FieldWrapper>
+          <FieldWrapper label="Pattern (regex source)">
+            <Input
+              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+              required
+              value={form.pattern}
+            />
+          </FieldWrapper>
+          <FieldWrapper
+            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+            label="Flags"
+          >
+            <Input
+              maxLength={10}
+              onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+              value={form.flags}
+            />
+          </FieldWrapper>
+          {error && <p className="text-xs text-brick-400">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button onClick={cancelEdit} type="button" variant="ghost">
+              Cancel
+            </Button>
+            <Button disabled={update.isPending} type="submit" variant="primary">
+              {update.isPending ? 'Saving…' : 'Save Changes'}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="space-y-5">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {pattern.isBuiltIn && (
+              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono uppercase tracking-wider text-paper-400">
+                built-in
+              </span>
+            )}
+            {pattern.origin && (
+              <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
+                origin: {pattern.origin}
+              </span>
+            )}
+            <span className="rounded bg-ink-600 px-2 py-0.5 font-mono text-paper-400">
+              {patternTypeOptions.find((o) => o.value === pattern.type)?.label ?? pattern.type}
+            </span>
+            <span
+              className={`rounded px-2 py-0.5 font-mono ${
+                pattern.isActive ? 'bg-ember-900/40 text-ember-400' : 'bg-ink-600 text-paper-500'
+              }`}
+            >
+              {pattern.isActive ? 'active' : 'inactive'}
+            </span>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-paper-500">
+              Regex Pattern
+            </div>
+            <pre className="overflow-x-auto rounded-sm border border-ink-600 bg-ink-800 p-3 font-mono text-sm text-paper-200 whitespace-pre-wrap break-all">
+              /{pattern.pattern}/{pattern.flags}
+            </pre>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-ink-700 pt-4">
+            <div className="space-y-0.5 text-xs text-paper-500">
+              <div>Created {new Date(pattern.createdAt).toLocaleDateString()}</div>
+              <div>Updated {new Date(pattern.updatedAt).toLocaleDateString()}</div>
+            </div>
+            {!pattern.isBuiltIn && (
+              <Button onClick={startEdit} variant="secondary">
+                Edit
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Delete Modal ──────────────────────────────────────────────────────────────
+
 function DeletePatternModal({
   onClose,
   pattern,
@@ -157,8 +330,11 @@ function DeletePatternModal({
   );
 }
 
+// ── Pattern Row ───────────────────────────────────────────────────────────────
+
 function PatternRow({ pattern }: { pattern: ScannerPattern }) {
   const update = useUpdateScannerPattern();
+  const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
 
   function toggleActive() {
@@ -168,7 +344,20 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
   return (
     <>
       <tr className="border-b border-ink-600 last:border-0">
-        <td className="py-2 pr-4 font-mono text-xs text-paper-100">{pattern.label}</td>
+        <td className="py-2 pr-4">
+          <button
+            className="text-left font-mono text-xs text-paper-100 hover:underline"
+            onClick={() => setViewTarget(pattern)}
+            type="button"
+          >
+            {pattern.label}
+          </button>
+          {pattern.origin && (
+            <span className="ml-1.5 rounded bg-ink-600 px-1 py-0.5 font-mono text-[10px] text-paper-400">
+              {pattern.origin}
+            </span>
+          )}
+        </td>
         <td className="max-w-xs py-2 pr-4">
           <code className="block truncate font-mono text-[11px] text-paper-300">
             /{pattern.pattern}/{pattern.flags}
@@ -199,17 +388,25 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
           </button>
         </td>
         <td className="py-2 text-right">
-          {!pattern.isBuiltIn && (
-            <Button onClick={() => setDeleteTarget(pattern)} size="sm" variant="danger">
-              Delete
+          <div className="flex items-center justify-end gap-2">
+            <Button onClick={() => setViewTarget(pattern)} size="sm" variant="ghost">
+              View
             </Button>
-          )}
+            {!pattern.isBuiltIn && (
+              <Button onClick={() => setDeleteTarget(pattern)} size="sm" variant="danger">
+                Delete
+              </Button>
+            )}
+          </div>
         </td>
       </tr>
+      <PatternDetailModal onClose={() => setViewTarget(null)} pattern={viewTarget} />
       <DeletePatternModal onClose={() => setDeleteTarget(null)} pattern={deleteTarget} />
     </>
   );
 }
+
+// ── Pattern Section ───────────────────────────────────────────────────────────
 
 function PatternSection({
   description,
@@ -249,6 +446,8 @@ function PatternSection({
     </Card>
   );
 }
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
