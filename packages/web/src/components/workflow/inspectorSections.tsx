@@ -456,3 +456,32 @@ export function AgentSection({
     </div>
   );
 }
+
+export function McpSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'mcp' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <Input
+        hint="id of an mcp-type Connection (manage at /admin/mcp-connections)"
+        label="Connection reference"
+        onChange={(e) => onChange({ ...node, connectionRef: e.target.value } as SpecNode)}
+        value={node.connectionRef}
+      />
+      <Input
+        hint="tool name exposed by the MCP server; its args come from Inputs below"
+        label="Tool"
+        onChange={(e) => onChange({ ...node, tool: e.target.value } as SpecNode)}
+        value={node.tool}
+      />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v } as SpecNode)}
+        value={node.onFail as OnFailValue | undefined}
+      />
+    </div>
+  );
+}

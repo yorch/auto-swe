@@ -18,6 +18,7 @@ import {
   AgentSection,
   CondSection,
   FanOutSection,
+  McpSection,
   SetSection,
   ShellSection,
   SignalSection,
@@ -139,7 +140,11 @@ export function NodeInspector({
         {node.type === 'fanOut' && <FanOutSection node={node} onChange={onChangeNode} />}
         {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
         {node.type === 'agent' && <AgentSection node={node} onChange={onChangeNode} />}
-        {(node.type === 'step' || node.type === 'shell' || node.type === 'agent') && (
+        {node.type === 'mcp' && <McpSection node={node} onChange={onChangeNode} />}
+        {(node.type === 'step' ||
+          node.type === 'shell' ||
+          node.type === 'agent' ||
+          node.type === 'mcp') && (
           <InputsBindingsSection
             inputs={(node as { inputs?: Record<string, Binding> }).inputs}
             onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}

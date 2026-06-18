@@ -31,6 +31,12 @@ const PRIMITIVES: PrimitiveDef[] = [
     swatch: 'bg-indigo-400',
     type: 'agent',
   },
+  {
+    hint: 'Call one tool on an MCP server',
+    label: 'MCP tool',
+    swatch: 'bg-dust-400',
+    type: 'mcp',
+  },
   { hint: 'Branch on an expression', label: 'Conditional', swatch: 'bg-violet-400', type: 'cond' },
   { hint: 'Set spec values', label: 'Set', swatch: 'bg-amber-400', type: 'set' },
   { hint: 'Wait for an external signal', label: 'Signal', swatch: 'bg-dust-400', type: 'signal' },
