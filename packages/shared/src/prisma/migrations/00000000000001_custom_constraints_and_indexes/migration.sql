@@ -13,14 +13,18 @@ CREATE INDEX IF NOT EXISTS "idx_memory_items_embedding" ON "memory_items"
     USING hnsw ("embedding" vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
 
--- ── Provider credentials (GLOBAL or TEAM only; no template scope) ────────────
+-- ── Provider credentials (GLOBAL, ORGANIZATION, or TEAM; no template scope) ──
 ALTER TABLE "provider_credentials"
     ADD CONSTRAINT "provider_credentials_scope_check"
-    CHECK ("scope" IN ('GLOBAL', 'TEAM'));
+    CHECK ("scope" IN ('GLOBAL', 'ORGANIZATION', 'TEAM'));
 
 CREATE UNIQUE INDEX "provider_credentials_global_unique"
     ON "provider_credentials" ("provider")
     WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "provider_credentials_org_unique"
+    ON "provider_credentials" ("provider", "org_id")
+    WHERE "scope" = 'ORGANIZATION';
 
 CREATE UNIQUE INDEX "provider_credentials_team_unique"
     ON "provider_credentials" ("provider", "team_id")
@@ -29,7 +33,8 @@ CREATE UNIQUE INDEX "provider_credentials_team_unique"
 ALTER TABLE "provider_credentials"
     ADD CONSTRAINT "provider_credentials_scope_keys_check"
     CHECK (
-        ("scope" = 'GLOBAL' AND "team_id" IS NULL)
+        ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
+        OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
 
@@ -47,6 +52,10 @@ CREATE UNIQUE INDEX "connections_git_repo_org_repo_uidx"
 CREATE UNIQUE INDEX "agents_key_version_global_uidx"
     ON "agents" ("key", "version")
     WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "agents_key_version_org_uidx"
+    ON "agents" ("key", "version", "org_id")
+    WHERE "scope" = 'ORGANIZATION';
 
 CREATE UNIQUE INDEX "agents_key_version_team_uidx"
     ON "agents" ("key", "version", "team_id")

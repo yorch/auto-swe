@@ -19,6 +19,10 @@ export type AnySkillRole = string;
 /// GLOBAL row is consulted.
 export interface ResolveCtx {
   teamId?: string;
+  /// P5: the owning Organization (derived from the team's org). Inserts an
+  /// ORGANIZATION tier between TEAM and GLOBAL in every config cascade. The tier
+  /// only fires when set, so GLOBAL/TEAM-only deployments behave unchanged.
+  orgId?: string;
   workflowTemplateId?: string;
   /// P1/WS3 run-start Agent-version pins (`{ agentKey: version }`). When present
   /// for a key, `resolveAgent` resolves that exact Agent version instead of the
@@ -33,7 +37,7 @@ export interface ResolvedModelConfig {
   /** `<provider>/<model-id>` spec the agent should bind to. */
   spec: string;
   /** Which scope row supplied the spec — for OTel attribution. */
-  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'GLOBAL';
+  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
   /** Plaintext API key from the resolved credential. */
   apiKey: string;
   /** Base URL override from the resolved credential. */

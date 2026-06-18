@@ -2,7 +2,8 @@
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
 -- consolidation). P1/P1.5 retired the role-config tables (Agent is the source
 -- of truth); P3 renamed AgentLesson → the generic MemoryItem, Repository → the
--- generic Connection, and WorkRequest → the generic RunInput. Custom DDL Prisma
+-- generic Connection, and WorkRequest → the generic RunInput. P5 added the
+-- Organization tenant boundary + ORGANIZATION config scope. Custom DDL Prisma
 -- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
 -- lives in the next migration.
 -- CreateSchema
@@ -24,7 +25,7 @@ CREATE TYPE "WorkflowStepStatus" AS ENUM ('PENDING', 'RUNNING', 'PASSED', 'FAILE
 CREATE TYPE "WorkflowTemplateStatus" AS ENUM ('DRAFT', 'ACTIVE', 'ARCHIVED');
 
 -- CreateEnum
-CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE');
+CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE');
 
 -- CreateEnum
 CREATE TYPE "ConfigAuditAction" AS ENUM ('CREATE', 'UPDATE', 'DELETE');
@@ -138,12 +139,25 @@ CREATE TABLE "connections" (
 );
 
 -- CreateTable
+CREATE TABLE "organizations" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "name" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "organizations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "teams" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "org_id" UUID NOT NULL,
     "shell_image_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "egress_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "slack_notify_channel" TEXT,
@@ -397,6 +411,7 @@ CREATE TABLE "provider_credentials" (
     "provider" TEXT NOT NULL,
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
+    "org_id" UUID,
     "api_base" TEXT,
     "api_key_ciphertext" BYTEA NOT NULL,
     "api_key_nonce" BYTEA NOT NULL,
@@ -567,25 +582,6 @@ CREATE TABLE "config_audit_log" (
 );
 
 -- CreateTable
-CREATE TABLE "installed_bundles" (
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "name" TEXT NOT NULL,
-    "version" TEXT NOT NULL,
-    "source" TEXT,
-    "content_hash" TEXT NOT NULL,
-    "trust_state" TEXT NOT NULL DEFAULT 'UNVERIFIED',
-    "signed_by" TEXT,
-    "installed_by_id" UUID,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "installed_bundles_pkey" PRIMARY KEY ("id")
-);
-
--- CreateIndex
-CREATE UNIQUE INDEX "installed_bundles_name_key" ON "installed_bundles"("name");
-
--- CreateTable
 CREATE TABLE "skills" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
@@ -623,6 +619,7 @@ CREATE TABLE "agents" (
     "key" TEXT NOT NULL,
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
+    "org_id" UUID,
     "workflow_template_id" UUID,
     "version" INTEGER NOT NULL DEFAULT 1,
     "name" TEXT NOT NULL,
@@ -671,6 +668,22 @@ CREATE TABLE "workflow_shell_audit" (
     CONSTRAINT "workflow_shell_audit_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "installed_bundles" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "name" TEXT NOT NULL,
+    "version" TEXT NOT NULL,
+    "source" TEXT,
+    "content_hash" TEXT NOT NULL,
+    "trust_state" TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    "signed_by" TEXT,
+    "installed_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "installed_bundles_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workflows"("temporal_workflow_id");
 
@@ -702,10 +715,19 @@ CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_
 CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("user_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "organizations_name_key" ON "organizations"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "organizations_slug_key" ON "organizations"("slug");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "teams_slug_key" ON "teams"("slug");
+
+-- CreateIndex
+CREATE INDEX "teams_org_id_idx" ON "teams"("org_id");
 
 -- CreateIndex
 CREATE INDEX "team_memberships_user_id_idx" ON "team_memberships"("user_id");
@@ -777,6 +799,9 @@ CREATE UNIQUE INDEX "workflow_template_versions_template_id_version_key" ON "wor
 CREATE INDEX "provider_credentials_provider_scope_team_id_idx" ON "provider_credentials"("provider", "scope", "team_id");
 
 -- CreateIndex
+CREATE INDEX "provider_credentials_provider_scope_org_id_idx" ON "provider_credentials"("provider", "scope", "org_id");
+
+-- CreateIndex
 CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"("entity_type", "entity_id");
 
 -- CreateIndex
@@ -789,6 +814,9 @@ CREATE UNIQUE INDEX "scanner_patterns_label_key" ON "scanner_patterns"("label");
 CREATE INDEX "agents_scope_team_id_idx" ON "agents"("scope", "team_id");
 
 -- CreateIndex
+CREATE INDEX "agents_scope_org_id_idx" ON "agents"("scope", "org_id");
+
+-- CreateIndex
 CREATE INDEX "agents_scope_workflow_template_id_idx" ON "agents"("scope", "workflow_template_id");
 
 -- CreateIndex
@@ -799,6 +827,9 @@ CREATE INDEX "workflow_shell_audit_template_version_id_idx" ON "workflow_shell_a
 
 -- CreateIndex
 CREATE INDEX "workflow_shell_audit_team_id_idx" ON "workflow_shell_audit"("team_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "installed_bundles_name_key" ON "installed_bundles"("name");
 
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -826,6 +857,9 @@ ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user
 
 -- AddForeignKey
 ALTER TABLE "connections" ADD CONSTRAINT "connections_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "teams" ADD CONSTRAINT "teams_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -888,10 +922,16 @@ ALTER TABLE "workflow_template_versions" ADD CONSTRAINT "workflow_template_versi
 ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "embedding_configs" ADD CONSTRAINT "embedding_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
