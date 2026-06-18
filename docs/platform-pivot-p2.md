@@ -144,7 +144,7 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
 
 ## Sequencing checklist
 
-**Status: 🔄 in progress (WS1 + WS2 + WS3 done; WS4 + WS5 remain).**
+**Status: 🔄 in progress (WS1 + WS2 + WS3 + WS4 done; WS5 — canvas authoring — remains).**
 
 - [x] WS1 — `agent` node + interpreter dispatch + `runAgentNode` activity (parity); spec
   `SPEC_SCHEMA_VERSION 4→5` + codemod; per-node `systemPrompt` override; canvas rendering. The
@@ -157,5 +157,9 @@ external packages). All MCP I/O and agent execution happen in **activities**, ne
   read/submit paths filtered + guarded by `isGitRepoConnection` (slice 2); admin write-path
   (`/api/v1/admin/mcp-connections` + `/admin/mcp-connections` UI + `mcpConnectionId` agent field with
   `validateMcpConnectionRef` tenancy check) (slice 3).
-- [ ] WS4 — `mcp` node (single-tool step)
-- [ ] WS5 — canvas palette + inspector for `agent`/`mcp`
+- [x] WS4 — `mcp` node (single-tool step): `McpNodeSchema` + interpreter `runMcpNode`
+  dispatch → `mcpCallTool` activity (resolve connection → load tool → call → bind result);
+  registered in `STEP_EXECUTORS`; cost-estimator + canvas node rendering handle the type.
+- [ ] WS5 — canvas palette + inspector for `agent`/`mcp` (the `mcp` node renders + has a
+  default-node factory, but the palette entry + inspector form to edit `connectionRef`/`tool`
+  are still pending)

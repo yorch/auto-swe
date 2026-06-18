@@ -335,12 +335,13 @@ flowchart TD
 
 ### Node types in a WorkflowSpec
 
-The spec supports **12 node types**. The eight core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
+The spec supports **13 node types**. The nine core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
 
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step` (name), `inputs`, `next`, `onFail`, `config` |
 | `agent` | Run a library Agent by reference (P2) | `agentRef` (`<key>` / `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `next`, `onFail` |
+| `mcp` | Call one tool on an `mcp` Connection (P2) | `connectionRef` (mcp Connection id), `tool`, `inputs` (→ tool args), `next`, `onFail` |
 | `set` | Write values into the workflow context | `values` (map of path → binding) |
 | `cond` | Branch on a boolean expression | `expr` (jsonpath), `onTrue`, `onFalse` |
 | `signal` | Await a named Temporal signal with timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |

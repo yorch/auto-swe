@@ -7,7 +7,7 @@
 | Doc | Status | Purpose |
 |-----|--------|---------|
 | **[product-overview.md](./product-overview.md)** | **Current** | Product thesis, target users, business value, capability map, primary use cases, differentiators, non-goals, maturity — start here for the "why" and "what" |
-| **[architecture.md](./architecture.md)** | **Current** | System context, package map with file references, request lifecycle, workflow engine (12 node types), runtime security scanners, budget tiers, auth, data model, infra diagrams |
+| **[architecture.md](./architecture.md)** | **Current** | System context, package map with file references, request lifecycle, workflow engine (13 node types), runtime security scanners, budget tiers, auth, data model, infra diagrams |
 | **[agents.md](./agents.md)** | **Current** | The 10 seeded agent keys (6 model-backed + 4 sub-roles), the first-class `Agent` library, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
 | [deployment.md](./deployment.md) | **Living** | End-to-end "clone → deployed" runbook |
 | [model-configuration.md](./model-configuration.md) | **Living** | DB-backed LLM model + provider credential config |
