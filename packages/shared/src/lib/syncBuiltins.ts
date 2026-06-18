@@ -6,6 +6,7 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
+  LESSON_CONSOLIDATOR_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
   MERGE_CONFLICT_RESOLVER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
@@ -152,6 +153,13 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'decomposer',
     name: 'Decomposer',
     systemPrompt: DECOMPOSER_AGENT_PROMPT,
+  },
+  {
+    description: 'Consolidates clusters of similar lessons into generalised insights.',
+    inheritsModelFrom: 'commitToMemory',
+    key: 'lessonConsolidator',
+    name: 'Lesson Consolidator',
+    systemPrompt: LESSON_CONSOLIDATOR_PROMPT,
   },
   {
     description: 'Fixes CI failures on the implementer branch.',

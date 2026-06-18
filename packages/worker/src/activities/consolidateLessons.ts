@@ -11,7 +11,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
-import { getModel } from '../lib/models.js';
+import { getModel, resolveSystemPrompt } from '../lib/models.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -154,16 +154,19 @@ export async function consolidateLessons(
     };
   }
 
-  // Load skills for the commitToMemory role (no ctx — consolidateLessons is
-  // a scheduled job unbound from any specific workflow run, so GLOBAL scope only).
-  const consolidatorSkills = await loadAgentSkills('commitToMemory');
+  // Resolve prompt + skills for the lessonConsolidator role (no ctx — this is a
+  // scheduled job unbound from any workflow run, so GLOBAL scope only).
+  const [consolidatorSkills, resolvedBasePrompt] = await Promise.all([
+    loadAgentSkills('lessonConsolidator'),
+    resolveSystemPrompt('lessonConsolidator', LESSON_CONSOLIDATOR_PROMPT),
+  ]);
   const consolidatorSkillSuffix = consolidatorSkills
     .map((s) => s.promptText)
     .filter(Boolean)
     .join('\n\n');
   const consolidatorPrompt = consolidatorSkillSuffix
-    ? `${LESSON_CONSOLIDATOR_PROMPT}\n\n${consolidatorSkillSuffix}`
-    : LESSON_CONSOLIDATOR_PROMPT;
+    ? `${resolvedBasePrompt}\n\n${consolidatorSkillSuffix}`
+    : resolvedBasePrompt;
 
   const agent = new Agent({
     id: 'lesson-consolidator',

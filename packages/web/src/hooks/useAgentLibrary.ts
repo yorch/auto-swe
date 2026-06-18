@@ -145,3 +145,14 @@ export function useUpdateTeamAgent(teamId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: teamKey(teamId) }),
   });
 }
+
+export function useDeleteTeamAgent(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ data: { deactivated: number } }>(
+        `/api/v1/teams/${teamId}/agent-library/${id}`
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: teamKey(teamId) }),
+  });
+}
