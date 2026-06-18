@@ -1,5 +1,6 @@
 'use client';
 
+import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -14,6 +15,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import {
   useCreateWorkflowTemplate,
@@ -136,6 +138,7 @@ export default function TemplatesPage() {
   const [forkError, setForkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -165,16 +168,20 @@ export default function TemplatesPage() {
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
+      {runTarget && (
+        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
+      )}
+
       <div className="fade-up">
         <PageHeader
           actions={
             <Button onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-              + New template
+              + New workflow
             </Button>
           }
-          chapter="§ Templates"
-          subtitle="Reusable workflow blueprints. Start from a curated starter, or create a blank canvas."
-          title="Workflow templates."
+          chapter="§ Workflows"
+          subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
+          title="Workflow library."
         />
       </div>
 
@@ -306,6 +313,15 @@ export default function TemplatesPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {t.status === 'ACTIVE' && t.activeVersion !== null && (
+                          <Button
+                            onClick={() => setRunTarget(t)}
+                            size="sm"
+                            variant="primary"
+                          >
+                            Run →
+                          </Button>
+                        )}
                         <Button
                           onClick={() => router.push(`/templates/${t.id}`)}
                           size="sm"

@@ -1,3 +1,4 @@
+import type { InputSchema } from '../lib/inputSchema.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
 export interface ApiResponse<T> {
@@ -221,6 +222,7 @@ export interface WorkflowTemplateSummary {
   experimentVersion: number | null;
   experimentSplit: number | null;
   versionCount: number;
+  inputSchema?: InputSchema | null;
   team: TeamRef | null;
   lastRun: {
     id: string;

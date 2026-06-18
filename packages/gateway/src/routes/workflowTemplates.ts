@@ -1,5 +1,8 @@
+import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
+import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import {
   assertShellImageAllowed,
   computeAnalytics,
@@ -14,7 +17,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
-import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 interface ShellNodeWithId {
@@ -239,6 +242,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     experimentSplit: tpl.experimentSplit,
     experimentVersion: tpl.experimentVersion,
     id: tpl.id,
+    inputSchema: tpl.inputSchema ?? null,
     isDefault: tpl.isDefault,
     lastRun: lastRun
       ? {
@@ -769,6 +773,133 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const lastRuns = await loadLastRuns(fastify, [updated.id]);
       return { data: projectTemplate(updated, lastRuns.get(updated.id)) };
+    }
+  );
+
+  // ── Run a template (generic trigger) ──
+  // POST /:id/runs
+  // Creates a RunInput + starts a Temporal workflow for any template with an
+  // active version. The request body is the generic payload validated against
+  // the template's declared inputSchema (if any). Non-SWE templates that don't
+  // need a connectionId may omit it; externalTicketId is auto-generated.
+  const RunTemplateBody = z.object({
+    label: z.string().max(200).optional(),
+    payload: z.record(z.string(), z.unknown()).optional().default({}),
+  });
+
+  app.post(
+    '/:id/runs',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { body: RunTemplateBody, params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const tpl = await fastify.prisma.workflowTemplate.findFirst({
+        select: { activeVersion: true, id: true, inputSchema: true },
+        where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },
+      });
+      if (!tpl) {
+        return reply.status(404).send({
+          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found or not active' },
+        });
+      }
+      if (!tpl.activeVersion) {
+        return reply.status(400).send({
+          error: {
+            code: 'NO_ACTIVE_VERSION',
+            message: 'Template has no active version — promote a version first',
+          },
+        });
+      }
+
+      const payload = request.body.payload ?? {};
+
+      if (tpl.inputSchema && isInputSchema(tpl.inputSchema)) {
+        const result = validateInputPayload(tpl.inputSchema, payload);
+        if (!result.ok) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_INPUT',
+              details: result.errors,
+              message: `Run input does not satisfy the template's input schema: ${result.errors.join('; ')}`,
+            },
+          });
+        }
+      }
+
+      // Extract well-known fields from the generic payload so they map onto the
+      // RepoWorkRequest struct that Temporal expects. Non-SWE templates that omit
+      // these fields get sensible defaults; the worker reads the full payload from
+      // RunInput.payload for anything beyond the base fields.
+      const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
+      const description =
+        typeof payload.description === 'string' ? payload.description : (request.body.label ?? '');
+      const budgetTier = (
+        ['STANDARD', 'LARGE', 'EPIC'].includes(payload.budget as string)
+          ? (payload.budget as BudgetTier)
+          : 'STANDARD'
+      ) satisfies BudgetTier;
+      const externalTicketId =
+        typeof payload.ticketId === 'string'
+          ? payload.ticketId
+          : (request.body.label ?? `run-${Date.now()}`);
+
+      const workRequestId = crypto.randomUUID();
+      const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
+      const temporalWorkflowId = `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+      const repoWorkRequest: RepoWorkRequest = {
+        budgetTier,
+        description,
+        externalTicketId,
+        repoId: connectionId ?? '',
+        requestPayload: JSON.stringify(request.body),
+        workRequestId,
+      };
+
+      try {
+        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+          request: repoWorkRequest,
+          templateId: tpl.id,
+          templateVersion: tpl.activeVersion,
+        });
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply.status(409).send({
+            error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' },
+          });
+        }
+        throw err;
+      }
+
+      await fastify.prisma.runInput.create({
+        data: {
+          connectionId,
+          description,
+          externalTicketId,
+          id: workRequestId,
+          payload: payload as object,
+          requestedById: user.sub,
+          requestPayload: JSON.stringify(request.body),
+          templateId: tpl.id,
+          templateVersion: tpl.activeVersion,
+        },
+      });
+
+      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
+        data: {
+          budgetTier,
+          currentStatus: 'IMPLEMENTING',
+          repoId: connectionId ?? null,
+          temporalWorkflowId,
+          workRequestId,
+        },
+      });
+
+      return reply.status(201).send({
+        data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId },
+      });
     }
   );
 

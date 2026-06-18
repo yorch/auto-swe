@@ -72,7 +72,7 @@ type NavGroup = {
 const NAV_GROUPS: NavGroup[] = [
   {
     items: [
-      { href: '/', icon: 'dashboard', label: 'Dashboard', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
+      { href: '/', icon: 'dashboard', label: 'Home', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/runs', icon: 'runs', label: 'Runs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       { href: '/inbox', icon: 'inbox', label: 'Inbox', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
     ],
@@ -83,7 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
       {
         href: '/templates',
         icon: 'templates',
-        label: 'Templates',
+        label: 'Workflows',
         roles: ['ENGINEER', 'LEAD', 'ADMIN'],
       },
       {
@@ -102,17 +102,17 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/admin/agents/library',
         icon: 'agents',
         label: 'Agents',
-        roles: ['ADMIN'],
+        roles: ['LEAD', 'ADMIN'],
       },
-      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['ADMIN'] },
+      { href: '/admin/skills', icon: 'skills', label: 'Skills', roles: ['LEAD', 'ADMIN'] },
       {
-        href: '/repositories',
+        href: '/connections',
         icon: 'connections',
         label: 'Connections',
         roles: ['LEAD', 'ADMIN'],
       },
     ],
-    label: 'Libraries',
+    label: 'Library',
   },
   {
     items: [

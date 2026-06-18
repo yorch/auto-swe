@@ -17,6 +17,7 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
+import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
@@ -269,6 +270,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
+  const [runOpen, setRunOpen] = useState(false);
 
   useEffect(() => {
     if (versionDetail) {
@@ -408,25 +410,34 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   return (
     <div className="space-y-8">
+      <RunTemplateModal onClose={() => setRunOpen(false)} open={runOpen} template={template} />
+
       {/* Back + header */}
       <div className="fade-up">
         <Link
           className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 transition-colors hover:text-ember-400"
           href="/templates"
         >
-          <span>←</span> templates
+          <span>←</span> workflows
         </Link>
         <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <div className="flex-1">
             <PageHeader
-              chapter={`§ Template · v${effectiveVersion ?? '?'}`}
+              chapter={`§ Workflows · v${effectiveVersion ?? '?'}`}
               subtitle={template.description ?? undefined}
               title={template.name}
             />
           </div>
-          <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
-            Edit metadata
-          </Button>
+          <div className="flex items-center gap-2">
+            {template.status === 'ACTIVE' && template.activeVersion !== null && (
+              <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
+                Run →
+              </Button>
+            )}
+            <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
+              Edit metadata
+            </Button>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <StatusBadge status={template.status} />
