@@ -7,9 +7,10 @@ libraries. Each phase is sized to land in one (or a small handful of) PR(s). Pic
 when starting a follow-up PR.
 
 > Status: **In progress** (rev. 2026-06-14). **P0, P1, P1.5 and P3 are implemented and merged into
-> the pivot branch; P2 is underway — the declarative `agent` node (WS1) and the `'mcp'` tool key
-> (WS2) are done, the first-class `mcp` Connection schema + implementer MCP binding (WS3 slices 1–2)
-> are done, and the MCP write-path / `mcp` node / canvas work remains.** Phases
+> the pivot branch; P2 is underway — the declarative `agent` node (WS1), the `'mcp'` tool key (WS2),
+> and the full MCP integration (WS3: first-class `mcp` Connection, binding across all implementer
+> activities + the generic agent node, and the admin write-path) are done; the `mcp` node (WS4) and
+> canvas/inspector (WS5) work remains.** Phases
 > P0–P3 are committed for build; P4–P5 are deferred but specified here so the architecture stays
 > compatible with them from day one. Per-phase build plans + status: `platform-pivot-p0.md`,
 > `platform-pivot-p1.md`, `platform-pivot-p2.md`.
@@ -176,7 +177,7 @@ third-party coded capability) is **P4**.
 |---|---|---|
 | **P0. De-domainify the engine** | ✅ Done | Delete `AgentRole` enum (→ string keys); registry-driven step dispatch; `AgentSpec` resolver + generic `runAgent`; cost decoupled from identity; move SWE content out of core code into seeded data (+ `origin` tag); cross-cutting scanner patterns → core defaults; computed `assertConfigReady`. **No behavior change.** |
 | **P1. Agent library** | ✅ Done | First-class `Agent` entity (consolidates model/skill/tool config); library UI + API; reference-by-key + inline; override cascade; versioning (pin/float) + prompt-edit security scan + RBAC. Supersedes `SkillOnlyRole`. |
-| **P2. Declarative agent node + MCP** | 🔄 In progress | New `agent` node (agentRef/inline) on the canvas — **done (WS1)**; `'mcp'` tool key — **done (WS2)**; first-class `mcp` Connection + implementer MCP binding — **done (WS3 slices 1–2)**; remaining: MCP write-path (gateway/UI), `mcp` node (WS4), canvas/inspector (WS5). The no/low-code tiers. |
+| **P2. Declarative agent node + MCP** | 🔄 In progress | New `agent` node (agentRef/inline) on the canvas — **done (WS1)**; `'mcp'` tool key — **done (WS2)**; full MCP integration — first-class `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path — **done (WS3)**; remaining: `mcp` node (WS4), canvas/inspector (WS5). The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | ✅ Done | `Connection` replaces `Repository` (slice 2); `MemoryItem` replaces `AgentLesson` (slice 1); template `inputSchema` + generic `RunInput` with submit-time validation (slice 3); config-driven trigger event→`RunInput` mappings (slice 4). SWE specializes via seed/config. Surface polish (generic `POST /runs`, live issues-webhook receiver, nullable `externalTicketId`) deferred — see `platform-pivot-p3.md`. |
 | **P4. Distribution layer** | **Deferred (spec'd)** | Export/import versioned, dependency-aware bundles of library entities; marketplace + cross-deployment install; provenance/trust; third-party **capability** extension via the plugin SDK (container contract). This is "packaging," reframed as distribution. |
 | **P5. UX layering + multi-org** | **Deferred (spec'd)** | Canvas palette polish for all node kinds; authoring SDK; true multi-tenancy on the `orgId` stub. |

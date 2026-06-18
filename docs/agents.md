@@ -152,20 +152,21 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
 - Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
 
-**Status:** ✅ (a) gateway `toolKeys` validation accepts `'mcp'` (WS2, via `AGENT_TOOL_KEYS`).
-✅ (b) WS3-binding is wired into the implementer activities: `executeImplementation` and
-`implementerSession` resolve the Agent's `mcpConnectionId` via `resolveAgentMcpUrl` →
-`mcpUrlForConnection` → `loadMcpTools(config.url)` (through the shared `buildImplementerForActivity`
-helper in `implementer.ts`) and call `closeMcp()` in their `finally` blocks. The `decomposition`
-merge-conflict resolver also goes through `buildImplementerForActivity`, so all three implementer
-activities bind MCP uniformly. Non-git connections are filtered out of the repo read/submit paths
-(GET `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
-`isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the work-request/Slack submit
-paths.
-**Remaining (P2/WS3 slice 3):** there is no gateway/UI write-path yet to set `Agent.mcpConnectionId`
-or create an `mcp` Connection (so the binding is inert until that lands), and the generic
-`runAgentNode` path is not yet MCP-bound — both are coupled (the generic node binding only becomes
-testable once an agent can be given an `mcpConnectionId`).
+**Status — WS3 complete:**
+- **Tool key (WS2):** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
+- **Binding:** all three implementer activities (`executeImplementation`, `implementerSession`, and
+  the `decomposition` merge-conflict resolver) bind MCP uniformly through the shared
+  `buildImplementerForActivity` helper, which resolves the Agent's `mcpConnectionId` via
+  `resolveAgentMcpUrl` → `mcpUrlForConnection` → `loadMcpTools(config.url)` and closes the client in
+  `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
+  agent — not just the implementer — can use MCP.
+- **Write-path:** admins manage `mcp` Connections at `/admin/mcp-connections` (gateway CRUD
+  `/api/v1/admin/mcp-connections`) and attach one to an Agent via the `mcpConnectionId` field on the
+  agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
+  Connection, and TEAM-scoped agents may only reference their own team's connection (tenancy).
+- **Guarding:** non-git connections are filtered out of the repo read/submit paths (GET
+  `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
+  `isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the submit paths.
 
 ---
 

@@ -177,7 +177,7 @@ By its own 9-phase build history, auto-swe is **feature-complete rather than asp
 
 - **Shipped-vs-planned matrix:** [STATUS.md](../STATUS.md)
 - **Design rationale (39 architecture decisions):** [configurable-workflows.md](./configurable-workflows.md)
-- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only; MCP implementer tool loading is wired into the implementer activities but has no gateway/UI write-path yet to configure it, so it stays inert until P2/WS3 slice 3 lands (see [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in)).
+- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only. (MCP tool integration is now end-to-end — see [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in) — though the `mcp` workflow node (P2/WS4) and canvas authoring (WS5) are still pending.)
 
 ---
 
