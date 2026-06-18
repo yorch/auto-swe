@@ -319,15 +319,19 @@ export async function resolveConsolidationConfig(
 
 export type TrackerProvider = 'jira' | 'linear' | 'github';
 
+// Import the richer config types from the integration registry and re-export them.
+import type {
+  ResolvedIssueTrackerConfig,
+  ResolvedKnowledgeBaseConfig,
+} from './integrations/registry.js';
+
+export type { ResolvedIssueTrackerConfig, ResolvedKnowledgeBaseConfig };
+
+/** @deprecated Use `ResolvedIssueTrackerConfig` instead. Kept for backwards compat. */
 export interface ResolvedTrackerConfig {
-  /// Which connector to use; null means the tracker integration is disabled.
   provider: TrackerProvider | null;
-  /// Jira site URL (e.g. https://acme.atlassian.net) or GitHub API base
-  /// (defaults to https://api.github.com). Linear's endpoint is fixed.
   baseUrl: string | null;
-  /// API token: Jira API token / Linear API key / GitHub token.
   apiToken: string | null;
-  /// Jira basic-auth user (the Atlassian account email). Null for others.
   email: string | null;
 }
 
@@ -335,8 +339,10 @@ function asTrackerProvider(value: string | null | undefined): TrackerProvider | 
   return value === 'jira' || value === 'linear' || value === 'github' ? value : null;
 }
 
-export async function resolveTrackerConfig(_opts?: ResolveOpts): Promise<ResolvedTrackerConfig> {
-  const row = await (await db()).trackerConfig.findUnique({ where: { id: 'default' } });
+export async function resolveIssueTrackerConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedIssueTrackerConfig> {
+  const row = await (await db()).issueTrackerConfig.findUnique({ where: { id: 'default' } });
 
   const apiToken =
     decryptOptional({
@@ -348,11 +354,72 @@ export async function resolveTrackerConfig(_opts?: ResolveOpts): Promise<Resolve
     process.env.TRACKER_API_TOKEN ??
     null;
 
+  const provider = asTrackerProvider(row?.provider ?? process.env.TRACKER_PROVIDER);
+
   return {
     apiToken,
     baseUrl: row?.baseUrl ?? process.env.TRACKER_BASE_URL ?? null,
+    defaultProjectKey: row?.defaultProjectKey ?? undefined,
     email: row?.email ?? process.env.TRACKER_EMAIL ?? null,
-    provider: asTrackerProvider(row?.provider ?? process.env.TRACKER_PROVIDER),
+    epicIssueType: row?.epicIssueType ?? undefined,
+    instanceType: row?.instanceType ?? undefined,
+    maxRetries: row?.maxRetries ?? undefined,
+    provider,
+    storyIssueType: row?.storyIssueType ?? undefined,
+    storyPointsFieldId: row?.storyPointsFieldId ?? undefined,
+    timeoutMs: row?.timeoutMs ?? undefined,
+    webhookSecret: row?.webhookSecret ?? undefined,
+    webhookTriggerStatus: row?.webhookTriggerStatus ?? undefined,
+  };
+}
+
+/** @deprecated Use `resolveIssueTrackerConfig` instead. Kept for backwards compat. */
+export async function resolveTrackerConfig(_opts?: ResolveOpts): Promise<ResolvedTrackerConfig> {
+  const resolved = await resolveIssueTrackerConfig(_opts);
+  return {
+    apiToken: resolved.apiToken,
+    baseUrl: resolved.baseUrl,
+    email: resolved.email,
+    provider: resolved.provider,
+  };
+}
+
+export async function resolveKnowledgeBaseConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedKnowledgeBaseConfig> {
+  const row = await (await db()).knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
+
+  const apiToken =
+    decryptOptional({
+      authTag: row?.apiTokenAuthTag ?? null,
+      ciphertext: row?.apiTokenCiphertext ?? null,
+      keyVersion: row?.apiTokenKeyVersion ?? null,
+      nonce: row?.apiTokenNonce ?? null,
+    }) ??
+    process.env.KB_API_TOKEN ??
+    null;
+
+  const provider =
+    (row?.provider ?? process.env.KB_PROVIDER) === 'confluence'
+      ? 'confluence'
+      : (row?.provider ?? process.env.KB_PROVIDER) === 'notion'
+        ? 'notion'
+        : null;
+
+  const spacesEnv = process.env.KB_SPACES
+    ? process.env.KB_SPACES.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  return {
+    apiToken,
+    baseUrl: row?.baseUrl ?? process.env.KB_BASE_URL ?? null,
+    email: row?.email ?? process.env.KB_EMAIL ?? null,
+    enabled: row?.enabled ?? false,
+    maxPages: row?.maxPages ?? undefined,
+    provider,
+    spaces: row?.spaces?.length ? row.spaces : spacesEnv,
   };
 }
 

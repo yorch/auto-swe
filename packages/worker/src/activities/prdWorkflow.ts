@@ -9,7 +9,7 @@
  */
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,
@@ -203,7 +203,7 @@ export async function createTrackerItems(
 ): Promise<TrackerItemsResult> {
   heartbeat('loading tracker config');
   const [trackerConfig, payload] = await Promise.all([
-    resolveTrackerConfig(),
+    resolveIssueTrackerConfig(),
     loadPrdPayload(request.workRequestId),
   ]);
 

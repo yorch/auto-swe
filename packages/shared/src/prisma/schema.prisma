@@ -146,8 +146,8 @@ model ContextSnapshot {
   id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workRequestId    String       @unique @map("work_request_id") @db.Uuid
   workRequest      RunInput     @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
-  rawTicketData    Json?        @map("raw_jira_epic")
-  rawDocumentation Json?        @map("raw_confluence")
+  rawTicketData    Json?        @map("raw_ticket_data")
+  rawDocumentation Json?        @map("raw_documentation")
   successCriteria  String[]     @map("success_criteria")
   capturedAt       DateTime     @default(now()) @map("captured_at") @db.Timestamptz
 
@@ -936,26 +936,63 @@ model GoogleOAuthConfig {
 }
 
 /// Singleton issue-tracker connector config. One row (id = "default").
-/// `provider` is 'jira' | 'linear' | 'github' or NULL (= connector disabled).
-/// `baseUrl` is the Jira site URL or GitHub API base; Linear's endpoint is
-/// fixed. `email` is the Jira basic-auth user. The API token uses the same
-/// AES-256-GCM envelope as the other config secrets.
-model TrackerConfig {
-  id String @id @default("default")
+model IssueTrackerConfig {
+  id           String  @id @default("default")
+  provider     String? // 'jira' | 'linear' | 'github' | null
+  instanceType String? @default("cloud") @map("instance_type") // 'cloud' | 'server' | 'datacenter'
+  baseUrl      String? @map("base_url")
+  email        String? // Jira basic-auth email
 
-  provider String?
-  baseUrl  String? @map("base_url")
-  email    String?
-
+  // AES-256-GCM encrypted API token (same envelope as other secrets)
   apiTokenCiphertext Bytes?  @map("api_token_ciphertext")
   apiTokenNonce      Bytes?  @map("api_token_nonce")
   apiTokenAuthTag    Bytes?  @map("api_token_auth_tag")
   apiTokenKeyVersion Int?    @map("api_token_key_version")
   apiTokenLastFour   String? @map("api_token_last_four")
 
+  // Reliability
+  timeoutMs  Int? @default(5000) @map("timeout_ms")
+  maxRetries Int? @default(3)    @map("max_retries")
+
+  // Jira field mapping (enterprise customization)
+  storyPointsFieldId String? @default("story_points") @map("story_points_field_id")
+  epicIssueType      String? @default("Epic")         @map("epic_issue_type")
+  storyIssueType     String? @default("Story")        @map("story_issue_type")
+  defaultProjectKey  String? @map("default_project_key")
+
+  // Inbound webhooks
+  webhookSecret        String? @map("webhook_secret")
+  webhookTriggerStatus String? @map("webhook_trigger_status")
+
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  @@map("tracker_config")
+  @@map("issue_tracker_config")
+}
+
+/// Singleton knowledge-base connector config. One row (id = "default").
+model KnowledgeBaseConfig {
+  id       String  @id @default("default")
+  provider String? // 'confluence' | 'notion' | null
+  enabled  Boolean @default(false)
+  baseUrl  String? @map("base_url") // shared with issue tracker when same vendor
+
+  // AES-256-GCM encrypted API token
+  apiTokenCiphertext Bytes?  @map("api_token_ciphertext")
+  apiTokenNonce      Bytes?  @map("api_token_nonce")
+  apiTokenAuthTag    Bytes?  @map("api_token_auth_tag")
+  apiTokenKeyVersion Int?    @map("api_token_key_version")
+  apiTokenLastFour   String? @map("api_token_last_four")
+
+  // Confluence: email for basic auth
+  email String?
+
+  // Search config
+  spaces   String[] // Confluence space keys or Notion database IDs to search
+  maxPages Int?     @default(5) @map("max_pages")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("knowledge_base_config")
 }
 
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.

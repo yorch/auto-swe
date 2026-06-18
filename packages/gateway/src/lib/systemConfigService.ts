@@ -2,9 +2,10 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   resolveGitHubConfig,
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
   resolveSlackConfig,
   resolveStorageConfig,
-  resolveTrackerConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
@@ -27,6 +28,7 @@ import type { FastifyBaseLogger } from 'fastify';
 export const SYSTEM_CONFIG_IDS = {
   github: '00000000-0000-0000-0001-000000000001',
   googleOAuth: '00000000-0000-0000-0001-000000000005',
+  knowledgeBase: '00000000-0000-0000-0001-000000000007',
   slack: '00000000-0000-0000-0001-000000000002',
   storage: '00000000-0000-0000-0001-000000000003',
   tracker: '00000000-0000-0000-0001-000000000006',
@@ -649,28 +651,46 @@ export async function updateGoogleOAuthConfig(
 
 // ─── Issue tracker ────────────────────────────────────────────────────────────
 
-type TrackerConfigRow = NonNullable<
-  Awaited<ReturnType<PrismaClient['trackerConfig']['findUnique']>>
+type IssueTrackerConfigRow = NonNullable<
+  Awaited<ReturnType<PrismaClient['issueTrackerConfig']['findUnique']>>
 >;
 
 export type TrackerConfigInput = {
   apiToken?: string;
   baseUrl?: string | null;
+  defaultProjectKey?: string | null;
   email?: string | null;
+  epicIssueType?: string | null;
+  instanceType?: 'cloud' | 'server' | 'datacenter' | null;
+  maxRetries?: number | null;
   provider?: 'jira' | 'linear' | 'github' | null;
+  storyIssueType?: string | null;
+  storyPointsFieldId?: string | null;
+  timeoutMs?: number | null;
+  webhookSecret?: string | null;
+  webhookTriggerStatus?: string | null;
 };
 
-function trackerData(row: TrackerConfigRow | null) {
+function trackerData(row: IssueTrackerConfigRow | null) {
   return {
     apiToken: maskedSecret(row?.apiTokenLastFour),
     baseUrl: row?.baseUrl ?? null,
+    defaultProjectKey: row?.defaultProjectKey ?? null,
     email: row?.email ?? null,
+    epicIssueType: row?.epicIssueType ?? null,
+    instanceType: row?.instanceType ?? null,
+    maxRetries: row?.maxRetries ?? null,
     provider: row?.provider ?? null,
+    storyIssueType: row?.storyIssueType ?? null,
+    storyPointsFieldId: row?.storyPointsFieldId ?? null,
+    timeoutMs: row?.timeoutMs ?? null,
+    webhookSecret: row?.webhookSecret ?? null,
+    webhookTriggerStatus: row?.webhookTriggerStatus ?? null,
   };
 }
 
 export async function getTrackerConfig(prisma: PrismaClient) {
-  const row = await prisma.trackerConfig.findUnique({ where: { id: 'default' } });
+  const row = await prisma.issueTrackerConfig.findUnique({ where: { id: 'default' } });
   return {
     data: trackerData(row),
     sources: {
@@ -686,9 +706,23 @@ export async function updateTrackerConfig(
   prisma: PrismaClient,
   body: TrackerConfigInput
 ): Promise<ConfigUpdateResult> {
-  const { apiToken, baseUrl, email, provider } = body;
+  const {
+    apiToken,
+    baseUrl,
+    defaultProjectKey,
+    email,
+    epicIssueType,
+    instanceType,
+    maxRetries,
+    provider,
+    storyIssueType,
+    storyPointsFieldId,
+    timeoutMs,
+    webhookSecret,
+    webhookTriggerStatus,
+  } = body;
 
-  const existing = await prisma.trackerConfig.findUnique({ where: { id: 'default' } });
+  const existing = await prisma.issueTrackerConfig.findUnique({ where: { id: 'default' } });
 
   const data: Record<string, unknown> = {};
   if (provider !== undefined) {
@@ -700,10 +734,37 @@ export async function updateTrackerConfig(
   if (email !== undefined) {
     data.email = email;
   }
+  if (instanceType !== undefined) {
+    data.instanceType = instanceType;
+  }
+  if (timeoutMs !== undefined) {
+    data.timeoutMs = timeoutMs;
+  }
+  if (maxRetries !== undefined) {
+    data.maxRetries = maxRetries;
+  }
+  if (storyPointsFieldId !== undefined) {
+    data.storyPointsFieldId = storyPointsFieldId;
+  }
+  if (epicIssueType !== undefined) {
+    data.epicIssueType = epicIssueType;
+  }
+  if (storyIssueType !== undefined) {
+    data.storyIssueType = storyIssueType;
+  }
+  if (defaultProjectKey !== undefined) {
+    data.defaultProjectKey = defaultProjectKey;
+  }
+  if (webhookSecret !== undefined) {
+    data.webhookSecret = webhookSecret;
+  }
+  if (webhookTriggerStatus !== undefined) {
+    data.webhookTriggerStatus = webhookTriggerStatus;
+  }
 
   sealInto(data, 'apiToken', apiToken);
 
-  const row = await prisma.trackerConfig.upsert({
+  const row = await prisma.issueTrackerConfig.upsert({
     create: { id: 'default', ...data },
     update: data,
     where: { id: 'default' },
@@ -714,14 +775,28 @@ export async function updateTrackerConfig(
     ['baseUrl', baseUrl],
     ['email', email],
     ['apiToken', apiToken],
+    ['instanceType', instanceType],
+    ['timeoutMs', timeoutMs],
+    ['maxRetries', maxRetries],
+    ['storyPointsFieldId', storyPointsFieldId],
+    ['epicIssueType', epicIssueType],
+    ['storyIssueType', storyIssueType],
+    ['defaultProjectKey', defaultProjectKey],
+    ['webhookSecret', webhookSecret],
+    ['webhookTriggerStatus', webhookTriggerStatus],
   ]);
 
   return {
     auditAfterJson: {
       baseUrl: row.baseUrl,
       changedFields,
+      defaultProjectKey: row.defaultProjectKey,
       email: row.email,
+      epicIssueType: row.epicIssueType,
+      instanceType: row.instanceType,
       provider: row.provider,
+      storyIssueType: row.storyIssueType,
+      webhookTriggerStatus: row.webhookTriggerStatus,
     },
     changedFields,
     data: trackerData(row),
@@ -734,7 +809,7 @@ export async function updateTrackerConfig(
 export async function testTrackerConnection(
   ticketId: string
 ): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveTrackerConfig();
+  const config = await resolveIssueTrackerConfig();
   if (!config.provider) {
     return { detail: 'No tracker provider configured.', ok: false };
   }
@@ -754,6 +829,152 @@ export async function testTrackerConnection(
     detail: `Fetched "${ticket.title}" (status: ${ticket.status}) from ${config.provider}.`,
     ok: true,
   };
+}
+
+// ─── Knowledge base ────────────────────────────────────────────────────────────
+
+type KnowledgeBaseConfigRow = NonNullable<
+  Awaited<ReturnType<PrismaClient['knowledgeBaseConfig']['findUnique']>>
+>;
+
+export type KnowledgeBaseConfigInput = {
+  apiToken?: string;
+  baseUrl?: string | null;
+  email?: string | null;
+  enabled?: boolean;
+  maxPages?: number | null;
+  provider?: 'confluence' | 'notion' | null;
+  spaces?: string[];
+};
+
+function knowledgeBaseData(row: KnowledgeBaseConfigRow | null) {
+  return {
+    apiToken: maskedSecret(row?.apiTokenLastFour),
+    baseUrl: row?.baseUrl ?? null,
+    email: row?.email ?? null,
+    enabled: row?.enabled ?? false,
+    maxPages: row?.maxPages ?? null,
+    provider: row?.provider ?? null,
+    spaces: row?.spaces ?? [],
+  };
+}
+
+export async function getKnowledgeBaseConfig(prisma: PrismaClient) {
+  const row = await prisma.knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
+  return {
+    data: knowledgeBaseData(row),
+    sources: {
+      apiToken: src(!!row?.apiTokenCiphertext, 'KB_API_TOKEN'),
+      baseUrl: src(!!row?.baseUrl, 'KB_BASE_URL'),
+      email: src(!!row?.email, 'KB_EMAIL'),
+      provider: src(!!row?.provider, 'KB_PROVIDER'),
+      spaces: src(!!row?.spaces?.length, 'KB_SPACES'),
+    },
+  };
+}
+
+export async function updateKnowledgeBaseConfig(
+  prisma: PrismaClient,
+  body: KnowledgeBaseConfigInput
+): Promise<ConfigUpdateResult> {
+  const { apiToken, baseUrl, email, enabled, maxPages, provider, spaces } = body;
+
+  const existing = await prisma.knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  if (provider !== undefined) {
+    data.provider = provider;
+  }
+  if (enabled !== undefined) {
+    data.enabled = enabled;
+  }
+  if (baseUrl !== undefined) {
+    data.baseUrl = baseUrl;
+  }
+  if (email !== undefined) {
+    data.email = email;
+  }
+  if (spaces !== undefined) {
+    data.spaces = spaces;
+  }
+  if (maxPages !== undefined) {
+    data.maxPages = maxPages;
+  }
+
+  sealInto(data, 'apiToken', apiToken);
+
+  const row = await prisma.knowledgeBaseConfig.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  const changedFields = changedKeys([
+    ['provider', provider],
+    ['enabled', enabled],
+    ['baseUrl', baseUrl],
+    ['email', email],
+    ['spaces', spaces],
+    ['maxPages', maxPages],
+    ['apiToken', apiToken],
+  ]);
+
+  return {
+    auditAfterJson: {
+      baseUrl: row.baseUrl,
+      changedFields,
+      email: row.email,
+      enabled: row.enabled,
+      maxPages: row.maxPages,
+      provider: row.provider,
+      spaces: row.spaces,
+    },
+    changedFields,
+    data: knowledgeBaseData(row),
+    existed: !!existing,
+  };
+}
+
+export async function testKnowledgeBaseConnection(): Promise<{ detail: string; ok: boolean }> {
+  const config = await resolveKnowledgeBaseConfig();
+  if (!config.provider || !config.enabled) {
+    return { detail: 'Knowledge base provider not configured or disabled.', ok: false };
+  }
+  if (!config.baseUrl || !config.apiToken) {
+    return {
+      detail: `Knowledge base (${config.provider}) missing baseUrl or apiToken.`,
+      ok: false,
+    };
+  }
+  // For Confluence: do a lightweight CQL search to validate credentials.
+  if (config.provider === 'confluence') {
+    try {
+      const base = config.baseUrl.replace(/\/$/, '');
+      const credentials = Buffer.from(`${config.email ?? ''}:${config.apiToken}`).toString(
+        'base64'
+      );
+      const res = await fetch(`${base}/wiki/rest/api/content/search?cql=type%3Dpage&limit=1`, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Basic ${credentials}`,
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) {
+        return {
+          detail: `Confluence API returned ${res.status}: ${res.statusText}`,
+          ok: false,
+        };
+      }
+      return { detail: 'Confluence connection successful.', ok: true };
+    } catch (err) {
+      return {
+        detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+        ok: false,
+      };
+    }
+  }
+  return { detail: `Provider ${config.provider} connected (no test implemented).`, ok: true };
 }
 
 // ─── Consolidation schedule ───────────────────────────────────────────────────

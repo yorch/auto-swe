@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { resolveTrackerConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -14,9 +19,12 @@ import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 /**
  * Best-effort ticket enrichment (EVOL-5): when a tracker connector is
  * configured, fetch the external ticket and seed `ContextSnapshot.rawTicketData`
- * for the work request. The worker's `validateContext` activity later upserts
- * the same row (unique on workRequestId) but only writes `successCriteria` on
- * the update path, so the ticket payload survives.
+ * for the work request. When a knowledge base connector is also configured,
+ * fetches linked pages and seeds `ContextSnapshot.rawDocumentation`.
+ *
+ * The worker's `validateContext` activity later upserts the same row
+ * (unique on workRequestId) but only writes `successCriteria` on the update
+ * path, so the ticket payload survives.
  *
  * Never throws and never blocks submission — every failure is logged and
  * swallowed.
@@ -30,10 +38,15 @@ async function enrichWithTicketData(
   }
 ): Promise<void> {
   try {
-    const tracker = await resolveTrackerConfig();
+    const [tracker, kbConfig] = await Promise.all([
+      resolveIssueTrackerConfig(),
+      resolveKnowledgeBaseConfig(),
+    ]);
+
     if (!tracker.provider) {
       return;
     }
+
     const ticket = await fetchTicket(tracker, args.externalTicketId, {
       defaultRepo: { owner: args.repo.organizationName, repo: args.repo.repoName },
       log: fastify.log,
@@ -41,12 +54,55 @@ async function enrichWithTicketData(
     if (!ticket) {
       return;
     }
+
+    // Best-effort: fetch linked KB pages when a knowledge base is configured
+    // and the ticket references page IDs (Jira + Confluence).
+    let rawDocumentation: unknown = null;
+    if (kbConfig.enabled && kbConfig.provider) {
+      try {
+        const kbProvider = createKnowledgeBaseProvider(kbConfig, { log: fastify.log });
+        if (kbProvider) {
+          const linkedPageIds = (ticket.raw as { linkedPageIds?: string[] })?.linkedPageIds;
+          if (Array.isArray(linkedPageIds) && linkedPageIds.length > 0) {
+            const pages = await kbProvider.fetchLinkedPages(linkedPageIds);
+            if (pages.length > 0) {
+              rawDocumentation = pages;
+            }
+          } else if (kbConfig.spaces?.length) {
+            // Fallback: search by ticket ID in configured spaces.
+            const pages = await kbProvider.searchPages(args.externalTicketId, kbConfig.spaces);
+            if (pages.length > 0) {
+              rawDocumentation = pages;
+            }
+          }
+        }
+      } catch (kbErr) {
+        fastify.log.warn(
+          { err: kbErr, ticketId: args.externalTicketId },
+          'Knowledge base enrichment failed; continuing without rawDocumentation'
+        );
+      }
+    }
+
+    const snapshotData: Record<string, unknown> = {
+      rawTicketData: ticket as unknown as Prisma.InputJsonValue,
+    };
+    if (rawDocumentation !== null) {
+      snapshotData.rawDocumentation = rawDocumentation as Prisma.InputJsonValue;
+    }
+
     await fastify.prisma.contextSnapshot.upsert({
       create: {
-        rawTicketData: ticket as unknown as Prisma.InputJsonValue,
+        ...(snapshotData as {
+          rawTicketData: Prisma.InputJsonValue;
+          rawDocumentation?: Prisma.InputJsonValue;
+        }),
         workRequestId: args.workRequestId,
       },
-      update: { rawTicketData: ticket as unknown as Prisma.InputJsonValue },
+      update: snapshotData as {
+        rawTicketData: Prisma.InputJsonValue;
+        rawDocumentation?: Prisma.InputJsonValue;
+      },
       where: { workRequestId: args.workRequestId },
     });
   } catch (err) {
