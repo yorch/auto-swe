@@ -137,7 +137,7 @@ export default function AdminWorkflowPage() {
                     Branch prefix
                   </label>
                   <input
-                    className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="branch-prefix"
                     onChange={(e) => setBranchPrefix(e.target.value)}
                     placeholder="auto"
@@ -160,7 +160,7 @@ export default function AdminWorkflowPage() {
                     PR title template
                   </label>
                   <input
-                    className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="pr-title-template"
                     onChange={(e) => setPrTitleTemplate(e.target.value)}
                     placeholder="[auto-swe] {{ticketId}}"
@@ -183,7 +183,7 @@ export default function AdminWorkflowPage() {
                     </span>
                   </label>
                   <textarea
-                    className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="pr-body-template"
                     onChange={(e) => setPrBodyTemplate(e.target.value)}
                     placeholder={
@@ -213,7 +213,7 @@ export default function AdminWorkflowPage() {
                   Default team slug
                 </label>
                 <input
-                  className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                  className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                   id="default-team-slug"
                   onChange={(e) => setDefaultTeamSlug(e.target.value)}
                   placeholder="default"
@@ -285,7 +285,7 @@ export default function AdminWorkflowPage() {
                       Cron expression
                     </label>
                     <input
-                      className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                      className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                       id="consolidation-cron"
                       onChange={(e) => setConsolidationCron(e.target.value)}
                       placeholder="0 3 * * 0"
@@ -306,7 +306,7 @@ export default function AdminWorkflowPage() {
                         Min cluster size
                       </label>
                       <input
-                        className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                        className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                         id="consolidation-min-cluster"
                         max={20}
                         min={2}
@@ -327,7 +327,7 @@ export default function AdminWorkflowPage() {
                         Similarity threshold
                       </label>
                       <input
-                        className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                        className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                         id="consolidation-threshold"
                         max={1}
                         min={0.5}

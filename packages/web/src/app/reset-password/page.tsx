@@ -87,12 +87,12 @@ function ResetPasswordInner() {
         </p>
 
         {!token && (
-          <div className="mb-4 rounded-sm border border-amber-400/40 bg-amber-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-amber-400">
+          <div className="mb-4 rounded-[9px] border border-amber-400/40 bg-amber-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-amber-400">
             ! no reset token in the url — request a fresh link from the login page
           </div>
         )}
         {error && (
-          <div className="mb-4 rounded-sm border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
+          <div className="mb-4 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
             ! {error}
           </div>
         )}

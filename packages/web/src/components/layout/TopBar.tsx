@@ -43,7 +43,7 @@ function pageTitle(pathname: string): string {
       return title;
     }
   }
-  return 'Conductor';
+  return 'auto·swe';
 }
 
 export function TopBar() {

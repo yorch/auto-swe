@@ -85,9 +85,9 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         <div
           className="text-brick-400 px-2 py-1.5"
           style={{
-            background: 'oklch(0.64 0.17 28 / 0.09)',
-            border: '1px solid oklch(0.64 0.17 28 / 0.3)',
-            borderRadius: '2px',
+            background: 'rgba(255, 122, 122, 0.09)',
+            border: '1px solid rgba(255, 122, 122, 0.3)',
+            borderRadius: '6px',
             fontFamily: 'var(--font-mono)',
             fontSize: '10px',
           }}
@@ -101,7 +101,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
           style={{
             background: 'var(--color-ink-900)',
             border: '1px solid var(--color-ink-500)',
-            borderRadius: '2px',
+            borderRadius: '6px',
             fontFamily: 'var(--font-mono)',
             fontSize: '10px',
             lineHeight: 1.5,
@@ -152,7 +152,7 @@ function EventRow({
             className="shrink-0 px-1 py-px"
             style={{
               background: glyph.bg,
-              borderRadius: '2px',
+              borderRadius: '4px',
               color: glyph.color,
               fontFamily: 'var(--font-mono)',
               fontSize: '8.5px',
@@ -300,7 +300,7 @@ export function TracesTab({
               className="text-paper-300 px-1.5 py-0.5"
               style={{
                 background: 'var(--color-ink-600)',
-                borderRadius: '2px',
+                borderRadius: '5px',
                 fontFamily: 'var(--font-mono)',
                 fontSize: '10px',
               }}

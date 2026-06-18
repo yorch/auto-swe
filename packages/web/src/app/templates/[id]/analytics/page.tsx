@@ -96,7 +96,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   </p>
                   <span
                     className={cn(
-                      'rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider',
+                      'rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider',
                       stats.significanceHint.isSignificant
                         ? 'border-moss-400/40 bg-moss-400/10 text-moss-400'
                         : 'border-amber-400/40 bg-amber-400/10 text-amber-400'
@@ -151,12 +151,12 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                         <span className="flex items-baseline gap-2 font-mono text-sm">
                           <span className="text-paper-100">v{v.version}</span>
                           {v.version === template?.activeVersion && (
-                            <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
                               active
                             </span>
                           )}
                           {v.version === template?.experimentVersion && (
-                            <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                            <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
                               experiment
                             </span>
                           )}
@@ -254,7 +254,7 @@ function VersionComparison({
         {badge && (
           <span
             className={cn(
-              'rounded-sm border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider',
+              'rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider',
               badgeClass
             )}
           >

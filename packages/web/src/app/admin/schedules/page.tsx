@@ -19,7 +19,7 @@ import {
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 
 const selectClass =
-  'w-full rounded-sm border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-paper-100 focus:border-ember-400 focus:outline-none';
+  'w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-paper-100 focus:border-ember-400 focus:outline-none';
 
 function fmtTime(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : '—';

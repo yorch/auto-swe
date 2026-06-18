@@ -238,12 +238,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <StatusBadge status={template.status} />
           {template.isDefault && (
-            <span className="rounded-sm border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+            <span className="rounded border border-ember-400/40 bg-ember-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
               default
             </span>
           )}
           {effectiveVersion === template.activeVersion && (
-            <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-moss-400">
+            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-moss-400">
               active
             </span>
           )}
@@ -305,7 +305,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
                 <textarea
-                  className="h-[520px] w-full rounded-sm border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
+                  className="h-[520px] w-full rounded-[9px] border border-ink-500 bg-ink-900 p-4 font-mono text-xs text-paper-100 outline-none focus:border-ember-400"
                   onChange={(e) => handleJsonChange(e.target.value)}
                   spellCheck={false}
                   value={editorJson}
@@ -336,12 +336,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {template.versions[0]?.version === template.activeVersion && (
-                    <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                    <span className="rounded border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
                       active
                     </span>
                   )}
                   {template.versions[0]?.version === template.experimentVersion && (
-                    <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                    <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
                       experiment
                     </span>
                   )}
@@ -357,7 +357,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   {template.versions.map((v) => (
                     <li key={v.id}>
                       <button
-                        className={`w-full rounded-sm px-3 py-2 text-left text-sm transition-colors ${
+                        className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                           effectiveVersion === v.version
                             ? 'bg-ink-700 text-paper-100'
                             : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
@@ -373,12 +373,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {v.version === template.activeVersion && (
-                            <span className="rounded-sm border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
+                            <span className="rounded border border-moss-400/40 bg-moss-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-moss-400">
                               active
                             </span>
                           )}
                           {v.version === template.experimentVersion && (
-                            <span className="rounded-sm border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
+                            <span className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-violet-400">
                               experiment
                             </span>
                           )}

@@ -235,7 +235,7 @@ function LoginPageInner() {
             approve your account before you can use the workshop. Ping an admin once you're approved
             — sign in again and you'll be in.
           </p>
-          <div className="rounded-sm border border-ink-600 bg-ink-800/40 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500">
+          <div className="rounded-[9px] border border-ink-600 bg-ink-800/40 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500">
             status: pending
           </div>
           <Button
@@ -342,7 +342,7 @@ function LoginPageInner() {
           </p>
 
           {gatewayDown && (
-            <div className="mb-6 rounded-sm border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-brick-200">
+            <div className="mb-6 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-4 py-3 text-xs text-brick-200">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-brick-400">
                 ! Gateway unreachable
               </div>
@@ -366,7 +366,7 @@ function LoginPageInner() {
             <div className="mb-6 space-y-2">
               {providers.github && (
                 <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-sm border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
+                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
                   onClick={() => signInWithProvider('github')}
                   type="button"
                 >
@@ -376,7 +376,7 @@ function LoginPageInner() {
               )}
               {providers.google && (
                 <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-sm border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
+                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
                   onClick={() => signInWithProvider('google')}
                   type="button"
                 >
@@ -395,7 +395,7 @@ function LoginPageInner() {
           )}
 
           {/* Tab switcher: magic link vs password */}
-          <div className="mb-5 flex gap-px overflow-hidden rounded-sm border border-ink-600 bg-ink-600/40">
+          <div className="mb-5 flex gap-px overflow-hidden rounded-lg border border-ink-600 bg-ink-600/40">
             <button
               className={`flex-1 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
                 tab === 'magic'
