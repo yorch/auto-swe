@@ -158,6 +158,12 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ADMIN'],
       },
       {
+        href: '/admin/bundles',
+        icon: 'templates',
+        label: 'Bundles',
+        roles: ['ADMIN'],
+      },
+      {
         href: '/admin/scanner',
         icon: 'security',
         label: 'Scanner',

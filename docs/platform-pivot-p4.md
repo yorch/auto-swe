@@ -131,7 +131,10 @@
 - [x] WS2 — install / upgrade (managed base layer): `bundleService.installBundle` (schema + content-
   hash + dependency checks before any write; idempotent GLOBAL seed of skills → patterns → agents
   (+skill refs) → templates, provenance-tagged); admin route `POST /api/v1/admin/bundles/install`.
-- [ ] WS3 — provenance / trust / transport (detached signatures, registry, install-from-URL)
+- [x] WS3 — provenance / trust / transport: `InstalledBundle` registry table; ed25519 detached-
+  signature verification against env-anchored trusted keys (`verifyBundleSignature` /
+  `resolveBundleTrustedKeys`) → VERIFIED/UNVERIFIED trust state; install-from-URL; admin route
+  `GET /api/v1/admin/bundles` + `POST .../install-from-url` + `/admin/bundles` UI.
 - [ ] WS4 — container-contract coded steps
 - [ ] WS5 — authoring SDK
 

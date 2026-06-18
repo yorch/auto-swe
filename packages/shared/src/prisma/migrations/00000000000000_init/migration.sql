@@ -566,6 +566,25 @@ CREATE TABLE "config_audit_log" (
 );
 
 -- CreateTable
+CREATE TABLE "installed_bundles" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "name" TEXT NOT NULL,
+    "version" TEXT NOT NULL,
+    "source" TEXT,
+    "content_hash" TEXT NOT NULL,
+    "trust_state" TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    "signed_by" TEXT,
+    "installed_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "installed_bundles_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "installed_bundles_name_key" ON "installed_bundles"("name");
+
+-- CreateTable
 CREATE TABLE "skills" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,

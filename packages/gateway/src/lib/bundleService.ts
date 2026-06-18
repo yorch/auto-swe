@@ -10,6 +10,8 @@ import {
   type BundleTemplate,
   computeContentHash,
   parseBundle,
+  type TrustedKey,
+  verifyBundleSignature,
 } from '@auto-swe/shared/bundle';
 
 /**
@@ -29,7 +31,42 @@ export class BundleDependencyError extends Error {}
 
 export interface InstallResult {
   counts: { agents: number; skills: number; scannerPatterns: number; templates: number };
+  /** VERIFIED when the bundle's signature matched a trusted key, else UNVERIFIED. */
+  trustState: 'VERIFIED' | 'UNVERIFIED';
+  signedBy: string | null;
   warnings: string[];
+}
+
+export interface InstallOptions {
+  /** Deployment trust anchors; a signature matching one yields trustState=VERIFIED. */
+  trustedKeys?: TrustedKey[];
+  installedById?: string | null;
+}
+
+export interface InstalledBundleRow {
+  name: string;
+  version: string;
+  source: string | null;
+  trustState: string;
+  signedBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Installed-bundle registry (P4/WS3), most-recent first. */
+export async function listInstalledBundles(prisma: PrismaClient): Promise<InstalledBundleRow[]> {
+  return prisma.installedBundle.findMany({
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      createdAt: true,
+      name: true,
+      signedBy: true,
+      source: true,
+      trustState: true,
+      updatedAt: true,
+      version: true,
+    },
+  });
 }
 
 function toStringArray(value: unknown): string[] | null {
@@ -177,7 +214,11 @@ export async function exportBundle(
  * authoritative for its own fields), mirroring `syncBuiltins`; user overrides live
  * at TEAM/TEMPLATE scope and are untouched.
  */
-export async function installBundle(prisma: PrismaClient, raw: unknown): Promise<InstallResult> {
+export async function installBundle(
+  prisma: PrismaClient,
+  raw: unknown,
+  opts: InstallOptions = {}
+): Promise<InstallResult> {
   const manifest = parseBundle(raw); // throws ZodError on malformed input
 
   const recomputed = computeContentHash({
@@ -198,6 +239,10 @@ export async function installBundle(prisma: PrismaClient, raw: unknown): Promise
       `bundle requires unsupported connection type(s): ${unsupported.join(', ')}`
     );
   }
+
+  // Trust: a detached signature matching a deployment-trusted key → VERIFIED.
+  const trust = verifyBundleSignature(manifest, opts.trustedKeys ?? []);
+  const trustState = trust.verified ? 'VERIFIED' : 'UNVERIFIED';
 
   const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
@@ -312,5 +357,27 @@ export async function installBundle(prisma: PrismaClient, raw: unknown): Promise
     counts.templates++;
   }
 
-  return { counts, warnings: [] };
+  // Record / upsert the install in the registry (one row per bundle name).
+  await prisma.installedBundle.upsert({
+    create: {
+      contentHash: manifest.metadata.contentHash,
+      installedById: opts.installedById ?? null,
+      name: manifest.metadata.name,
+      signedBy: trust.signedBy,
+      source: manifest.metadata.source ?? null,
+      trustState,
+      version: manifest.metadata.version,
+    },
+    update: {
+      contentHash: manifest.metadata.contentHash,
+      installedById: opts.installedById ?? null,
+      signedBy: trust.signedBy,
+      source: manifest.metadata.source ?? null,
+      trustState,
+      version: manifest.metadata.version,
+    },
+    where: { name: manifest.metadata.name },
+  });
+
+  return { counts, signedBy: trust.signedBy, trustState, warnings: [] };
 }

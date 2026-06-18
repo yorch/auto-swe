@@ -1,7 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleEntities,
+  type BundleManifest,
   computeContentHash,
+  signContentHash,
 } from '@auto-swe/shared/bundle';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -11,7 +14,10 @@ import {
   installBundle,
 } from './bundleService.js';
 
-function manifestFor(entities: BundleEntities, dependencies: { connectionType: string }[] = []) {
+function manifestFor(
+  entities: BundleEntities,
+  dependencies: { connectionType: string }[] = []
+): BundleManifest {
   return {
     bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
     dependencies,
@@ -85,6 +91,7 @@ describe('installBundle', () => {
         update: vi.fn().mockResolvedValue({ id: 'a1' }),
       },
       agentSkillRef: { create: vi.fn(), deleteMany: vi.fn(), findFirst: vi.fn() },
+      installedBundle: { upsert: vi.fn() },
       scannerPattern: { upsert: vi.fn() },
       skill: {
         create: vi.fn().mockResolvedValue({ id: 's1' }),
@@ -149,5 +156,27 @@ describe('installBundle', () => {
     expect(prisma.agentSkillRef.create).toHaveBeenCalledTimes(1);
     expect(prisma.workflowTemplate.create).toHaveBeenCalledTimes(1);
     expect(prisma.workflowTemplateVersion.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.installedBundle.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a bundle VERIFIED when signed by a trusted key, UNVERIFIED otherwise', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const privPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    const pubPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+
+    const signed = manifestFor({ ...EMPTY });
+    signed.metadata.signature = signContentHash(privPem, signed.metadata.contentHash);
+    const verified = await installBundle(asArg(), signed, {
+      trustedKeys: [{ id: 'first-party', publicKeyPem: pubPem }],
+    });
+    expect(verified.trustState).toBe('VERIFIED');
+    expect(verified.signedBy).toBe('first-party');
+    expect(prisma.installedBundle.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ trustState: 'VERIFIED' }) })
+    );
+
+    const unsigned = await installBundle(asArg(), manifestFor({ ...EMPTY }), { trustedKeys: [] });
+    expect(unsigned.trustState).toBe('UNVERIFIED');
+    expect(unsigned.signedBy).toBeNull();
   });
 });

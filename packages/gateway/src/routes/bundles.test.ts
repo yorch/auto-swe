@@ -8,6 +8,20 @@ function newMockPrisma() {
   return {
     agent: { findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    installedBundle: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          createdAt: new Date(),
+          name: 'swe',
+          signedBy: null,
+          source: 'swe-starter',
+          trustState: 'UNVERIFIED',
+          updatedAt: new Date(),
+          version: '1.0.0',
+        },
+      ]),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
     scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
     skill: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
@@ -44,6 +58,14 @@ describe('bundleRoutes', () => {
     const m = JSON.parse(res.payload).data;
     expect(m.bundleSchemaVersion).toBe(BUNDLE_SCHEMA_VERSION);
     expect(m.metadata.name).toBe('swe');
+    await app.close();
+  });
+
+  it('lists installed bundles for an admin', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/admin/bundles' });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data).toHaveLength(1);
     await app.close();
   });
 

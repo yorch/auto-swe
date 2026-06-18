@@ -1,4 +1,10 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from 'node:crypto';
 import { z } from 'zod';
 
 /**
@@ -82,6 +88,10 @@ export const BundleMetadataSchema = z.object({
   createdAt: z.string(),
   description: z.string().optional(),
   name: z.string().min(1),
+  /** Detached base64 signature over `contentHash` (P4/WS3); absent = unsigned. */
+  signature: z.string().optional(),
+  /** Label/id of the key that signed it (informational; verified against trusted keys). */
+  signedBy: z.string().optional(),
   /** Free-form provenance, e.g. the origin tag or source deployment. */
   source: z.string().optional(),
   version: z.string().min(1),
@@ -134,4 +144,56 @@ export function computeContentHash(payload: {
 /** Parse + validate a raw object into a BundleManifest (throws on malformed input). */
 export function parseBundle(input: unknown): BundleManifest {
   return BundleManifestSchema.parse(input);
+}
+
+/** A deployment-trusted signing key (the trust anchor for VERIFIED bundles). */
+export interface TrustedKey {
+  id: string;
+  publicKeyPem: string;
+}
+
+/**
+ * Produce a detached base64 signature over a bundle's `contentHash` (P4/WS3).
+ * ed25519 (algorithm `null` per Node's API for Ed25519). Used by signing tooling
+ * and tests; the platform only ever *verifies*.
+ */
+export function signContentHash(privateKeyPem: string, contentHash: string): string {
+  return cryptoSign(
+    null,
+    Buffer.from(contentHash, 'utf8'),
+    createPrivateKey(privateKeyPem)
+  ).toString('base64');
+}
+
+/**
+ * Verify a bundle's detached signature against the deployment's trusted keys.
+ * Returns `{ verified: true, signedBy }` for the first trusted key whose public
+ * half validates the signature over `contentHash`; otherwise `{ verified: false }`.
+ * Unsigned bundles and bad keys never throw — they're simply not verified.
+ */
+export function verifyBundleSignature(
+  manifest: BundleManifest,
+  trustedKeys: TrustedKey[]
+): { verified: boolean; signedBy: string | null } {
+  const sig = manifest.metadata.signature;
+  if (!sig) {
+    return { signedBy: null, verified: false };
+  }
+  let signature: Buffer;
+  try {
+    signature = Buffer.from(sig, 'base64');
+  } catch {
+    return { signedBy: null, verified: false };
+  }
+  const data = Buffer.from(manifest.metadata.contentHash, 'utf8');
+  for (const key of trustedKeys) {
+    try {
+      if (cryptoVerify(null, data, createPublicKey(key.publicKeyPem), signature)) {
+        return { signedBy: key.id, verified: true };
+      }
+    } catch {
+      // ignore malformed trusted key; try the next
+    }
+  }
+  return { signedBy: null, verified: false };
 }
