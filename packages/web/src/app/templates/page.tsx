@@ -7,13 +7,34 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Textarea } from '@/components/ui/Textarea';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
-import { useCreateWorkflowTemplate, useWorkflowTemplates } from '@/hooks/useWorkflows';
+import {
+  useCreateWorkflowTemplate,
+  useUpdateWorkflowTemplate,
+  useWorkflowTemplates,
+} from '@/hooks/useWorkflows';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
+
+const SPEC_SCHEMA_VERSION = 1;
+
+const BLANK_SPEC: WorkflowSpec = {
+  description: 'Replace this step with your first action.',
+  entry: 'start',
+  name: 'new-template',
+  nodes: {
+    done: { status: 'SUCCESS', type: 'terminate' },
+    start: { next: 'done', step: 'noop', type: 'step' },
+  },
+  schemaVersion: SPEC_SCHEMA_VERSION,
+};
 
 const TONE_CLASS: Record<StarterTemplate['tone'], string> = {
   amber: 'border-l-amber-400',
@@ -24,6 +45,88 @@ const TONE_CLASS: Record<StarterTemplate['tone'], string> = {
   violet: 'border-l-violet-400',
 };
 
+function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const router = useRouter();
+  const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
+  const createTemplate = useCreateWorkflowTemplate();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Name is required');
+      return;
+    }
+    setError(null);
+    try {
+      const spec: WorkflowSpec = { ...BLANK_SPEC, name: trimmed };
+      const result = await createTemplate.mutateAsync({
+        description: description.trim() || undefined,
+        name: trimmed,
+        spec,
+        teamId: selectedTeamId ?? undefined,
+      });
+      const data = (result as { data: { id: string } }).data;
+      onClose();
+      setName('');
+      setDescription('');
+      router.push(`/templates/${data.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'create failed');
+    }
+  };
+
+  return (
+    <Modal
+      eyebrow="§ Templates"
+      onClose={() => {
+        onClose();
+        setName('');
+        setDescription('');
+        setError(null);
+      }}
+      open={open}
+      title="New template"
+    >
+      <div className="space-y-4">
+        {error && <Alert>{error}</Alert>}
+        <Input
+          label="Name"
+          onChange={(e) => setName(e.target.value)}
+          placeholder="my-workflow"
+          value={name}
+        />
+        <Textarea
+          hint="Optional"
+          label="Description"
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What does this template do?"
+          rows={3}
+          value={description}
+        />
+        <div className="flex justify-end gap-2 pt-2">
+          <Button
+            onClick={() => {
+              onClose();
+              setName('');
+              setDescription('');
+              setError(null);
+            }}
+            variant="secondary"
+          >
+            Cancel
+          </Button>
+          <Button disabled={createTemplate.isPending} onClick={handleCreate} variant="primary">
+            {createTemplate.isPending ? 'Creating…' : 'Create blank template'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function TemplatesPage() {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
@@ -31,6 +134,8 @@ export default function TemplatesPage() {
   const createTemplate = useCreateWorkflowTemplate();
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -56,8 +161,17 @@ export default function TemplatesPage() {
 
   return (
     <div className="space-y-12">
+      <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
+
+      <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
+
       <div className="fade-up">
         <PageHeader
+          actions={
+            <Button onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+              + New template
+            </Button>
+          }
           chapter="§ Templates"
           subtitle="Reusable workflow blueprints. Start from a curated starter, or create a blank canvas."
           title="Workflow templates."
@@ -123,6 +237,9 @@ export default function TemplatesPage() {
                     Team
                   </th>
                   <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
                     Active version
                   </th>
                   <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
@@ -132,7 +249,7 @@ export default function TemplatesPage() {
                     Updated
                   </th>
                   <th className="px-4 py-3 text-right font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500">
-                    Versions
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -161,6 +278,9 @@ export default function TemplatesPage() {
                     <td className="px-4 py-3 text-paper-400">
                       {t.team?.name ?? <em className="text-paper-500">global</em>}
                     </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={t.status} />
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs text-paper-300">
                       {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
                     </td>
@@ -184,8 +304,25 @@ export default function TemplatesPage() {
                     <td className="px-4 py-3 font-mono text-[11px] text-paper-500">
                       {formatRelativeTime(t.updatedAt)}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-xs text-paper-400">
-                      {t.versionCount}
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          onClick={() => router.push(`/templates/${t.id}`)}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          Edit
+                        </Button>
+                        {t.status !== 'ARCHIVED' && (
+                          <Button
+                            onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
+                            size="sm"
+                            variant="danger"
+                          >
+                            Archive
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -193,9 +330,9 @@ export default function TemplatesPage() {
                   <tr>
                     <td
                       className="px-4 py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-                      colSpan={6}
+                      colSpan={7}
                     >
-                      no templates yet — fork a starter above to begin
+                      no templates yet — fork a starter above or create a blank template
                     </td>
                   </tr>
                 )}
@@ -205,5 +342,34 @@ export default function TemplatesPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function ArchiveConfirmModal({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string } | null;
+  onClose: () => void;
+}) {
+  const updateTemplate = useUpdateWorkflowTemplate(target?.id ?? '');
+
+  const handleArchive = async () => {
+    if (!target) {
+      return;
+    }
+    await updateTemplate.mutateAsync({ status: 'ARCHIVED' });
+    onClose();
+  };
+
+  return (
+    <ConfirmModal
+      confirmLabel="Archive"
+      message={`Archive "${target?.name ?? ''}"? It will no longer be available for new runs. You can restore it by changing its status back to Active.`}
+      onClose={onClose}
+      onConfirm={handleArchive}
+      open={target !== null}
+      title="Archive template"
+    />
   );
 }

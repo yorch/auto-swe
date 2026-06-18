@@ -1,11 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
+import { TabBar } from '@/components/ui/TabBar';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useWorkflows';
 import { cn, formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
@@ -13,15 +16,35 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+type SubTab = 'editor' | 'analytics' | 'runs' | 'compare';
+
+const SUB_TABS: { id: SubTab; label: string }[] = [
+  { id: 'editor', label: 'Editor' },
+  { id: 'analytics', label: 'Analytics' },
+  { id: 'runs', label: 'Run history' },
+  { id: 'compare', label: 'Compare versions' },
+];
+
 const WINDOWS = [7, 14, 30, 90] as const;
 
 const formatUsdNullable = (n: number | null) => (n === null ? '—' : formatCost(n));
 
 export default function TemplateAnalyticsPage({ params }: PageProps) {
+  const router = useRouter();
   const { id } = use(params);
   const [windowDays, setWindowDays] = useState<number>(30);
   const { data: template } = useWorkflowTemplate(id);
   const { data: stats, isLoading } = useWorkflowTemplateAnalytics(id, windowDays);
+
+  const handleTabChange = (tab: SubTab) => {
+    if (tab === 'editor') {
+      router.push(`/templates/${id}`);
+    } else if (tab === 'runs') {
+      router.push(`/templates/${id}/runs`);
+    } else if (tab === 'compare') {
+      router.push(`/templates/${id}/diff`);
+    }
+  };
 
   return (
     <div className="space-y-10">
@@ -32,36 +55,36 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
         >
           <span>←</span> {template?.name ?? 'template'}
         </Link>
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <PageHeader
-            actions={
-              <div className="flex items-end gap-2">
-                <label
-                  className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-                  htmlFor="window"
-                >
-                  Window
-                </label>
-                <Select
-                  className="h-9 w-auto px-2 font-mono text-xs"
-                  id="window"
-                  onChange={(e) => setWindowDays(Number(e.target.value))}
-                  value={windowDays}
-                >
-                  {WINDOWS.map((w) => (
-                    <option key={w} value={w}>
-                      {w}d
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            }
             chapter={`§ Analytics · last ${windowDays} days`}
             subtitle="Observed performance and cost metrics for this template across the chosen rolling window."
             title="Observed performance."
           />
+          <div className="flex items-end gap-2">
+            <label
+              className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
+              htmlFor="window"
+            >
+              Window
+            </label>
+            <Select
+              className="h-9 w-auto px-2 font-mono text-xs"
+              id="window"
+              onChange={(e) => setWindowDays(Number(e.target.value))}
+              value={windowDays}
+            >
+              {WINDOWS.map((w) => (
+                <option key={w} value={w}>
+                  {w}d
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
       </div>
+
+      <TabBar active="analytics" className="fade-up" onChange={handleTabChange} tabs={SUB_TABS} />
 
       {isLoading || !stats ? (
         <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
@@ -85,9 +108,74 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             <Stat label="Failed" tone="brick" value={stats.failed} />
           </section>
 
-          {stats.significanceHint && (
+          {/* Per-step failure rate chart */}
+          {stats.perStepFailureRates.length > 0 && (
             <section className="fade-up stagger-2">
-              <SectionHeader hint="two-proportion z-test" number="01" title="A/B significance" />
+              <SectionHeader hint="sorted by failure rate" number="01" title="Step failure rates" />
+              <Card>
+                <p className="mb-6 text-xs text-paper-400">
+                  Failure rate per node across all executions in this window. Skipped and pending
+                  excluded.
+                </p>
+                <ResponsiveContainer
+                  height={Math.max(180, stats.perStepFailureRates.length * 36)}
+                  width="100%"
+                >
+                  <BarChart
+                    data={[...stats.perStepFailureRates]
+                      .sort((a, b) => b.failureRate - a.failureRate)
+                      .map((r) => ({
+                        failureRate: Math.round(r.failureRate * 1000) / 10,
+                        name: r.nodeId,
+                        total: r.total,
+                      }))}
+                    layout="vertical"
+                    margin={{ bottom: 0, left: 0, right: 40, top: 0 }}
+                  >
+                    <CartesianGrid horizontal={false} stroke="#1f2530" strokeDasharray="3 3" />
+                    <XAxis
+                      domain={[0, 100]}
+                      tick={{ fill: '#7a7162', fontFamily: 'monospace', fontSize: 10 }}
+                      tickFormatter={(v) => `${v}%`}
+                      type="number"
+                    />
+                    <YAxis
+                      dataKey="name"
+                      tick={{ fill: '#a8a395', fontFamily: 'monospace', fontSize: 11 }}
+                      type="category"
+                      width={110}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) {
+                          return null;
+                        }
+                        const d = payload[0]?.payload as {
+                          name: string;
+                          failureRate: number;
+                          total: number;
+                        };
+                        return (
+                          <div className="rounded border border-ink-500 bg-ink-800 px-3 py-2 font-mono text-xs text-paper-200 shadow-lg">
+                            <div className="font-medium">{d.name}</div>
+                            <div className="mt-1 text-paper-400">
+                              {d.failureRate}% failure · {d.total} runs
+                            </div>
+                          </div>
+                        );
+                      }}
+                      cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                    />
+                    <Bar dataKey="failureRate" fill="#c44a4a" radius={[0, 3, 3, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
+            </section>
+          )}
+
+          {stats.significanceHint && (
+            <section className="fade-up stagger-3">
+              <SectionHeader hint="two-proportion z-test" number="02" title="A/B significance" />
               <Card>
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-xs text-paper-400">
@@ -134,8 +222,12 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           )}
 
           {stats.perVersionCounts.length > 1 && (
-            <section className="fade-up stagger-3">
-              <SectionHeader hint="traffic split" number="02" title="Per-version run mix" />
+            <section className="fade-up stagger-4">
+              <SectionHeader
+                hint="traffic split"
+                number={stats.significanceHint ? '03' : '02'}
+                title="Per-version run mix"
+              />
               <Card>
                 <p className="mb-4 text-xs text-paper-400">
                   Useful for confirming the A/B traffic split is landing where you configured it.
@@ -173,11 +265,13 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             </section>
           )}
 
-          <section className="fade-up stagger-4">
+          <section className="fade-up stagger-5">
             <SectionHeader
-              hint="grouped by node · sorted by failure rate"
-              number={stats.significanceHint ? '03' : '01'}
-              title="Per-step failure rate"
+              hint="grouped by node"
+              number={
+                stats.significanceHint ? '04' : stats.perVersionCounts.length > 1 ? '03' : '02'
+              }
+              title="Per-step detail"
             />
             <Card>
               <p className="mb-4 text-xs text-paper-400">

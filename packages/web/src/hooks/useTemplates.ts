@@ -49,7 +49,10 @@ export function useWorkflowTemplateVersion(id: string, version: number | null) {
   });
 }
 
-export function useTemplateRuns(id: string, limit = 50) {
+export function useTemplateRuns(
+  id: string,
+  { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {}
+) {
   return useQuery({
     enabled: !!id,
     queryFn: () =>
@@ -57,9 +60,9 @@ export function useTemplateRuns(id: string, limit = 50) {
         .get<{
           data: WorkflowRunSummary[];
           meta: { total: number };
-        }>(`/api/v1/workflow-templates/${id}/runs?limit=${limit}`)
+        }>(`/api/v1/workflow-templates/${id}/runs?limit=${limit}&offset=${offset}`)
         .then((r) => ({ data: r.data, total: r.meta.total })),
-    queryKey: ['workflow-template-runs', id, limit],
+    queryKey: ['workflow-template-runs', id, limit, offset],
     refetchInterval: 10_000,
   });
 }

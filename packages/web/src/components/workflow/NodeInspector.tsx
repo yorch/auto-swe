@@ -10,6 +10,7 @@
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { type HandleKind, handleKindsFor } from './dagNode';
@@ -196,7 +197,10 @@ export function NodeInspector({
           <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500 hover:text-paper-200">
             Raw JSON
           </summary>
-          <pre className="mt-2 max-h-48 overflow-auto rounded-sm border border-ink-600 bg-ink-900 p-2 font-mono text-[10px] text-paper-300">
+          <div className="mt-2 flex items-center justify-end">
+            <CopyButton value={JSON.stringify(node, null, 2)} />
+          </div>
+          <pre className="mt-1 max-h-48 overflow-auto rounded-sm border border-ink-600 bg-ink-900 p-2 font-mono text-[10px] text-paper-300">
             {JSON.stringify(node, null, 2)}
           </pre>
         </details>

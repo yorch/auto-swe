@@ -2,10 +2,13 @@
 
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { TabBar } from '@/components/ui/TabBar';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useWorkflows';
 import { cn } from '@/lib/utils';
@@ -13,6 +16,15 @@ import { cn } from '@/lib/utils';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
+
+type SubTab = 'editor' | 'analytics' | 'runs' | 'compare';
+
+const SUB_TABS: { id: SubTab; label: string }[] = [
+  { id: 'editor', label: 'Editor' },
+  { id: 'analytics', label: 'Analytics' },
+  { id: 'runs', label: 'Run history' },
+  { id: 'compare', label: 'Compare versions' },
+];
 
 function diffMarkers(
   diff: { addedNodes: string[]; changedNodes: string[]; removedNodes: string[] },
@@ -37,7 +49,54 @@ function diffMarkers(
   return out;
 }
 
+function NodeJsonDiff({
+  nodeId,
+  before,
+  after,
+}: {
+  nodeId: string;
+  before: unknown;
+  after: unknown;
+}) {
+  const beforeStr = JSON.stringify(before, null, 2);
+  const afterStr = JSON.stringify(after, null, 2);
+
+  return (
+    <details className="rounded-lg border border-ink-600 bg-ink-900/50">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-amber-400 hover:text-amber-300">
+        <span>changed · {nodeId}</span>
+        <span className="text-paper-600">▸</span>
+      </summary>
+      <div className="grid grid-cols-1 gap-px border-t border-ink-600 xl:grid-cols-2">
+        <div className="p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-paper-500">
+              Before
+            </span>
+            <CopyButton value={beforeStr} />
+          </div>
+          <pre className="overflow-auto rounded-sm bg-ink-950/60 p-2 font-mono text-[10px] leading-relaxed text-brick-400/80">
+            {beforeStr}
+          </pre>
+        </div>
+        <div className="border-t border-ink-600 p-3 xl:border-l xl:border-t-0">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-paper-500">
+              After
+            </span>
+            <CopyButton value={afterStr} />
+          </div>
+          <pre className="overflow-auto rounded-sm bg-ink-950/60 p-2 font-mono text-[10px] leading-relaxed text-moss-400/80">
+            {afterStr}
+          </pre>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export default function TemplateDiffPage({ params }: PageProps) {
+  const router = useRouter();
   const { id } = use(params);
   const { data: template } = useWorkflowTemplate(id);
   const sortedVersions = useMemo(
@@ -63,6 +122,29 @@ export default function TemplateDiffPage({ params }: PageProps) {
 
   const { data: diffPayload, isLoading } = useWorkflowSpecDiff(id, a, b);
 
+  const handleTabChange = (tab: SubTab) => {
+    if (tab === 'editor') {
+      router.push(`/templates/${id}`);
+    } else if (tab === 'analytics') {
+      router.push(`/templates/${id}/analytics`);
+    } else if (tab === 'runs') {
+      router.push(`/templates/${id}/runs`);
+    }
+  };
+
+  const changedNodeDiffs = useMemo(() => {
+    if (!diffPayload) {
+      return [];
+    }
+    const specA = diffPayload.a.spec as WorkflowSpec;
+    const specB = diffPayload.b.spec as WorkflowSpec;
+    return diffPayload.diff.changedNodes.map((nodeId) => ({
+      after: specB.nodes[nodeId],
+      before: specA.nodes[nodeId],
+      nodeId,
+    }));
+  }, [diffPayload]);
+
   return (
     <div className="space-y-10">
       <div className="fade-up">
@@ -74,39 +156,40 @@ export default function TemplateDiffPage({ params }: PageProps) {
         </Link>
         <div className="mt-4">
           <PageHeader
+            actions={
+              <div className="flex flex-wrap items-end gap-4">
+                <VersionSelect
+                  activeVersion={template?.activeVersion ?? null}
+                  label="A · before"
+                  onChange={setA}
+                  value={a}
+                  versions={sortedVersions}
+                />
+                <VersionSelect
+                  activeVersion={template?.activeVersion ?? null}
+                  label="B · after"
+                  onChange={setB}
+                  value={b}
+                  versions={sortedVersions}
+                />
+                {a !== null && b !== null && a === b && (
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
+                    ! pick two distinct versions
+                  </span>
+                )}
+              </div>
+            }
             chapter="§ Compare versions"
-            subtitle="Side-by-side diff of two versions of this template. Nodes added, removed, or changed are highlighted on both diagrams."
+            subtitle="Side-by-side diff of two versions of this template. Changed nodes are highlighted on both diagrams and expanded below."
             title="Version diff."
           />
         </div>
       </div>
 
-      <Card className="fade-up stagger-1" variant="inset">
-        <div className="flex flex-wrap items-end gap-4">
-          <VersionSelect
-            activeVersion={template?.activeVersion ?? null}
-            label="A · before"
-            onChange={setA}
-            value={a}
-            versions={sortedVersions}
-          />
-          <VersionSelect
-            activeVersion={template?.activeVersion ?? null}
-            label="B · after"
-            onChange={setB}
-            value={b}
-            versions={sortedVersions}
-          />
-          {a !== null && b !== null && a === b && (
-            <span className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
-              ! pick two distinct versions to compare
-            </span>
-          )}
-        </div>
-      </Card>
+      <TabBar active="compare" className="fade-up" onChange={handleTabChange} tabs={SUB_TABS} />
 
       {isLoading && (
-        <div className="fade-up stagger-2 flex items-center justify-center py-12 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
+        <div className="fade-up stagger-1 flex items-center justify-center py-12 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
           <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
           computing diff…
         </div>
@@ -114,7 +197,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
 
       {diffPayload && (
         <>
-          <section className="fade-up stagger-2">
+          <section className="fade-up stagger-1">
             <SectionHeader hint="changes" number="01" title="Summary" />
             <Card variant="inset">
               <ul className="space-y-2 text-sm">
@@ -162,8 +245,24 @@ export default function TemplateDiffPage({ params }: PageProps) {
             </Card>
           </section>
 
+          {/* Per-changed-node JSON diff */}
+          {changedNodeDiffs.length > 0 && (
+            <section className="fade-up stagger-2">
+              <SectionHeader hint="field-level" number="02" title="Changed node details" />
+              <div className="space-y-2">
+                {changedNodeDiffs.map(({ nodeId, before, after }) => (
+                  <NodeJsonDiff after={after} before={before} key={nodeId} nodeId={nodeId} />
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="fade-up stagger-3">
-            <SectionHeader hint="side-by-side" number="02" title="Topology" />
+            <SectionHeader
+              hint="side-by-side"
+              number={changedNodeDiffs.length > 0 ? '03' : '02'}
+              title="Topology"
+            />
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <Card>
                 <CardHeader>
@@ -231,18 +330,18 @@ interface VersionSelectProps {
 }
 
 function VersionSelect({ label, versions, value, onChange, activeVersion }: VersionSelectProps) {
-  const id = `version-${label.replace(/[^a-z]/gi, '-').toLowerCase()}`;
+  const selectId = `version-${label.replace(/[^a-z]/gi, '-').toLowerCase()}`;
   return (
     <div className="space-y-1.5">
       <label
         className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-        htmlFor={id}
+        htmlFor={selectId}
       >
         {label}
       </label>
       <Select
         className="h-9 w-auto px-2 font-mono text-xs"
-        id={id}
+        id={selectId}
         onChange={(e) => onChange(Number(e.target.value))}
         value={value ?? ''}
       >

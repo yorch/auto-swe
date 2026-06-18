@@ -252,6 +252,23 @@ function EditorInner({
     onSelect(null);
   }, [selectedNodeId, spec, onChange, onSelect]);
 
+  // Delete the selected node when Delete/Backspace is pressed while a canvas
+  // element (not an input/textarea) holds focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') {
+        return;
+      }
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        return;
+      }
+      handleDeleteNode();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleDeleteNode]);
+
   const handleRename = useCallback(
     (oldId: string, newId: string) => {
       if (!newId || oldId === newId || spec.nodes[newId]) {
