@@ -27,6 +27,7 @@ export async function executeCIFixImplementation(
   systemPromptOverride?: string
 ): Promise<CodeResult> {
   return runImplementerFixSession({
+    agentKey: 'ciFixer',
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
     defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
     mode: 'CI_FIX',
@@ -55,6 +56,7 @@ export async function executeReviewFixImplementation(
   systemPromptOverride?: string
 ): Promise<CodeResult> {
   return runImplementerFixSession({
+    agentKey: 'reviewFixer',
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,
     defaultSystemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
     mode: 'REVIEW_FIX',

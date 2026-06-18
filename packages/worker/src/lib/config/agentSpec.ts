@@ -65,8 +65,8 @@ export interface InlineAgentSpec {
 /** Resolve from a known model-backed agent key (its `Agent` carries a `modelSpec`). */
 export interface AgentKeySpecInput {
   agentKey: ModelBackedAgentKey;
-  /** Fallback system prompt used when no DB/override prompt is configured. */
-  basePrompt: string;
+  /** Fallback system prompt used when no DB/override prompt is configured. Defaults to ''. */
+  basePrompt?: string;
   /** Explicit override (highest priority — e.g. a per-step prompt override). */
   promptOverride?: string;
   outputSchema?: z.ZodTypeAny;
@@ -131,7 +131,7 @@ export async function resolveAgentSpec(
     };
   }
 
-  const { agentKey, basePrompt, promptOverride, outputSchema, availableTools, memoryScope } = input;
+  const { agentKey, basePrompt = '', promptOverride, outputSchema, availableTools, memoryScope } = input;
   // P1.5: one resolution path. The first-class `Agent` is the sole source of
   // model/prompt/skills/tools (the legacy ModelRoleConfig / AgentSkillAssignment
   // / AgentToolConfig tables were removed), so the composed spec comes entirely

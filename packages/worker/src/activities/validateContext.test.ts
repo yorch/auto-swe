@@ -47,11 +47,10 @@ describe('validateContext (WS3 proof-migration)', () => {
 
     expect(result).toEqual({ contextSnapshotId: 'snap-1', successCriteria: ['c1', 'c2'] });
 
-    // Spec resolved for the right role with the context-validator base prompt.
+    // Spec resolved for the right role.
     expect(mockedResolveSpec).toHaveBeenCalledWith(
       expect.objectContaining({
         agentKey: 'validateContext',
-        basePrompt: expect.any(String),
         outputSchema: expect.anything(),
         promptOverride: undefined,
       }),

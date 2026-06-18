@@ -105,7 +105,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
  *  3. `fallback` — used when the DB row has no system prompt set.
  */
 export async function resolveSystemPrompt(
-  role: ModelBackedAgentKey,
+  role: string,
   fallback: string,
   configOverride?: string
 ): Promise<string> {

@@ -300,6 +300,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       const passed = rerun.exitCode === 0 && !rerun.signal;
       return `${gateName} ${passed ? 'passing' : 'still failing'}`;
     },
+    agentKey: 'gateFixer',
     commitMessage: `auto: fix ${gateName} for ${previousCodeResult.branch}`,
     defaultSystemPrompt: GATE_FIX_SYSTEM_PROMPT,
     mode: 'GATE_FIX',
