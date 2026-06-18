@@ -123,7 +123,7 @@
 
 ## Sequencing checklist
 
-**Status: 🔄 in progress (WS1 + WS2 done — content distribution end-to-end via the API).**
+**Status: ✅ done (WS1–WS5 complete) — the distribution layer has landed on the branch.**
 
 - [x] WS1 — bundle format + export: `BundleManifest` Zod schema + `computeContentHash` +
   `parseBundle` (`@auto-swe/shared/bundle`); `bundleService.exportBundle` (GLOBAL content, locals
@@ -139,7 +139,9 @@
   `runContainerStep` activity (runs the image in the Phase-6 ephemeral sandbox, JSON input on
   `CONTAINER_STEP_INPUT` env, parsed stdout JSON bound at `nodes.<id>.output.result`); same image
   allowlist + egress + authoring RBAC + audit as `shell`; canvas palette + `ContainerStepSection`.
-- [ ] WS5 — authoring SDK
+- [x] WS5 — authoring SDK: new `packages/sdk` (`@auto-swe/sdk`) — `defineAgent`/`defineSkill`/
+  `defineScannerPattern`/`defineTemplate`/`defineContainerStep`, `defineBundle` (assembles +
+  hashes a manifest), `signBundle` (ed25519), and `validateBundle` (schema + content-hash harness).
 
 > Follow-up (thin): `auto-swe bundles export/install` CLI subcommands over the new API (the gateway
 > API + a web surface are the primary paths; the CLI is a convenience wrapper).

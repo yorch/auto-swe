@@ -228,6 +228,16 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@auto-swe/sdk@workspace:packages/sdk":
+  version: 0.0.0-use.local
+  resolution: "@auto-swe/sdk@workspace:packages/sdk"
+  dependencies:
+    "@auto-swe/shared": "npm:*"
+    "@types/node": "npm:25.9.1"
+    typescript: "npm:6.0.3"
+  languageName: unknown
+  linkType: soft
+
 "@auto-swe/shared@npm:*, @auto-swe/shared@workspace:packages/shared":
   version: 0.0.0-use.local
   resolution: "@auto-swe/shared@workspace:packages/shared"
