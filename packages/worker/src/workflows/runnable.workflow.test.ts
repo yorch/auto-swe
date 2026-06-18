@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
 
 const TASK_QUEUE = 'runnable-workflow-test';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,7 +76,16 @@ let workerRun: Promise<void>;
 beforeAll(async () => {
   // Quiet the worker logs in test output.
   Runtime.install({ logger: new DefaultLogger('WARN') });
-  env = await TestWorkflowEnvironment.createTimeSkipping();
+  try {
+    env = await TestWorkflowEnvironment.createTimeSkipping();
+  } catch (e) {
+    // Network-restricted environments can't download the test-server binary.
+    // Tests will be skipped individually via the beforeEach guard below.
+    if (/Failed to start ephemeral server|Forbidden|ECONNREFUSED/.test(String(e))) {
+      return;
+    }
+    throw e;
+  }
   worker = await Worker.create({
     activities: fakeActivities,
     connection: env.nativeConnection,
@@ -85,6 +94,12 @@ beforeAll(async () => {
   });
   workerRun = worker.run();
 }, 240_000);
+
+beforeEach((ctx: TestContext) => {
+  if (!env || !worker) {
+    ctx.skip();
+  }
+});
 
 afterAll(async () => {
   worker?.shutdown();

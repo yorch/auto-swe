@@ -131,7 +131,14 @@ export async function resolveAgentSpec(
     };
   }
 
-  const { agentKey, basePrompt = '', promptOverride, outputSchema, availableTools, memoryScope } = input;
+  const {
+    agentKey,
+    basePrompt = '',
+    promptOverride,
+    outputSchema,
+    availableTools,
+    memoryScope,
+  } = input;
   // P1.5: one resolution path. The first-class `Agent` is the sole source of
   // model/prompt/skills/tools (the legacy ModelRoleConfig / AgentSkillAssignment
   // / AgentToolConfig tables were removed), so the composed spec comes entirely

@@ -1,3 +1,8 @@
+vi.mock('@auto-swe/shared/db', () => ({
+  PrismaClient: vi.fn(),
+  prisma: {},
+}));
+
 import { BUNDLE_SCHEMA_VERSION, computeContentHash } from '@auto-swe/shared/bundle';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';

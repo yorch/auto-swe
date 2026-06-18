@@ -42,8 +42,12 @@ function clean(o: Record<string, unknown>): Record<string, unknown> {
 }
 
 function modelLabel(a: AgentRow): string {
-  if (a.modelSpec) return a.modelSpec;
-  if (a.inheritsModelFrom) return `↳ ${a.inheritsModelFrom}`;
+  if (a.modelSpec) {
+    return a.modelSpec;
+  }
+  if (a.inheritsModelFrom) {
+    return `↳ ${a.inheritsModelFrom}`;
+  }
   return '—';
 }
 
@@ -67,7 +71,9 @@ function SkillRefEditor({
   }
   function move(i: number, dir: -1 | 1) {
     const j = i + dir;
-    if (j < 0 || j >= refs.length) return;
+    if (j < 0 || j >= refs.length) {
+      return;
+    }
     const next = [...refs];
     [next[i], next[j]] = [next[j], next[i]];
     onChange(next.map((r, k) => ({ ...r, sortOrder: k })));
@@ -102,7 +108,11 @@ function SkillRefEditor({
               >
                 ↓
               </button>
-              <button className="text-brick-400 hover:text-brick-300" onClick={() => remove(i)} type="button">
+              <button
+                className="text-brick-400 hover:text-brick-300"
+                onClick={() => remove(i)}
+                type="button"
+              >
                 ×
               </button>
             </li>
@@ -110,10 +120,19 @@ function SkillRefEditor({
         </ul>
       )}
       {available.length > 0 && (
-        <Select onChange={(e) => { if (e.target.value) add(e.target.value); }} value="">
+        <Select
+          onChange={(e) => {
+            if (e.target.value) {
+              add(e.target.value);
+            }
+          }}
+          value=""
+        >
           <option value="">+ Add skill…</option>
           {available.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
           ))}
         </Select>
       )}
@@ -148,7 +167,10 @@ function ToolKeysEditor({
         {isCustom && (
           <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-1">
             {ALL_TOOL_KEYS.map((key) => (
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300" key={key}>
+              <label
+                className="flex cursor-pointer items-center gap-2 text-sm text-paper-300"
+                key={key}
+              >
                 <input
                   checked={value?.includes(key) ?? false}
                   className="accent-ember-400"
@@ -184,7 +206,9 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   async function submitDelete() {
-    if (!deleteConfirm) return;
+    if (!deleteConfirm) {
+      return;
+    }
     setError(null);
     try {
       await deleteAgent.mutateAsync(deleteConfirm.id);
@@ -206,7 +230,9 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   }
 
   async function submitEdit() {
-    if (!editing) return;
+    if (!editing) {
+      return;
+    }
     setError(null);
     try {
       const skillRefsPayload: SkillRefInput[] = (editing.skillRefs ?? []).map((r, i) => ({
@@ -235,12 +261,14 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   }
 
   function setEditSkillRefs(refs: SkillRefInput[]) {
-    if (!editing) return;
+    if (!editing) {
+      return;
+    }
     const asAgentRefs: AgentSkillRef[] = refs.map((r, i) => ({
       id: `${r.skillId}-${i}`,
+      skill: { id: r.skillId, name: skills?.find((s) => s.id === r.skillId)?.name ?? r.skillId },
       skillId: r.skillId,
       sortOrder: r.sortOrder,
-      skill: { id: r.skillId, name: skills?.find((s) => s.id === r.skillId)?.name ?? r.skillId },
     }));
     setEditing({ ...editing, skillRefs: asAgentRefs });
   }
@@ -289,11 +317,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                     <Button onClick={() => setEditing({ ...a })} size="sm" variant="ghost">
                       Edit
                     </Button>
-                    <Button
-                      onClick={() => setDeleteConfirm(a)}
-                      size="sm"
-                      variant="ghost"
-                    >
+                    <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="ghost">
                       <span className="text-brick-400">Delete</span>
                     </Button>
                   </div>
@@ -305,7 +329,12 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       )}
 
       {/* Create */}
-      <Modal onClose={() => setCreateOpen(false)} open={createOpen} size="lg" title="New team agent">
+      <Modal
+        onClose={() => setCreateOpen(false)}
+        open={createOpen}
+        size="lg"
+        title="New team agent"
+      >
         <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -416,9 +445,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                 />
                 <Input
                   label="Inherits model from"
-                  onChange={(e) =>
-                    setEditing({ ...editing, inheritsModelFrom: e.target.value })
-                  }
+                  onChange={(e) => setEditing({ ...editing, inheritsModelFrom: e.target.value })}
                   value={editing.inheritsModelFrom ?? ''}
                 />
               </div>
@@ -474,25 +501,20 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       <Modal
         onClose={() => setDeleteConfirm(null)}
         open={deleteConfirm !== null}
-        size="sm"
         title="Delete team agent"
       >
         {deleteConfirm ? (
           <>
             <p className="mb-4 text-sm text-paper-300">
-              Deactivate{' '}
-              <span className="font-mono text-paper-100">{deleteConfirm.key}</span> for this team?
-              GLOBAL agents are unaffected — runs will fall through to the GLOBAL version.
+              Deactivate <span className="font-mono text-paper-100">{deleteConfirm.key}</span> for
+              this team? GLOBAL agents are unaffected — runs will fall through to the GLOBAL
+              version.
             </p>
             <div className="flex justify-end gap-2">
               <Button onClick={() => setDeleteConfirm(null)} variant="secondary">
                 Cancel
               </Button>
-              <Button
-                disabled={deleteAgent.isPending}
-                onClick={submitDelete}
-                variant="primary"
-              >
+              <Button disabled={deleteAgent.isPending} onClick={submitDelete} variant="primary">
                 Delete
               </Button>
             </div>
