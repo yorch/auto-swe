@@ -3,6 +3,7 @@ import type { JwtPayload } from '../plugins/auth.js';
 
 export type AuditEntityType =
   | 'Agent'
+  | 'Bundle'
   | 'Connection'
   | 'EmbeddingConfig'
   | 'GitHubConfig'

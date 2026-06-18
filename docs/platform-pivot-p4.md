@@ -123,10 +123,17 @@
 
 ## Sequencing checklist
 
-**Status: 🔄 in progress (0 / 5).**
+**Status: 🔄 in progress (WS1 + WS2 done — content distribution end-to-end via the API).**
 
-- [ ] WS1 — bundle format + export
-- [ ] WS2 — install / upgrade (managed base layer)
-- [ ] WS3 — provenance / trust / transport
+- [x] WS1 — bundle format + export: `BundleManifest` Zod schema + `computeContentHash` +
+  `parseBundle` (`@auto-swe/shared/bundle`); `bundleService.exportBundle` (GLOBAL content, locals
+  stripped, deps derived); admin route `POST /api/v1/admin/bundles/export`.
+- [x] WS2 — install / upgrade (managed base layer): `bundleService.installBundle` (schema + content-
+  hash + dependency checks before any write; idempotent GLOBAL seed of skills → patterns → agents
+  (+skill refs) → templates, provenance-tagged); admin route `POST /api/v1/admin/bundles/install`.
+- [ ] WS3 — provenance / trust / transport (detached signatures, registry, install-from-URL)
 - [ ] WS4 — container-contract coded steps
 - [ ] WS5 — authoring SDK
+
+> Follow-up (thin): `auto-swe bundles export/install` CLI subcommands over the new API (the gateway
+> API + a web surface are the primary paths; the CLI is a convenience wrapper).

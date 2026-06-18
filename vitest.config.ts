@@ -60,6 +60,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/types/workflow.ts'),
       },
       {
+        find: '@auto-swe/shared/bundle',
+        replacement: path.resolve(__dirname, 'packages/shared/src/bundle/index.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow/spec',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/spec.ts'),
       },
