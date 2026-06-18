@@ -1,4 +1,15 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
+import {
+  CONTEXT_VALIDATOR_PROMPT,
+  DECOMPOSER_AGENT_PROMPT,
+  DOMAIN_LOGIC_REVIEWER_PROMPT,
+  IMPLEMENTER_SYSTEM_PROMPT,
+  MEMORY_SUMMARIZER_PROMPT,
+  PERFORMANCE_REVIEWER_PROMPT,
+  PLANNER_AGENT_PROMPT,
+  SECURITY_AUDITOR_PROMPT,
+  SECURITY_REVIEW_PROMPT,
+} from './agentPrompts.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
@@ -60,6 +71,8 @@ interface SweAgentDef {
   inheritsModelFrom?: string;
   /** Tool keys this agent may use (null/omitted = all candidate tools). */
   toolKeys?: string[];
+  /** Base system prompt / persona for this agent. */
+  systemPrompt: string;
 }
 
 const IMPLEMENTER_TOOLS = ['readFile', 'writeFile', 'listDirectory', 'bash'];
@@ -70,6 +83,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'implementer',
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Implementer',
+    systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
     toolKeys: IMPLEMENTER_TOOLS,
   },
   {
@@ -77,54 +91,63 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'reviewer',
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Reviewer',
+    systemPrompt: DOMAIN_LOGIC_REVIEWER_PROMPT,
   },
   {
     description: 'Decomposes work into an implementation plan.',
     key: 'planner',
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Planner',
+    systemPrompt: PLANNER_AGENT_PROMPT,
   },
   {
     description: 'Legacy security-review role (review network is canonical).',
     key: 'securityReview',
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Security Review',
+    systemPrompt: SECURITY_REVIEW_PROMPT,
   },
   {
     description: 'Extracts success criteria from the work request.',
     key: 'validateContext',
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Context Validator',
+    systemPrompt: CONTEXT_VALIDATOR_PROMPT,
   },
   {
     description: 'Commits lessons to semantic memory.',
     key: 'commitToMemory',
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Memory Committer',
+    systemPrompt: MEMORY_SUMMARIZER_PROMPT,
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',
     inheritsModelFrom: 'reviewer',
     key: 'securityReviewer',
     name: 'Security Reviewer',
+    systemPrompt: SECURITY_AUDITOR_PROMPT,
   },
   {
     description: 'Domain-logic sub-reviewer in the review network.',
     inheritsModelFrom: 'reviewer',
     key: 'domainLogicReviewer',
     name: 'Domain Logic Reviewer',
+    systemPrompt: DOMAIN_LOGIC_REVIEWER_PROMPT,
   },
   {
     description: 'Performance-focused sub-reviewer in the review network.',
     inheritsModelFrom: 'reviewer',
     key: 'performanceReviewer',
     name: 'Performance Reviewer',
+    systemPrompt: PERFORMANCE_REVIEWER_PROMPT,
   },
   {
     description: 'Breaks an epic into subtasks.',
     inheritsModelFrom: 'planner',
     key: 'decomposer',
     name: 'Decomposer',
+    systemPrompt: DECOMPOSER_AGENT_PROMPT,
   },
 ];
 
@@ -159,9 +182,17 @@ async function syncAgents(prisma: PrismaClient): Promise<void> {
           name: def.name,
           origin: SWE_ORIGIN,
           scope: 'GLOBAL',
+          systemPrompt: def.systemPrompt,
           toolKeys: def.toolKeys ?? undefined,
           version: 1,
         },
+      });
+    } else if (!agent.systemPrompt) {
+      // One-time migration: backfill systemPrompt for existing rows that predate
+      // this change. Skipped once an admin has set a custom value.
+      await prisma.agent.update({
+        data: { systemPrompt: def.systemPrompt },
+        where: { id: agent.id },
       });
     }
 
