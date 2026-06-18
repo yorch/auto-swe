@@ -1,7 +1,7 @@
 'use client';
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -175,6 +175,21 @@ export function ConnectionFormModal({
     }
   }
 
+  const configJsonError = useMemo(() => {
+    if (connType === 'git_repo' || !configJson.trim() || configJson.trim() === '{}') {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(configJson);
+      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+        return 'Must be a JSON object — e.g. {"key": "value"}';
+      }
+      return null;
+    } catch {
+      return 'Invalid JSON';
+    }
+  }, [connType, configJson]);
+
   const isEdit = mode.kind === 'edit';
   const busy = create.isPending || update.isPending;
   const isGit = connType === 'git_repo';
@@ -305,13 +320,18 @@ export function ConnectionFormModal({
                 </span>
               </label>
               <textarea
-                className="w-full rounded border border-ink-600 bg-ink-800 p-2 font-mono text-xs text-paper-200 focus:border-ember-400 focus:outline-none"
+                className={`w-full rounded border bg-ink-800 p-2 font-mono text-xs text-paper-200 focus:outline-none ${configJsonError ? 'border-brick-400 focus:border-brick-400' : 'border-ink-600 focus:border-ember-400'}`}
                 id="conn-config-json"
                 onChange={(e) => setConfigJson(e.target.value)}
                 placeholder="{}"
                 rows={5}
                 value={configJson}
               />
+              {configJsonError && (
+                <p className="font-mono text-[10px] uppercase tracking-wider text-brick-400">
+                  {configJsonError}
+                </p>
+              )}
             </div>
           </>
         )}
@@ -353,7 +373,7 @@ export function ConnectionFormModal({
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
           </Button>
-          <Button disabled={busy || !teamId} type="submit" variant="primary">
+          <Button disabled={busy || !teamId || !!configJsonError} type="submit" variant="primary">
             {busy ? 'Saving…' : isEdit ? 'Save changes' : 'Add connection'}
           </Button>
         </div>

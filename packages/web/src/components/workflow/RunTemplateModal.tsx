@@ -2,7 +2,7 @@
 
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { useRepositories } from '@/hooks/useWorkflows';
+import { connectionLabel } from '@/lib/connectionDisplay';
 
 function ConnectionPicker({
   label,
@@ -29,7 +30,7 @@ function ConnectionPicker({
       <option value="">— select connection —</option>
       {connections.map((c) => (
         <option key={c.id} value={c.id}>
-          {`${c.organizationName}/${c.repoName}`}
+          {connectionLabel(c)}
         </option>
       ))}
     </Select>
@@ -41,13 +42,16 @@ function FieldInput({
   prop,
   value,
   onChange,
+  required,
 }: {
   name: string;
   prop: InputSchemaProperty;
   value: unknown;
   onChange: (v: unknown) => void;
+  required?: boolean;
 }) {
-  const label = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+  const base = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+  const label = required ? `${base} *` : base;
   const hint = prop.description;
 
   if (prop.type === 'connection') {
@@ -146,7 +150,6 @@ export function RunTemplateModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const runTemplate = useRunTemplate(template.id);
   const schema = template.inputSchema as InputSchema | null | undefined;
 
@@ -155,18 +158,19 @@ export function RunTemplateModal({
   );
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [launchedRunId, setLaunchedRunId] = useState<string | null>(null);
 
   const handleClose = () => {
     onClose();
     setError(null);
+    setLaunchedRunId(null);
   };
 
   const handleRun = async () => {
     setError(null);
     try {
       const result = await runTemplate.mutateAsync({ label: label.trim() || undefined, payload });
-      handleClose();
-      router.push(`/workflows/${result.workflowId}`);
+      setLaunchedRunId(result.workflowId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Run failed';
       setError(msg);
@@ -178,6 +182,33 @@ export function RunTemplateModal({
   };
 
   const hasSchema = schema && Object.keys(schema.properties).length > 0;
+  const requiredKeys = new Set(schema?.required ?? []);
+
+  if (launchedRunId) {
+    return (
+      <Modal
+        eyebrow={`§ ${template.name}`}
+        onClose={handleClose}
+        open={open}
+        title="Workflow started"
+      >
+        <div className="space-y-6 py-2 text-center">
+          <div className="text-3xl text-moss-400">✓</div>
+          <p className="text-sm text-paper-300">
+            Your workflow is running. Track its progress in the run detail view.
+          </p>
+          <div className="flex justify-center gap-3 pt-2">
+            <Button onClick={handleClose} variant="secondary">
+              Close
+            </Button>
+            <Link href={`/workflows/${launchedRunId}`} onClick={handleClose}>
+              <Button variant="primary">View run →</Button>
+            </Link>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -207,6 +238,7 @@ export function RunTemplateModal({
               name={key}
               onChange={(v) => setField(key, v)}
               prop={prop}
+              required={requiredKeys.has(key)}
               value={payload[key]}
             />
           ))}

@@ -5,7 +5,7 @@ import type {
   InputSchema,
   InputSchemaProperty,
 } from '@auto-swe/shared/lib/inputSchema';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -30,8 +30,12 @@ interface FieldDraft {
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
   const prop: InputSchemaProperty = { type: draft.type };
-  if (draft.description.trim()) prop.description = draft.description.trim();
-  if (draft.type === 'string' && draft.format === 'uuid') prop.format = 'uuid';
+  if (draft.description.trim()) {
+    prop.description = draft.description.trim();
+  }
+  if (draft.type === 'string' && draft.format === 'uuid') {
+    prop.format = 'uuid';
+  }
   if (draft.type !== 'boolean' && draft.type !== 'array' && draft.enumValues.trim()) {
     prop.enum = draft.enumValues
       .split(',')
@@ -62,11 +66,17 @@ function toSchema(fields: FieldDraft[]): InputSchema | null {
   const required: string[] = [];
   for (const d of fields) {
     const k = d.key.trim();
-    if (!k) continue;
+    if (!k) {
+      continue;
+    }
     properties[k] = fieldToProperty(d);
-    if (d.required) required.push(k);
+    if (d.required) {
+      required.push(k);
+    }
   }
-  if (Object.keys(properties).length === 0) return null;
+  if (Object.keys(properties).length === 0) {
+    return null;
+  }
   return { properties, type: 'object', ...(required.length ? { required } : {}) };
 }
 
@@ -83,6 +93,22 @@ export function InputSchemaBuilder({
       propertyToDraft(k, p, (s.required ?? []).includes(k))
     );
   });
+
+  const duplicateKeys = useMemo(() => {
+    const seen = new Set<string>();
+    const dupes = new Set<string>();
+    for (const f of fields) {
+      const k = f.key.trim();
+      if (k) {
+        if (seen.has(k)) {
+          dupes.add(k);
+        } else {
+          seen.add(k);
+        }
+      }
+    }
+    return dupes;
+  }, [fields]);
 
   function update(next: FieldDraft[]) {
     setFields(next);
@@ -124,7 +150,13 @@ export function InputSchemaBuilder({
         <div className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3" key={f.id}>
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
             <Input
-              hint={!f.key.trim() ? 'Key required — this field will not be saved' : undefined}
+              hint={
+                !f.key.trim()
+                  ? 'Key required — this field will not be saved'
+                  : duplicateKeys.has(f.key.trim())
+                    ? 'Duplicate key — overwrites another field'
+                    : undefined
+              }
               label="Field key"
               onChange={(e) => updateField(i, { key: e.target.value })}
               placeholder="ticketId"

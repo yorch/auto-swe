@@ -267,17 +267,27 @@ export default function TemplatesPage() {
                     key={t.id}
                   >
                     <td className="px-4 py-3">
-                      <Link
-                        className="font-medium text-paper-100 hover:text-ember-400"
-                        href={`/templates/${t.id}`}
-                      >
-                        {t.name}
-                      </Link>
-                      {t.isDefault && (
-                        <span className="ml-2 rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
-                          default
-                        </span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Link
+                          className="font-medium text-paper-100 hover:text-ember-400"
+                          href={`/templates/${t.id}`}
+                        >
+                          {t.name}
+                        </Link>
+                        {t.isDefault && (
+                          <span className="rounded border border-ember-400/40 bg-ember-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ember-400">
+                            default
+                          </span>
+                        )}
+                        {t.webhookToken && (
+                          <span
+                            className="rounded border border-violet-400/40 bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-violet-400"
+                            title="Webhook trigger active"
+                          >
+                            webhook
+                          </span>
+                        )}
+                      </div>
                       {t.description && (
                         <div className="text-xs text-paper-500">{t.description}</div>
                       )}
@@ -313,10 +323,24 @@ export default function TemplatesPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {t.status === 'ACTIVE' && t.activeVersion !== null && (
+                        {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
+                          t.activeVersion !== null ? (
                           <Button onClick={() => setRunTarget(t)} size="sm" variant="primary">
                             Run →
                           </Button>
+                        ) : (
+                          <span
+                            className="cursor-not-allowed"
+                            title={
+                              t.status === 'DRAFT'
+                                ? 'Activate this template before running'
+                                : 'No active version — promote a version first'
+                            }
+                          >
+                            <Button disabled size="sm" variant="ghost">
+                              Run
+                            </Button>
+                          </span>
                         )}
                         <Button
                           onClick={() => router.push(`/templates/${t.id}`)}
