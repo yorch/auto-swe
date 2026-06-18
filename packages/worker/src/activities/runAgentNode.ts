@@ -1,4 +1,6 @@
 import { loadMcpTools } from '../agents/mcpTools.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -55,10 +57,11 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
 
   // P2/WS3: bind MCP tools when the Agent enables them; closed in finally.
   // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
+  const tracer = new AgentTracer();
   const mcpServerRef = await resolveAgentMcpUrl(key, resolveCtx);
   let closeMcp: (() => Promise<void>) | undefined;
   if (mcpServerRef) {
-    const loaded = await loadMcpTools(mcpServerRef);
+    const loaded = await loadMcpTools(mcpServerRef, tracer);
     closeMcp = loaded.close;
     // Built-in/spec tools win over MCP tools on key collision.
     spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
@@ -72,5 +75,6 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
     return { object: result.object, text: result.text };
   } finally {
     await closeMcp?.();
+    await persistActivityTrace(tracer, key);
   }
 }
