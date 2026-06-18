@@ -333,7 +333,9 @@ function WebhookCard({
     : null;
 
   const handleCopy = async () => {
-    if (!webhookUrl) return;
+    if (!webhookUrl) {
+      return;
+    }
     await navigator.clipboard.writeText(webhookUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
