@@ -193,7 +193,7 @@ export default function AgentLibraryPage() {
             hint="<provider>/<model>, or leave blank to inherit"
             label="Model spec (optional)"
             onChange={(e) => setCreateForm({ ...createForm, modelSpec: e.target.value })}
-            placeholder="anthropic/claude-opus-4-7"
+            placeholder="anthropic/claude-opus-4-8"
             value={createForm.modelSpec ?? ''}
           />
           <Input

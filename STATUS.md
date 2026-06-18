@@ -18,7 +18,7 @@
 | Team + TeamMembership tables (schema only, no enforcement)          | Done   |                                                                   |
 | Temporal server + single worker process                             | Done   |                                                                   |
 | `EngineeringWorkflow` (child workflow)                              | Done   | Full loop: Implement → Review → PR → CI → Merge → Memory. **Superseded** by `RunnableWorkflow` + the seeded `default-engineering@v1` spec (PR #13); the hardcoded class no longer exists. |
-| Implementer Agent (Mastra + `claude-opus-4-7`) with bash/file tools | Done   |                                                                   |
+| Implementer Agent (Mastra + `claude-opus-4-8`) with bash/file tools | Done   |                                                                   |
 | Local TDD loop (write tests, run in DinD, iterate)                  | Done   |                                                                   |
 | `createOrUpdatePullRequest` activity via GitHub API                 | Done   |                                                                   |
 | Human merge signal webhook (`POST /api/v1/webhooks/git`)            | Done   | HMAC signature verification                                       |

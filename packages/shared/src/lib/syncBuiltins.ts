@@ -68,14 +68,14 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
-    modelSpec: 'anthropic/claude-opus-4-7',
+    modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Implementer',
     toolKeys: IMPLEMENTER_TOOLS,
   },
   {
     description: 'Reviews diffs through the multi-agent review network.',
     key: 'reviewer',
-    modelSpec: 'anthropic/claude-opus-4-7',
+    modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Reviewer',
   },
   {
@@ -99,7 +99,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     description: 'Commits lessons to semantic memory.',
     key: 'commitToMemory',
-    modelSpec: 'anthropic/claude-opus-4-7',
+    modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Memory Committer',
   },
   {

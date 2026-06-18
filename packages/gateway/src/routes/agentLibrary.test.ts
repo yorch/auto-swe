@@ -243,7 +243,7 @@ describe('agentLibraryRoutes — admin', () => {
     mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
     const res = await app.inject({
-      body: { modelSpec: 'anthropic/claude-opus-4-7' },
+      body: { modelSpec: 'anthropic/claude-opus-4-8' },
       headers: AUTH,
       method: 'PUT',
       url: '/api/v1/admin/agent-library/33333333-3333-4333-8333-333333333333',

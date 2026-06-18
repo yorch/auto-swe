@@ -27,7 +27,7 @@ vi.mock('@auto-swe/shared/db', async () => {
           inheritsModelFrom: null,
           isVerified: true,
           key: 'implementer',
-          modelSpec: 'anthropic/claude-opus-4-7',
+          modelSpec: 'anthropic/claude-opus-4-8',
           origin: null,
           scope: 'GLOBAL',
           skillRefs: [],

@@ -41,7 +41,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'anthropic/claude-opus-4-5': { input: 5, output: 25 },
   'anthropic/claude-opus-4-6': { input: 5, output: 25 },
   // Anthropic — Opus 4.5+ family ($5 / $25)
-  'anthropic/claude-opus-4-7': { input: 5, output: 25 },
+  'anthropic/claude-opus-4-8': { input: 5, output: 25 },
   'anthropic/claude-opus-4-20250514': { input: 15, output: 75 },
   'anthropic/claude-sonnet-4-5': { input: 3, output: 15 },
   // Anthropic — Sonnet 4.x family ($3 / $15)

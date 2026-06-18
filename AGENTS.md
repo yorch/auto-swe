@@ -269,12 +269,12 @@ Per-role baked-in defaults (seeded onto the GLOBAL Agents by `syncAgents`):
 
 | Role              | Default                       |
 | ----------------- | ----------------------------- |
-| `implementer`     | `anthropic/claude-opus-4-7`   |
-| `reviewer`        | `anthropic/claude-opus-4-7`   |
+| `implementer`     | `anthropic/claude-opus-4-8`   |
+| `reviewer`        | `anthropic/claude-opus-4-8`   |
 | `planner`         | `anthropic/claude-sonnet-4-6` |
 | `securityReview`  | `anthropic/claude-sonnet-4-6` |
 | `validateContext` | `anthropic/claude-sonnet-4-6` |
-| `commitToMemory`  | `anthropic/claude-opus-4-7`   |
+| `commitToMemory`  | `anthropic/claude-opus-4-8`   |
 | (embedding)       | `openai/text-embedding-3-large` |
 
 **Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the credential row — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, OpenCode Go, etc.
@@ -289,7 +289,7 @@ Per-role baked-in defaults (seeded onto the GLOBAL Agents by `syncAgents`):
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
-| Anthropic | `claude-opus-4-7`            | `claude-sonnet-4-6`         | `claude-haiku-4-5-20251001`             |
+| Anthropic | `claude-opus-4-8`            | `claude-sonnet-4-6`         | `claude-haiku-4-5-20251001`             |
 | OpenAI    | `gpt-5-5-pro`                | `gpt-5-5`                   | `gpt-5`                                 |
 | Google    | `gemini-2.5-pro`             | `gemini-2.5-flash`          | `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash-lite` |
 

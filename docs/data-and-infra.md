@@ -372,7 +372,7 @@ LLM code generation can be syntactically perfect but functionally broken.
 The `SecurityReviewProcessor` acts as an inescapable, real-time middleware for Implementation agents.
 
 1. **Intercept Phase:** Every Mastra MCP tool call to `writeFile` or `editFile` triggers this output processor.
-2. **Audit Phase:** A `claude-opus-4-7` model compares the requested code diff against the "Security Guideline" dataset.
+2. **Audit Phase:** A `claude-opus-4-8` model compares the requested code diff against the "Security Guideline" dataset.
 3. **Self-Correction Phase:** If a violation is detected (e.g., SQL Injection risk), the processor denies the write access and returns a retry instruction forcing immediate remediation.
 
 ## 4. Infrastructure & Deployment (Local Lab)

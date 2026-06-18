@@ -71,7 +71,7 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 
 | Role / Slot | Default |
 | ----------- | ------- |
-| `IMPLEMENTER` / `REVIEWER` / `COMMIT_TO_MEMORY` | `anthropic/claude-opus-4-7` |
+| `IMPLEMENTER` / `REVIEWER` / `COMMIT_TO_MEMORY` | `anthropic/claude-opus-4-8` |
 | `PLANNER` / `SECURITY_REVIEW` / `VALIDATE_CONTEXT` | `anthropic/claude-sonnet-4-6` |
 | Embeddings | `openai/text-embedding-3-large` |
 
@@ -143,7 +143,7 @@ curl -X PUT http://localhost:8080/api/v1/admin/model-config \
     "role": "IMPLEMENTER",
     "scope": "TEAM",
     "teamId": "<team-uuid>",
-    "modelSpec": "anthropic/claude-opus-4-7"
+    "modelSpec": "anthropic/claude-opus-4-8"
   }'
 
 # Rotate a credential (admin scope). Provider + scope are immutable; only

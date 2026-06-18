@@ -58,7 +58,7 @@ function agentRow(overrides: Record<string, any> = {}) {
     isBuiltIn: true,
     isVerified: true,
     key: 'reviewer',
-    modelSpec: 'anthropic/claude-opus-4-7',
+    modelSpec: 'anthropic/claude-opus-4-8',
     origin: 'swe-starter',
     scope: 'GLOBAL',
     skillRefs: [],
@@ -92,7 +92,7 @@ describe('resolveAgent — reads from the Agent entity', () => {
       apiBase: undefined,
       apiKey: 'sk-cred',
       scope: 'GLOBAL',
-      spec: 'anthropic/claude-opus-4-7',
+      spec: 'anthropic/claude-opus-4-8',
       systemPrompt: 'SYS',
     });
     expect(r.skills.map((s) => s.name)).toEqual(['a', 'b']);
@@ -128,12 +128,12 @@ describe('resolveAgent — model inheritance', () => {
           skillRefs: [skillRef('sec', 0)],
         });
       }
-      return agentRow({ key: 'reviewer', modelSpec: 'anthropic/claude-opus-4-7' });
+      return agentRow({ key: 'reviewer', modelSpec: 'anthropic/claude-opus-4-8' });
     });
 
     const r = await resolveAgent('securityReviewer');
 
-    expect(r.model.spec).toBe('anthropic/claude-opus-4-7');
+    expect(r.model.spec).toBe('anthropic/claude-opus-4-8');
     expect(r.skills.map((s) => s.name)).toEqual(['sec']); // sub-role's own skills
     expect(mockedResolveCred).toHaveBeenCalledWith('anthropic', undefined);
   });
