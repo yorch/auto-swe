@@ -21,6 +21,7 @@ import { TabBar } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
+import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
@@ -159,12 +160,14 @@ function EditSchemaModal({
   const [schema, setSchema] = useState<InputSchema | null>(initialSchema ?? null);
   const [builderKey, setBuilderKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
 
   useEffect(() => {
     if (open) {
       setSchema(initialSchema ?? null);
       setBuilderKey((k) => k + 1);
       setError(null);
+      setPreview(false);
     }
   }, [open, initialSchema]);
 
@@ -189,12 +192,29 @@ function EditSchemaModal({
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
-        <InputSchemaBuilder key={builderKey} onChange={setSchema} value={schema ?? undefined} />
+        <div className="flex items-center justify-end">
+          <Button
+            onClick={() => setPreview((p) => !p)}
+            size="sm"
+            variant={preview ? 'primary' : 'ghost'}
+          >
+            {preview ? 'Back to editor' : 'Preview form'}
+          </Button>
+        </div>
+        {preview ? (
+          <SchemaFormPreview schema={schema} />
+        ) : (
+          <InputSchemaBuilder key={builderKey} onChange={setSchema} value={schema ?? undefined} />
+        )}
         <div className="flex justify-end gap-2 border-t border-ink-600 pt-4">
           <Button onClick={onClose} variant="secondary">
             Cancel
           </Button>
-          <Button disabled={updateTemplate.isPending} onClick={handleSave} variant="primary">
+          <Button
+            disabled={updateTemplate.isPending || preview}
+            onClick={handleSave}
+            variant="primary"
+          >
             {updateTemplate.isPending ? 'Saving…' : 'Save schema'}
           </Button>
         </div>
@@ -333,7 +353,9 @@ function WebhookCard({
     : null;
 
   const handleCopy = async () => {
-    if (!webhookUrl) return;
+    if (!webhookUrl) {
+      return;
+    }
     await navigator.clipboard.writeText(webhookUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);

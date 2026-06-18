@@ -5,7 +5,7 @@ import type {
   InputSchema,
   InputSchemaProperty,
 } from '@auto-swe/shared/lib/inputSchema';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -15,6 +15,7 @@ const FIELD_TYPES: { label: string; value: InputFieldType }[] = [
   { label: 'Number', value: 'number' },
   { label: 'Boolean', value: 'boolean' },
   { label: 'Array', value: 'array' },
+  { label: 'Connection', value: 'connection' },
 ];
 
 interface FieldDraft {
@@ -26,12 +27,17 @@ interface FieldDraft {
   enumValues: string;
   format: '' | 'uuid';
   itemType: Exclude<InputFieldType, 'array' | 'connection'>;
+  connectionType: string;
 }
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
   const prop: InputSchemaProperty = { type: draft.type };
-  if (draft.description.trim()) prop.description = draft.description.trim();
-  if (draft.type === 'string' && draft.format === 'uuid') prop.format = 'uuid';
+  if (draft.description.trim()) {
+    prop.description = draft.description.trim();
+  }
+  if (draft.type === 'string' && draft.format === 'uuid') {
+    prop.format = 'uuid';
+  }
   if (draft.type !== 'boolean' && draft.type !== 'array' && draft.enumValues.trim()) {
     prop.enum = draft.enumValues
       .split(',')
@@ -41,11 +47,15 @@ function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
   if (draft.type === 'array') {
     prop.items = { type: draft.itemType };
   }
+  if (draft.type === 'connection' && draft.connectionType) {
+    prop.connectionType = draft.connectionType;
+  }
   return prop;
 }
 
 function propertyToDraft(key: string, prop: InputSchemaProperty, required: boolean): FieldDraft {
   return {
+    connectionType: prop.connectionType ?? '',
     description: prop.description ?? '',
     enumValues: prop.enum ? prop.enum.join(', ') : '',
     format: prop.format === 'uuid' ? 'uuid' : '',
@@ -62,11 +72,17 @@ function toSchema(fields: FieldDraft[]): InputSchema | null {
   const required: string[] = [];
   for (const d of fields) {
     const k = d.key.trim();
-    if (!k) continue;
+    if (!k) {
+      continue;
+    }
     properties[k] = fieldToProperty(d);
-    if (d.required) required.push(k);
+    if (d.required) {
+      required.push(k);
+    }
   }
-  if (Object.keys(properties).length === 0) return null;
+  if (Object.keys(properties).length === 0) {
+    return null;
+  }
   return { properties, type: 'object', ...(required.length ? { required } : {}) };
 }
 
@@ -84,6 +100,22 @@ export function InputSchemaBuilder({
     );
   });
 
+  const duplicateKeys = useMemo(() => {
+    const seen = new Set<string>();
+    const dupes = new Set<string>();
+    for (const f of fields) {
+      const k = f.key.trim();
+      if (k) {
+        if (seen.has(k)) {
+          dupes.add(k);
+        } else {
+          seen.add(k);
+        }
+      }
+    }
+    return dupes;
+  }, [fields]);
+
   function update(next: FieldDraft[]) {
     setFields(next);
     onChange(toSchema(next));
@@ -93,6 +125,7 @@ export function InputSchemaBuilder({
     update([
       ...fields,
       {
+        connectionType: '',
         description: '',
         enumValues: '',
         format: '',
@@ -124,7 +157,13 @@ export function InputSchemaBuilder({
         <div className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3" key={f.id}>
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
             <Input
-              hint={!f.key.trim() ? 'Key required — this field will not be saved' : undefined}
+              hint={
+                !f.key.trim()
+                  ? 'Key required — this field will not be saved'
+                  : duplicateKeys.has(f.key.trim())
+                    ? 'Duplicate key — overwrites another field'
+                    : undefined
+              }
               label="Field key"
               onChange={(e) => updateField(i, { key: e.target.value })}
               placeholder="ticketId"
@@ -192,6 +231,20 @@ export function InputSchemaBuilder({
               <option value="string">String</option>
               <option value="number">Number</option>
               <option value="boolean">Boolean</option>
+            </Select>
+          )}
+          {f.type === 'connection' && (
+            <Select
+              hint="Only show connections of this type in the run form"
+              id={`conn-type-${i}`}
+              label="Filter by connection type"
+              onChange={(e) => updateField(i, { connectionType: e.target.value })}
+              value={f.connectionType}
+            >
+              <option value="">Any type</option>
+              <option value="git_repo">Git repository</option>
+              <option value="api_endpoint">REST API</option>
+              <option value="generic">Generic</option>
             </Select>
           )}
           <div className="flex justify-end">

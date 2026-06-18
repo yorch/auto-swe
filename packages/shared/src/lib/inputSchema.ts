@@ -24,6 +24,8 @@ export interface InputSchemaProperty {
   format?: 'uuid';
   /** Element type when `type === 'array'`. */
   items?: { type: Exclude<InputFieldType, 'array' | 'connection'>; format?: 'uuid' };
+  /** When `type === 'connection'`, restricts the picker to connections of this type. */
+  connectionType?: string;
 }
 
 export interface InputSchema {

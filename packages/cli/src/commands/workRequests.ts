@@ -155,8 +155,8 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     const repos = await apiRequest<RepositorySummary[]>(env, 'GET', '/api/v1/repositories');
     const repo = repos.find(
       (r) =>
-        r.organizationName.toLowerCase() === org.toLowerCase() &&
-        r.repoName.toLowerCase() === repoName.toLowerCase()
+        (r.organizationName ?? '').toLowerCase() === org.toLowerCase() &&
+        (r.repoName ?? '').toLowerCase() === repoName.toLowerCase()
     );
     if (!repo) {
       process.stderr.write(
