@@ -403,6 +403,7 @@ export interface HumanStepSummary {
   options?: unknown;
   fields?: unknown;
   requestedAt: string;
+  resolvedAt?: string | null;
   run: {
     id: string;
     status: string;

@@ -7,6 +7,8 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { useRespondToHumanStep } from '@/hooks/useWorkflows';
+import { formatRelativeTime } from '@/lib/utils';
+import { DiffRenderer } from './DiffRenderer';
 
 const KIND_LABEL: Record<string, string> = {
   APPROVAL: 'Approval',
@@ -22,6 +24,27 @@ const KIND_COLOR: Record<string, string> = {
   REVIEW: 'bg-violet-400/20 text-violet-400',
 };
 
+function contextToString(context: unknown): string {
+  if (context == null) {
+    return '';
+  }
+  if (typeof context === 'string') {
+    return context;
+  }
+  return JSON.stringify(context, null, 2);
+}
+
+function getTimestampColor(requestedAt: string): string {
+  const ageMs = Date.now() - new Date(requestedAt).getTime();
+  if (ageMs > 72 * 3600_000) {
+    return 'text-brick-400';
+  }
+  if (ageMs > 24 * 3600_000) {
+    return 'text-amber-400';
+  }
+  return 'text-paper-500';
+}
+
 export interface HumanStepCardProps {
   step: HumanStepSummary;
   showRunLink?: boolean;
@@ -30,28 +53,43 @@ export interface HumanStepCardProps {
 export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) {
   const respond = useRespondToHumanStep();
   const [expanded, setExpanded] = useState(false);
+  const [showContext, setShowContext] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [reviewText, setReviewText] = useState(() => String(step.context ?? ''));
   // Guard against double-submit: isPending from TanStack Query updates asynchronously
   // (after the next render), so a rapid second click reaches this handler before
   // respond.isPending flips to true in the component's closure.
   const inFlight = useRef(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+
+  function toggleExpanded() {
+    if (!expanded) {
+      // Clear stale error state when re-opening after a failed submission.
+      respond.reset();
+    }
+    setExpanded((v) => !v);
+  }
 
   function handleRespond(action: string, value?: unknown) {
     if (inFlight.current) {
       return;
     }
     inFlight.current = true;
+    setPendingAction(action === 'select' ? String(value) : action);
     respond.mutate(
       { action, id: step.id, value },
       {
         onSettled: () => {
           inFlight.current = false;
+          setPendingAction(null);
         },
         onSuccess: () => setExpanded(false),
       }
     );
   }
+
+  const contextStr = contextToString(step.context);
+  const hasContext = contextStr.length > 0;
 
   return (
     <div className="border border-ink-600 rounded-lg p-4 space-y-3">
@@ -66,29 +104,75 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           {step.description && (
             <div className="text-xs text-paper-400 mt-0.5">{step.description}</div>
           )}
-          {showRunLink && (
-            <div className="text-xs text-paper-400 mt-1">
-              {step.run.workRequest?.externalTicketId && (
-                <span className="font-mono">{step.run.workRequest.externalTicketId} · </span>
-              )}
-              <Link className="underline" href={`/runs/${step.run.id}`}>
-                View run
-              </Link>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-x-2 mt-1 text-xs text-paper-500">
+            <span className={getTimestampColor(step.requestedAt)}>
+              {formatRelativeTime(step.requestedAt)}
+            </span>
+            {showRunLink && (
+              <>
+                <span>·</span>
+                {step.run.workRequest?.externalTicketId && (
+                  <>
+                    <span className="font-mono">{step.run.workRequest.externalTicketId}</span>
+                    <span>·</span>
+                  </>
+                )}
+                <Link
+                  className="underline text-paper-400 hover:text-paper-200"
+                  href={`/runs/${step.run.id}`}
+                >
+                  View run
+                </Link>
+              </>
+            )}
+          </div>
         </div>
-        <Button onClick={() => setExpanded((v) => !v)} size="sm" variant="ghost">
-          {expanded ? 'Hide' : 'Respond'}
-        </Button>
+        {step.status === 'PENDING' && (
+          <Button onClick={toggleExpanded} size="sm" variant="ghost">
+            {expanded ? 'Cancel' : 'Respond'}
+          </Button>
+        )}
+        {step.status !== 'PENDING' && (
+          <span
+            className={`text-[10px] font-mono uppercase tracking-wider shrink-0 ${
+              step.status === 'RESOLVED'
+                ? 'text-moss-400'
+                : step.status === 'TIMED_OUT'
+                  ? 'text-paper-500'
+                  : 'text-brick-400'
+            }`}
+          >
+            {step.status.replace(/_/g, ' ').toLowerCase()}
+          </span>
+        )}
       </div>
 
-      {expanded && (
+      {expanded && step.status === 'PENDING' && (
         <div className="border-t border-ink-600 pt-3 space-y-3">
           {respond.isError && (
             <Alert variant="error">
               {respond.error?.message ?? 'Submission failed. Please try again.'}
             </Alert>
           )}
+
+          {/* Context panel for APPROVAL / DECISION */}
+          {(step.kind === 'APPROVAL' || step.kind === 'DECISION') && hasContext && (
+            <div>
+              <button
+                className="text-xs text-paper-400 hover:text-paper-200 underline underline-offset-2"
+                onClick={() => setShowContext((v) => !v)}
+                type="button"
+              >
+                {showContext ? 'Hide context' : 'Show context'}
+              </button>
+              {showContext && (
+                <div className="mt-2 bg-ink-700 rounded p-3 overflow-auto max-h-64">
+                  <DiffRenderer content={contextStr} />
+                </div>
+              )}
+            </div>
+          )}
+
           {step.kind === 'APPROVAL' && (
             <div className="flex gap-2">
               <Button
@@ -97,7 +181,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 size="sm"
                 variant="primary"
               >
-                Approve
+                {pendingAction === 'approve' ? 'Submitting…' : 'Approve'}
               </Button>
               <Button
                 disabled={respond.isPending}
@@ -120,7 +204,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   size="sm"
                   variant="secondary"
                 >
-                  {opt.label}
+                  {respond.isPending && pendingAction === opt.value ? 'Submitting…' : opt.label}
                 </Button>
               ))}
             </div>
@@ -198,27 +282,45 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 size="sm"
                 variant="primary"
               >
-                Submit
+                {pendingAction === 'submit' ? 'Submitting…' : 'Submit'}
               </Button>
             </div>
           )}
 
           {step.kind === 'REVIEW' && (
-            <div className="space-y-2">
-              <textarea
-                className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono resize-y"
-                onChange={(e) => setReviewText(e.target.value)}
-                rows={8}
-                value={reviewText}
-              />
-              <Button
-                disabled={respond.isPending}
-                onClick={() => handleRespond('submit', reviewText)}
-                size="sm"
-                variant="primary"
-              >
-                Submit
-              </Button>
+            <div className={hasContext ? 'flex gap-4 min-h-0' : 'space-y-2'}>
+              {hasContext && (
+                <div className="flex-[3] min-w-0 flex flex-col gap-1">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-paper-500">
+                    Context
+                  </span>
+                  <div className="overflow-auto max-h-72 bg-ink-700 rounded p-3 flex-1">
+                    <DiffRenderer content={contextStr} />
+                  </div>
+                </div>
+              )}
+              <div className={hasContext ? 'flex-[2] flex flex-col gap-2' : 'space-y-2'}>
+                {hasContext && (
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-paper-500">
+                    Your notes
+                  </span>
+                )}
+                <textarea
+                  className="w-full text-sm border border-ink-600 rounded px-2 py-1 font-mono resize-y"
+                  onChange={(e) => setReviewText(e.target.value)}
+                  placeholder="Add your review notes…"
+                  rows={hasContext ? 10 : 8}
+                  value={reviewText}
+                />
+                <Button
+                  disabled={respond.isPending}
+                  onClick={() => handleRespond('submit', reviewText)}
+                  size="sm"
+                  variant="primary"
+                >
+                  {pendingAction === 'submit' ? 'Submitting…' : 'Submit'}
+                </Button>
+              </div>
             </div>
           )}
         </div>

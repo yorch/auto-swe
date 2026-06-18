@@ -171,15 +171,18 @@ function LayoutA({
             <div className="flex items-center gap-3">
               {pendingSteps.length > 0 && (
                 <span
-                  className="text-amber-400"
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-400"
                   style={{
                     fontFamily: 'var(--font-mono)',
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    textTransform: 'uppercase',
+                    fontSize: '11px',
+                    letterSpacing: '0.06em',
                   }}
                 >
-                  {pendingSteps.length} pending action{pendingSteps.length !== 1 ? 's' : ''}
+                  <span
+                    aria-hidden
+                    className="pulse-dot w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+                  />
+                  {pendingSteps.length} pending
                 </span>
               )}
               <ConsoleModeToggle onChange={setConsoleMode} value={consoleMode} />
@@ -188,7 +191,7 @@ function LayoutA({
 
           <div className="flex-1 overflow-hidden">
             {pendingSteps.length > 0 && (
-              <div className="p-4 border-b border-ink-600/30 space-y-3">
+              <div className="px-4 py-3 border-b border-amber-400/20 bg-amber-400/5 space-y-3">
                 {pendingSteps.map((step) => (
                   <HumanStepCard key={step.id} showRunLink={false} step={step} />
                 ))}
