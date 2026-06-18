@@ -355,6 +355,7 @@ CREATE TABLE "workflow_human_steps" (
     "resolved_by" UUID,
     "payload" JSONB,
     "requested_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "timeout_at" TIMESTAMPTZ,
 
     CONSTRAINT "workflow_human_steps_pkey" PRIMARY KEY ("id")
 );

@@ -60,6 +60,25 @@ export interface CreateHumanStepInput {
     required?: boolean;
     options?: string[];
   }>;
+  /** Raw timeout duration string from the node spec (e.g. "24h", "30m"). */
+  timeout?: string;
+}
+
+/** Parse simple duration strings like "30m", "4h", "7d" into milliseconds. */
+function parseDurationMs(duration: string): number {
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/.exec(duration.trim());
+  if (!match) {
+    return 0;
+  }
+  const value = parseFloat(match[1]);
+  const multipliers: Record<string, number> = {
+    d: 86_400_000,
+    h: 3_600_000,
+    m: 60_000,
+    ms: 1,
+    s: 1_000,
+  };
+  return value * (multipliers[match[2]] ?? 0);
 }
 
 /**
@@ -77,6 +96,10 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   // reach the user even when the DB create was skipped.
   let stepId: string | undefined;
   try {
+    const timeoutAt =
+      input.timeout && parseDurationMs(input.timeout) > 0
+        ? new Date(Date.now() + parseDurationMs(input.timeout))
+        : undefined;
     const created = await prisma.workflowHumanStep.create({
       data: {
         context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
@@ -87,6 +110,7 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
         options: input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
         runId: input.runId,
         signalName: input.signalName,
+        timeoutAt,
         title: input.title,
       },
     });

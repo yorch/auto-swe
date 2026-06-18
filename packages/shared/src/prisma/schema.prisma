@@ -591,6 +591,9 @@ model WorkflowHumanStep {
   /// The signal payload submitted by the human (action + optional value).
   payload      Json?
   requestedAt  DateTime        @default(now()) @map("requested_at") @db.Timestamptz
+  /// Absolute deadline derived from the node's timeout duration. Null for steps
+  /// created before this column was added (backwards-compatible).
+  timeoutAt    DateTime?       @map("timeout_at") @db.Timestamptz
 
   @@index([runId])
   @@index([status])

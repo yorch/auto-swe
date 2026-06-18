@@ -45,6 +45,31 @@ function getTimestampColor(requestedAt: string): string {
   return 'text-paper-500';
 }
 
+function formatTimeRemaining(timeoutAt: string): string {
+  const msLeft = new Date(timeoutAt).getTime() - Date.now();
+  if (msLeft <= 0) {
+    return `expired ${formatRelativeTime(timeoutAt)}`;
+  }
+  if (msLeft < 3_600_000) {
+    return `expires in ${Math.ceil(msLeft / 60_000)}m`;
+  }
+  if (msLeft < 86_400_000) {
+    return `expires in ${Math.ceil(msLeft / 3_600_000)}h`;
+  }
+  return `expires in ${Math.ceil(msLeft / 86_400_000)}d`;
+}
+
+function getTimeoutColor(timeoutAt: string): string {
+  const msLeft = new Date(timeoutAt).getTime() - Date.now();
+  if (msLeft < 2 * 3_600_000) {
+    return 'text-brick-400';
+  }
+  if (msLeft < 8 * 3_600_000) {
+    return 'text-amber-400';
+  }
+  return 'text-paper-500';
+}
+
 export interface HumanStepCardProps {
   step: HumanStepSummary;
   showRunLink?: boolean;
@@ -108,6 +133,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <span className={getTimestampColor(step.requestedAt)}>
               {formatRelativeTime(step.requestedAt)}
             </span>
+            {step.status === 'PENDING' && step.timeoutAt && (
+              <>
+                <span>·</span>
+                <span className={getTimeoutColor(String(step.timeoutAt))}>
+                  {formatTimeRemaining(String(step.timeoutAt))}
+                </span>
+              </>
+            )}
             {showRunLink && (
               <>
                 <span>·</span>

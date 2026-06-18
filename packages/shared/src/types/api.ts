@@ -404,6 +404,7 @@ export interface HumanStepSummary {
   fields?: unknown;
   requestedAt: string;
   resolvedAt?: string | null;
+  timeoutAt?: string | null;
   run: {
     id: string;
     status: string;

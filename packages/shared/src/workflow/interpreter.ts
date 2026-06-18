@@ -145,6 +145,8 @@ export interface Dispatcher {
       required?: boolean;
       options?: string[];
     }>;
+    /** Raw timeout duration string from the node spec (e.g. "24h", "30m"). */
+    timeout?: string;
   }): Promise<void>;
 
   /**
@@ -756,6 +758,7 @@ async function runHumanNode(
                 ? node.options.map((o) => ({ label: o.label, value: o.value }))
                 : undefined,
             signalName,
+            timeout: node.timeout,
             title: node.title,
           })
       : undefined
