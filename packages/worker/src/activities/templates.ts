@@ -126,6 +126,9 @@ export async function finalizeWorkflowRun(
           activeWorkflows: {
             select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
           },
+          connection: {
+            select: { team: { select: { orgId: true } } },
+          },
           externalTicketId: true,
         },
       },
@@ -159,6 +162,30 @@ export async function finalizeWorkflowRun(
     await prisma.activeWorkflow.updateMany({
       data: { currentStatus: terminalStatus },
       where: { temporalWorkflowId: run.workflowId },
+    });
+  }
+
+  // P5: aggregate cost into OrgMonthlyUsage using Prisma's increment operator
+  // to avoid read-modify-write races on concurrent run finalization.
+  const orgId = run?.workRequest?.connection?.team?.orgId;
+  if (orgId) {
+    const yearMonth = new Date().toISOString().slice(0, 7);
+    await prisma.orgMonthlyUsage.upsert({
+      create: {
+        costUsdAccrued,
+        orgId,
+        runsCompleted: 1,
+        tokensInput: tokensInputTotal,
+        tokensOutput: tokensOutputTotal,
+        yearMonth,
+      },
+      update: {
+        costUsdAccrued: { increment: costUsdAccrued },
+        runsCompleted: { increment: 1 },
+        tokensInput: { increment: tokensInputTotal },
+        tokensOutput: { increment: tokensOutputTotal },
+      },
+      where: { orgId_yearMonth: { orgId, yearMonth } },
     });
   }
 

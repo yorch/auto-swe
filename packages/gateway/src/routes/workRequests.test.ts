@@ -76,7 +76,11 @@ describe('POST /api/v1/work-requests', () => {
           isActive: true,
           organizationName: 'org',
           repoName: 'test',
-          team: { memberships: [{ userId: 'user-1' }] },
+          team: {
+            memberships: [{ userId: 'user-1' }],
+            organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+            orgId: 'org-1',
+          },
           teamId: 'team-1',
           type: 'git_repo',
         }),
@@ -86,6 +90,12 @@ describe('POST /api/v1/work-requests', () => {
           snapshotUpserts.push(args);
           return { id: 'cs-1' };
         },
+      },
+      organizationMembership: {
+        findUnique: async () => ({ role: 'ORG_MEMBER' }),
+      },
+      orgMonthlyUsage: {
+        findUnique: async () => null,
       },
       runInput: {
         create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),

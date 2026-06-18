@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export type AgentScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
 
 export interface AgentSkillRef {
   id: string;
@@ -15,6 +15,7 @@ export interface AgentRow {
   key: string;
   scope: AgentScope;
   teamId: string | null;
+  orgId: string | null;
   workflowTemplateId: string | null;
   version: number;
   name: string;
@@ -42,6 +43,7 @@ export interface CreateAgentBody {
   key: string;
   scope: AgentScope;
   teamId?: string;
+  orgId?: string;
   workflowTemplateId?: string;
   name: string;
   description?: string | null;
