@@ -1,12 +1,16 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
 import {
+  CI_FIX_SYSTEM_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
   DECOMPOSER_AGENT_PROMPT,
   DOMAIN_LOGIC_REVIEWER_PROMPT,
+  GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
+  MERGE_CONFLICT_RESOLVER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
   PLANNER_AGENT_PROMPT,
+  REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
 } from './agentPrompts.js';
@@ -148,6 +152,38 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'decomposer',
     name: 'Decomposer',
     systemPrompt: DECOMPOSER_AGENT_PROMPT,
+  },
+  {
+    description: 'Fixes CI failures on the implementer branch.',
+    inheritsModelFrom: 'implementer',
+    key: 'ciFixer',
+    name: 'CI Fixer',
+    systemPrompt: CI_FIX_SYSTEM_PROMPT,
+    toolKeys: IMPLEMENTER_TOOLS,
+  },
+  {
+    description: 'Addresses review findings on the implementer branch.',
+    inheritsModelFrom: 'implementer',
+    key: 'reviewFixer',
+    name: 'Review Fixer',
+    systemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
+    toolKeys: IMPLEMENTER_TOOLS,
+  },
+  {
+    description: 'Fixes quality-gate failures on the implementer branch.',
+    inheritsModelFrom: 'implementer',
+    key: 'gateFixer',
+    name: 'Gate Fixer',
+    systemPrompt: GATE_FIX_SYSTEM_PROMPT,
+    toolKeys: IMPLEMENTER_TOOLS,
+  },
+  {
+    description: 'Resolves merge conflicts when rebasing the implementer branch.',
+    inheritsModelFrom: 'implementer',
+    key: 'mergeConflictResolver',
+    name: 'Merge Conflict Resolver',
+    systemPrompt: MERGE_CONFLICT_RESOLVER_PROMPT,
+    toolKeys: IMPLEMENTER_TOOLS,
   },
 ];
 

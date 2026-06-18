@@ -2,7 +2,6 @@ import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
-import { CONTEXT_VALIDATOR_PROMPT } from '../agents/prompts.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runAgent } from './runAgent.js';
@@ -33,7 +32,6 @@ export async function validateContext(
   const spec = await resolveAgentSpec(
     {
       agentKey: 'validateContext',
-      basePrompt: CONTEXT_VALIDATOR_PROMPT,
       outputSchema: ContextValidationSchema,
       promptOverride: systemPromptOverride,
     },

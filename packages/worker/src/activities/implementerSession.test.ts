@@ -144,6 +144,7 @@ function codeResult(overrides: Partial<CodeResult> = {}): CodeResult {
 
 function input(overrides: Partial<Parameters<typeof runImplementerFixSession>[0]> = {}) {
   return {
+    agentKey: 'ciFixer',
     commitMessage: 'auto: fix CI for auto/T-1',
     defaultSystemPrompt: 'FIX THINGS',
     mode: 'CI_FIX' as const,

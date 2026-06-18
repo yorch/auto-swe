@@ -33,6 +33,10 @@ const AgentBaseFields = {
   mcpConnectionId: z.string().uuid().nullable().optional(),
   modelSpec: z.string().max(200).nullable().optional(),
   name: z.string().min(1).max(200),
+  skillRefs: z
+    .array(z.object({ skillId: z.string().uuid(), sortOrder: z.number().int().min(0) }))
+    .nullable()
+    .optional(),
   systemPrompt: z.string().max(50_000).nullable().optional(),
   toolKeys: z.array(z.enum(AGENT_TOOL_KEYS)).nullable().optional(),
 };

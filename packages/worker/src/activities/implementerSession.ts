@@ -29,6 +29,8 @@ export interface FixSessionInput {
   previousCodeResult: CodeResult;
   /** Mode-specific fields merged into the user message JSON alongside `mode` and `previousDiff`. */
   userPayload: Record<string, unknown>;
+  /** Agent key to resolve the system prompt from (e.g. 'ciFixer', 'reviewFixer', 'gateFixer'). */
+  agentKey: string;
   /** Built-in system prompt for this mode (resolveSystemPrompt handles DB/step overrides). */
   defaultSystemPrompt: string;
   systemPromptOverride?: string;
@@ -121,7 +123,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     closeMcp = cm;
 
     const systemPrompt = await resolveSystemPrompt(
-      'implementer',
+      input.agentKey,
       input.defaultSystemPrompt,
       input.systemPromptOverride
     );
