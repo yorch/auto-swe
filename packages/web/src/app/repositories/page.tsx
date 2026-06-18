@@ -6,6 +6,7 @@ import { RepositoryFormModal } from '@/components/repositories/RepositoryFormMod
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useRepositories } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -23,14 +24,18 @@ export default function RepositoriesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold">Repositories</h2>
-        {canManage && (
-          <Button onClick={() => setMode({ kind: 'create' })} variant="primary">
-            + Add repository
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        actions={
+          canManage ? (
+            <Button onClick={() => setMode({ kind: 'create' })} size="sm" variant="primary">
+              + Add connection
+            </Button>
+          ) : undefined
+        }
+        chapter="§ Library"
+        subtitle="Git repositories and other integrations available to your workflows."
+        title="Connections."
+      />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {(repos ?? []).map((r) => (
           <Card key={r.id}>
@@ -63,10 +68,10 @@ export default function RepositoriesPage() {
         ))}
         {(repos ?? []).length === 0 && (
           <p className="col-span-full text-center text-sm text-paper-400 py-12">
-            No repositories yet.
+            No connections yet.
             {canManage
-              ? ' Use "Add repository" above to connect one.'
-              : ' Ask an admin to add one.'}
+              ? ' Use "Add connection" above to connect a repository.'
+              : ' Ask a team lead or admin to add one.'}
           </p>
         )}
       </div>

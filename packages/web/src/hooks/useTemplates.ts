@@ -177,3 +177,20 @@ export function useGlobalAnalytics(windowDays = 30) {
     refetchInterval: 30_000,
   });
 }
+
+export function useRunTemplate(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) =>
+      api
+        .post<{ data: { temporalWorkflowId: string; workRequestId: string } }>(
+          `/api/v1/workflow-templates/${templateId}/runs`,
+          body
+        )
+        .then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-template-runs', templateId] });
+      qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+    },
+  });
+}
