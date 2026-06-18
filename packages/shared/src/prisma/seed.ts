@@ -48,14 +48,25 @@ async function main() {
     '  Run `yarn db:seed:auth` next to also provision a better-auth credential (enables the new email+password tab on /login).'
   );
 
+  // Seed default organization (P5 multi-org foundation). Every team nests
+  // under exactly one org; this default keeps single-tenant deployments working
+  // unchanged. The ORGANIZATION cascade tier sits between TEAM and GLOBAL.
+  const org = await prisma.organization.upsert({
+    create: { name: 'Default Organization', slug: 'default' },
+    update: {},
+    where: { slug: 'default' },
+  });
+  console.log(`Seed: default organization created (${org.id})`);
+
   // Seed default team
   const team = await prisma.team.upsert({
     create: {
       description: 'Default team for local development',
       name: 'Default Team',
+      orgId: org.id,
       slug: 'default',
     },
-    update: {},
+    update: { orgId: org.id },
     where: { slug: 'default' },
   });
   console.log(`Seed: default team created (${team.id})`);

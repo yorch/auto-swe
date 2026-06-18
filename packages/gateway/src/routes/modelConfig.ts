@@ -39,13 +39,27 @@ const CredentialCreateSchema = z
   .object({
     apiBase: z.string().url().max(500).optional(),
     apiKey: z.string().min(1).max(10_000),
+    orgId: z.string().uuid().optional(),
     provider: ProviderSchema,
-    scope: z.enum(['GLOBAL', 'TEAM']),
+    scope: z.enum(['GLOBAL', 'ORGANIZATION', 'TEAM']),
     teamId: z.string().uuid().optional(),
   })
-  .refine((v) => (v.scope === 'GLOBAL' ? !v.teamId : !!v.teamId), {
-    message: 'scope=TEAM requires teamId; scope=GLOBAL forbids it',
-  });
+  .refine(
+    (v) => {
+      // Each scope requires exactly its own key and forbids the others.
+      if (v.scope === 'GLOBAL') {
+        return !v.teamId && !v.orgId;
+      }
+      if (v.scope === 'ORGANIZATION') {
+        return !!v.orgId && !v.teamId;
+      }
+      return !!v.teamId && !v.orgId; // TEAM
+    },
+    {
+      message:
+        'scope=TEAM requires teamId; scope=ORGANIZATION requires orgId; scope=GLOBAL forbids both',
+    }
+  );
 
 const CredentialUpdateSchema = z.object({
   apiBase: z.string().url().max(500).nullable().optional(),
@@ -146,12 +160,12 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CredentialCreateSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { provider, scope, teamId, apiBase, apiKey } = request.body;
+      const { provider, scope, teamId, orgId, apiBase, apiKey } = request.body;
       return createCredentialAndAudit(
         fastify,
         actor,
         reply,
-        { actorId: actor.sub, apiBase, apiKey, provider, scope, teamId },
+        { actorId: actor.sub, apiBase, apiKey, orgId, provider, scope, teamId },
         {
           conflict: (existingId) =>
             `Credential for provider '${provider}' at scope '${scope}' already exists. Use PUT /credentials/${existingId} to update.`,

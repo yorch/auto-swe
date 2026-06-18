@@ -483,7 +483,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         memory: config.memory as string | undefined,
         network: config.network as 'none' | 'egress' | undefined,
         request,
+        ...(config.sidecar
+          ? { sidecar: config.sidecar as { port: number; requestPath?: string } }
+          : {}),
         timeoutMs: config.timeoutMs as number | undefined,
+        transport: config.transport as 'stdout' | 'ndjson' | 'sidecar' | undefined,
       }),
   ],
   [
@@ -634,14 +638,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     },
   ],
   // ── PRD decomposition workflow ───────────────────────────────────────────────
-  ['analyzePrd', ({ request }) => prdActivities.analyzePrd(request)],
+  [
+    'analyzePrd',
+    ({ request, config }) =>
+      prdActivities.analyzePrd(request, config.systemPrompt as string | undefined),
+  ],
   [
     'decomposePrd',
-    ({ request, inputs }) =>
-      prdActivities.decomposePrd(request, {
-        analysis: inputs.analysis,
-        pmFeedback: inputs.pmFeedback,
-      }),
+    ({ request, config, inputs }) =>
+      prdActivities.decomposePrd(
+        request,
+        { analysis: inputs.analysis, pmFeedback: inputs.pmFeedback },
+        config.systemPrompt as string | undefined
+      ),
   ],
   [
     'createTrackerItems',

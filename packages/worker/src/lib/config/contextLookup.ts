@@ -39,7 +39,9 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
     async () => {
       const [active, run] = await Promise.all([
         prisma.activeWorkflow.findFirst({
-          select: { repository: { select: { teamId: true } } },
+          select: {
+            repository: { select: { team: { select: { orgId: true } }, teamId: true } },
+          },
           where: { temporalWorkflowId: wid },
         }),
         prisma.workflowRun.findUnique({
@@ -53,12 +55,16 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
           : undefined;
       return {
         agentVersions,
+        // Org is derived transitively (team → org); the ORGANIZATION cascade
+        // tier sits between TEAM and GLOBAL.
+        orgId: active?.repository?.team?.orgId,
         teamId: active?.repository?.teamId,
         workflowTemplateId: run?.templateId,
       };
     },
     (ctx) =>
       ctx.teamId !== undefined ||
+      ctx.orgId !== undefined ||
       ctx.workflowTemplateId !== undefined ||
       ctx.agentVersions !== undefined
   );

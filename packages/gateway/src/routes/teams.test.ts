@@ -92,7 +92,23 @@ function buildApp(state: State): FastifyInstance {
   } as unknown as never);
 
   app.decorate('prisma', {
+    organization: {
+      findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
+        // Single default org for the create-path test.
+        where.slug === 'default' || where.id === 'org-default'
+          ? { id: 'org-default', slug: 'default' }
+          : null,
+    },
     team: {
+      create: async ({ data }: { data: Record<string, unknown> }) => ({ id: 'new-team', ...data }),
+      findFirst: async ({ where }: { where: { OR?: { name?: string; slug?: string }[] } }) => {
+        const ors = where.OR ?? [];
+        return (
+          state.teams.find((t) =>
+            ors.some((o) => (o.name && t.name === o.name) || (o.slug && t.slug === o.slug))
+          ) ?? null
+        );
+      },
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null,
       update: async ({
@@ -149,6 +165,38 @@ function buildApp(state: State): FastifyInstance {
 
 afterEach(() => {
   // App instances are throwaway per-test; nothing to clean.
+});
+
+describe('POST /api/v1/teams', () => {
+  it('creates a team under the default org when no orgId is given (P5)', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      body: { name: 'Payments', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.orgId).toBe('org-default');
+  });
+
+  it('400s when the requested org does not exist (P5)', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      body: { name: 'Payments', orgId: '00000000-0000-4000-8000-0000000000ff', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('ORG_NOT_FOUND');
+  });
 });
 
 describe('DELETE /api/v1/teams/:id/members/:userId', () => {

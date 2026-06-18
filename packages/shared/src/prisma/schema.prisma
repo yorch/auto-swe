@@ -40,6 +40,7 @@ enum WorkflowTemplateStatus {
 
 enum ConfigScope {
   GLOBAL
+  ORGANIZATION
   TEAM
   WORKFLOW_TEMPLATE
 }
@@ -239,12 +240,36 @@ model Connection {
   @@map("connections")
 }
 
+/// Top-level tenant boundary (P5 multi-org foundation). Every Team belongs to
+/// exactly one Organization; the config cascade gains an ORGANIZATION tier that
+/// sits between TEAM and GLOBAL. Billing, org-level RBAC, and row-level data
+/// isolation are intentionally NOT part of this foundation — only identity and
+/// the scope cascade. A single 'default' Organization is seeded so existing
+/// teams/global content keep working unchanged.
+model Organization {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  slug      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  teams               Team[]
+  agents              Agent[]
+  providerCredentials ProviderCredential[]
+
+  @@map("organizations")
+}
+
 model Team {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String   @unique
   slug        String   @unique
   description String   @default("")
   isActive    Boolean  @default(true) @map("is_active")
+  /// Owning Organization (P5). Required: a team always nests under one org.
+  orgId        String       @map("org_id") @db.Uuid
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
   /// Per-team additions to the phase-6 shell-step image allowlist. The built-in
   /// images (BUILTIN_SHELL_IMAGES in shared/workflow/shellImageAllowlist.ts) are
   /// always allowed; entries here grant additional `image:tag` strings.
@@ -271,6 +296,7 @@ model Team {
   providerCredentials    ProviderCredential[]
   agents                 Agent[]
 
+  @@index([orgId])
   @@map("teams")
 }
 
@@ -686,10 +712,11 @@ model WorkflowTemplateVersion {
   @@map("workflow_template_versions")
 }
 
-/// Encrypted API credential for one LLM provider, scoped GLOBAL or TEAM.
-/// (WORKFLOW_TEMPLATE scope is intentionally unsupported — templates can
+/// Encrypted API credential for one LLM provider, scoped GLOBAL, ORGANIZATION,
+/// or TEAM. (WORKFLOW_TEMPLATE scope is intentionally unsupported — templates can
 /// reference existing credentials via `ModelRoleConfig.credentialId` but
-/// can't create their own.) API key bytes are AES-256-GCM encrypted with
+/// can't create their own.) Resolution cascade: TEAM → ORGANIZATION → GLOBAL.
+/// API key bytes are AES-256-GCM encrypted with
 /// the key from `CONFIG_ENCRYPTION_KEY`; see `packages/shared/src/lib/crypto.ts`.
 /// `lastFour` is the trailing four plaintext chars, stored for UI display
 /// only. `keyVersion` exists for future key-rotation support.
@@ -699,6 +726,9 @@ model ProviderCredential {
   scope           ConfigScope
   teamId          String?           @map("team_id") @db.Uuid
   team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
+  orgId           String?           @map("org_id") @db.Uuid
+  organization    Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   apiBase         String?           @map("api_base")
   apiKeyCiphertext Bytes            @map("api_key_ciphertext")
   apiKeyNonce     Bytes             @map("api_key_nonce")
@@ -713,6 +743,7 @@ model ProviderCredential {
   agents           Agent[]
 
   @@index([provider, scope, teamId])
+  @@index([provider, scope, orgId])
   @@map("provider_credentials")
 }
 
@@ -996,9 +1027,10 @@ model ScannerPattern {
 /// override field is null (no skillRefs / null toolKeys / null modelSpec / null
 /// systemPrompt), `resolveAgent` falls through to the legacy per-scope config
 /// tables (ModelRoleConfig / AgentSkillAssignment / AgentToolConfig) for `key`,
-/// preserving P0 behavior exactly. The override cascade GLOBAL → TEAM →
-/// WORKFLOW_TEMPLATE mirrors the other config tables (partial unique indexes
-/// live in raw SQL — Prisma can't express `WHERE scope = …`). `version` is
+/// preserving P0 behavior exactly. The override cascade
+/// WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL mirrors the other config
+/// tables (partial unique indexes live in raw SQL — Prisma can't express
+/// `WHERE scope = …`). `version` is
 /// bumped on base edits; the active row is the highest `version` with
 /// `isActive` at a scope, and runs snapshot the resolved version (P1 WS3).
 model Agent {
@@ -1006,6 +1038,8 @@ model Agent {
   key                String
   scope              ConfigScope
   teamId             String?             @map("team_id") @db.Uuid
+  /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
+  orgId              String?             @map("org_id") @db.Uuid
   workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
   version            Int                 @default(1)
   name               String
@@ -1037,12 +1071,14 @@ model Agent {
   updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  organization     Organization?       @relation(fields: [orgId], references: [id], onDelete: Cascade)
   workflowTemplate WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
   credential       ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   mcpConnection    Connection?         @relation("AgentMcpConnection", fields: [mcpConnectionId], references: [id], onDelete: SetNull)
   skillRefs        AgentSkillRef[]
 
   @@index([scope, teamId])
+  @@index([scope, orgId])
   @@index([scope, workflowTemplateId])
   @@map("agents")
 }

@@ -19,6 +19,7 @@
 import crypto from 'node:crypto';
 import { promises as dnsPromises } from 'node:dns';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { heartbeat } from '@temporalio/activity';
 import { type CapturedResult, execShellAsync, spawnCaptureAsync } from './execUtils.js';
 
 export type EphemeralRunResult = CapturedResult;
@@ -53,6 +54,12 @@ export interface EphemeralRunInput {
    * the JSON input payload (the value is shell-quoted by the caller).
    */
   env?: Record<string, string>;
+  /**
+   * Optional per-line stdout callback (P5): the NDJSON containerStep transport
+   * consumes the container's output line-by-line as it streams. stdout is still
+   * fully buffered into the result regardless.
+   */
+  onStdoutLine?: (line: string) => void;
 }
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -65,10 +72,16 @@ const MEMORY_RE = /^\d+[bkmg]?$/i;
 const MOUNT_SOURCE_RE = /^(\/[^:]+|[a-zA-Z0-9][a-zA-Z0-9_.-]+)$/;
 
 /**
- * Build the argv passed to `docker run`. Exposed for testing — the
- * pure-function shape lets us assert flag ordering without invoking docker.
+ * Validate the shared inputs and emit the lockdown flag block common to every
+ * ephemeral container (foreground or sidecar): network, resource caps,
+ * read-only root, dropped capabilities, env, and the workspace mount. Keeping
+ * this in one place guarantees the sidecar transport inherits the exact same
+ * isolation as the foreground runner.
  */
-export function buildDockerArgs(input: EphemeralRunInput, containerName: string): string[] {
+function lockdownFlags(input: Omit<EphemeralRunInput, 'command'>): {
+  network: 'none' | 'egress';
+  flags: string[];
+} {
   if (!DOCKER_IMAGE_REF_RE.test(input.image)) {
     throw new Error(`Invalid Docker image name: ${input.image}`);
   }
@@ -89,7 +102,7 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
 
   // DNS-based egress filtering: when an allowlist is present, point DNS at an
   // unreachable address so name-based lookups fail for non-allowlisted hosts.
-  // --add-host entries for resolved IPs are injected in runEphemeralContainer.
+  // --add-host entries for resolved IPs are injected in the runners.
   // Does not block IP-direct connections; wildcard entries are informational only.
   const dnsArgs =
     network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0
@@ -104,31 +117,110 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
     envArgs.push('-e', `${k}=${v}`);
   }
 
+  return {
+    flags: [
+      `--network=${dockerNetwork}`,
+      ...dnsArgs,
+      `--memory=${memory}`,
+      `--cpus=${cpus}`,
+      '--pids-limit=256',
+      '--read-only',
+      '--tmpfs=/tmp:size=64m,mode=1777',
+      '--security-opt=no-new-privileges',
+      '--cap-drop=ALL',
+      ...envArgs,
+      '-v',
+      `${input.workspaceMount}:/workspace:rw`,
+      '-w',
+      workdir,
+    ],
+    network,
+  };
+}
+
+/**
+ * Build the argv passed to `docker run`. Exposed for testing — the
+ * pure-function shape lets us assert flag ordering without invoking docker.
+ */
+export function buildDockerArgs(input: EphemeralRunInput, containerName: string): string[] {
+  const { flags } = lockdownFlags(input);
   return [
     'run',
     '--rm',
     '--name',
     containerName,
-    `--network=${dockerNetwork}`,
-    ...dnsArgs,
-    `--memory=${memory}`,
-    `--cpus=${cpus}`,
-    '--pids-limit=256',
-    '--read-only',
-    '--tmpfs=/tmp:size=64m,mode=1777',
-    '--security-opt=no-new-privileges',
-    '--cap-drop=ALL',
-    ...envArgs,
-    '-v',
-    `${input.workspaceMount}:/workspace:rw`,
-    '-w',
-    workdir,
+    ...flags,
     '--',
     input.image,
     'sh',
     '-c',
     input.command,
   ];
+}
+
+const PORT_RE = /^\d{1,5}$/;
+
+/**
+ * Build the argv for a detached **sidecar** container (P5 sidecar transport):
+ * same lockdown as {@link buildDockerArgs}, but `-d` (detached) and the sidecar
+ * port published to an ephemeral port on loopback only (`-p 127.0.0.1::PORT`) so
+ * the worker — and nothing off-host — can reach it. A `command` override is
+ * optional; absent, the image's own entrypoint serves the HTTP contract.
+ */
+export function buildSidecarDockerArgs(
+  input: Omit<EphemeralRunInput, 'command'> & { port: number; command?: string },
+  containerName: string
+): string[] {
+  if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
+    throw new Error(`Invalid sidecar port: ${input.port}`);
+  }
+  const { flags } = lockdownFlags(input);
+  const portArg = String(input.port);
+  if (!PORT_RE.test(portArg)) {
+    throw new Error(`Invalid sidecar port: ${input.port}`);
+  }
+  return [
+    'run',
+    '-d',
+    '--rm',
+    '--name',
+    containerName,
+    ...flags,
+    // Loopback-only publish; Docker assigns the ephemeral host port.
+    '-p',
+    `127.0.0.1::${portArg}/tcp`,
+    '--',
+    input.image,
+    ...(input.command ? ['sh', '-c', input.command] : []),
+  ];
+}
+
+/**
+ * DNS-based egress filtering: resolve each allowlisted hostname and splice an
+ * `--add-host` flag in before the `--` image separator so name lookups succeed
+ * only for allowlisted hosts (non-allowlisted names fail against the
+ * unreachable DNS). Mutates `args` in place. Wildcards are informational only;
+ * IP-direct connections are not blocked.
+ */
+async function injectEgressAddHosts(
+  input: Pick<EphemeralRunInput, 'network' | 'egressAllowlist'>,
+  args: string[]
+): Promise<void> {
+  if (!(input.network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0)) {
+    return;
+  }
+  for (const hostname of input.egressAllowlist) {
+    if (hostname.startsWith('*')) {
+      continue;
+    }
+    try {
+      const { address } = await dnsPromises.lookup(hostname);
+      const imageIdx = args.indexOf('--');
+      args.splice(imageIdx, 0, `--add-host=${hostname}:${address}`);
+    } catch {
+      console.warn(`[egress-allowlist] DNS lookup failed for ${hostname}; skipping --add-host`);
+    }
+  }
 }
 
 /**
@@ -143,27 +235,12 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
   const args = buildDockerArgs(input, containerName);
   const timeoutMs = input.timeoutMs ?? 600_000;
 
-  // DNS-based egress filtering: blocks name-based lookups to non-allowlisted hosts.
-  // Does not block IP-direct connections; wildcard entries are informational only.
-  if (input.network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0) {
-    for (const hostname of input.egressAllowlist) {
-      if (hostname.startsWith('*')) {
-        continue;
-      }
-      try {
-        const { address } = await dnsPromises.lookup(hostname);
-        // Insert --add-host flags before the image argument (last 3 args are: image, sh, -c, command)
-        const imageIdx = args.indexOf('--');
-        args.splice(imageIdx, 0, `--add-host=${hostname}:${address}`);
-      } catch {
-        console.warn(`[egress-allowlist] DNS lookup failed for ${hostname}; skipping --add-host`);
-      }
-    }
-  }
+  await injectEgressAddHosts(input, args);
 
   try {
     return await spawnCaptureAsync('docker', args, {
       heartbeatLabel: 'shell-step: command running',
+      ...(input.onStdoutLine ? { onStdoutLine: input.onStdoutLine } : {}),
       timeoutMs,
     });
   } finally {
@@ -176,4 +253,115 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
       /* already removed */
     }
   }
+}
+
+export interface SidecarRunInput extends Omit<EphemeralRunInput, 'command'> {
+  /** Optional command override; absent, the image's own entrypoint serves HTTP. */
+  command?: string;
+  /** Container port the sidecar's HTTP server listens on. */
+  port: number;
+  /** POST path for the request (default '/'). */
+  requestPath?: string;
+  /** GET path polled until 2xx before the request is sent (default = requestPath). */
+  readinessPath?: string;
+  /** Max wall-clock to wait for readiness, default 30_000 ms. */
+  readyTimeoutMs?: number;
+  /** JSON body POSTed to the sidecar; the parsed JSON response is the result. */
+  body?: unknown;
+}
+
+export interface SidecarRunResult {
+  status: number;
+  result: unknown;
+}
+
+/** Discover the loopback host port Docker published for `containerPort`. */
+async function resolvePublishedPort(containerName: string, containerPort: number): Promise<number> {
+  const out = await execShellAsync(`docker port ${containerName} ${containerPort}/tcp`);
+  // e.g. "127.0.0.1:49162" (possibly multiple lines); take the first host port.
+  const m = /:(\d{1,5})\s*$/m.exec(out.trim());
+  if (!m) {
+    throw new Error(`could not resolve published port for ${containerName}:${containerPort}`);
+  }
+  return Number(m[1]);
+}
+
+/**
+ * Run an image as a detached HTTP **sidecar** (P5 sidecar transport): start it
+ * with the full ephemeral lockdown + a loopback-only published port, poll its
+ * readiness endpoint, POST the JSON `body`, and return the parsed response. The
+ * container is always force-removed in `finally`.
+ */
+export async function runSidecarContainer(input: SidecarRunInput): Promise<SidecarRunResult> {
+  const containerName = `sidecar-${crypto.randomBytes(8).toString('hex')}`;
+  const args = buildSidecarDockerArgs(input, containerName);
+  await injectEgressAddHosts(input, args);
+  const requestPath = input.requestPath ?? '/';
+  const readinessPath = input.readinessPath ?? requestPath;
+  const readyTimeoutMs = input.readyTimeoutMs ?? 30_000;
+
+  try {
+    // `docker run -d` prints the container id; failure (non-zero) means it
+    // never started — surface stderr.
+    const started = await spawnCaptureAsync('docker', args, {
+      heartbeatLabel: 'sidecar: starting',
+      timeoutMs: 60_000,
+    });
+    if (started.exitCode !== 0) {
+      throw new Error(
+        `sidecar failed to start: ${(started.stderr || started.stdout).slice(0, 500)}`
+      );
+    }
+    const hostPort = await resolvePublishedPort(containerName, input.port);
+    const baseUrl = `http://127.0.0.1:${hostPort}`;
+
+    await waitForReady(`${baseUrl}${readinessPath}`, readyTimeoutMs);
+
+    const res = await fetch(`${baseUrl}${requestPath}`, {
+      body: JSON.stringify(input.body ?? {}),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`sidecar request failed (${res.status}): ${text.slice(0, 500)}`);
+    }
+    let result: unknown;
+    try {
+      result = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`sidecar did not return JSON: ${text.slice(0, 500)}`);
+    }
+    return { result, status: res.status };
+  } finally {
+    try {
+      await execShellAsync(`docker rm -f ${containerName}`);
+    } catch {
+      /* already removed */
+    }
+  }
+}
+
+/** Poll a readiness URL until it answers 2xx or the deadline passes. */
+async function waitForReady(url: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = 'no response';
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      if (res.ok) {
+        return;
+      }
+      lastErr = `status ${res.status}`;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+    heartbeat('sidecar: awaiting readiness');
+    await delay(250);
+  }
+  throw new Error(`sidecar not ready within ${timeoutMs}ms (${lastErr})`);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

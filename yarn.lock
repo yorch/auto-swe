@@ -181,6 +181,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@auto-swe/cli@workspace:packages/cli"
   dependencies:
+    "@auto-swe/sdk": "npm:*"
     "@auto-swe/shared": "npm:*"
     "@types/node": "npm:25.9.1"
     tsx: "npm:4.22.4"
@@ -228,7 +229,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@auto-swe/sdk@workspace:packages/sdk":
+"@auto-swe/sdk@npm:*, @auto-swe/sdk@workspace:packages/sdk":
   version: 0.0.0-use.local
   resolution: "@auto-swe/sdk@workspace:packages/sdk"
   dependencies:

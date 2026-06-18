@@ -17,10 +17,11 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-const AGENT_SCOPES = ['GLOBAL', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
+const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
 
 const ListQuery = z.object({
   all: z.coerce.boolean().optional(),
+  orgId: z.string().uuid().optional(),
   scope: z.enum(AGENT_SCOPES).optional(),
   teamId: z.string().uuid().optional(),
   workflowTemplateId: z.string().uuid().optional(),
@@ -49,18 +50,20 @@ const CreateAgentSchema = z
       .min(1)
       .max(100)
       .regex(/^[A-Za-z0-9_.-]+$/, 'key may contain letters, digits, dot, dash, underscore'),
+    orgId: z.string().uuid().optional(),
     scope: z.enum(AGENT_SCOPES),
     teamId: z.string().uuid().optional(),
     workflowTemplateId: z.string().uuid().optional(),
   })
   .refine(
     (v) =>
-      (v.scope === 'GLOBAL' && !v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'TEAM' && !!v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !!v.workflowTemplateId),
+      (v.scope === 'GLOBAL' && !v.teamId && !v.orgId && !v.workflowTemplateId) ||
+      (v.scope === 'ORGANIZATION' && !!v.orgId && !v.teamId && !v.workflowTemplateId) ||
+      (v.scope === 'TEAM' && !!v.teamId && !v.orgId && !v.workflowTemplateId) ||
+      (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !v.orgId && !!v.workflowTemplateId),
     {
       message:
-        'scope=TEAM requires teamId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids both',
+        'scope=TEAM requires teamId only; scope=ORGANIZATION requires orgId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids all',
     }
   );
 
@@ -79,6 +82,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const rows = await listAgents(fastify.prisma, {
         latestOnly: !request.query.all,
+        orgId: request.query.orgId,
         scope: request.query.scope,
         teamId: request.query.teamId,
         workflowTemplateId: request.query.workflowTemplateId,
@@ -104,6 +108,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         select: { createdAt: true, id: true, isActive: true, isVerified: true, version: true },
         where: {
           key: agent.key,
+          orgId: agent.orgId,
           scope: agent.scope,
           teamId: agent.teamId,
           workflowTemplateId: agent.workflowTemplateId,
@@ -120,6 +125,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const body = request.body;
       const refError = await validateAgentScopeRefs(fastify.prisma, {
+        orgId: body.orgId,
         teamId: body.teamId,
         workflowTemplateId: body.workflowTemplateId,
       });
@@ -137,6 +143,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const key: AgentScopeKey = {
         key: body.key,
+        orgId: body.orgId,
         scope: body.scope,
         teamId: body.teamId,
         workflowTemplateId: body.workflowTemplateId,

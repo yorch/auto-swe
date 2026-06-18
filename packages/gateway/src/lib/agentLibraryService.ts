@@ -12,13 +12,14 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 
 export type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
 
-export type AgentScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
 
 /** Identifies one Agent lineage: a key at a scope. Versions live underneath. */
 export interface AgentScopeKey {
   key: string;
   scope: AgentScope;
   teamId?: string | null;
+  orgId?: string | null;
   workflowTemplateId?: string | null;
 }
 
@@ -45,6 +46,7 @@ export interface AgentBaseInput {
 function scopeWhere(key: AgentScopeKey) {
   return {
     key: key.key,
+    orgId: key.scope === 'ORGANIZATION' ? (key.orgId ?? null) : null,
     scope: key.scope,
     teamId: key.scope === 'TEAM' ? (key.teamId ?? null) : null,
     workflowTemplateId: key.scope === 'WORKFLOW_TEMPLATE' ? (key.workflowTemplateId ?? null) : null,
@@ -64,12 +66,21 @@ async function maxVersion(prisma: PrismaClient, key: AgentScopeKey): Promise<num
 /** Validate that referenced scope rows (team / template) exist. */
 export async function validateAgentScopeRefs(
   prisma: PrismaClient,
-  args: { teamId?: string | null; workflowTemplateId?: string | null }
+  args: { teamId?: string | null; orgId?: string | null; workflowTemplateId?: string | null }
 ): Promise<string | null> {
   if (args.teamId) {
     const team = await prisma.team.findUnique({ select: { id: true }, where: { id: args.teamId } });
     if (!team) {
       return 'Team not found';
+    }
+  }
+  if (args.orgId) {
+    const org = await prisma.organization.findUnique({
+      select: { id: true },
+      where: { id: args.orgId },
+    });
+    if (!org) {
+      return 'Organization not found';
     }
   }
   if (args.workflowTemplateId) {
@@ -115,7 +126,13 @@ export async function validateMcpConnectionRef(
 }
 export async function listAgents(
   prisma: PrismaClient,
-  filter: { scope?: AgentScope; teamId?: string; workflowTemplateId?: string; latestOnly?: boolean }
+  filter: {
+    scope?: AgentScope;
+    teamId?: string;
+    orgId?: string;
+    workflowTemplateId?: string;
+    latestOnly?: boolean;
+  }
 ): Promise<AgentRow[]> {
   const rows = await prisma.agent.findMany({
     include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
@@ -123,6 +140,7 @@ export async function listAgents(
     where: {
       ...(filter.scope && { scope: filter.scope }),
       ...(filter.teamId && { teamId: filter.teamId }),
+      ...(filter.orgId && { orgId: filter.orgId }),
       ...(filter.workflowTemplateId && { workflowTemplateId: filter.workflowTemplateId }),
     },
   });
@@ -133,7 +151,7 @@ export async function listAgents(
   const seen = new Set<string>();
   const latest: AgentRow[] = [];
   for (const r of rows) {
-    const lineage = `${r.key}:${r.scope}:${r.teamId ?? ''}:${r.workflowTemplateId ?? ''}`;
+    const lineage = `${r.key}:${r.scope}:${r.teamId ?? ''}:${r.orgId ?? ''}:${r.workflowTemplateId ?? ''}`;
     if (!seen.has(lineage)) {
       seen.add(lineage);
       latest.push(r);
@@ -170,6 +188,7 @@ export async function createAgent(
       mcpConnectionId: base.mcpConnectionId ?? null,
       modelSpec: base.modelSpec ?? null,
       name: base.name,
+      orgId: scopeWhere(key).orgId,
       origin: null,
       scope: key.scope,
       systemPrompt: base.systemPrompt ?? null,
@@ -204,6 +223,7 @@ export async function updateAgent(
 ): Promise<{ agent: AgentRow; scanWarnings: string[] }> {
   const key: AgentScopeKey = {
     key: current.key,
+    orgId: current.orgId,
     scope: current.scope as AgentScope,
     teamId: current.teamId,
     workflowTemplateId: current.workflowTemplateId,
@@ -245,6 +265,7 @@ export async function updateAgent(
       mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
       modelSpec: pick(base.modelSpec, current.modelSpec),
       name: pick(base.name, current.name),
+      orgId: current.orgId,
       origin: current.origin,
       scope: current.scope,
       systemPrompt: pick(base.systemPrompt, current.systemPrompt),

@@ -105,7 +105,10 @@ async function loadPrdPayload(workRequestId: string): Promise<PrdPayload> {
  * Analyse the PRD for engineering readiness. Returns a structured analysis
  * including a readiness verdict and a list of gaps/questions for the PM.
  */
-export async function analyzePrd(request: RepoWorkRequest): Promise<PrdAnalysis> {
+export async function analyzePrd(
+  request: RepoWorkRequest,
+  systemPromptOverride?: string
+): Promise<PrdAnalysis> {
   heartbeat('loading PRD payload');
   const payload = await loadPrdPayload(request.workRequestId);
 
@@ -115,6 +118,7 @@ export async function analyzePrd(request: RepoWorkRequest): Promise<PrdAnalysis>
     {
       agentKey: 'prdAnalyst' as ModelBackedAgentKey,
       outputSchema: PrdAnalysisSchema,
+      promptOverride: systemPromptOverride,
     },
     ctx
   );
@@ -140,7 +144,8 @@ export async function analyzePrd(request: RepoWorkRequest): Promise<PrdAnalysis>
  */
 export async function decomposePrd(
   request: RepoWorkRequest,
-  inputs: { analysis: unknown; pmFeedback?: unknown }
+  inputs: { analysis: unknown; pmFeedback?: unknown },
+  systemPromptOverride?: string
 ): Promise<PrdDecomposition> {
   heartbeat('loading PRD payload');
   const payload = await loadPrdPayload(request.workRequestId);
@@ -151,6 +156,7 @@ export async function decomposePrd(
     {
       agentKey: 'prdDecomposer' as ModelBackedAgentKey,
       outputSchema: PrdDecompositionSchema,
+      promptOverride: systemPromptOverride,
     },
     ctx
   );

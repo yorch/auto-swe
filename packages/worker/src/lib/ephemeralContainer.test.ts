@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDockerArgs } from './ephemeralContainer.js';
+import { buildDockerArgs, buildSidecarDockerArgs } from './ephemeralContainer.js';
 
 const BASE = {
   command: 'echo hello',
@@ -88,5 +88,40 @@ describe('buildDockerArgs', () => {
     const args = buildDockerArgs({ ...BASE, workdir: '/workspace/repo' }, 'name');
     const wIdx = args.indexOf('-w');
     expect(args[wIdx + 1]).toBe('/workspace/repo');
+  });
+});
+
+describe('buildSidecarDockerArgs', () => {
+  const SIDE = { image: 'node:24-alpine', port: 8080, workspaceMount: 'cstep-abc' };
+
+  it('runs detached with a loopback-only published port and the full lockdown', () => {
+    const args = buildSidecarDockerArgs(SIDE, 'sidecar-abc');
+    expect(args).toContain('-d');
+    expect(args).toContain('--cap-drop=ALL');
+    expect(args).toContain('--read-only');
+    const pIdx = args.indexOf('-p');
+    expect(args[pIdx + 1]).toBe('127.0.0.1::8080/tcp');
+  });
+
+  it('omits sh -c when no command is given (image entrypoint serves HTTP)', () => {
+    const args = buildSidecarDockerArgs(SIDE, 'sidecar-abc');
+    const sep = args.indexOf('--');
+    expect(args[sep + 1]).toBe('node:24-alpine');
+    expect(args[sep + 2]).toBeUndefined();
+  });
+
+  it('appends sh -c <command> when a command override is given', () => {
+    const args = buildSidecarDockerArgs({ ...SIDE, command: 'node server.js' }, 'sidecar-abc');
+    const sep = args.indexOf('--');
+    expect(args.slice(sep + 1)).toEqual(['node:24-alpine', 'sh', '-c', 'node server.js']);
+  });
+
+  it('rejects an out-of-range port', () => {
+    expect(() => buildSidecarDockerArgs({ ...SIDE, port: 0 }, 'name')).toThrow(
+      /Invalid sidecar port/
+    );
+    expect(() => buildSidecarDockerArgs({ ...SIDE, port: 70000 }, 'name')).toThrow(
+      /Invalid sidecar port/
+    );
   });
 });

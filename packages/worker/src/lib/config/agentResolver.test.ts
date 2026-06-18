@@ -186,4 +186,45 @@ describe('resolveAgent — scope cascade', () => {
     const r = await resolveAgent('reviewer', { teamId: 't1' });
     expect(r.version).toBe(7);
   });
+
+  it('prefers an ORGANIZATION row over GLOBAL when no TEAM row exists (P5)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      if (args.where.scope === 'TEAM') {
+        return null;
+      }
+      if (args.where.scope === 'ORGANIZATION') {
+        return agentRow({ orgId: 'o1', scope: 'ORGANIZATION', version: 5 });
+      }
+      return agentRow();
+    });
+    const r = await resolveAgent('reviewer', { orgId: 'o1', teamId: 't1' });
+    expect(r.model.scope).toBe('ORGANIZATION');
+    expect(r.version).toBe(5);
+  });
+
+  it('TEAM wins over ORGANIZATION which wins over GLOBAL (P5)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) => {
+      if (args.where.scope === 'TEAM') {
+        return agentRow({ scope: 'TEAM', version: 9 });
+      }
+      if (args.where.scope === 'ORGANIZATION') {
+        return agentRow({ orgId: 'o1', scope: 'ORGANIZATION', version: 5 });
+      }
+      return agentRow();
+    });
+    const r = await resolveAgent('reviewer', { orgId: 'o1', teamId: 't1' });
+    expect(r.version).toBe(9); // TEAM is most specific
+  });
+
+  it('falls through ORGANIZATION to GLOBAL when no org row exists (P5)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.scope === 'GLOBAL' ? agentRow({ version: 1 }) : null
+    );
+    const r = await resolveAgent('reviewer', { orgId: 'o1', teamId: 't1' });
+    expect(r.model.scope).toBe('GLOBAL');
+    expect(r.version).toBe(1);
+  });
 });

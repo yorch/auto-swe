@@ -15,22 +15,26 @@ export class ConfigMissingError extends Error {
 }
 
 /// Look up the credential for a provider at the given scope. Cascade is
-/// TEAM → GLOBAL (templates intentionally don't have their own credentials —
-/// they reference an existing one). Throws `ConfigMissingError` when no
+/// TEAM → ORGANIZATION → GLOBAL (templates intentionally don't have their own
+/// credentials — they reference an existing one). The ORGANIZATION tier only
+/// fires when `ctx.orgId` is present. Throws `ConfigMissingError` when no
 /// credential exists for the provider.
 export async function resolveProviderCredential(
   provider: string,
   ctx?: ResolveCtx
 ): Promise<{ apiBase?: string; apiKey: string }> {
-  const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}`;
+  const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}`;
   const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
     resolveProviderCredentialUncached(provider, ctx)
   );
-  // When a team-scoped request fell through to the GLOBAL row, we cached
-  // the GLOBAL credential under the team's cache key. That would mask a
-  // subsequent TEAM-scope insert for the full TTL — bust the cache now so
-  // the next call re-queries and picks up the new row.
-  if (ctx?.teamId && resolved._scope === 'GLOBAL') {
+  // When a more-specific request fell through to a less-specific scope, we
+  // cached the broader credential under the narrower cache key. That would mask
+  // a subsequent narrower insert for the full TTL — bust the cache now so the
+  // next call re-queries and picks up the new row. (A TEAM request that landed
+  // on ORG or GLOBAL, or an ORG request that landed on GLOBAL.)
+  const fellThrough =
+    (ctx?.teamId && resolved._scope !== 'TEAM') || (ctx?.orgId && resolved._scope === 'GLOBAL');
+  if (fellThrough) {
     invalidate(cacheKey);
   }
   return { apiBase: resolved.apiBase, apiKey: resolved.apiKey };
@@ -40,8 +44,8 @@ interface ResolvedCredentialInternal {
   apiKey: string;
   apiBase?: string;
   /// Which scope the row came from — used by the wrapper above to detect
-  /// cross-scope GLOBAL fallback. Not exposed to callers.
-  _scope: 'TEAM' | 'GLOBAL';
+  /// cross-scope fallback. Not exposed to callers.
+  _scope: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
 }
 
 async function resolveProviderCredentialUncached(
@@ -55,6 +59,15 @@ async function resolveProviderCredentialUncached(
     if (row) {
       const decrypted = decryptRow(row);
       return { _scope: 'TEAM', apiBase: decrypted.apiBase, apiKey: decrypted.apiKey };
+    }
+  }
+  if (ctx?.orgId) {
+    const row = await prisma.providerCredential.findFirst({
+      where: { orgId: ctx.orgId, provider, scope: 'ORGANIZATION' },
+    });
+    if (row) {
+      const decrypted = decryptRow(row);
+      return { _scope: 'ORGANIZATION', apiBase: decrypted.apiBase, apiKey: decrypted.apiKey };
     }
   }
   const globalRow = await prisma.providerCredential.findFirst({

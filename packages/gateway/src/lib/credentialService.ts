@@ -19,8 +19,9 @@ export type ProviderCredentialRow = NonNullable<
 export function redactCredential(row: {
   id: string;
   provider: string;
-  scope: 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
   teamId: string | null;
+  orgId: string | null;
   apiBase: string | null;
   lastFour: string;
   keyVersion: number;
@@ -36,6 +37,7 @@ export function redactCredential(row: {
     keyVersion: row.keyVersion,
     lastFour: row.lastFour,
     maskedKey: `****${row.lastFour}`,
+    orgId: row.orgId,
     provider: row.provider,
     scope: row.scope,
     teamId: row.teamId,
@@ -205,8 +207,9 @@ export type CreateCredentialInput = {
   apiBase?: string | null;
   apiKey: string;
   provider: string;
-  scope: 'GLOBAL' | 'TEAM';
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
   teamId?: string | null;
+  orgId?: string | null;
 };
 
 export type CreateCredentialResult =
@@ -214,17 +217,18 @@ export type CreateCredentialResult =
   | { outcome: 'conflict_race' }
   | { outcome: 'created'; credential: ProviderCredentialRow };
 
-/// Creates a provider credential at GLOBAL or TEAM scope. Pre-flight checks
-/// for an existing row at the same (provider, scope, teamId) key, then
-/// catches the P2002 from a lost create race so both surface as a conflict
-/// rather than a 500. Used by the admin and team-scoped routes alike.
+/// Creates a provider credential at GLOBAL, ORGANIZATION, or TEAM scope.
+/// Pre-flight checks for an existing row at the same (provider, scope, key)
+/// tuple, then catches the P2002 from a lost create race so both surface as a
+/// conflict rather than a 500. Used by the admin and team-scoped routes alike.
 export async function createCredential(
   prisma: PrismaClient,
   input: CreateCredentialInput
 ): Promise<CreateCredentialResult> {
   const teamId = input.scope === 'TEAM' ? (input.teamId ?? null) : null;
+  const orgId = input.scope === 'ORGANIZATION' ? (input.orgId ?? null) : null;
   const existing = await prisma.providerCredential.findFirst({
-    where: { provider: input.provider, scope: input.scope, teamId },
+    where: { orgId, provider: input.provider, scope: input.scope, teamId },
   });
   if (existing) {
     return { existingId: existing.id, outcome: 'conflict' };
@@ -241,6 +245,7 @@ export async function createCredential(
         createdById: input.actorId,
         keyVersion: sealed.keyVersion,
         lastFour: sealed.lastFour,
+        orgId,
         provider: input.provider,
         scope: input.scope,
         teamId,

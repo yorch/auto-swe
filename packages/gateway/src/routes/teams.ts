@@ -9,6 +9,8 @@ import { teamScopedConfigRoutes } from './modelConfig.js';
 const CreateTeamSchema = z.object({
   description: z.string().max(500).default(''),
   name: z.string().min(1).max(100),
+  /** P5: owning organization. Defaults to the 'default' org when omitted. */
+  orgId: z.string().uuid().optional(),
   slug: z
     .string()
     .min(1)
@@ -49,7 +51,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: CreateTeamSchema },
     },
     async (request, reply) => {
-      const { name, slug, description } = request.body;
+      const { name, slug, description, orgId } = request.body;
 
       const existing = await fastify.prisma.team.findFirst({
         where: { OR: [{ name }, { slug }] },
@@ -60,8 +62,22 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // P5: every team nests under an organization. Use the requested org, else
+      // fall back to the seeded 'default' org so single-tenant flows still work.
+      const org = orgId
+        ? await fastify.prisma.organization.findUnique({ where: { id: orgId } })
+        : await fastify.prisma.organization.findUnique({ where: { slug: 'default' } });
+      if (!org) {
+        return reply.status(400).send({
+          error: {
+            code: 'ORG_NOT_FOUND',
+            message: orgId ? `Organization ${orgId} not found` : 'No default organization exists',
+          },
+        });
+      }
+
       const team = await fastify.prisma.team.create({
-        data: { description, name, slug },
+        data: { description, name, orgId: org.id, slug },
       });
 
       return reply.status(201).send({ data: team });

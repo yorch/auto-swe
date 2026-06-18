@@ -24,6 +24,8 @@ function newMockPrisma() {
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
+    // P5: org-scoped agent creation validates the org exists via this lookup.
+    organization: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },

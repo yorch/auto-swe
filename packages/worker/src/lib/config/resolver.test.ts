@@ -76,6 +76,30 @@ describe('resolveProviderCredential', () => {
     expect(r.apiKey).toBe('sk-global');
   });
 
+  it('prefers an ORGANIZATION credential over GLOBAL when no team row exists (P5)', async () => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+      if (args.where.scope === 'ORGANIZATION') {
+        return credRow('sk-org');
+      }
+      if (args.where.scope === 'GLOBAL') {
+        return credRow('sk-global');
+      }
+      return null;
+    });
+
+    const r = await resolveProviderCredential('anthropic', { orgId: 'o1', teamId: 't1' });
+    expect(r.apiKey).toBe('sk-org');
+  });
+
+  it('cascades TEAM → ORGANIZATION → GLOBAL (P5)', async () => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === 'GLOBAL' ? credRow('sk-global') : null
+    );
+
+    const r = await resolveProviderCredential('anthropic', { orgId: 'o1', teamId: 't1' });
+    expect(r.apiKey).toBe('sk-global');
+  });
+
   it('throws ConfigMissingError when neither scope has the credential', async () => {
     credFindFirstMock.mockResolvedValue(null);
 

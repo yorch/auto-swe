@@ -80,7 +80,7 @@ Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
-| `packages/cli`     | `auto-swe` CLI (workflows list/show/export/import)   | ESM Node 24+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API                                                              |
+| `packages/cli`     | `auto-swe` CLI (workflows, runs, tokens; `bundle` local authoring + `bundles` distribution) | ESM Node 24+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. **`bundle init/validate/sign`** is token-free local authoring over `@auto-swe/sdk` (P5); **`bundles list/export/install/install-from-url`** hits `/api/v1/admin/bundles` (P5) |
 | `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK (P4/WS5)      | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` (schema + hash harness) |
 
 Top-level files that matter:
@@ -211,10 +211,11 @@ Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admi
 
 **Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
 
-**Scope cascade** for skills and tool configs follows the same 3-level pattern as model config:
+**Scope cascade** for skills and tool configs follows the same 4-level pattern as model config (P5 added the `ORGANIZATION` tier between `TEAM` and `GLOBAL`):
 1. `WORKFLOW_TEMPLATE` scope (if the run's template has an override)
 2. `TEAM` scope (if the team has an override)
-3. `GLOBAL` scope (system-wide; built-in skills are seeded here)
+3. `ORGANIZATION` scope (P5; if the run's team belongs to an org with an override — `ctx.orgId` is derived transitively from `Team.orgId`)
+4. `GLOBAL` scope (system-wide; built-in skills are seeded here)
 
 Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` from `@auto-swe/shared/agentKeys`), `packages/worker/src/lib/config/resolver.ts` (`resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay; surfaces `mcpConnectionId`), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/lib/config/mcpConnection.ts` (`mcpUrlForConnection`, `resolveAgentMcpUrl` — P2/WS3), `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
 
@@ -253,9 +254,10 @@ Model selection and provider credentials are fully DB-driven. Per-agent **model 
 
 1. `WORKFLOW_TEMPLATE` row matching the run's template ID, if any
 2. `TEAM` row matching the work request's team, if any
-3. `GLOBAL` row (system-wide default — required for every role)
+3. `ORGANIZATION` row matching the team's owning org, if any (P5; `ctx.orgId` derived from `Team.orgId`)
+4. `GLOBAL` row (system-wide default — required for every role)
 
-No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker boot's `assertConfigReady()` walks every required row before the Temporal poller starts.
+No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker boot's `assertConfigReady()` walks every required row before the Temporal poller starts. The `ORGANIZATION` tier is consulted only when the run's team belongs to an org, so deployments that never create orgs behave exactly as the 3-level cascade did.
 
 **Bootstrap flow** (fresh deployment):
 
