@@ -247,142 +247,151 @@ export async function installBundle(
   const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
 
-  // Skills first — agents reference them by name.
-  for (const s of manifest.entities.skills) {
-    const existing = await prisma.skill.findFirst({ where: { name: s.name } });
-    if (existing) {
-      await prisma.skill.update({
-        data: { description: s.description ?? null, origin, promptText: s.promptText },
-        where: { id: existing.id },
-      });
-    } else {
-      await prisma.skill.create({
-        data: {
-          description: s.description ?? null,
-          isBuiltIn: true,
-          // Never trust the bundle's verification flag — installed content starts
-          // UNVERIFIED; verification is a local human step regardless of trust state.
-          isVerified: false,
-          name: s.name,
-          origin,
-          promptText: s.promptText,
-        },
-      });
-    }
-    counts.skills++;
-  }
-
-  for (const p of manifest.entities.scannerPatterns) {
-    await prisma.scannerPattern.upsert({
-      create: {
-        flags: p.flags ?? '',
-        isBuiltIn: true,
-        label: p.label,
-        origin,
-        pattern: p.pattern,
-        type: p.type,
-      },
-      update: { flags: p.flags ?? '', origin, pattern: p.pattern, type: p.type },
-      where: { label: p.label },
-    });
-    counts.scannerPatterns++;
-  }
-
-  for (const a of manifest.entities.agents) {
-    const base = {
-      description: a.description ?? null,
-      inheritsModelFrom: a.inheritsModelFrom ?? null,
-      modelSpec: a.modelSpec ?? null,
-      name: a.name,
-      origin,
-      systemPrompt: a.systemPrompt ?? null,
-      // DbNull (not undefined) so a re-install clears a stale toolKeys override
-      // rather than leaving the prior value on the managed base-layer row.
-      toolKeys: a.toolKeys ?? Prisma.DbNull,
-    };
-    const existing = await prisma.agent.findFirst({
-      where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
-    });
-    const agent = existing
-      ? await prisma.agent.update({ data: base, where: { id: existing.id } })
-      : await prisma.agent.create({
-          data: {
-            ...base,
-            isBuiltIn: true,
-            // Bundle's verification flag is not trusted (see skills above).
-            isVerified: false,
-            key: a.key,
-            scope: 'GLOBAL',
-            version: 1,
-          },
-        });
-    // Reconcile skill refs from the bundle (clear + recreate by skill name).
-    await prisma.agentSkillRef.deleteMany({ where: { agentId: agent.id } });
-    for (const ref of a.skills ?? []) {
-      const skill = await prisma.skill.findFirst({ where: { name: ref.skill } });
-      if (skill) {
-        await prisma.agentSkillRef.create({
-          data: { agentId: agent.id, skillId: skill.id, sortOrder: ref.sortOrder ?? 0 },
-        });
+  // Atomic: seed all entities + record the registry row in one transaction, so a
+  // mid-install failure rolls back rather than leaving a half-applied base layer.
+  // Generous timeout — a large bundle is many sequential writes.
+  await prisma.$transaction(
+    async (tx) => {
+      // Skills first — agents reference them by name.
+      for (const s of manifest.entities.skills) {
+        const existing = await tx.skill.findFirst({ where: { name: s.name } });
+        if (existing) {
+          await tx.skill.update({
+            data: { description: s.description ?? null, origin, promptText: s.promptText },
+            where: { id: existing.id },
+          });
+        } else {
+          await tx.skill.create({
+            data: {
+              description: s.description ?? null,
+              isBuiltIn: true,
+              // Never trust the bundle's verification flag — installed content starts
+              // UNVERIFIED; verification is a local human step regardless of trust state.
+              isVerified: false,
+              name: s.name,
+              origin,
+              promptText: s.promptText,
+            },
+          });
+        }
+        counts.skills++;
       }
-    }
-    counts.agents++;
-  }
 
-  for (const t of manifest.entities.templates) {
-    const existing = await prisma.workflowTemplate.findFirst({
-      where: { name: t.name, teamId: null },
-    });
-    const tpl = existing
-      ? await prisma.workflowTemplate.update({
-          data: {
-            activeVersion: 1,
-            ...(t.inputSchema ? { inputSchema: t.inputSchema as object } : {}),
+      for (const p of manifest.entities.scannerPatterns) {
+        await tx.scannerPattern.upsert({
+          create: {
+            flags: p.flags ?? '',
+            isBuiltIn: true,
+            label: p.label,
             origin,
-            status: 'ACTIVE',
+            pattern: p.pattern,
+            type: p.type,
           },
-          where: { id: existing.id },
-        })
-      : await prisma.workflowTemplate.create({
-          data: {
-            activeVersion: 1,
-            description: t.description ?? '',
-            ...(t.inputSchema ? { inputSchema: t.inputSchema as object } : {}),
-            name: t.name,
-            origin,
-            status: 'ACTIVE',
-            teamId: null,
-          },
+          update: { flags: p.flags ?? '', origin, pattern: p.pattern, type: p.type },
+          where: { label: p.label },
         });
-    await prisma.workflowTemplateVersion.upsert({
-      create: { spec: t.spec as object, templateId: tpl.id, version: 1 },
-      update: { spec: t.spec as object },
-      where: { templateId_version: { templateId: tpl.id, version: 1 } },
-    });
-    counts.templates++;
-  }
+        counts.scannerPatterns++;
+      }
 
-  // Record / upsert the install in the registry (one row per bundle name).
-  await prisma.installedBundle.upsert({
-    create: {
-      contentHash: manifest.metadata.contentHash,
-      installedById: opts.installedById ?? null,
-      name: manifest.metadata.name,
-      signedBy: trust.signedBy,
-      source: manifest.metadata.source ?? null,
-      trustState,
-      version: manifest.metadata.version,
+      for (const a of manifest.entities.agents) {
+        const base = {
+          description: a.description ?? null,
+          inheritsModelFrom: a.inheritsModelFrom ?? null,
+          modelSpec: a.modelSpec ?? null,
+          name: a.name,
+          origin,
+          systemPrompt: a.systemPrompt ?? null,
+          // DbNull (not undefined) so a re-install clears a stale toolKeys override
+          // rather than leaving the prior value on the managed base-layer row.
+          toolKeys: a.toolKeys ?? Prisma.DbNull,
+        };
+        const existing = await tx.agent.findFirst({
+          where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+        });
+        const agent = existing
+          ? await tx.agent.update({ data: base, where: { id: existing.id } })
+          : await tx.agent.create({
+              data: {
+                ...base,
+                isBuiltIn: true,
+                // Bundle's verification flag is not trusted (see skills above).
+                isVerified: false,
+                key: a.key,
+                scope: 'GLOBAL',
+                version: 1,
+              },
+            });
+        // Reconcile skill refs from the bundle (clear + recreate by skill name).
+        await tx.agentSkillRef.deleteMany({ where: { agentId: agent.id } });
+        for (const ref of a.skills ?? []) {
+          const skill = await tx.skill.findFirst({ where: { name: ref.skill } });
+          if (skill) {
+            await tx.agentSkillRef.create({
+              data: { agentId: agent.id, skillId: skill.id, sortOrder: ref.sortOrder ?? 0 },
+            });
+          }
+        }
+        counts.agents++;
+      }
+
+      for (const t of manifest.entities.templates) {
+        const existing = await tx.workflowTemplate.findFirst({
+          where: { name: t.name, teamId: null },
+        });
+        const tpl = existing
+          ? await tx.workflowTemplate.update({
+              data: {
+                activeVersion: 1,
+                ...(t.inputSchema ? { inputSchema: t.inputSchema as object } : {}),
+                origin,
+                status: 'ACTIVE',
+              },
+              where: { id: existing.id },
+            })
+          : await tx.workflowTemplate.create({
+              data: {
+                activeVersion: 1,
+                description: t.description ?? '',
+                ...(t.inputSchema ? { inputSchema: t.inputSchema as object } : {}),
+                name: t.name,
+                origin,
+                status: 'ACTIVE',
+                teamId: null,
+              },
+            });
+        await tx.workflowTemplateVersion.upsert({
+          create: { spec: t.spec as object, templateId: tpl.id, version: 1 },
+          update: { spec: t.spec as object },
+          where: { templateId_version: { templateId: tpl.id, version: 1 } },
+        });
+        counts.templates++;
+      }
+
+      // Record the install in the registry inside the same transaction (one row
+      // per bundle name) — a rolled-back install leaves no registry row.
+      await tx.installedBundle.upsert({
+        create: {
+          contentHash: manifest.metadata.contentHash,
+          installedById: opts.installedById ?? null,
+          name: manifest.metadata.name,
+          signedBy: trust.signedBy,
+          source: manifest.metadata.source ?? null,
+          trustState,
+          version: manifest.metadata.version,
+        },
+        update: {
+          contentHash: manifest.metadata.contentHash,
+          installedById: opts.installedById ?? null,
+          signedBy: trust.signedBy,
+          source: manifest.metadata.source ?? null,
+          trustState,
+          version: manifest.metadata.version,
+        },
+        where: { name: manifest.metadata.name },
+      });
     },
-    update: {
-      contentHash: manifest.metadata.contentHash,
-      installedById: opts.installedById ?? null,
-      signedBy: trust.signedBy,
-      source: manifest.metadata.source ?? null,
-      trustState,
-      version: manifest.metadata.version,
-    },
-    where: { name: manifest.metadata.name },
-  });
+    { maxWait: 10_000, timeout: 120_000 }
+  );
 
   return { counts, signedBy: trust.signedBy, trustState, warnings: [] };
 }

@@ -84,7 +84,10 @@ describe('installBundle', () => {
   let prisma: ReturnType<typeof newPrisma>;
 
   function newPrisma() {
-    return {
+    const client = {
+      // installBundle wraps all writes in a transaction; the callback receives a
+      // tx client — feed it this same mock so the per-model spies still capture calls.
+      $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(client)),
       agent: {
         create: vi.fn().mockResolvedValue({ id: 'a1' }),
         findFirst: vi.fn().mockResolvedValue(null),
@@ -105,6 +108,7 @@ describe('installBundle', () => {
       },
       workflowTemplateVersion: { upsert: vi.fn() },
     };
+    return client;
   }
 
   beforeEach(() => {

@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bundleRoutes } from './bundles.js';
 
 function newMockPrisma() {
-  return {
+  const client = {
+    // installBundle wraps its writes in a transaction; hand the callback this mock.
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(client)),
     agent: { findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     installedBundle: {
@@ -26,6 +28,7 @@ function newMockPrisma() {
     skill: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   };
+  return client;
 }
 
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
