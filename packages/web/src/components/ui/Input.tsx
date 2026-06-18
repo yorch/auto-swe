@@ -14,7 +14,7 @@ export function Input({ label, hint, error, className, id, ...props }: InputProp
     <FieldWrapper error={error} hint={hint} id={inputId} label={label}>
       <input
         className={cn(
-          'h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
+          'h-10 w-full rounded-[9px] border border-ink-400 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
           'focus:border-ember-400 focus:bg-ink-900/80',
           'placeholder:text-paper-600',
           error && 'border-brick-400 focus:border-brick-400',

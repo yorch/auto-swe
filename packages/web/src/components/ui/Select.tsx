@@ -24,12 +24,13 @@ export function Select({ label, hint, error, className, id, children, ...props }
       aria-describedby={describedBy}
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-10 w-full rounded-sm border border-ink-500 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
+        'h-10 w-full border border-ink-400 bg-ink-900/60 px-3 text-sm text-paper-100 outline-none transition-colors',
         'focus:border-ember-400 focus:bg-ink-900/80',
         error && 'border-brick-400 focus:border-brick-400',
         className
       )}
       id={selectId}
+      style={{ borderRadius: 9 }}
       {...props}
     >
       {children}

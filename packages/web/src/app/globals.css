@@ -6,57 +6,57 @@
 @source '../../src/components/**/*.{ts,tsx}';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Design tokens — "Flight Telemetry Console"
-   Near-black neutral charcoal · coral accent · Bodoni serif · IBM Plex Mono
+   Design tokens — "Conductor Platform"
+   Deep navy/indigo backgrounds · violet+teal accent · Inter sans · IBM Plex Mono
    ──────────────────────────────────────────────────────────────────────── */
 @theme {
-  /* Ink / surface ramp — neutral charcoal, near-black */
-  --color-ink-950: #0c0e12; /* panel, deepest */
-  --color-ink-900: #0d0e10; /* bg-2, recessed rails, code blocks */
-  --color-ink-800: #131417; /* bg, page ground */
-  --color-ink-700: #0e1014; /* panel-2, slightly cooler than bg */
-  --color-ink-600: #1c1d20; /* surface, raised / selected rows */
-  --color-ink-500: #232427; /* surface-2 */
-  --color-ink-400: #2e3035; /* line-2, stronger borders */
-  --color-ink-300: #42454d; /* strong dividers */
+  /* Ink / surface ramp — deep navy/indigo */
+  --color-ink-950: #0a0c12; /* panel, deepest */
+  --color-ink-900: #0e111a; /* bg-2, recessed rails, code blocks */
+  --color-ink-800: #0c0f17; /* bg, page ground */
+  --color-ink-700: #141926; /* panel-2, slightly cooler than bg */
+  --color-ink-600: #1a2030; /* surface, raised / selected rows */
+  --color-ink-500: #212940; /* surface-2 */
+  --color-ink-400: #232b40; /* line-2, stronger borders */
+  --color-ink-300: #33405e; /* strong dividers */
 
-  /* Text scale — cool neutral */
-  --color-paper-50: #e9eaee; /* primary ink */
-  --color-paper-100: #e9eaee;
-  --color-paper-200: #e9eaee; /* main body text */
-  --color-paper-300: #adafb6; /* secondary */
-  --color-paper-400: #adafb6; /* secondary / body */
-  --color-paper-500: #81848c; /* labels / muted */
-  --color-paper-600: #565960; /* faint / numerals / captions */
+  /* Text scale — cool blue-grey neutral */
+  --color-paper-50: #eef1f7; /* primary ink */
+  --color-paper-100: #eef1f7;
+  --color-paper-200: #eef1f7; /* main body text */
+  --color-paper-300: #aeb6c9; /* secondary */
+  --color-paper-400: #aeb6c9; /* secondary / body */
+  --color-paper-500: #6f7990; /* labels / muted */
+  --color-paper-600: #4b5568; /* faint / numerals / captions */
 
-  /* Accent — coral, single warm accent */
-  --color-ember-50: oklch(0.95 0.02 28); /* near-white tint */
-  --color-ember-100: oklch(0.87 0.07 28);
-  --color-ember-200: oklch(0.82 0.11 28);
-  --color-ember-300: oklch(0.77 0.155 28); /* accent-bright */
-  --color-ember-400: oklch(0.7 0.145 28); /* accent */
-  --color-ember-500: oklch(0.62 0.14 28);
-  --color-ember-600: oklch(0.52 0.12 28);
-  --color-ember-700: oklch(0.42 0.1 28);
+  /* Accent — violet, primary accent */
+  --color-ember-50: #f0eeff; /* violet tint near-white */
+  --color-ember-100: #d8d4ff; /* violet light */
+  --color-ember-200: #b5afff; /* violet mid */
+  --color-ember-300: #9b8fff; /* violet-soft */
+  --color-ember-400: #7c6cff; /* violet — PRIMARY ACCENT */
+  --color-ember-500: #6a5bff; /* violet-deep */
+  --color-ember-600: #5244cc; /* violet-darker */
+  --color-ember-700: #3c3199; /* violet darkest */
 
   /* Status — used for badges, graph nodes, timing bars */
-  --color-moss-400: oklch(0.72 0.1 150); /* passed / ok */
-  --color-moss-600: oklch(0.52 0.08 150);
-  --color-amber-400: oklch(0.78 0.11 80); /* events / suggested-fix hints */
-  --color-amber-600: oklch(0.58 0.09 80);
-  --color-brick-400: oklch(0.64 0.17 28); /* failed / timeout */
-  --color-brick-600: oklch(0.46 0.13 28);
-  --color-dust-400: oklch(0.66 0.11 235); /* running / LLM turn (blue) */
-  --color-dust-600: oklch(0.46 0.09 235);
-  --color-violet-400: oklch(0.66 0.1 290); /* in-review */
-  --color-violet-600: oklch(0.46 0.08 290);
+  --color-moss-400: #46d28a; /* passed / ok */
+  --color-moss-600: #2a9062;
+  --color-amber-400: #f6b545; /* events / suggested-fix hints */
+  --color-amber-600: #c48a18;
+  --color-brick-400: #ff7a7a; /* failed / timeout */
+  --color-brick-600: #cc4040;
+  --color-dust-400: #4d8dff; /* running / LLM turn (blue) */
+  --color-dust-600: #2d6acc;
+  --color-violet-400: #34d8c0; /* in-review — teal secondary accent */
+  --color-violet-600: #1aa88f;
 
   /* Type stack — three families only */
-  --font-display: 'Bodoni Moda', Georgia, serif;
-  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
 
-  /* Border radius — tiny; nothing pill-shaped except status dots */
+  /* Border radius */
   --radius-none: 0;
   --radius-xs: 1px;
   --radius-sm: 2px;
@@ -95,31 +95,28 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Atmosphere: faint accent glow at top. Film grain is a fixed overlay element
-     added in layout.tsx so it composites above all content. */
+  /* Atmosphere: violet+teal glow at top corners. */
   body {
-    background-image: radial-gradient(
-      ellipse 80% 60% at 50% -10%,
-      oklch(0.7 0.145 28 / 0.07),
-      transparent 60%
-    );
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(124, 108, 255, 0.16), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(52, 216, 192, 0.1), transparent 55%);
     background-repeat: no-repeat;
     background-attachment: fixed;
   }
 
-  /* Display serif for headlines only */
+  /* Sans-serif for all headlines */
   h1,
   h2,
   h3 {
-    font-family: var(--font-display);
-    font-weight: 500;
+    font-family: var(--font-sans);
+    font-weight: 650;
     letter-spacing: -0.01em;
   }
 
-  /* Selection uses accent-dim */
+  /* Selection uses violet-dim */
   ::selection {
     color: var(--color-ink-950);
-    background: oklch(0.7 0.145 28 / 0.35);
+    background: rgba(124, 108, 255, 0.35);
   }
 
   /* Form elements */
@@ -168,7 +165,7 @@
   .kicker {
     font-family: var(--font-mono);
     font-size: 10.5px;
-    color: var(--color-paper-500);
+    color: var(--color-ember-400);
     text-transform: uppercase;
     letter-spacing: 0.22em;
   }
@@ -268,7 +265,7 @@
   /* Brief accent-dim flash — spotlights a just-arrived row */
   @keyframes hl {
     0% {
-      background-color: oklch(0.7 0.145 28 / 0.14);
+      background-color: rgba(124, 108, 255, 0.14);
     }
     100% {
       background-color: transparent;
@@ -303,10 +300,10 @@
   @keyframes halo-pulse {
     0%,
     100% {
-      box-shadow: 0 0 0 2px oklch(0.64 0.17 28 / 0.5);
+      box-shadow: 0 0 0 2px rgba(255, 122, 122, 0.5);
     }
     50% {
-      box-shadow: 0 0 0 6px oklch(0.64 0.17 28 / 0.15);
+      box-shadow: 0 0 0 6px rgba(255, 122, 122, 0.15);
     }
   }
   .halo-pulse {
@@ -315,11 +312,11 @@
 
   /* Diagonal hatch fill for failed waterfall bars */
   .hatch-fail {
-    background-color: oklch(0.64 0.17 28 / 0.15);
+    background-color: rgba(255, 122, 122, 0.15);
     background-image: repeating-linear-gradient(
       -45deg,
-      oklch(0.64 0.17 28 / 0.25) 0px,
-      oklch(0.64 0.17 28 / 0.25) 2px,
+      rgba(255, 122, 122, 0.25) 0px,
+      rgba(255, 122, 122, 0.25) 2px,
       transparent 2px,
       transparent 8px
     );
@@ -327,7 +324,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   React Flow theme overrides — dark surface, coral accents.
+   React Flow theme overrides — dark surface, violet accents.
    ──────────────────────────────────────────────────────────────────────── */
 .react-flow__controls {
   background: var(--color-ink-700);

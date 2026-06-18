@@ -8,11 +8,10 @@ export function StatusBadge({ status, showDot = true }: { status: string; showDo
     <span
       className={cn('inline-flex items-center gap-1.5 border px-1.5 py-0.5', meta.classes)}
       style={{
-        borderRadius: '2px',
+        borderRadius: '6px',
         fontFamily: 'var(--font-mono)',
-        fontSize: '9.5px',
-        letterSpacing: '0.14em',
-        textTransform: 'uppercase',
+        fontSize: '11.5px',
+        letterSpacing: '0.06em',
       }}
     >
       {showDot && (

@@ -17,11 +17,11 @@ export function PageHeader({
     <header className={cn('mb-10 flex items-end justify-between gap-6', className)}>
       <div className="min-w-0">
         {chapter && (
-          <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.24em] text-paper-500">
+          <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
             {chapter}
           </div>
         )}
-        <h1 className="font-display text-[44px] font-light leading-[1.05] tracking-tight text-paper-50">
+        <h1 className="text-[32px] font-bold leading-tight tracking-tight text-paper-50">
           {title}
         </h1>
         {subtitle && (
@@ -59,7 +59,7 @@ export function SectionHeader({
             {number}
           </span>
         )}
-        <h2 className="font-display text-xl font-medium tracking-tight text-paper-100">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-paper-100">{title}</h2>
         {hint && (
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
             {hint}

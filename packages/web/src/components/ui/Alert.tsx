@@ -24,7 +24,8 @@ export function Alert({
   return (
     <div
       className={cn(
-        'rounded-sm border px-3 py-2 font-mono text-[11px] uppercase tracking-wider',
+        'border px-3 py-2.5 text-sm',
+        'rounded-[9px]',
         VARIANT_CLASSES[variant],
         className
       )}

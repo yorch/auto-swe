@@ -38,9 +38,10 @@ export function Modal({
 
   return (
     <dialog
-      className={`m-auto ${width} rounded-sm border border-ink-500 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/70`}
+      className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
       onClose={onClose}
       ref={dialogRef}
+      style={{ borderRadius: 14 }}
     >
       <div className="space-y-6 p-6">
         <header className="space-y-1">

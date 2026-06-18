@@ -26,7 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="h-screen overflow-hidden text-paper-200"
-      style={{ display: 'grid', gridTemplateColumns: '230px 1fr' }}
+      style={{ display: 'grid', gridTemplateColumns: '234px 1fr' }}
     >
       <Sidebar />
       <div className="flex flex-col overflow-hidden">
