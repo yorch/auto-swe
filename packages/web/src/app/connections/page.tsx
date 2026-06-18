@@ -3,6 +3,7 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
+import { connectionLabel } from '@/lib/connectionDisplay';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -35,12 +36,6 @@ function ConnectionTypeBadge({ type }: { type: string }) {
   );
 }
 
-function connectionTitle(r: RepositorySummary): string {
-  if (!r.type || r.type === 'git_repo') {
-    return `${r.organizationName ?? ''}/${r.repoName ?? ''}`;
-  }
-  return (r as RepositorySummary & { name?: string | null }).name ?? r.type;
-}
 
 export default function ConnectionsPage() {
   const { data: repos, isLoading } = useRepositories();
@@ -70,7 +65,7 @@ export default function ConnectionsPage() {
         {(repos ?? []).map((r) => (
           <Card key={r.id}>
             <div className="flex items-start justify-between gap-2">
-              <h3 className="min-w-0 truncate font-semibold">{connectionTitle(r)}</h3>
+              <h3 className="min-w-0 truncate font-semibold">{connectionLabel(r)}</h3>
               <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
             </div>
             <div className="mt-2 space-y-1 text-sm text-paper-400">

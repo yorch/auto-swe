@@ -18,6 +18,7 @@ const FIELD_TYPES: { label: string; value: InputFieldType }[] = [
 ];
 
 interface FieldDraft {
+  id: string;
   key: string;
   type: InputFieldType;
   description: string;
@@ -48,6 +49,7 @@ function propertyToDraft(key: string, prop: InputSchemaProperty, required: boole
     description: prop.description ?? '',
     enumValues: prop.enum ? prop.enum.join(', ') : '',
     format: prop.format === 'uuid' ? 'uuid' : '',
+    id: crypto.randomUUID(),
     itemType: prop.items?.type ?? 'string',
     key,
     required,
@@ -94,6 +96,7 @@ export function InputSchemaBuilder({
         description: '',
         enumValues: '',
         format: '',
+        id: crypto.randomUUID(),
         itemType: 'string',
         key: '',
         required: false,
@@ -118,9 +121,10 @@ export function InputSchemaBuilder({
         </p>
       )}
       {fields.map((f, i) => (
-        <div key={i} className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3">
+        <div key={f.id} className="space-y-3 rounded border border-ink-600 bg-ink-900 p-3">
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
             <Input
+              hint={!f.key.trim() ? 'Key required — this field will not be saved' : undefined}
               label="Field key"
               onChange={(e) => updateField(i, { key: e.target.value })}
               placeholder="ticketId"

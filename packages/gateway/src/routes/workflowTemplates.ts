@@ -174,10 +174,29 @@ const CreateTemplateBody = z.object({
   teamId: z.string().uuid().nullable().optional(),
 });
 
+const InputSchemaPropertyZ = z.object({
+  type: z.enum(['string', 'number', 'boolean', 'array']),
+  description: z.string().optional(),
+  enum: z.array(z.union([z.string(), z.number()])).optional(),
+  format: z.literal('uuid').optional(),
+  items: z
+    .object({ format: z.literal('uuid').optional(), type: z.enum(['string', 'number', 'boolean']) })
+    .optional(),
+});
+
+const InputSchemaBodyZ = z
+  .object({
+    properties: z.record(z.string(), InputSchemaPropertyZ),
+    required: z.array(z.string()).optional(),
+    type: z.literal('object'),
+  })
+  .nullable();
+
 const UpdateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
+  inputSchema: InputSchemaBodyZ.optional(),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -590,8 +609,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const { inputSchema, ...restBody } = request.body;
       const updated = await fastify.prisma.workflowTemplate.update({
-        data: request.body,
+        data: {
+          ...restBody,
+          ...(inputSchema !== undefined ? { inputSchema: inputSchema as object } : {}),
+        },
         include: TEMPLATE_INCLUDE,
         where: { id: existing.id },
       });

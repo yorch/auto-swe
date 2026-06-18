@@ -153,11 +153,13 @@ function EditSchemaModal({
 }) {
   const updateTemplate = useUpdateWorkflowTemplate(templateId);
   const [schema, setSchema] = useState<InputSchema | null>(initialSchema ?? null);
+  const [builderKey, setBuilderKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setSchema(initialSchema ?? null);
+      setBuilderKey((k) => k + 1);
       setError(null);
     }
   }, [open, initialSchema]);
@@ -183,7 +185,7 @@ function EditSchemaModal({
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
-        <InputSchemaBuilder onChange={setSchema} value={schema ?? undefined} />
+        <InputSchemaBuilder key={builderKey} onChange={setSchema} value={schema ?? undefined} />
         <div className="flex justify-end gap-2 border-t border-ink-600 pt-4">
           <Button onClick={onClose} variant="secondary">
             Cancel

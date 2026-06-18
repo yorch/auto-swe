@@ -2,6 +2,7 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useState } from 'react';
+import { connectionLabel } from '@/lib/connectionDisplay';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -17,13 +18,6 @@ const CONNECTION_TYPES = [
 ] as const;
 
 type ConnectionType = (typeof CONNECTION_TYPES)[number]['value'];
-
-function displayName(r: RepositorySummary): string {
-  if (r.type === 'git_repo' || !r.type) {
-    return `${r.organizationName ?? ''}/${r.repoName ?? ''}`;
-  }
-  return r.name ?? r.type;
-}
 
 export function ConnectionFormModal({
   open,
@@ -52,10 +46,9 @@ export function ConnectionFormModal({
 
   // generic / api_endpoint fields
   const [name, setName] = useState(initial?.name ?? '');
-  const [configJson, setConfigJson] = useState(() => {
-    const c = (initial as RepositorySummary & { config?: unknown })?.config;
-    return c ? JSON.stringify(c, null, 2) : '';
-  });
+  const [configJson, setConfigJson] = useState(() =>
+    initial?.config != null ? JSON.stringify(initial.config, null, 2) : ''
+  );
 
   // shared fields
   const [teamId, setTeamId] = useState(initial?.team?.id ?? '');
@@ -76,8 +69,7 @@ export function ConnectionFormModal({
     setExecutorImage(initial?.executorImage ?? '');
     setLanguage(initial?.language ?? '');
     setName(initial?.name ?? '');
-    const c = (initial as RepositorySummary & { config?: unknown })?.config;
-    setConfigJson(c ? JSON.stringify(c, null, 2) : '');
+    setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
     setDescription(initial?.description ?? '');
     setIsActive(initial?.isActive ?? true);
     setConsolidationEnabled(initial?.consolidationEnabled ?? true);
@@ -93,14 +85,20 @@ export function ConnectionFormModal({
     e.preventDefault();
     setError(null);
 
-    let parsedConfig: unknown = undefined;
+    let parsedConfig: Record<string, unknown> | null = null;
     if (connType !== 'git_repo' && configJson.trim()) {
+      let parsed: unknown;
       try {
-        parsedConfig = JSON.parse(configJson);
+        parsed = JSON.parse(configJson);
       } catch {
         setError('Config JSON is invalid');
         return;
       }
+      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+        setError('Config must be a JSON object (e.g. {"key": "value"})');
+        return;
+      }
+      parsedConfig = parsed as Record<string, unknown>;
     }
 
     try {
@@ -165,7 +163,7 @@ export function ConnectionFormModal({
           ? 'auto-swe clones this repo into an ephemeral Docker container per work request and opens pull requests back here.'
           : 'A named external system your workflows can target or reference.'
       }
-      title={isEdit ? displayName(initial!) : 'Add a connection'}
+      title={mode.kind === 'edit' ? connectionLabel(mode.repo) : 'Add a connection'}
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
         {!isEdit && (

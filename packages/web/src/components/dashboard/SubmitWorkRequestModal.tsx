@@ -26,7 +26,8 @@ export function SubmitWorkRequestModal({
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const { data: repos = [] } = useRepositories();
+  const { data: allRepos = [] } = useRepositories();
+  const repos = allRepos.filter((r) => !r.type || r.type === 'git_repo');
   const mutation = useCreateWorkRequest();
 
   const [externalTicketId, setExternalTicketId] = useState('');
