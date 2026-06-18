@@ -43,9 +43,13 @@ export async function createWorkspace(
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
-  // Start container — use '--' to separate docker flags from the image argument
+  // Start container — use '--' to separate docker flags from the image argument.
+  // Pin public DNS resolvers (Cloudflare + Google) so name resolution doesn't
+  // depend on Docker's embedded forwarder, which intermittently times out when
+  // the host's upstream DNS is briefly unreachable (e.g. VPN/hotspot/sleep) and
+  // breaks long-running git operations like clone/push mid-job.
   await execShellAsync(
-    `docker run -d --name ${containerName} -- ${shellQuote(image)} sleep infinity`,
+    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 -- ${shellQuote(image)} sleep infinity`,
     { heartbeatLabel: 'workspace: starting container' }
   );
 
