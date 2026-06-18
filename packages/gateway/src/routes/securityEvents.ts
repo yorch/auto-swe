@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth } from '../plugins/auth.js';
@@ -71,7 +70,7 @@ const ListQuery = z.object({
     .optional(),
 });
 
-export const securityEventRoutes: FastifyPluginAsync = fp(async (fastify) => {
+export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   app.get(
@@ -127,4 +126,4 @@ export const securityEventRoutes: FastifyPluginAsync = fp(async (fastify) => {
       return { data: events };
     }
   );
-});
+};

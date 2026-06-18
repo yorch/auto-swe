@@ -16,7 +16,7 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 
-type PatternType = 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY';
+type PatternType = 'INJECTION' | 'EXFILTRATION' | 'SHELL_COMMAND' | 'CODE_SECURITY' | 'SENSITIVE_FILE';
 
 type PatternForm = {
   flags: string;
@@ -37,6 +37,7 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
     { label: 'Exfiltration (skill content)', value: 'EXFILTRATION' },
     { label: 'Shell Command (bash tool)', value: 'SHELL_COMMAND' },
     { label: 'Code Security (diff review)', value: 'CODE_SECURITY' },
+    { label: 'Sensitive File (writeFile block)', value: 'SENSITIVE_FILE' },
   ];
   const [error, setError] = useState<string | null>(null);
   const create = useCreateScannerPattern();
@@ -257,6 +258,7 @@ export default function AdminScannerPage() {
   const exfiltration = patterns?.filter((p) => p.type === 'EXFILTRATION') ?? [];
   const shellCommand = patterns?.filter((p) => p.type === 'SHELL_COMMAND') ?? [];
   const codeSecurity = patterns?.filter((p) => p.type === 'CODE_SECURITY') ?? [];
+  const sensitiveFile = patterns?.filter((p) => p.type === 'SENSITIVE_FILE') ?? [];
 
   return (
     <div className="space-y-6">
@@ -297,6 +299,11 @@ export default function AdminScannerPage() {
             description="Checked against added lines in the final diff. Findings are advisory — passed to the security reviewer agent as structured context."
             patterns={codeSecurity}
             title="Code Security Patterns"
+          />
+          <PatternSection
+            description="Checked against file paths before each writeFile tool call. Matches are hard-blocked — the agent cannot write to the matched path."
+            patterns={sensitiveFile}
+            title="Sensitive File Patterns"
           />
         </>
       )}

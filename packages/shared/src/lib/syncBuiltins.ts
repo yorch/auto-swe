@@ -309,7 +309,8 @@ async function syncScannerPatterns(prisma: PrismaClient, group: 'core' | 'swe'):
         pattern: p.pattern,
         type: p.type,
       },
-      update: { flags: p.flags, isActive: true, origin, pattern: p.pattern, type: p.type },
+      // isActive intentionally omitted — preserve any admin disable decision.
+      update: { flags: p.flags, origin, pattern: p.pattern, type: p.type },
       where: { label: p.label },
     });
   }
