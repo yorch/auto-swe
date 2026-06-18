@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { runBundleCommand } from './commands/bundle.js';
+import { runBundlesCommand } from './commands/bundles.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runTokensCommand } from './commands/tokens.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
@@ -29,6 +31,14 @@ COMMANDS
   tokens create <name>                 Issue a long-lived API token (printed once)
   tokens revoke <id>                   Revoke a token
 
+  bundle init [dir]                    Scaffold a bundle authoring project (local, no token)
+  bundle validate <path>               Validate a bundle manifest (schema + content hash)
+  bundle sign <path> --key=<pem>       Attach a detached ed25519 signature
+  bundles list                         List installed bundles (admin token)
+  bundles export <name> <version>      Export GLOBAL content to a bundle file
+  bundles install <path>               Install a bundle from a file
+  bundles install-from-url <url>       Install a bundle from a URL
+
   help                                 Show this message
 
 ENVIRONMENT
@@ -48,6 +58,11 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
+  // `bundle` (singular) is local authoring — no gateway, no token. Dispatch it
+  // before resolving credentials so it works offline.
+  if (cmd === 'bundle') {
+    return await runBundleCommand(rest);
+  }
   let env: CliEnv;
   try {
     env = await loadCliEnv();
@@ -66,6 +81,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'tokens') {
     return await runTokensCommand(rest, env);
+  }
+  if (cmd === 'bundles') {
+    return await runBundlesCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;
