@@ -180,8 +180,8 @@ third-party coded capability) is **P4**.
 | **P1. Agent library** | ✅ Done | First-class `Agent` entity (consolidates model/skill/tool config); library UI + API; reference-by-key + inline; override cascade; versioning (pin/float) + prompt-edit security scan + RBAC. Supersedes `SkillOnlyRole`. |
 | **P2. Declarative agent node + MCP** | ✅ Done | `agent` node (WS1); `'mcp'` tool key (WS2); full MCP integration — first-class `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path (WS3); `mcp` workflow node (WS4); canvas palette + inspector for both new node types (WS5). The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | ✅ Done | `Connection` replaces `Repository` (slice 2); `MemoryItem` replaces `AgentLesson` (slice 1); template `inputSchema` + generic `RunInput` with submit-time validation (slice 3); config-driven trigger event→`RunInput` mappings (slice 4). SWE specializes via seed/config. Surface polish (generic `POST /runs`, live issues-webhook receiver, nullable `externalTicketId`) deferred — see `platform-pivot-p3.md`. |
-| **P4. Distribution layer** | 🔄 In progress (P4 branch) | Export/import versioned, dependency-aware bundles of library entities; cross-deployment install as a managed base layer; signature-based provenance/trust; third-party **capability** extension via container-contract coded steps; authoring SDK. All 5 work-streams (WS1–WS5) implemented — see [platform-pivot-p4.md](./platform-pivot-p4.md). |
-| **P5. UX layering + multi-org** | **Deferred (spec'd)** | Canvas palette polish for all node kinds; authoring SDK; true multi-tenancy on the `orgId` stub. |
+| **P4. Distribution layer** | ✅ Done | Export/import versioned, dependency-aware bundles of library entities; cross-deployment install as a managed base layer; signature-based provenance/trust; third-party **capability** extension via container-contract coded steps; authoring SDK. All 5 work-streams (WS1–WS5) — see [platform-pivot-p4.md](./platform-pivot-p4.md). |
+| **P5. UX layering + multi-org** | 🔄 In progress | **Multi-org foundation done** (first-class `Organization`; `ORGANIZATION` config scope; 4-level cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`) — billing, org-level RBAC, and row-level data isolation still deferred. **Authoring-SDK polish done** (`auto-swe bundle` local init/validate/sign + `auto-swe bundles` install/export). **Coded-step transports done** (containerStep NDJSON streaming + sidecar HTTP). Canvas palette polish for org scope still deferred. |
 
 ---
 
@@ -327,17 +327,23 @@ a goal. The P0–P3 libraries are designed export/import-friendly specifically s
 
 ---
 
-## P5 — UX layering + multi-org (DEFERRED — full spec)
+## P5 — UX layering + multi-org (IN PROGRESS)
 
 - **Canvas palette** for all node kinds (`agent`, `mcp`, coded step) with schema-aware inspectors;
-  library content drives a categorized palette.
-- **Authoring SDK polish:** scaffolding CLI, local dev-loop, publish flow.
+  library content drives a categorized palette. _(Org-scope palette polish still deferred.)_
+- **Authoring SDK polish:** scaffolding CLI, local dev-loop, publish flow. **Done** — `auto-swe
+  bundle init|validate|sign` (token-free, over `@auto-swe/sdk`) + `auto-swe bundles
+  list|export|install|install-from-url` (gateway-backed).
 - **Multi-org / true multi-tenancy:** promote the `orgId` stub to a first-class tenant boundary —
   org-scoped libraries, billing/budget, RBAC; today's team/global scopes nest under org (the
-  cascade becomes 4-level).
+  cascade becomes 4-level). **Foundation done:** first-class `Organization` model (every `Team`
+  nests under one), `ORGANIZATION` added to `ConfigScope`, and the agent + credential cascades are
+  now `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL` (the ORGANIZATION tier fires only when the
+  run's team has an org, so single-tenant behavior is unchanged). **Still deferred:** billing,
+  org-level RBAC, and row-level data isolation.
 
-### Open questions
-- 4-level cascade interaction; per-org data isolation (likely row-level); org-granularity billing.
+### Open questions (remaining)
+- Org-level RBAC model; per-org data isolation (likely row-level); org-granularity billing.
 
 ---
 

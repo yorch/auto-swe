@@ -39,7 +39,7 @@
 |---|---|
 | Bundle artifact format | A single versioned JSON document (`bundleSchemaVersion`) with a `metadata` block, an `entities` map per library type, and a `dependencies[]` manifest. Self-describing; diff-friendly; round-trips through the existing Zod schemas. |
 | Signing / trust | Start with a content **sha256** over the canonicalized entity payload + `source`/`origin` metadata; **detached signature + pinned trusted-key allowlist** added in WS3. No KMS yet. |
-| Coded-step transport | **stdin → stdout JSON** over `ephemeralContainer.ts` first (sidecar/streaming deferred). Reuses the Phase-6 shell-container isolation (`--network=none` + egress allowlist). |
+| Coded-step transport | Shipped as `env → stdout JSON` over `ephemeralContainer.ts`, reusing the Phase-6 shell-container isolation (`--network=none` + egress allowlist). **Streaming + sidecar landed in P5:** the `containerStep` node now carries a `transport` of `stdout` (default), `ndjson` (newline-delimited event stream, result = last `{type:'result'}` event), or `sidecar` (detached HTTP server, loopback-only published port, worker POSTs inputs). |
 | Cross-process cache invalidation on install | TTL-only today (same limitation as scanner/pattern edits); documented. A cross-process invalidation bus is out of scope. |
 | Secret scoping for capability connections | A coded step declares **required connection types**; install/run binds team-scoped `Connection` rows via the existing resolver — no secrets travel in the bundle. |
 
