@@ -5,6 +5,7 @@ import { ConfluenceProvider } from './providers/confluence.js';
 import { GitHubIssuesProvider } from './providers/githubIssues.js';
 import { JiraProvider } from './providers/jira.js';
 import { LinearProvider } from './providers/linear.js';
+import { NotionKnowledgeBaseProvider } from './providers/notion.js';
 
 export interface ResolvedIssueTrackerConfig {
   provider: 'jira' | 'linear' | 'github' | null;
@@ -92,6 +93,9 @@ export function createKnowledgeBaseProvider(
         email: config.email,
       });
       return new ConfluenceProvider(client, { log: opts?.log, maxPages: config.maxPages });
+    }
+    case 'notion': {
+      return new NotionKnowledgeBaseProvider(config);
     }
     default:
       return null;
