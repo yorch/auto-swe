@@ -17,6 +17,8 @@ export function makeDefaultNodeFor(payload: PaletteDragKind): SpecNode {
       return { agentRef: '', type: 'agent' } as SpecNode;
     case 'mcp':
       return { connectionRef: '', tool: '', type: 'mcp' } as SpecNode;
+    case 'containerStep':
+      return { command: '', image: 'node:24-alpine', type: 'containerStep' } as SpecNode;
     case 'cond':
       return { expr: 'true', onFalse: '', onTrue: '', type: 'cond' } as SpecNode;
     case 'signal':

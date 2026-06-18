@@ -108,6 +108,9 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
       case 'mcp':
         // External MCP tool call — no token-based cost modeled here.
         return walk(node.next);
+      case 'containerStep':
+        // Coded container step — container runtime cost, not token-based.
+        return walk(node.next);
       case 'set':
         return walk(node.next);
       case 'cond':

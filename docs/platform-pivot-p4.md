@@ -135,7 +135,10 @@
   signature verification against env-anchored trusted keys (`verifyBundleSignature` /
   `resolveBundleTrustedKeys`) → VERIFIED/UNVERIFIED trust state; install-from-URL; admin route
   `GET /api/v1/admin/bundles` + `POST .../install-from-url` + `/admin/bundles` UI.
-- [ ] WS4 — container-contract coded steps
+- [x] WS4 — container-contract coded steps: `containerStep` spec node + interpreter dispatch →
+  `runContainerStep` activity (runs the image in the Phase-6 ephemeral sandbox, JSON input on
+  `CONTAINER_STEP_INPUT` env, parsed stdout JSON bound at `nodes.<id>.output.result`); same image
+  allowlist + egress + authoring RBAC + audit as `shell`; canvas palette + `ContainerStepSection`.
 - [ ] WS5 — authoring SDK
 
 > Follow-up (thin): `auto-swe bundles export/install` CLI subcommands over the new API (the gateway

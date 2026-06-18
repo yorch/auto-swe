@@ -7,7 +7,6 @@ import {
   diffSpecs,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
-  type ShellNode,
   SPEC_SCHEMA_VERSION,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
@@ -20,14 +19,23 @@ import { projectRunSummary, RunListPaginationQuery } from './workflowProjections
 
 interface ShellNodeWithId {
   id: string;
-  node: ShellNode;
+  /** Structural subset shared by `shell` and `containerStep` — both run a
+   *  team-authored image+command and are gated/audited identically. */
+  node: { image: string; command: string; network?: 'none' | 'egress' };
 }
 
+// Both `shell` and `containerStep` execute team-authored code in a container, so
+// they share the same authoring RBAC, image allowlist, and audit trail.
 function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
   const out: ShellNodeWithId[] = [];
   for (const [id, node] of Object.entries(spec.nodes)) {
     if (node.type === 'shell') {
       out.push({ id, node });
+    } else if (node.type === 'containerStep') {
+      out.push({
+        id,
+        node: { command: node.command ?? '', image: node.image, network: node.network },
+      });
     }
   }
   return out;

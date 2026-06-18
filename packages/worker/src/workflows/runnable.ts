@@ -112,6 +112,17 @@ const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellSte
   startToCloseTimeout: '60m',
 });
 
+// P4/WS4: container-contract coded steps. Same sandbox/lifecycle shape as shell.
+const containerStepActivities = proxyActivities<Pick<typeof activitiesType, 'runContainerStep'>>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 2,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '60m',
+});
+
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
 // kept low — workflow-level retry/warn/block comes from the spec's onFail
 // policy (handled by the interpreter), not the activity proxy.
@@ -417,6 +428,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         inputs,
         spanName: config.spanName as string | undefined,
         tool: config.tool as string,
+      }),
+  ],
+  [
+    // P4/WS4 container-contract coded step: run an image with JSON in/out.
+    'runContainerStep',
+    ({ request, config, inputs }) =>
+      containerStepActivities.runContainerStep({
+        command: config.command as string | undefined,
+        cpus: config.cpus as number | undefined,
+        image: config.image as string,
+        inputs,
+        memory: config.memory as string | undefined,
+        network: config.network as 'none' | 'egress' | undefined,
+        request,
+        timeoutMs: config.timeoutMs as number | undefined,
       }),
   ],
   [

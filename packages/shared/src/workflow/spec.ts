@@ -279,6 +279,37 @@ const ShellNodeSchema = z.object({
 });
 
 /**
+ * P4/WS4 — `containerStep`: a container-contract coded capability. Runs an image
+ * in the same locked-down ephemeral container as `shell`, but with a structured
+ * JSON contract: the node's resolved `inputs` are passed as JSON on the
+ * `CONTAINER_STEP_INPUT` env var, and the container is expected to print a JSON
+ * object to stdout, which is bound at `nodes.<id>.output.result`. This is how a
+ * bundle ships *coded* capabilities (a connector/mechanism core lacks) without
+ * untrusted code ever entering the worker process. Same image-allowlist + egress
+ * + authoring RBAC + audit as `shell`.
+ */
+const ContainerStepNodeSchema = z.object({
+  /** Optional command override (`sh -c`); defaults to the image entrypoint. */
+  command: z.string().max(8000).optional(),
+  cpus: z.number().min(0.1).max(8).optional(),
+  /** Docker image to run; must be on the team's effective allowlist at run start. */
+  image: z.string().min(1).max(256),
+  inputs: InputMapSchema.optional(),
+  memory: z
+    .string()
+    .regex(/^\d+[bkmg]?$/i, 'memory must be a Docker size literal like "512m" or "1g"')
+    .optional(),
+  network: z.enum(['none', 'egress']).optional(),
+  next: NodeIdSchema.optional(),
+  onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
+  retry: RetryPolicySchema,
+  startToCloseTimeout: z.string().optional(),
+  timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
+  type: z.literal('containerStep'),
+});
+
+/**
  * HITL — `humanApproval`: pause the workflow and ask a human to approve or reject.
  * The Temporal signal name is `hitl_${nodeId}`.
  */
@@ -359,6 +390,7 @@ export const NodeSchema = z.discriminatedUnion('type', [
   TerminateNodeSchema,
   FanOutNodeSchema,
   ShellNodeSchema,
+  ContainerStepNodeSchema,
   HumanApprovalNodeSchema,
   HumanDecisionNodeSchema,
   HumanInputNodeSchema,
@@ -374,6 +406,7 @@ export type SignalNode = z.infer<typeof SignalNodeSchema>;
 export type TerminateNode = z.infer<typeof TerminateNodeSchema>;
 export type FanOutNode = z.infer<typeof FanOutNodeSchema>;
 export type ShellNode = z.infer<typeof ShellNodeSchema>;
+export type ContainerStepNode = z.infer<typeof ContainerStepNodeSchema>;
 export type HumanApprovalNode = z.infer<typeof HumanApprovalNodeSchema>;
 export type HumanDecisionNode = z.infer<typeof HumanDecisionNodeSchema>;
 export type HumanInputNode = z.infer<typeof HumanInputNodeSchema>;

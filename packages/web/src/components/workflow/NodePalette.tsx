@@ -52,6 +52,12 @@ const PRIMITIVES: PrimitiveDef[] = [
     swatch: 'bg-brick-400',
     type: 'shell',
   },
+  {
+    hint: 'Run a coded capability container — JSON in/out (⚠ elevated)',
+    label: 'Container step',
+    swatch: 'bg-brick-400',
+    type: 'containerStep',
+  },
   { hint: 'End the workflow', label: 'Terminate', swatch: 'bg-paper-500', type: 'terminate' },
   {
     hint: 'Pause for human approval',

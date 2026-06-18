@@ -32,6 +32,21 @@ describe('buildDockerArgs', () => {
     expect(args[sep + 4]).toBe('echo hello');
   });
 
+  it('injects -e KEY=VALUE for env entries (container-contract JSON input)', () => {
+    const args = buildDockerArgs({ ...BASE, env: { CONTAINER_STEP_INPUT: '{"q":1}' } }, 'name');
+    const i = args.indexOf('-e');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('CONTAINER_STEP_INPUT={"q":1}');
+    // env args precede the `--` image separator
+    expect(i).toBeLessThan(args.indexOf('--'));
+  });
+
+  it('rejects an invalid env var name', () => {
+    expect(() => buildDockerArgs({ ...BASE, env: { 'bad-name': 'x' } }, 'name')).toThrow(
+      /environment variable name/
+    );
+  });
+
   it('switches network mode to bridge when egress is requested', () => {
     const args = buildDockerArgs({ ...BASE, network: 'egress' }, 'name');
     expect(args).toContain('--network=bridge');
