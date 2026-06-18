@@ -377,6 +377,18 @@ export interface AgentTraceRecord {
   outputJson: unknown;
   durationMs: number | null;
   error: string | null;
+  /** `<provider>/<model>` spec — present on llm_response records. */
+  model: string | null;
+  /** Input token count — present on llm_response records. */
+  inputTokens: number | null;
+  /** Output token count — present on llm_response records. */
+  outputTokens: number | null;
+  /** USD cost — present on llm_response records. */
+  costUsd: number | null;
+  /** W3C trace-id correlating this record to a Grafana/Tempo span. */
+  otelTraceId: string | null;
+  /** W3C span-id correlating this record to a Grafana/Tempo span. */
+  otelSpanId: string | null;
   createdAt: string;
 }
 

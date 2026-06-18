@@ -111,6 +111,16 @@ model MemoryItem {
   workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
   repoId          String?         @map("repo_id") @db.Uuid
   repository      Connection?     @relation(fields: [repoId], references: [id])
+  /// WorkflowRun that produced this lesson. Null on rows written before this
+  /// column existed. Enables lineage queries: "which run created this lesson?"
+  workflowRunId   String?         @map("workflow_run_id") @db.Uuid
+  workflowRun     WorkflowRun?    @relation(fields: [workflowRunId], references: [id])
+  /// Agent key that produced this lesson (e.g. "commitToMemory").
+  agentKey        String?         @map("agent_key")
+  /// `<provider>/<model>` spec the LLM summarizer used. Null on pre-tracking rows.
+  model           String?
+  /// USD cost of the LLM call that produced this lesson. Null on pre-tracking rows.
+  costUsd         Float?          @map("cost_usd")
   rationale       String
   lessonSummary   String          @map("lesson_summary")
   embedding       Unsupported("vector(1536)")?
@@ -504,11 +514,18 @@ model WorkflowRun {
   /// `WorkRequest → ActiveWorkflow.costUsdAccrued` so analytics queries don't
   /// have to re-join through the work-request graph (also keeps numbers stable
   /// if `ActiveWorkflow.costUsdAccrued` is later re-shaped).
-  costUsdAccrued  Float              @default(0) @map("cost_usd_accrued")
+  costUsdAccrued    Float              @default(0) @map("cost_usd_accrued")
+  /// Total input tokens consumed across all agent activities in this run.
+  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
+  tokensInputTotal  Int                @default(0) @map("tokens_input_total")
+  /// Total output tokens consumed across all agent activities in this run.
+  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
+  tokensOutputTotal Int                @default(0) @map("tokens_output_total")
 
   steps           WorkflowStep[]
   artifacts       WorkflowArtifact[]
   traces          AgentTrace[]
+  memoryItems     MemoryItem[]
   humanSteps      WorkflowHumanStep[]
 
   @@index([templateId])
@@ -522,24 +539,37 @@ model WorkflowRun {
 /// `attempt` mirrors the Temporal activity attempt number so retry attempts can be separated.
 /// Persisted best-effort — failures are swallowed so tracing never breaks runs.
 model AgentTrace {
-  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId      String      @map("run_id") @db.Uuid
-  run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId        String      @map("run_id") @db.Uuid
+  run          WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// Temporal activity type that produced this trace (e.g. "executeImplementation").
-  nodeId     String      @map("node_id")
+  nodeId       String      @map("node_id")
   /// The agent key (identity) that produced this trace, e.g. "implementer".
-  agentKey   String      @map("agent_key")
+  agentKey     String      @map("agent_key")
   /// Temporal activity attempt number (1-based). Lets the UI group traces by retry attempt.
-  attempt    Int         @default(1)
-  seq        Int
+  attempt      Int         @default(1)
+  seq          Int
   /// "tool_call" | "llm_response" | "activity_event"
-  type       String
-  toolName   String?     @map("tool_name")
-  inputJson  Json?       @map("input_json")
-  outputJson Json?       @map("output_json")
-  durationMs Int?        @map("duration_ms")
-  error      String?
-  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  type         String
+  toolName     String?     @map("tool_name")
+  inputJson    Json?       @map("input_json")
+  outputJson   Json?       @map("output_json")
+  durationMs   Int?        @map("duration_ms")
+  error        String?
+  /// `<provider>/<model>` spec used for this LLM call. Null for tool_call and activity_event rows.
+  model        String?
+  /// Input token count for this LLM call. Null for non-LLM records.
+  inputTokens  Int?        @map("input_tokens")
+  /// Output token count for this LLM call. Null for non-LLM records.
+  outputTokens Int?        @map("output_tokens")
+  /// USD cost of this LLM call, rounded to micro-dollars. Null for non-LLM records.
+  costUsd      Float?      @map("cost_usd")
+  /// W3C trace-id of the OTel span active when this activity was persisted.
+  /// Enables correlation between AgentTrace DB rows and Grafana/Tempo spans.
+  otelTraceId  String?     @map("otel_trace_id")
+  /// W3C span-id of the OTel span active when this activity was persisted.
+  otelSpanId   String?     @map("otel_span_id")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
   @@map("agent_traces")

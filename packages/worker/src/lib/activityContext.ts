@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { trace } from '@opentelemetry/api';
 import { activityInfo } from '@temporalio/activity';
 import type { AgentTracer } from './agentTracer.js';
 
@@ -59,9 +60,15 @@ export async function currentWorkflowRunId(): Promise<string | undefined> {
 
 /**
  * Persist all in-memory traces for the currently executing activity.
+ * Captures the active OTel span context (if any) so trace rows can be
+ * correlated with Grafana/Tempo spans via otelTraceId/otelSpanId.
  * Best-effort: errors are swallowed inside `AgentTracer.persist`.
  */
 export async function persistActivityTrace(tracer: AgentTracer, agentKey: string): Promise<void> {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (spanContext?.traceId && spanContext?.spanId) {
+    tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
+  }
   await tracer.persist(
     await currentWorkflowRunId(),
     currentActivityType(),
