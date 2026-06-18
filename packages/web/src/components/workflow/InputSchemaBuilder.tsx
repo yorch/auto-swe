@@ -25,7 +25,7 @@ interface FieldDraft {
   required: boolean;
   enumValues: string;
   format: '' | 'uuid';
-  itemType: Exclude<InputFieldType, 'array'>;
+  itemType: Exclude<InputFieldType, 'array' | 'connection'>;
 }
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
@@ -183,7 +183,7 @@ export function InputSchemaBuilder({
               id={`item-type-${i}`}
               label="Item type"
               onChange={(e) =>
-                updateField(i, { itemType: e.target.value as Exclude<InputFieldType, 'array'> })
+                updateField(i, { itemType: e.target.value as Exclude<InputFieldType, 'array' | 'connection'> })
               }
               value={f.itemType}
             >
