@@ -4,6 +4,17 @@ import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
+export interface GitHubRepoInfo {
+  org: string;
+  name: string;
+  description: string | null;
+  language: string | null;
+  defaultBranch: string;
+  htmlUrl: string;
+  apiUrl: string;
+  alreadyImported: boolean;
+}
+
 export interface CreateRepoBody {
   organizationName: string;
   repoName: string;
@@ -67,5 +78,17 @@ export function useUpdateRepository(id: string) {
     mutationFn: (body: UpdateRepoBody) =>
       api.patch<{ data: RepositorySummary }>(`/api/v1/repositories/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
+export function useGitHubAvailableRepos(enabled = false) {
+  return useQuery({
+    enabled,
+    queryFn: () =>
+      api
+        .get<{ data: GitHubRepoInfo[] }>('/api/v1/repositories/github/available')
+        .then((r) => r.data),
+    queryKey: ['github-available-repos'],
+    staleTime: 30_000,
   });
 }

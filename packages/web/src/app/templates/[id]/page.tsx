@@ -34,8 +34,8 @@ import {
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useWorkflows';
-import { useAuthStore } from '@/stores/authStore';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -800,17 +800,17 @@ export default function TemplateDetailPage({ params }: PageProps) {
               typeof template.inputSchema === 'object' &&
               'properties' in (template.inputSchema as object) ? (
                 <ul className="mt-2 space-y-1">
-                  {Object.entries(
-                    (template.inputSchema as InputSchema).properties
-                  ).map(([key, prop]) => (
-                    <li key={key} className="flex items-baseline gap-2 text-xs">
-                      <span className="font-mono text-paper-200">{key}</span>
-                      <span className="text-paper-500">{prop.type}</span>
-                      {(template.inputSchema as InputSchema).required?.includes(key) && (
-                        <span className="text-brick-400">required</span>
-                      )}
-                    </li>
-                  ))}
+                  {Object.entries((template.inputSchema as InputSchema).properties).map(
+                    ([key, prop]) => (
+                      <li className="flex items-baseline gap-2 text-xs" key={key}>
+                        <span className="font-mono text-paper-200">{key}</span>
+                        <span className="text-paper-500">{prop.type}</span>
+                        {(template.inputSchema as InputSchema).required?.includes(key) && (
+                          <span className="text-brick-400">required</span>
+                        )}
+                      </li>
+                    )
+                  )}
                 </ul>
               ) : (
                 <p className="mt-1 text-xs text-paper-500">No schema — runs accept any input</p>

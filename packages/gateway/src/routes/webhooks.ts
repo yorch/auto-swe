@@ -5,8 +5,8 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { verifyGitHubSignature } from '../lib/github.js';
-import { getErrorName } from '../plugins/auth.js';
 import { postSlackMessage } from '../lib/slack.js';
+import { getErrorName } from '../plugins/auth.js';
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
 // non-PR/non-check event can still arrive. Validate the fields we touch so a
@@ -394,9 +394,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'TEMPLATE_NOT_ACTIVE', message: 'Template is not active' } });
       }
       if (template.activeVersion === null) {
-        return reply
-          .status(409)
-          .send({ error: { code: 'NO_ACTIVE_VERSION', message: 'Template has no active version' } });
+        return reply.status(409).send({
+          error: { code: 'NO_ACTIVE_VERSION', message: 'Template has no active version' },
+        });
       }
 
       const payload = request.body ?? {};
@@ -411,14 +411,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Extract well-known fields from the payload (same as POST /:id/runs).
-      const connectionId =
-        typeof payload.connectionId === 'string' ? payload.connectionId : null;
-      const description =
-        typeof payload.description === 'string' ? payload.description : '';
+      const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
+      const description = typeof payload.description === 'string' ? payload.description : '';
       const externalTicketId =
-        typeof payload.ticketId === 'string'
-          ? payload.ticketId
-          : `webhook-${Date.now()}`;
+        typeof payload.ticketId === 'string' ? payload.ticketId : `webhook-${Date.now()}`;
 
       const workRequestId = crypto.randomUUID();
       const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
@@ -439,9 +435,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err: unknown) {
         if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply
-            .status(409)
-            .send({ error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' } });
+          return reply.status(409).send({
+            error: {
+              code: 'RUN_CONFLICT',
+              message: 'A run with this workflow ID already exists',
+            },
+          });
         }
         throw err;
       }

@@ -2,6 +2,7 @@ import { Prisma } from '@auto-swe/shared';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
@@ -62,6 +63,42 @@ async function canManageTeamRepos(
 
 export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // GET /api/v1/repositories/github/available — List importable GitHub repos
+  app.get(
+    '/github/available',
+    { onRequest: requireAuth({ requiredRole: 'LEAD' }) },
+    async (_request, reply) => {
+      let repos: Awaited<ReturnType<typeof listGitHubRepos>>;
+      try {
+        repos = await listGitHubRepos();
+      } catch (err) {
+        if (err instanceof GitHubTokenMissingError) {
+          return reply.status(503).send({
+            error: {
+              code: 'GITHUB_NOT_CONFIGURED',
+              message:
+                'GitHub integration not configured. Visit /admin/integrations to add a PAT or GitHub App.',
+            },
+          });
+        }
+        throw err;
+      }
+
+      const existing = await fastify.prisma.connection.findMany({
+        select: { organizationName: true, repoName: true },
+        where: { type: 'git_repo' },
+      });
+      const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
+
+      return {
+        data: repos.map((r) => ({
+          ...r,
+          alreadyImported: importedSet.has(`${r.org}/${r.name}`),
+        })),
+      };
+    }
+  );
 
   // GET /api/v1/repositories — List repositories
   app.get(
@@ -196,11 +233,37 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const { config, consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId } = request.body;
+      const {
+        config,
+        consolidationEnabled,
+        defaultBranch,
+        description,
+        executorImage,
+        githubApiUrl,
+        githubUrl,
+        isActive,
+        language,
+        name,
+        teamId,
+      } = request.body;
       const updated = await fastify.prisma.connection.update({
         data: {
-          config: config === undefined ? undefined : (config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull),
-          consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId,
+          config:
+            config === undefined
+              ? undefined
+              : config != null
+                ? (config as unknown as Prisma.InputJsonValue)
+                : Prisma.DbNull,
+          consolidationEnabled,
+          defaultBranch,
+          description,
+          executorImage,
+          githubApiUrl,
+          githubUrl,
+          isActive,
+          language,
+          name,
+          teamId,
         },
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: request.params.id },
