@@ -348,4 +348,37 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ data: agent, ...(scanWarnings.length > 0 ? { scanWarnings } : {}) });
     }
   );
+
+  app.delete(
+    '/:id/agent-library/:agentId',
+    { onRequest: teamAdmin, schema: { params: TeamAgentParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const current = await fastify.prisma.agent.findUnique({
+        where: { id: request.params.agentId },
+      });
+      if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+      }
+      const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {
+        requireTeamAdmin: true,
+      });
+      if (!access.ok) {
+        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+      }
+      const count = await deactivateAgentLineage(fastify.prisma, {
+        key: current.key,
+        scope: 'TEAM',
+        teamId: current.teamId,
+      });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor,
+        before: { key: current.key, scope: 'TEAM', teamId: current.teamId },
+        entityId: current.id,
+        entityType: 'Agent',
+      });
+      return reply.send({ data: { deactivated: count } });
+    }
+  );
 };

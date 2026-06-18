@@ -17,6 +17,7 @@ import {
   type SkillRefInput,
   type UpdateAgentBody,
   useCreateTeamAgent,
+  useDeleteTeamAgent,
   useTeamAgents,
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
@@ -172,13 +173,26 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const { data: agents, isLoading } = useTeamAgents(teamId);
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
+  const deleteAgent = useDeleteTeamAgent(teamId);
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
   const [editing, setEditing] = useState<AgentRow | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<AgentRow | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function submitDelete() {
+    if (!deleteConfirm) return;
+    setError(null);
+    try {
+      await deleteAgent.mutateAsync(deleteConfirm.id);
+      setDeleteConfirm(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
 
   async function submitCreate() {
     setError(null);
@@ -271,9 +285,18 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                 </td>
                 <td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</td>
                 <td className="py-2 text-right">
-                  <Button onClick={() => setEditing({ ...a })} size="sm" variant="ghost">
-                    Edit
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button onClick={() => setEditing({ ...a })} size="sm" variant="ghost">
+                      Edit
+                    </Button>
+                    <Button
+                      onClick={() => setDeleteConfirm(a)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      <span className="text-brick-400">Delete</span>
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -441,6 +464,36 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               </Button>
               <Button disabled={updateAgent.isPending} onClick={submitEdit} variant="primary">
                 Save new version
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+
+      {/* Delete confirmation */}
+      <Modal
+        onClose={() => setDeleteConfirm(null)}
+        open={deleteConfirm !== null}
+        size="sm"
+        title="Delete team agent"
+      >
+        {deleteConfirm ? (
+          <>
+            <p className="mb-4 text-sm text-paper-300">
+              Deactivate{' '}
+              <span className="font-mono text-paper-100">{deleteConfirm.key}</span> for this team?
+              GLOBAL agents are unaffected — runs will fall through to the GLOBAL version.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setDeleteConfirm(null)} variant="secondary">
+                Cancel
+              </Button>
+              <Button
+                disabled={deleteAgent.isPending}
+                onClick={submitDelete}
+                variant="primary"
+              >
+                Delete
               </Button>
             </div>
           </>
