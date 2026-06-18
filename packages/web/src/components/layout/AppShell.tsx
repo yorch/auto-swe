@@ -35,7 +35,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <main className="flex-1 overflow-hidden">{children}</main>
         ) : (
           <main className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-[1280px] px-10 py-10">{children}</div>
+            <div className="mx-auto max-w-[1280px] px-10 pt-10 pb-16">{children}</div>
           </main>
         )}
       </div>
