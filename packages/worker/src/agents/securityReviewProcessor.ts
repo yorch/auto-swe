@@ -72,8 +72,9 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         { structuredOutput: { schema: SecurityScanResultSchema } }
       );
 
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
       if (result.usage) {
-        await recordLlmUsage(
+        attribution = await recordLlmUsage(
           currentWorkflowId(),
           'securityReview',
           result.usage,
@@ -94,13 +95,17 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       };
 
       tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
         durationMs: Date.now() - start,
         inputJson: { systemPrompt: instructions, userMessage: diff },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
         outputJson: {
           findings: finalResult.findings,
           findingsCount: finalResult.findings.length,
           passed: finalResult.passed,
         },
+        outputTokens: attribution.outputTokens,
         role: 'securityReview',
       });
 

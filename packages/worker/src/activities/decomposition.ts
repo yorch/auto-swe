@@ -30,7 +30,6 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
-import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -411,14 +410,10 @@ async function mergeOneWithResolver(
       activityCtx
     );
     try {
-      const resolvedPrompt = await resolveSystemPrompt(
-        'mergeConflictResolver',
-        MERGE_CONFLICT_RESOLVER_PROMPT
-      );
       const result = await agent.generate(
         [
           {
-            content: resolvedPrompt + (promptSuffix ? `\n\n${promptSuffix}` : ''),
+            content: MERGE_CONFLICT_RESOLVER_PROMPT + (promptSuffix ? `\n\n${promptSuffix}` : ''),
             role: 'system',
           },
           {
@@ -435,6 +430,9 @@ async function mergeOneWithResolver(
       );
 
       if (result.usage) {
+        // Capture attribution but discard — no tracer addLlmResponse here since
+        // the agent drives tool calls internally and we don't have text/object output
+        // to record at this point. The OTel span from recordLlmUsage still fires.
         await recordLlmUsage(
           currentWorkflowId(),
           'implementer',

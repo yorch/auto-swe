@@ -71,8 +71,9 @@ async function runReviewerAgent(
           structuredOutput: { schema: ReviewVerdictSchema },
         });
 
+        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          await recordLlmUsage(
+          attribution = await recordLlmUsage(
             currentWorkflowId(),
             'reviewer',
             result.usage,
@@ -87,9 +88,13 @@ async function runReviewerAgent(
         const verdictWithType = { ...verdict, reviewer: reviewerType };
 
         tracer?.addLlmResponse({
+          costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
+          inputTokens: attribution.inputTokens,
+          model: attribution.modelSpec || undefined,
           outputJson: verdictWithType,
+          outputTokens: attribution.outputTokens,
           role: reviewerType,
         });
 

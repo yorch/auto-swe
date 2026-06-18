@@ -148,12 +148,19 @@ interface TokenUsage {
  * @param usage - Token usage from result.usage (Vercel AI SDK shape).
  * @param spanName - OTel span name for attribution (e.g., 'llm.implementer.iteration_1').
  */
+export interface LlmAttribution {
+  modelSpec: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
 export async function recordLlmUsage(
   temporalWorkflowId: string,
   role: string,
   usage: TokenUsage,
   spanName = 'llm.usage'
-): Promise<void> {
+): Promise<LlmAttribution> {
   // Resolve the spec defensively: if the DB row is corrupt (missing `/`,
   // unknown provider, decrypt failure) we still need to debit the token
   // counters for budget enforcement. Without this guard, malformed config
@@ -172,7 +179,13 @@ export async function recordLlmUsage(
   }
   const { known } = getModelPrice(modelSpec);
 
-  await tracer.startActiveSpan(spanName, async (span) => {
+  // Capture resolved token counts for attribution before entering the span so
+  // they're available for the fallback return path (no workflow found).
+  const inputTokens = usage.inputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
+  const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
+
+  const attribution = await tracer.startActiveSpan(spanName, async (span): Promise<LlmAttribution> => {
     try {
       if (specResolutionError) {
         span.setAttribute('llm.spec_resolution_failed', true);
@@ -192,12 +205,9 @@ export async function recordLlmUsage(
       if (!workflow) {
         // Non-fatal: workflow record may not exist in test/dev scenarios
         span.setAttribute('llm.workflow_found', false);
-        return;
+        return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
       }
 
-      const inputTokens = usage.inputTokens ?? 0;
-      const outputTokens = usage.outputTokens ?? 0;
-      const callCost = calculateCostUsd(modelSpec, inputTokens, outputTokens);
       const newInput = workflow.tokensInputUsed + inputTokens;
       const newOutput = workflow.tokensOutputUsed + outputTokens;
       // ARCH-8: cost is a Float column accumulated incrementally; round each
@@ -247,6 +257,8 @@ export async function recordLlmUsage(
           { newCost, newInput, newOutput, tier }
         );
       }
+
+      return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
     } catch (e) {
       span.recordException(e as Error);
       throw e;
@@ -254,4 +266,6 @@ export async function recordLlmUsage(
       span.end();
     }
   });
+
+  return attribution;
 }

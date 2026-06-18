@@ -87,8 +87,14 @@ export async function planDecomposition(
           structuredOutput: { schema: DecomposerOutputSchema },
         });
 
+        let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
         if (result.usage) {
-          await recordLlmUsage(currentWorkflowId(), 'planner', result.usage, 'llm.decomposer');
+          attribution = await recordLlmUsage(
+            currentWorkflowId(),
+            'planner',
+            result.usage,
+            'llm.decomposer'
+          );
         }
 
         if (!result.object) {
@@ -113,13 +119,17 @@ export async function planDecomposition(
 
         span.setAttribute('decomposer.subtask_count', subtasks.length);
         tracer?.addLlmResponse({
+          costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt, userMessage: llmUserMessage },
+          inputTokens: attribution.inputTokens,
+          model: attribution.modelSpec || undefined,
           outputJson: {
             rationale: parsed.rationale,
             subtaskCount: subtasks.length,
             subtasks: subtasks.map((s) => ({ id: s.id, title: s.title })),
           },
+          outputTokens: attribution.outputTokens,
           role: 'planner',
         });
 
