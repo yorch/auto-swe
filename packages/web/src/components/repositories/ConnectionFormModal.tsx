@@ -9,7 +9,19 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
 
-type Mode = { kind: 'create' } | { kind: 'edit'; repo: RepositorySummary };
+export interface ConnectionPrefill {
+  organizationName?: string;
+  repoName?: string;
+  defaultBranch?: string;
+  language?: string;
+  description?: string;
+  githubUrl?: string;
+  githubApiUrl?: string;
+}
+
+type Mode =
+  | { kind: 'create'; prefill?: ConnectionPrefill }
+  | { kind: 'edit'; repo: RepositorySummary };
 
 const CONNECTION_TYPES = [
   { label: 'Git repository (GitHub / GHE)', value: 'git_repo' },
@@ -33,16 +45,22 @@ export function ConnectionFormModal({
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
   const initial = mode.kind === 'edit' ? mode.repo : null;
+  const prefill = mode.kind === 'create' ? mode.prefill : undefined;
+
   const [connType, setConnType] = useState<ConnectionType>(
     (initial?.type as ConnectionType) ?? 'git_repo'
   );
 
   // git_repo fields
-  const [organizationName, setOrganizationName] = useState(initial?.organizationName ?? '');
-  const [repoName, setRepoName] = useState(initial?.repoName ?? '');
-  const [defaultBranch, setDefaultBranch] = useState(initial?.defaultBranch ?? 'main');
+  const [organizationName, setOrganizationName] = useState(
+    initial?.organizationName ?? prefill?.organizationName ?? ''
+  );
+  const [repoName, setRepoName] = useState(initial?.repoName ?? prefill?.repoName ?? '');
+  const [defaultBranch, setDefaultBranch] = useState(
+    initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main'
+  );
   const [executorImage, setExecutorImage] = useState(initial?.executorImage ?? '');
-  const [language, setLanguage] = useState(initial?.language ?? '');
+  const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
 
   // generic / api_endpoint fields
   const [name, setName] = useState(initial?.name ?? '');
@@ -52,7 +70,9 @@ export function ConnectionFormModal({
 
   // shared fields
   const [teamId, setTeamId] = useState(initial?.team?.id ?? '');
-  const [description, setDescription] = useState(initial?.description ?? '');
+  const [description, setDescription] = useState(
+    initial?.description ?? prefill?.description ?? ''
+  );
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
   const [consolidationEnabled, setConsolidationEnabled] = useState(
     initial?.consolidationEnabled ?? true
@@ -63,18 +83,18 @@ export function ConnectionFormModal({
     if (!open) return;
     const t = (initial?.type as ConnectionType) ?? 'git_repo';
     setConnType(t);
-    setOrganizationName(initial?.organizationName ?? '');
-    setRepoName(initial?.repoName ?? '');
-    setDefaultBranch(initial?.defaultBranch ?? 'main');
+    setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
+    setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
+    setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
     setExecutorImage(initial?.executorImage ?? '');
-    setLanguage(initial?.language ?? '');
+    setLanguage(initial?.language ?? prefill?.language ?? '');
     setName(initial?.name ?? '');
     setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
-    setDescription(initial?.description ?? '');
+    setDescription(initial?.description ?? prefill?.description ?? '');
     setIsActive(initial?.isActive ?? true);
     setConsolidationEnabled(initial?.consolidationEnabled ?? true);
     setError(null);
-  }, [open, initial]);
+  }, [open, initial, prefill]);
 
   useEffect(() => {
     if (!open) return;
@@ -108,6 +128,8 @@ export function ConnectionFormModal({
             defaultBranch,
             description: description.trim() || undefined,
             executorImage: executorImage.trim() || undefined,
+            githubApiUrl: prefill?.githubApiUrl || undefined,
+            githubUrl: prefill?.githubUrl || undefined,
             language: language.trim() || undefined,
             organizationName: organizationName.trim(),
             repoName: repoName.trim(),
@@ -152,6 +174,8 @@ export function ConnectionFormModal({
   const isEdit = mode.kind === 'edit';
   const busy = create.isPending || update.isPending;
   const isGit = connType === 'git_repo';
+  // When importing from GitHub the type is always git_repo — hide the type selector.
+  const showTypeSelector = !isEdit && !prefill;
 
   return (
     <Modal
@@ -166,7 +190,7 @@ export function ConnectionFormModal({
       title={mode.kind === 'edit' ? connectionLabel(mode.repo) : 'Add a connection'}
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
-        {!isEdit && (
+        {showTypeSelector && (
           <Select
             id="conn-type"
             label="Connection type"

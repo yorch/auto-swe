@@ -2,16 +2,23 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
+import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
-import { connectionLabel } from '@/lib/connectionDisplay';
+import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useRepositories } from '@/hooks/useWorkflows';
+import { connectionLabel } from '@/lib/connectionDisplay';
 import { useAuthStore } from '@/stores/authStore';
 
-type ModalMode = { kind: 'create' } | { kind: 'edit'; repo: RepositorySummary } | null;
+type ModalMode =
+  | { kind: 'create'; prefill?: ConnectionPrefill }
+  | { kind: 'edit'; repo: RepositorySummary }
+  | { kind: 'import' }
+  | null;
 
 const TYPE_LABELS: Record<string, string> = {
   api_endpoint: 'REST API',
@@ -36,7 +43,6 @@ function ConnectionTypeBadge({ type }: { type: string }) {
   );
 }
 
-
 export default function ConnectionsPage() {
   const { data: repos, isLoading } = useRepositories();
   const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
@@ -47,14 +53,36 @@ export default function ConnectionsPage() {
     return <LoadingState />;
   }
 
+  function handleImportSelect(repo: GitHubRepoInfo) {
+    setMode({
+      kind: 'create',
+      prefill: {
+        defaultBranch: repo.defaultBranch,
+        description: repo.description ?? undefined,
+        githubApiUrl: repo.apiUrl,
+        githubUrl: repo.htmlUrl,
+        language: repo.language ?? undefined,
+        organizationName: repo.org,
+        repoName: repo.name,
+      },
+    });
+  }
+
+  const formMode = mode?.kind === 'create' || mode?.kind === 'edit' ? mode : null;
+
   return (
     <div className="space-y-6">
       <PageHeader
         actions={
           canManage ? (
-            <Button onClick={() => setMode({ kind: 'create' })} size="sm" variant="primary">
-              + Add connection
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
+                Import from GitHub
+              </Button>
+              <Button onClick={() => setMode({ kind: 'create' })} size="sm" variant="primary">
+                + Add connection
+              </Button>
+            </div>
           ) : undefined
         }
         chapter="§ Library"
@@ -69,9 +97,7 @@ export default function ConnectionsPage() {
               <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
             </div>
             <div className="mt-2 space-y-1 text-sm text-paper-400">
-              {(!r.type || r.type === 'git_repo') && (
-                <p>Branch: {r.defaultBranch}</p>
-              )}
+              {(!r.type || r.type === 'git_repo') && <p>Branch: {r.defaultBranch}</p>}
               <p>Team: {r.team?.name ?? 'None'}</p>
               <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
               {(!r.type || r.type === 'git_repo') && (
@@ -101,14 +127,23 @@ export default function ConnectionsPage() {
           <p className="col-span-full py-12 text-center text-sm text-paper-400">
             No connections yet.
             {canManage
-              ? ' Use "Add connection" above to add a git repo, REST API, or other integration.'
+              ? ' Use "Import from GitHub" or "Add connection" above.'
               : ' Ask a team lead or admin to add one.'}
           </p>
         )}
       </div>
-      {mode && (
-        <ConnectionFormModal mode={mode} onClose={() => setMode(null)} open={mode !== null} />
-      )}
+
+      <ImportFromGitHubModal
+        onClose={() =>
+          // Functional update so that if onSelect already transitioned mode to
+          // 'create', the dialog's programmatic close event doesn't overwrite it.
+          setMode((prev) => (prev?.kind === 'create' ? prev : null))
+        }
+        onSelect={handleImportSelect}
+        open={mode?.kind === 'import'}
+      />
+
+      {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
     </div>
   );
 }

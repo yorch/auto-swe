@@ -8,7 +8,17 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useCreateRepository, useTeams, useUpdateRepository } from '@/hooks/useWorkflows';
 
-type Mode = { kind: 'create' } | { kind: 'edit'; repo: RepositorySummary };
+export interface RepoPrefill {
+  organizationName?: string;
+  repoName?: string;
+  defaultBranch?: string;
+  language?: string;
+  description?: string;
+  githubUrl?: string;
+  githubApiUrl?: string;
+}
+
+type Mode = { kind: 'create'; prefill?: RepoPrefill } | { kind: 'edit'; repo: RepositorySummary };
 
 export function RepositoryFormModal({
   open,
@@ -24,20 +34,27 @@ export function RepositoryFormModal({
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
   const initial = mode.kind === 'edit' ? mode.repo : null;
-  const [organizationName, setOrganizationName] = useState(initial?.organizationName ?? '');
-  const [repoName, setRepoName] = useState(initial?.repoName ?? '');
-  const [defaultBranch, setDefaultBranch] = useState(initial?.defaultBranch ?? 'main');
+  const prefill = mode.kind === 'create' ? mode.prefill : undefined;
+  const [organizationName, setOrganizationName] = useState(
+    initial?.organizationName ?? prefill?.organizationName ?? ''
+  );
+  const [repoName, setRepoName] = useState(initial?.repoName ?? prefill?.repoName ?? '');
+  const [defaultBranch, setDefaultBranch] = useState(
+    initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main'
+  );
   const [teamId, setTeamId] = useState(initial?.team?.id ?? '');
   const [executorImage, setExecutorImage] = useState(initial?.executorImage ?? '');
-  const [language, setLanguage] = useState(initial?.language ?? '');
-  const [description, setDescription] = useState(initial?.description ?? '');
+  const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
+  const [description, setDescription] = useState(
+    initial?.description ?? prefill?.description ?? ''
+  );
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
   const [consolidationEnabled, setConsolidationEnabled] = useState(
     initial?.consolidationEnabled ?? true
   );
   const [error, setError] = useState<string | null>(null);
 
-  // Reset form state from `initial` only when the modal opens — the previous
+  // Reset form state from `initial`/`prefill` only when the modal opens — the previous
   // version also depended on `teams` so it re-ran every time the useTeams()
   // query resolved (or any parent re-render produced a new array identity)
   // and stomped user input.
@@ -45,16 +62,16 @@ export function RepositoryFormModal({
     if (!open) {
       return;
     }
-    setOrganizationName(initial?.organizationName ?? '');
-    setRepoName(initial?.repoName ?? '');
-    setDefaultBranch(initial?.defaultBranch ?? 'main');
+    setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
+    setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
+    setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
     setExecutorImage(initial?.executorImage ?? '');
-    setLanguage(initial?.language ?? '');
-    setDescription(initial?.description ?? '');
+    setLanguage(initial?.language ?? prefill?.language ?? '');
+    setDescription(initial?.description ?? prefill?.description ?? '');
     setIsActive(initial?.isActive ?? true);
     setConsolidationEnabled(initial?.consolidationEnabled ?? true);
     setError(null);
-  }, [open, initial]);
+  }, [open, initial, prefill]);
 
   // Default-select the first team only when nothing is selected yet, so a
   // late-resolving useTeams() doesn't override an in-flight admin selection.
