@@ -1,4 +1,4 @@
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -141,7 +141,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
       const repo = await fastify.prisma.connection.create({
         data: {
-          config: config ?? null,
+          config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
           name: name ?? null,
           organizationName: organizationName ?? null,
           repoName: repoName ?? null,
@@ -198,7 +198,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { config, consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId } = request.body;
       const updated = await fastify.prisma.connection.update({
-        data: { config, consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId },
+        data: {
+          config: config === undefined ? undefined : (config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull),
+          consolidationEnabled, defaultBranch, description, executorImage, githubApiUrl, githubUrl, isActive, language, name, teamId,
+        },
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: request.params.id },
       });
