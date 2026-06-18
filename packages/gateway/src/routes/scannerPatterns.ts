@@ -1,6 +1,5 @@
 import { invalidateScannerPatternCache } from '@auto-swe/shared/lib/skillScanner';
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -48,7 +47,7 @@ function validateRegex(pattern: string, flags: string): string | null {
   }
 }
 
-export const scannerPatternRoutes: FastifyPluginAsync = fp(async (fastify) => {
+export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/admin/scanner-patterns
@@ -193,4 +192,4 @@ export const scannerPatternRoutes: FastifyPluginAsync = fp(async (fastify) => {
       return reply.status(204).send();
     }
   );
-});
+};

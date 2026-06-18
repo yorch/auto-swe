@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -48,7 +47,7 @@ const ListSkillsQuery = z.object({});
 
 // ── Skills CRUD routes (admin) ──────────────────────────────────────────────
 
-export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
+export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
@@ -189,13 +188,13 @@ export const skillsRoutes: FastifyPluginAsync = fp(async (fastify) => {
       return reply.status(204).send();
     }
   );
-});
+};
 
 // ── Team-scoped read-only skill library ─────────────────────────────────────
 
 const TeamIdParams = z.object({ teamId: z.string().uuid() });
 
-export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
+export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const engineer = requireAuth({ requiredRole: 'ENGINEER' });
 
@@ -227,4 +226,4 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = fp(async (fastify) => {
       return { data: skills };
     }
   );
-});
+};
