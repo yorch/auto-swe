@@ -74,9 +74,8 @@ function blocksToPlainText(blocks: NotionBlock[]): string {
     .map((block) => {
       const type = block.type;
       if (!type) return '';
-      const richText = (block as Record<string, { rich_text?: NotionRichText[] } | undefined>)[
-        type
-      ]?.rich_text;
+      const richText = (block as Record<string, { rich_text?: NotionRichText[] } | undefined>)[type]
+        ?.rich_text;
       return richTextToPlain(richText);
     })
     .filter(Boolean)
@@ -113,10 +112,7 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
     try {
       const [page, blocksResp] = await Promise.all([
         this.request<NotionPage>('GET', `/pages/${encodeURIComponent(pageId)}`),
-        this.request<NotionBlocksResponse>(
-          'GET',
-          `/blocks/${encodeURIComponent(pageId)}/children`
-        ),
+        this.request<NotionBlocksResponse>('GET', `/blocks/${encodeURIComponent(pageId)}/children`),
       ]);
 
       const title = extractTitle(page);

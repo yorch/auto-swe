@@ -61,18 +61,10 @@ export default defineConfig({
         replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/lib/trackerSync.ts'),
       },
       {
-        find: '@auto-swe/shared/lib/integrations/registry',
-        replacement: path.resolve(
-          '/home/user/auto-swe',
-          'packages/shared/src/lib/integrations/registry.ts'
-        ),
-      },
-      {
-        find: '@auto-swe/shared/lib/integrations/adf',
-        replacement: path.resolve(
-          '/home/user/auto-swe',
-          'packages/shared/src/lib/integrations/adf.ts'
-        ),
+        // Broad alias covers registry, adf, providers/*, and any future subpaths.
+        // Must come before the bare @auto-swe/shared catch-all.
+        find: '@auto-swe/shared/lib/integrations',
+        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/lib/integrations'),
       },
       {
         find: '@auto-swe/shared/types/api',

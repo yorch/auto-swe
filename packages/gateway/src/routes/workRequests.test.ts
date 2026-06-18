@@ -9,6 +9,15 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     email: null,
     provider: null,
   })),
+  resolveKnowledgeBaseConfig: vi.fn(async () => ({
+    apiToken: null,
+    baseUrl: null,
+    email: null,
+    enabled: false,
+    maxPages: 10,
+    provider: null,
+    spaces: [],
+  })),
   resolveWorkflowDefaults: vi.fn(async () => ({
     branchPrefix: 'auto',
     defaultTeamSlug: 'default',

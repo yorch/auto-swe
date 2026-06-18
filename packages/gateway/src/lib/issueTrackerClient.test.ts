@@ -67,7 +67,8 @@ describe('fetchTicket — jira', () => {
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://acme.atlassian.net/rest/api/3/issue/PROJ-123');
+    // Jira provider appends ?fields=... query params — use toContain for the path
+    expect(url).toContain('/rest/api/3/issue/PROJ-123');
     expect((init.headers as Record<string, string>).Authorization).toBe(
       `Basic ${Buffer.from('bot@acme.com:jira-token').toString('base64')}`
     );
@@ -75,9 +76,8 @@ describe('fetchTicket — jira', () => {
 
   it('returns null on 404', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 404)));
-    const log = { warn: vi.fn() };
-    expect(await fetchTicket(jiraConfig, 'PROJ-404', { log })).toBeNull();
-    expect(log.warn).toHaveBeenCalled();
+    // Jira provider handles 404 silently (AtlassianError not_found → null), no log.warn
+    expect(await fetchTicket(jiraConfig, 'PROJ-404')).toBeNull();
   });
 
   it('returns null when jira config is incomplete (no email)', async () => {
@@ -194,7 +194,8 @@ describe('fetchTicket — failure policy', () => {
       vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))
     );
     const log = { warn: vi.fn() };
-    expect(await fetchTicket(jiraConfig, 'PROJ-1', { log })).toBeNull();
+    // maxRetries: 0 on jiraConfig so AtlassianClient doesn't retry with backoff
+    expect(await fetchTicket({ ...jiraConfig, maxRetries: 0 }, 'PROJ-1', { log })).toBeNull();
     expect(await fetchTicket(linearConfig, 'ENG-1', { log })).toBeNull();
     expect(await fetchTicket(githubConfig, 'a/b#1', { log })).toBeNull();
     expect(log.warn).toHaveBeenCalledTimes(3);
