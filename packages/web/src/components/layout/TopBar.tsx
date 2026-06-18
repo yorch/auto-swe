@@ -31,6 +31,7 @@ function pageTitle(pathname: string): string {
     ['/admin/schedules', 'Schedules'],
     ['/admin/sessions', 'Sessions'],
     ['/admin/access-tokens', 'API Tokens'],
+    ['/admin/lessons', 'Lessons'],
     ['/admin', 'Admin'],
     ['/teams', 'Teams'],
     ['/users', 'Users'],
