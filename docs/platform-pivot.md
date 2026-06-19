@@ -6,15 +6,14 @@ platform**, where SWE is simply the first use case seeded into the platform's re
 libraries. Each phase is sized to land in one (or a small handful of) PR(s). Pick up here
 when starting a follow-up PR.
 
-> Status: **In progress** (rev. 2026-06-14). **All committed-for-build phases are implemented on the
-> pivot branch: P0, P1, P1.5, P3, and now P2 in full — the declarative `agent` node (WS1), the
-> `'mcp'` tool key (WS2), the full MCP integration (WS3: first-class `mcp` Connection, binding across
-> all implementer activities + the generic agent node, and the admin write-path), the `mcp` workflow
-> node (WS4), and the canvas palette/inspector authoring for the new node types (WS5). P4–P5 remain
-> deferred.** Phases
-> P0–P3 are committed for build; P4–P5 are deferred but specified here so the architecture stays
-> compatible with them from day one. Per-phase build plans + status: `platform-pivot-p0.md`,
-> `platform-pivot-p1.md`, `platform-pivot-p2.md`.
+> Status: **Complete** (rev. 2026-06-19). **All phases are implemented: P0, P1, P1.5, P2 (the
+> declarative `agent` node (WS1), the `'mcp'` tool key (WS2), the full MCP integration (WS3:
+> first-class `mcp` Connection, binding across all implementer activities + the generic agent node,
+> and the admin write-path), the `mcp` workflow node (WS4), and the canvas palette/inspector
+> authoring for the new node types (WS5)), P3, P4 (distribution layer), and now P5 in full —
+> multi-org foundation, org-level RBAC, application-layer row isolation, org-granularity billing
+> (budget caps), authoring-SDK polish, coded-step transports, and canvas org-scope polish.** Per-phase
+> build plans + status: `platform-pivot-p0.md`, `platform-pivot-p1.md`, `platform-pivot-p2.md`.
 >
 > **This is rev. 2** — it supersedes the original pack-centric framing. See
 > [Design evolution](#design-evolution) for the rationale trail.
@@ -181,7 +180,7 @@ third-party coded capability) is **P4**.
 | **P2. Declarative agent node + MCP** | ✅ Done | `agent` node (WS1); `'mcp'` tool key (WS2); full MCP integration — first-class `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path (WS3); `mcp` workflow node (WS4); canvas palette + inspector for both new node types (WS5). The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | ✅ Done | `Connection` replaces `Repository` (slice 2); `MemoryItem` replaces `AgentLesson` (slice 1); template `inputSchema` + generic `RunInput` with submit-time validation (slice 3); config-driven trigger event→`RunInput` mappings (slice 4). SWE specializes via seed/config. Surface polish (generic `POST /runs`, live issues-webhook receiver, nullable `externalTicketId`) deferred — see `platform-pivot-p3.md`. |
 | **P4. Distribution layer** | ✅ Done | Export/import versioned, dependency-aware bundles of library entities; cross-deployment install as a managed base layer; signature-based provenance/trust; third-party **capability** extension via container-contract coded steps; authoring SDK. All 5 work-streams (WS1–WS5) — see [platform-pivot-p4.md](./platform-pivot-p4.md). |
-| **P5. UX layering + multi-org** | 🔄 In progress | **Multi-org foundation done** (first-class `Organization`; `ORGANIZATION` config scope; 4-level cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`) — billing, org-level RBAC, and row-level data isolation still deferred. **Authoring-SDK polish done** (`auto-swe bundle` local init/validate/sign + `auto-swe bundles` install/export). **Coded-step transports done** (containerStep NDJSON streaming + sidecar HTTP). Canvas palette polish for org scope still deferred. |
+| **P5. UX layering + multi-org** | ✅ Done | **Multi-org foundation** (first-class `Organization`; `ORGANIZATION` config scope; 4-level cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`). **Org-level RBAC** (`OrganizationMembership` + `OrgRole`; `assertOrgAccess`/`assertOrgAdmin`; member CRUD API; platform `ADMIN` bypass). **Row-level data isolation** (application-layer: org-membership gate on work-request submit + org-scoped routes). **Org-granularity billing** (`OrgMonthlyUsage` increment-upsert aggregation; `monthlyBudgetUsdCents` cap → `402 ORG_BUDGET_EXCEEDED`; budget API + admin UI). **Authoring-SDK polish** (`auto-swe bundle` local init/validate/sign + `auto-swe bundles` install/export). **Coded-step transports** (containerStep NDJSON streaming + sidecar HTTP). **Canvas palette org-scope polish** (`ORGANIZATION` tier in agent/credential scope selectors + Scope column + `/admin/organizations/[orgId]` page). |
 
 ---
 
@@ -327,10 +326,13 @@ a goal. The P0–P3 libraries are designed export/import-friendly specifically s
 
 ---
 
-## P5 — UX layering + multi-org (IN PROGRESS)
+## P5 — UX layering + multi-org (DONE)
 
 - **Canvas palette** for all node kinds (`agent`, `mcp`, coded step) with schema-aware inspectors;
-  library content drives a categorized palette. _(Org-scope palette polish still deferred.)_
+  library content drives a categorized palette. **Org-scope polish done** — `ORGANIZATION` is a
+  first-class option in the agent-library and credential scope selectors (with an `orgId` input), a
+  "Scope" column surfaces org-scoped rows, and `/admin/organizations/[orgId]` manages members +
+  budget.
 - **Authoring SDK polish:** scaffolding CLI, local dev-loop, publish flow. **Done** — `auto-swe
   bundle init|validate|sign` (token-free, over `@auto-swe/sdk`) + `auto-swe bundles
   list|export|install|install-from-url` (gateway-backed).
@@ -339,11 +341,20 @@ a goal. The P0–P3 libraries are designed export/import-friendly specifically s
   cascade becomes 4-level). **Foundation done:** first-class `Organization` model (every `Team`
   nests under one), `ORGANIZATION` added to `ConfigScope`, and the agent + credential cascades are
   now `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL` (the ORGANIZATION tier fires only when the
-  run's team has an org, so single-tenant behavior is unchanged). **Still deferred:** billing,
-  org-level RBAC, and row-level data isolation.
+  run's team has an org, so single-tenant behavior is unchanged). **RBAC done:**
+  `OrganizationMembership` join table + `OrgRole` enum (`ORG_ADMIN` / `ORG_MEMBER`);
+  `assertOrgAccess` / `assertOrgAdmin` gateway helpers; member CRUD at
+  `/api/v1/admin/organizations/:orgId/members`; platform `ADMIN` bypasses membership checks.
+  **Row-level data isolation done** (application-layer): work-request submission requires org
+  membership, and every org-scoped route enforces `assertOrgAccess`. **Billing done:**
+  `OrgMonthlyUsage` aggregates per-org cost/runs/tokens via Prisma `increment` upserts (race-safe)
+  at run finalize; `Organization.monthlyBudgetUsdCents` caps spend and returns
+  `402 ORG_BUDGET_EXCEEDED` at submit time; budget read/update API at
+  `/api/v1/admin/organizations/:orgId/budget` with admin UI.
 
 ### Open questions (remaining)
-- Org-level RBAC model; per-org data isolation (likely row-level); org-granularity billing.
+- None — Postgres-level RLS remains a possible future hardening over today's application-layer
+  isolation, but is not required for the P5 deliverable.
 
 ---
 
@@ -668,8 +679,7 @@ flowchart TB
 
 ### 8. Phase roadmap (P0–P5)
 
-What each phase delivers and the dependency order. P0–P3 are committed; P4–P5 are deferred but
-shape-compatible from day one.
+What each phase delivers and the dependency order. All phases (P0–P5) are now implemented.
 
 ```mermaid
 flowchart LR
@@ -683,9 +693,7 @@ flowchart LR
     p0 --> p1 --> p2 --> p3 --> p4 --> p5
 
     classDef committed fill:#bbf7d0,stroke:#15803d,color:#052e16;
-    classDef deferred fill:#e5e7eb,stroke:#6b7280,color:#111827,stroke-dasharray: 5 3;
-    class p0,p1,p2,p3 committed;
-    class p4,p5 deferred;
+    class p0,p1,p2,p3,p4,p5 committed;
 ```
 
 ---
@@ -702,14 +710,12 @@ flowchart TB
     rows --> reset["1 · Reset to starter<br/>= re-run seed (FREE, now)"]
     rows --> integ["2 · Referential integrity<br/>write-time agentRef/skillRef check<br/>(P1 — needed anyway)"]
     rows --> drift["3 · Drift detection<br/>per-row base hash compare<br/>(P1 — optional)"]
-    rows --> upg["4 · Version-coherent upgrades<br/>dependency graph + bundle merge<br/>(P4 — deferred)"]
+    rows --> upg["4 · Version-coherent upgrades<br/>dependency graph + bundle merge<br/>(P4 — done)"]
 
     classDef now fill:#bbf7d0,stroke:#15803d,color:#052e16;
     classDef soon fill:#fde68a,stroke:#b45309,color:#3b2a00;
-    classDef later fill:#e5e7eb,stroke:#6b7280,color:#111827,stroke-dasharray: 5 3;
-    class reset now;
+    class reset,upg now;
     class integ,drift soon;
-    class upg later;
 ```
 
 ---
@@ -722,4 +728,4 @@ flowchart TB
 | 🟨 Amber | SWE **seed content** / near-term config work |
 | 🟪 Purple | Libraries layer |
 | 🟩 Green | Available now / committed / runtime |
-| ⬜ Gray (dashed) | Deferred (P4–P5) or intentionally ignored |
+| ⬜ Gray (dashed) | Intentionally ignored / out of scope |
