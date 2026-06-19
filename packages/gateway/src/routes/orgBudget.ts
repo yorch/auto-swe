@@ -6,8 +6,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { assertOrgAccess, assertOrgAdmin, currentYearMonth } from '../lib/orgAccess.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { currentYearMonth } from '../lib/orgAccess.js';
+import { requireAuth } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 
@@ -19,19 +19,12 @@ const PatchBudgetSchema = z.object({
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // GET /api/v1/admin/organizations/:orgId/budget
-  // assertOrgAccess is the real gate; the platform-role floor is just
-  // "authenticated" so any org member can read their org's budget.
+  // GET /api/v1/admin/organizations/:orgId/budget — any org member may read.
   f.get(
     '/:orgId/budget',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    { onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }) },
     async (request, reply) => {
-      const user = requireUser(request);
       const { orgId } = OrgParamsSchema.parse(request.params);
-      const allowed = await assertOrgAccess(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
 
       const [org, usage] = await Promise.all([
         fastify.prisma.organization.findUnique({
@@ -65,23 +58,16 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/admin/organizations/:orgId/budget
-  // assertOrgAdmin is the real gate (ORG_ADMIN or platform ADMIN).
+  // PATCH /api/v1/admin/organizations/:orgId/budget — ORG_ADMIN only.
   f.patch(
     '/:orgId/budget',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: { body: PatchBudgetSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const { orgId } = OrgParamsSchema.parse(request.params);
       const { monthlyBudgetUsdCents } = PatchBudgetSchema.parse(request.body);
-
-      const allowed = await assertOrgAdmin(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
 
       const org = await fastify.prisma.organization.findUnique({ where: { id: orgId } });
       if (!org) {

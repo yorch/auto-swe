@@ -1,13 +1,17 @@
 /**
  * Org membership CRUD (P5 RBAC).
  * Mounted at /api/v1/admin/organizations.
+ *
+ * Access is enforced declaratively by the `requireAuth` onRequest hook:
+ * `requiredOrgRole: 'ORG_MEMBER'` to read, `'ORG_ADMIN'` to write. Platform
+ * ADMINs bypass the org check. This mirrors the team-scoped `requiredTeamRole`
+ * pattern, so the gate is visible in each route's options rather than inline.
  */
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { assertOrgAccess, assertOrgAdmin } from '../lib/orgAccess.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { requireAuth } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 const MemberParamsSchema = z.object({ orgId: z.string().uuid(), userId: z.string().uuid() });
@@ -25,19 +29,11 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/admin/organizations/:orgId/members
-  // Platform-role floor is just "authenticated"; assertOrgAccess is the real
-  // gate so any org member can list, regardless of platform role.
   f.get(
     '/:orgId/members',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request, reply) => {
-      const user = requireUser(request);
+    { onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }) },
+    async (request) => {
       const { orgId } = OrgParamsSchema.parse(request.params);
-      const allowed = await assertOrgAccess(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
-
       const rows = await fastify.prisma.organizationMembership.findMany({
         include: { user: { select: { email: true, id: true, name: true, role: true } } },
         orderBy: { createdAt: 'asc' },
@@ -55,23 +51,15 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /api/v1/admin/organizations/:orgId/members
-  // assertOrgAdmin is the real gate (ORG_ADMIN or platform ADMIN); the
-  // platform-role floor is just "authenticated".
   f.post(
     '/:orgId/members',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: { body: UpsertMemberSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const { orgId } = OrgParamsSchema.parse(request.params);
       const { userId, role } = UpsertMemberSchema.parse(request.body);
-
-      const allowed = await assertOrgAdmin(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
 
       const existing = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
@@ -94,18 +82,12 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.patch(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: { body: PatchMemberSchema, params: MemberParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const { orgId, userId } = MemberParamsSchema.parse(request.params);
       const { role } = PatchMemberSchema.parse(request.body);
-
-      const allowed = await assertOrgAdmin(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
 
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },
@@ -127,17 +109,11 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.delete(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: { params: MemberParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const { orgId, userId } = MemberParamsSchema.parse(request.params);
-
-      const allowed = await assertOrgAdmin(fastify.prisma, user, orgId, reply);
-      if (!allowed) {
-        return;
-      }
 
       const row = await fastify.prisma.organizationMembership.findUnique({
         where: { userId_orgId: { orgId, userId } },

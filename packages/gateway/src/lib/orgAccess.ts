@@ -1,43 +1,27 @@
 /**
- * Org-level RBAC helpers (P5).
+ * Org-level RBAC helper (P5).
  *
- * Platform ADMINs bypass all org checks. Non-admin users must have an
- * `OrganizationMembership` row to access org-scoped resources or submit work
- * requests to teams nested under that org.
+ * Most org-scoped routes enforce access declaratively via the `requireAuth`
+ * onRequest hook (`requiredOrgRole` + `orgIdParam`). This helper covers the one
+ * case the hook can't: work-request submission, where the org is derived from
+ * the target connection inside the handler rather than from a route param.
+ *
+ * Platform ADMINs bypass the check; non-admins need an `OrganizationMembership`
+ * row for the org.
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
-// Re-exported so existing callers (workRequests, orgBudget) keep importing it
-// from the org-access module; the implementation lives in @auto-swe/shared so
-// the worker (OrgMonthlyUsage writer) and gateway (reader) share one formula.
+// Re-exported so callers (workRequests, orgBudget) keep importing it from this
+// module; the implementation lives in @auto-swe/shared so the worker
+// (OrgMonthlyUsage writer) and gateway (reader) share one formula.
 export { currentYearMonth };
-
-/**
- * Resolve the requesting user's standing in `orgId`. Platform ADMINs are
- * reported with `isPlatformAdmin: true` and skip the membership lookup. Shared
- * by both assert helpers so the bypass + lookup live in one place.
- */
-async function loadOrgStanding(
-  prisma: PrismaClient,
-  user: JwtPayload,
-  orgId: string
-): Promise<{ isPlatformAdmin: boolean; role: string | null }> {
-  if (user.role === 'ADMIN') {
-    return { isPlatformAdmin: true, role: null };
-  }
-  const membership = await prisma.organizationMembership.findUnique({
-    where: { userId_orgId: { orgId, userId: user.sub } },
-  });
-  return { isPlatformAdmin: false, role: membership?.role ?? null };
-}
 
 /**
  * Assert that the user is a member of `orgId` (platform ADMINs short-circuit).
  * Sends a 403 reply and returns `false` if the check fails; returns `true` on success.
- * Intended for use in route handlers — call before reading/writing org data.
  */
 export async function assertOrgAccess(
   prisma: PrismaClient,
@@ -45,32 +29,17 @@ export async function assertOrgAccess(
   orgId: string,
   reply: FastifyReply
 ): Promise<boolean> {
-  const { isPlatformAdmin, role } = await loadOrgStanding(prisma, user, orgId);
-  if (isPlatformAdmin || role) {
+  if (user.role === 'ADMIN') {
     return true;
   }
-  await reply.status(403).send({
-    error: { code: 'FORBIDDEN', message: 'You are not a member of this organization' },
+  const membership = await prisma.organizationMembership.findUnique({
+    where: { userId_orgId: { orgId, userId: user.sub } },
   });
-  return false;
-}
-
-/**
- * Assert that the user is an ORG_ADMIN of `orgId` (or platform ADMIN).
- * Returns false + sends 403 on failure.
- */
-export async function assertOrgAdmin(
-  prisma: PrismaClient,
-  user: JwtPayload,
-  orgId: string,
-  reply: FastifyReply
-): Promise<boolean> {
-  const { isPlatformAdmin, role } = await loadOrgStanding(prisma, user, orgId);
-  if (isPlatformAdmin || role === 'ORG_ADMIN') {
-    return true;
+  if (!membership) {
+    await reply.status(403).send({
+      error: { code: 'FORBIDDEN', message: 'You are not a member of this organization' },
+    });
+    return false;
   }
-  await reply.status(403).send({
-    error: { code: 'FORBIDDEN', message: 'Requires ORG_ADMIN role in this organization' },
-  });
-  return false;
+  return true;
 }

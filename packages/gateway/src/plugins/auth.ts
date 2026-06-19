@@ -30,6 +30,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     user?: JwtPayload;
     teamRole?: string;
+    orgRole?: string;
   }
 }
 
@@ -42,6 +43,16 @@ const ROLE_HIERARCHY: Record<string, number> = {
 
 function hasRole(userRole: string, requiredRole: string): boolean {
   return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
+}
+
+// Org role hierarchy: ORG_ADMIN > ORG_MEMBER (P5 multi-org RBAC).
+const ORG_ROLE_HIERARCHY: Record<string, number> = {
+  ORG_ADMIN: 2,
+  ORG_MEMBER: 1,
+};
+
+function hasOrgRole(userRole: string, requiredRole: string): boolean {
+  return (ORG_ROLE_HIERARCHY[userRole] ?? 0) >= (ORG_ROLE_HIERARCHY[requiredRole] ?? 0);
 }
 
 /**
@@ -172,6 +183,8 @@ export interface RBACOptions {
   requiredRole?: string; // Platform role check
   requiredTeamRole?: string; // Team-scoped role check (resolves via team membership)
   teamIdParam?: string; // Route param name containing the team ID (default: 'id')
+  requiredOrgRole?: string; // Org-scoped role check (resolves via org membership)
+  orgIdParam?: string; // Route param name containing the org ID (default: 'orgId')
 }
 
 /**
@@ -179,8 +192,9 @@ export interface RBACOptions {
  * and optional role-based access control.
  *
  * When `requiredTeamRole` is set with a `teamIdParam`, the middleware resolves
- * the user's membership in that team and checks their team role. Platform ADMINs
- * bypass team checks.
+ * the user's membership in that team and checks their team role. Likewise,
+ * `requiredOrgRole` with `orgIdParam` resolves org membership and checks the
+ * org role (ORG_ADMIN > ORG_MEMBER). Platform ADMINs bypass team/org checks.
  */
 /** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
  * 32 bytes of base64url entropy (~43 chars). Anything starting with this
@@ -410,6 +424,39 @@ export function requireAuth(options: RBACOptions = {}) {
       }
 
       request.teamRole = membership.role;
+    }
+
+    // Org role check: resolve org membership and enforce (P5 multi-org RBAC)
+    if (options.requiredOrgRole) {
+      // Platform ADMIN bypasses org checks
+      if (payload.role === 'ADMIN') {
+        return;
+      }
+
+      const orgId = (request.params as Record<string, string>)?.[options.orgIdParam ?? 'orgId'];
+      if (!orgId) {
+        // requiredOrgRole was set but the param is absent — a server-side
+        // misconfiguration. Fail loudly rather than silently granting access.
+        return reply.status(500).send({
+          error: { code: 'SERVER_ERROR', message: 'Org ID param misconfigured on this route' },
+        });
+      }
+
+      const prisma = request.server.prisma;
+      const membership = await prisma.organizationMembership.findUnique({
+        where: { userId_orgId: { orgId, userId: payload.sub } },
+      });
+
+      if (!membership || !hasOrgRole(membership.role, options.requiredOrgRole)) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: `Requires ${options.requiredOrgRole} role in this organization`,
+          },
+        });
+      }
+
+      request.orgRole = membership.role;
     }
   };
 }

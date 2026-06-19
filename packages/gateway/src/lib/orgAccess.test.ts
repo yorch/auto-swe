@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertOrgAccess, assertOrgAdmin, currentYearMonth } from './orgAccess.js';
+import { assertOrgAccess, currentYearMonth } from './orgAccess.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
@@ -40,30 +40,6 @@ describe('assertOrgAccess', () => {
     const prisma = makePrisma(null);
     const reply = makeReply();
     const result = await assertOrgAccess(prisma as never, LEAD_USER, ORG_ID, reply);
-    expect(result).toBe(false);
-    expect(reply.status).toHaveBeenCalledWith(403);
-  });
-});
-
-describe('assertOrgAdmin', () => {
-  it('platform ADMIN always passes', async () => {
-    const prisma = makePrisma(null);
-    const reply = makeReply();
-    const result = await assertOrgAdmin(prisma as never, ADMIN_USER, ORG_ID, reply);
-    expect(result).toBe(true);
-  });
-
-  it('returns true for ORG_ADMIN', async () => {
-    const prisma = makePrisma({ role: 'ORG_ADMIN' });
-    const reply = makeReply();
-    const result = await assertOrgAdmin(prisma as never, LEAD_USER, ORG_ID, reply);
-    expect(result).toBe(true);
-  });
-
-  it('returns false + sends 403 for ORG_MEMBER', async () => {
-    const prisma = makePrisma({ role: 'ORG_MEMBER' });
-    const reply = makeReply();
-    const result = await assertOrgAdmin(prisma as never, LEAD_USER, ORG_ID, reply);
     expect(result).toBe(false);
     expect(reply.status).toHaveBeenCalledWith(403);
   });
