@@ -38,17 +38,22 @@ async function enrichWithTicketData(
   }
 ): Promise<void> {
   try {
-    const [tracker, kbConfig] = await Promise.all([
-      resolveIssueTrackerConfig(),
-      resolveKnowledgeBaseConfig(),
-    ]);
+    const tracker = await resolveIssueTrackerConfig();
 
     if (!tracker.provider) {
       return;
     }
 
+    // Resolve KB config independently so a missing/broken KB table never
+    // aborts ticket enrichment (which is the more critical path).
+    let kbConfig = await resolveKnowledgeBaseConfig().catch((err: unknown) => {
+      fastify.log.warn({ err }, 'KB config resolution failed; enriching without knowledge base');
+      return null;
+    });
+
     const ticket = await fetchTicket(tracker, args.externalTicketId, {
       defaultRepo: { owner: args.repo.organizationName, repo: args.repo.repoName },
+      fetchLinkedPages: kbConfig?.enabled ?? false,
       log: fastify.log,
     });
     if (!ticket) {
@@ -58,7 +63,7 @@ async function enrichWithTicketData(
     // Best-effort: fetch linked KB pages when a knowledge base is configured
     // and the ticket references page IDs (Jira + Confluence).
     let rawDocumentation: unknown = null;
-    if (kbConfig.enabled && kbConfig.provider) {
+    if (kbConfig?.enabled && kbConfig.provider) {
       try {
         const kbProvider = createKnowledgeBaseProvider(kbConfig, { log: fastify.log });
         if (kbProvider) {
@@ -68,7 +73,7 @@ async function enrichWithTicketData(
             if (pages.length > 0) {
               rawDocumentation = pages;
             }
-          } else if (kbConfig.spaces?.length) {
+          } else if (kbConfig?.spaces?.length) {
             // Fallback: search by ticket ID in configured spaces.
             const pages = await kbProvider.searchPages(args.externalTicketId, kbConfig.spaces);
             if (pages.length > 0) {

@@ -368,7 +368,7 @@ export function IssueTrackerTab() {
           </CardHeader>
           <p className="mb-4 text-xs text-paper-500">
             Configure a webhook in Jira pointing to your gateway&apos;s{' '}
-            <span className="font-mono text-paper-300">/api/v1/webhooks/tracker</span> endpoint.
+            <span className="font-mono text-paper-300">/api/v1/webhooks/jira</span> endpoint.
             Enter the shared secret below and set it as the webhook secret in Jira.
           </p>
           <div className="space-y-4">

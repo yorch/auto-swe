@@ -29,6 +29,7 @@ export interface FetchedTicket {
 /** @deprecated Use `FetchIssueOptions` from `@auto-swe/shared/lib/integrations/types`. */
 export interface FetchTicketOptions {
   defaultRepo?: { owner: string; repo: string };
+  fetchLinkedPages?: boolean;
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
@@ -51,6 +52,7 @@ export async function fetchTicket(
     }
     const issue = await provider.fetchIssue(externalTicketId, {
       defaultRepo: opts?.defaultRepo,
+      fetchLinkedPages: opts?.fetchLinkedPages,
       log: opts?.log,
     });
     if (!issue) {

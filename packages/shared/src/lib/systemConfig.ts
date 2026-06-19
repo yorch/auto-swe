@@ -360,7 +360,13 @@ export async function resolveIssueTrackerConfig(
     storyIssueType: row?.storyIssueType ?? undefined,
     storyPointsFieldId: row?.storyPointsFieldId ?? undefined,
     timeoutMs: row?.timeoutMs ?? undefined,
-    webhookSecret: row?.webhookSecret ?? undefined,
+    webhookSecret:
+      decryptOptional({
+        authTag: row?.webhookSecretAuthTag ?? null,
+        ciphertext: row?.webhookSecretCiphertext ?? null,
+        keyVersion: row?.webhookSecretKeyVersion ?? null,
+        nonce: row?.webhookSecretNonce ?? null,
+      }) ?? undefined,
     webhookTriggerStatus: row?.webhookTriggerStatus ?? undefined,
   };
 }

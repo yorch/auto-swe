@@ -118,15 +118,11 @@ export async function executeImplementation(
     heartbeat('lessons retrieved');
 
     // Fire-and-forget tracker sync — never blocks implementation
-    resolveIssueTrackerConfig().then((trackerConfig) =>
-      syncTrackerOnEvent(
-        {
-          issueId: request.externalTicketId,
-          type: 'workflow_started',
-        },
-        trackerConfig
-      ).catch(() => null)
-    );
+    resolveIssueTrackerConfig()
+      .then((trackerConfig) =>
+        syncTrackerOnEvent({ issueId: request.externalTicketId, type: 'workflow_started' }, trackerConfig)
+      )
+      .catch(() => null);
 
     let testResult: TestRunResult = {
       duration_ms: 0,

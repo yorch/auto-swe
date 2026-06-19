@@ -64,29 +64,32 @@ export class JiraProvider implements IssueTrackerProvider {
     this.log = config.log;
   }
 
-  async fetchIssue(id: string, _opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
+  async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
     try {
       const issue = await this.client.get<JiraIssueResponse>(
         `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components`
       );
 
-      // Fetch remote links to find linked Confluence pages
+      // Fetch remote links to find linked Confluence pages — gated behind
+      // opts.fetchLinkedPages to avoid an unconditional extra round-trip for
+      // callers that have no knowledge base configured.
       let linkedPageIds: string[] = [];
-      try {
-        const remoteLinks = await this.client.get<JiraRemoteLink[]>(
-          `/rest/api/3/issue/${encodeURIComponent(id)}/remotelink`
-        );
-        linkedPageIds = (remoteLinks ?? [])
-          .map((rl) => rl.object?.url ?? '')
-          .filter((url) => url.includes('/wiki/'))
-          .map((url) => {
-            // Extract page ID from Confluence URL patterns like /wiki/spaces/.../pages/123456
-            const match = /\/pages\/(\d+)/.exec(url);
-            return match?.[1] ?? '';
-          })
-          .filter(Boolean);
-      } catch {
-        // Remote links are optional — ignore errors
+      if (opts?.fetchLinkedPages) {
+        try {
+          const remoteLinks = await this.client.get<JiraRemoteLink[]>(
+            `/rest/api/3/issue/${encodeURIComponent(id)}/remotelink`
+          );
+          linkedPageIds = (remoteLinks ?? [])
+            .map((rl) => rl.object?.url ?? '')
+            .filter((url) => url.includes('/wiki/'))
+            .map((url) => {
+              const match = /\/pages\/(\d+)/.exec(url);
+              return match?.[1] ?? '';
+            })
+            .filter(Boolean);
+        } catch {
+          // Remote links are optional — ignore errors
+        }
       }
 
       return {

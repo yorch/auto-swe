@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
+import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
 import {
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
@@ -684,7 +686,7 @@ function issueTrackerData(row: IssueTrackerConfigRow | null) {
     storyIssueType: row?.storyIssueType ?? null,
     storyPointsFieldId: row?.storyPointsFieldId ?? null,
     timeoutMs: row?.timeoutMs ?? null,
-    webhookSecret: row?.webhookSecret ?? null,
+    webhookSecret: maskedSecret(row?.webhookSecretLastFour),
     webhookTriggerStatus: row?.webhookTriggerStatus ?? null,
   };
 }
@@ -755,14 +757,12 @@ export async function updateIssueTrackerConfig(
   if (defaultProjectKey !== undefined) {
     data.defaultProjectKey = defaultProjectKey;
   }
-  if (webhookSecret !== undefined) {
-    data.webhookSecret = webhookSecret;
-  }
   if (webhookTriggerStatus !== undefined) {
     data.webhookTriggerStatus = webhookTriggerStatus;
   }
 
   sealInto(data, 'apiToken', apiToken);
+  sealInto(data, 'webhookSecret', webhookSecret ?? undefined);
 
   const row = await prisma.issueTrackerConfig.upsert({
     create: { id: 'default', ...data },
@@ -946,35 +946,19 @@ export async function testKnowledgeBaseConnection(): Promise<{ detail: string; o
       ok: false,
     };
   }
-  // For Confluence: do a lightweight CQL search to validate credentials.
-  if (config.provider === 'confluence') {
-    try {
-      const base = config.baseUrl.replace(/\/$/, '');
-      const credentials = Buffer.from(`${config.email ?? ''}:${config.apiToken}`).toString(
-        'base64'
-      );
-      const res = await fetch(`${base}/wiki/rest/api/content/search?cql=type%3Dpage&limit=1`, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Basic ${credentials}`,
-        },
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!res.ok) {
-        return {
-          detail: `Confluence API returned ${res.status}: ${res.statusText}`,
-          ok: false,
-        };
-      }
-      return { detail: 'Confluence connection successful.', ok: true };
-    } catch (err) {
-      return {
-        detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
-        ok: false,
-      };
+  try {
+    const kbProvider = createKnowledgeBaseProvider(config);
+    if (!kbProvider) {
+      return { detail: `Provider ${config.provider} not supported.`, ok: false };
     }
+    await kbProvider.searchPages('', config.spaces?.slice(0, 1) ?? []);
+    return { detail: `${config.provider} connection successful.`, ok: true };
+  } catch (err) {
+    return {
+      detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+      ok: false,
+    };
   }
-  return { detail: `Provider ${config.provider} connected (no test implemented).`, ok: true };
 }
 
 // ─── Consolidation schedule ───────────────────────────────────────────────────
@@ -1054,24 +1038,17 @@ export async function detectJiraFields(): Promise<{
   if (config.provider !== 'jira' || !config.baseUrl || !config.apiToken) {
     throw new Error('Jira is not configured');
   }
-  const url = `${config.baseUrl.replace(/\/$/, '')}/rest/api/3/field`;
-  const authHeader = Buffer.from(`${config.email ?? ''}:${config.apiToken}`).toString('base64');
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Basic ${authHeader}`,
-    },
-    signal: AbortSignal.timeout(10_000),
+  const client = new AtlassianClient({
+    apiToken: config.apiToken,
+    baseUrl: config.baseUrl,
+    email: config.email ?? '',
   });
-  if (!res.ok) {
-    throw new Error(`Jira field list failed: ${res.status}`);
-  }
-  const allFields = (await res.json()) as { id: string; name: string }[];
-  const spField = allFields.find(
+  const allFields = await client.get<{ id: string; name: string }[]>('/rest/api/3/field');
+  const spField = allFields?.find(
     (f) => f.name.toLowerCase().includes('story point') || f.id === 'story_points'
   );
   return {
-    fields: allFields.map((f) => ({ id: f.id, name: f.name })),
+    fields: (allFields ?? []).map((f) => ({ id: f.id, name: f.name })),
     storyPointsFieldId: spField?.id ?? null,
   };
 }

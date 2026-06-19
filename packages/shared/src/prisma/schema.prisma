@@ -960,9 +960,13 @@ model IssueTrackerConfig {
   storyIssueType     String? @default("Story")        @map("story_issue_type")
   defaultProjectKey  String? @map("default_project_key")
 
-  // Inbound webhooks
-  webhookSecret        String? @map("webhook_secret")
-  webhookTriggerStatus String? @map("webhook_trigger_status")
+  // Inbound webhooks (secret stored with same AES-256-GCM envelope as other secrets)
+  webhookSecretCiphertext Bytes?  @map("webhook_secret_ciphertext")
+  webhookSecretNonce      Bytes?  @map("webhook_secret_nonce")
+  webhookSecretAuthTag    Bytes?  @map("webhook_secret_auth_tag")
+  webhookSecretKeyVersion Int?    @map("webhook_secret_key_version")
+  webhookSecretLastFour   String? @map("webhook_secret_last_four")
+  webhookTriggerStatus    String? @map("webhook_trigger_status")
 
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

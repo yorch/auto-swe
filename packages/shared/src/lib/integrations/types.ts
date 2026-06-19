@@ -65,6 +65,7 @@ export interface CreatedPage {
 
 export interface FetchIssueOptions {
   defaultRepo?: { owner: string; repo: string };
+  fetchLinkedPages?: boolean;
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 

@@ -26,6 +26,7 @@
     "./lib/trackerWrite": "./dist/lib/trackerWrite.js",
     "./lib/trackerSync": "./dist/lib/trackerSync.js",
     "./lib/integrations/adf": "./dist/lib/integrations/adf.js",
+    "./lib/integrations/atlassianClient": "./dist/lib/integrations/atlassianClient.js",
     "./lib/integrations/registry": "./dist/lib/integrations/registry.js",
     "./lib/integrations/issueTracker": "./dist/lib/integrations/issueTracker.js",
     "./lib/integrations/knowledgeBase": "./dist/lib/integrations/knowledgeBase.js",

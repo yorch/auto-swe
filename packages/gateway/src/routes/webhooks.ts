@@ -279,8 +279,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Best-effort tracker sync on PR merge.
       if (wr?.externalTicketId) {
         const trackerConfig = await resolveIssueTrackerConfig();
+        const { baseUrl: ghBaseUrl } = await resolveGitHubConfig();
+        const prUrl = `${ghBaseUrl}/${org}/${repoName}/pull/${prNumber}`;
         await syncTrackerOnEvent(
-          { issueId: wr.externalTicketId, type: 'workflow_completed' },
+          {
+            issueId: wr.externalTicketId,
+            prTitle: `PR #${prNumber}`,
+            prUrl,
+            type: 'workflow_completed',
+          },
           trackerConfig
         ).catch(() => null);
       }
@@ -514,7 +521,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/jira',
     {
-      config: { skipAuth: true },
+      config: { rawBody: true, skipAuth: true },
       schema: { body: z.object({}).passthrough() },
     },
     async (request, reply) => {
@@ -525,13 +532,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         if (!signature) {
           return reply.code(401).send({ error: 'Missing signature' });
         }
-        const expected = `sha256=${crypto.createHmac('sha256', config.webhookSecret)
-          .update(JSON.stringify(request.body))
-          .digest('hex')}`;
-        // Use equal-length buffers to avoid timing attacks
-        const sigBuf = Buffer.from(signature);
-        const expBuf = Buffer.from(expected);
-        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+        if (!rawBody) {
+          return reply.code(401).send({ error: 'Missing raw body' });
+        }
+        if (!verifyGitHubSignature(rawBody, signature, config.webhookSecret)) {
           return reply.code(401).send({ error: 'Invalid signature' });
         }
       }
@@ -557,7 +562,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // 4. Auto-create a work request — find the first active git_repo connection
-      const ticketId = issue.key as string;
+      const ticketId = issue.key as string | undefined;
+      if (!ticketId) {
+        return reply.code(200).send({ reason: 'missing issue key', skipped: true });
+      }
       const fields = issue.fields as Record<string, unknown> | undefined;
       const summary = (fields?.summary as string | undefined) ?? ticketId;
       const defaultRepo = await prisma.connection.findFirst({
@@ -567,12 +575,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(200).send({ reason: 'no active repos', skipped: true });
       }
 
+      // Resolve the default workflow template so the RunInput is processable.
+      const defaultTemplate = await fastify.prisma.workflowTemplate.findFirst({
+        where: { isDefault: true, status: 'ACTIVE' },
+      });
+
       await prisma.runInput.create({
         data: {
           connectionId: defaultRepo.id,
           description: summary,
           externalTicketId: ticketId,
           requestPayload: JSON.stringify({ source: 'jira_webhook', summary, ticketId }),
+          ...(defaultTemplate
+            ? { templateId: defaultTemplate.id, templateVersion: defaultTemplate.activeVersion }
+            : {}),
         },
       });
 
