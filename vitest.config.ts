@@ -13,10 +13,7 @@ export default defineConfig({
       },
       {
         find: '@auto-swe/shared/db',
-        // The Prisma client is only generated in the main workspace (not in git
-        // worktrees). Point to the main repo's db.ts so tests that mock this
-        // module can still resolve the path without a generated-client error.
-        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/db.ts'),
+        replacement: path.resolve(__dirname, 'packages/shared/src/db.ts'),
       },
       {
         find: '@auto-swe/shared/lib/agentPrompts',
@@ -56,15 +53,13 @@ export default defineConfig({
       },
       {
         find: '@auto-swe/shared/lib/trackerSync',
-        // trackerSync.ts was added after this worktree's branch point — use the
-        // main repo's source so tests can mock it without needing a build step.
-        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/lib/trackerSync.ts'),
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/trackerSync.ts'),
       },
       {
         // Broad alias covers registry, adf, providers/*, and any future subpaths.
         // Must come before the bare @auto-swe/shared catch-all.
         find: '@auto-swe/shared/lib/integrations',
-        replacement: path.resolve('/home/user/auto-swe', 'packages/shared/src/lib/integrations'),
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/integrations'),
       },
       {
         find: '@auto-swe/shared/types/api',
