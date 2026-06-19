@@ -1,5 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -104,6 +110,41 @@ async function doCreateOrUpdatePullRequest(
     prUrl,
     workRequestId: request.workRequestId,
   });
+
+  // Best-effort tracker sync on PR opened.
+  if (request.externalTicketId) {
+    const trackerConfig = await resolveIssueTrackerConfig();
+    await syncTrackerOnEvent(
+      {
+        issueId: request.externalTicketId,
+        prTitle: `PR #${prNumber}`,
+        prUrl,
+        type: 'pr_opened',
+      },
+      trackerConfig
+    ).catch(() => null);
+  }
+
+  // Best-effort Confluence PR link write-back — search for a page matching the
+  // ticket ID and append the PR link. Never blocks the PR creation path.
+  if (request.externalTicketId) {
+    try {
+      const kbConfig = await resolveKnowledgeBaseConfig();
+      const kbProvider = createKnowledgeBaseProvider(kbConfig);
+      if (kbProvider) {
+        const pages = await kbProvider.searchPages(request.externalTicketId, kbConfig.spaces);
+        if (pages.length > 0 && pages[0]) {
+          await kbProvider.updatePageWithPrLink(pages[0].id, prUrl, `PR #${prNumber}`);
+          tracer.addActivityEvent({
+            name: 'kb.pr_link_updated',
+            outputJson: { pageId: pages[0].id, pageTitle: pages[0].title, prUrl },
+          });
+        }
+      }
+    } catch {
+      // KB write is best-effort — never fails the PR activity
+    }
+  }
 
   tracer.addActivityEvent({
     name: 'pr.created',

@@ -52,6 +52,16 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/triggerMapping.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/trackerSync',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/trackerSync.ts'),
+      },
+      {
+        // Broad alias covers registry, adf, providers/*, and any future subpaths.
+        // Must come before the bare @auto-swe/shared catch-all.
+        find: '@auto-swe/shared/lib/integrations',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/integrations'),
+      },
+      {
         find: '@auto-swe/shared/types/api',
         replacement: path.resolve(__dirname, 'packages/shared/src/types/api.ts'),
       },
@@ -136,5 +146,9 @@ export default defineConfig({
     // of each file. (The deprecated `environmentMatchGlobs` got replaced by
     // the `projects` API in vitest 3.x; per-file pragmas keep the config flat.)
     include: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.test.tsx'],
+    // Anchor test discovery to the worktree directory (not the CWD from which
+    // vitest is invoked) so the correct test files are found when running from
+    // the main repo root.
+    root: __dirname,
   },
 });

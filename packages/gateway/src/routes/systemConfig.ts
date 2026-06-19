@@ -7,24 +7,28 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  detectJiraFields,
   getGitHubConfig,
   getGoogleOAuthConfig,
+  getIssueTrackerConfig,
+  getKnowledgeBaseConfig,
   getSlackConfig,
   getStorageConfig,
-  getTrackerConfig,
   listConfigAuditEntries,
   SYSTEM_CONFIG_IDS,
   testDecryptSecrets,
   testGitHubConnection,
+  testIssueTrackerConnection,
+  testKnowledgeBaseConnection,
   testSlackConnection,
   testStorageConnection,
-  testTrackerConnection,
   updateConsolidationConfig,
   updateGitHubConfig,
   updateGoogleOAuthConfig,
+  updateIssueTrackerConfig,
+  updateKnowledgeBaseConfig,
   updateSlackConfig,
   updateStorageConfig,
-  updateTrackerConfig,
   writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -35,14 +39,16 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 ///   GET/PUT /api/v1/admin/config/storage
 ///   GET/PUT /api/v1/admin/config/workflow-defaults
 ///   GET/PUT /api/v1/admin/config/oauth/google
-///   GET/PUT /api/v1/admin/config/tracker
+///   GET/PUT /api/v1/admin/config/issue-tracker
+///   GET/PUT /api/v1/admin/config/knowledge-base
 ///
 /// Also:
-///   POST /api/v1/admin/config/github/test   — live connection test
-///   POST /api/v1/admin/config/slack/test    — live connection test
-///   POST /api/v1/admin/config/storage/test  — connectivity test
-///   POST /api/v1/admin/config/tracker/test  — fetch a sample ticket
-///   GET  /api/v1/admin/config/audit-log     — config change history
+///   POST /api/v1/admin/config/github/test          — live connection test
+///   POST /api/v1/admin/config/slack/test           — live connection test
+///   POST /api/v1/admin/config/storage/test         — connectivity test
+///   POST /api/v1/admin/config/issue-tracker/test   — fetch a sample ticket
+///   POST /api/v1/admin/config/knowledge-base/test  — knowledge base connectivity test
+///   GET  /api/v1/admin/config/audit-log            — config change history
 ///
 /// All routes require platform ADMIN role.
 /// Secret fields are write-only from the API: reads return `lastFour` only,
@@ -117,15 +123,34 @@ const GoogleOAuthPutBody = z.object({
   clientSecret: z.string().min(1).max(500).optional(),
 });
 
-const TrackerPutBody = z.object({
+const IssueTrackerPutBody = z.object({
+  apiToken: z.string().min(1).max(500).optional(),
+  baseUrl: z.string().url().max(500).nullable().optional(),
+  defaultProjectKey: z.string().max(100).nullable().optional(),
+  email: z.string().max(320).nullable().optional(),
+  epicIssueType: z.string().max(100).nullable().optional(),
+  instanceType: z.enum(['cloud', 'server', 'datacenter']).nullable().optional(),
+  maxRetries: z.number().int().min(0).max(10).nullable().optional(),
+  provider: z.enum(['jira', 'linear', 'github']).nullable().optional(),
+  storyIssueType: z.string().max(100).nullable().optional(),
+  storyPointsFieldId: z.string().max(100).nullable().optional(),
+  timeoutMs: z.number().int().min(1000).max(60_000).nullable().optional(),
+  webhookSecret: z.string().max(500).nullable().optional(),
+  webhookTriggerStatus: z.string().max(200).nullable().optional(),
+});
+
+const IssueTrackerTestBody = z.object({
+  ticketId: z.string().min(1).max(200),
+});
+
+const KnowledgeBasePutBody = z.object({
   apiToken: z.string().min(1).max(500).optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   email: z.string().max(320).nullable().optional(),
-  provider: z.enum(['jira', 'linear', 'github']).nullable().optional(),
-});
-
-const TrackerTestBody = z.object({
-  ticketId: z.string().min(1).max(200),
+  enabled: z.boolean().optional(),
+  maxPages: z.number().int().min(1).max(50).nullable().optional(),
+  provider: z.enum(['confluence', 'notion']).nullable().optional(),
+  spaces: z.array(z.string().min(1).max(200)).max(20).optional(),
 });
 
 // ─── route plugin ─────────────────────────────────────────────────────────────
@@ -275,15 +300,15 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Issue tracker ────────────────────────────────────────────────────────────
 
-  f.get('/config/tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getTrackerConfig(prisma))
+  f.get('/config/issue-tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getIssueTrackerConfig(prisma))
   );
 
   f.put(
-    '/config/tracker',
-    { schema: { body: TrackerPutBody, response: { 200: z.any() } } },
+    '/config/issue-tracker',
+    { schema: { body: IssueTrackerPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateTrackerConfig(prisma, req.body);
+      const result = await updateIssueTrackerConfig(prisma, req.body);
       if (result.changedFields.length > 0) {
         const actor = requireUser(req);
         await writeSystemConfigAudit(prisma, fastify.log, {
@@ -291,7 +316,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           actorId: actor.sub,
           afterJson: result.auditAfterJson,
           entityId: SYSTEM_CONFIG_IDS.tracker,
-          entityType: 'TrackerConfig',
+          entityType: 'IssueTrackerConfig',
         });
       }
       return reply.send({ data: result.data });
@@ -299,9 +324,58 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   );
 
   f.post(
-    '/config/tracker/test',
-    { schema: { body: TrackerTestBody, response: { 200: z.any() } } },
-    async (req, reply) => reply.send(await testTrackerConnection(req.body.ticketId))
+    '/config/issue-tracker/test',
+    { schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testIssueTrackerConnection(req.body.ticketId))
+  );
+
+  f.post(
+    '/config/issue-tracker/detect-fields',
+    {
+      schema: {
+        response: {
+          200: z.object({
+            fields: z.array(z.object({ id: z.string(), name: z.string() })),
+            storyPointsFieldId: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    async (_req, reply) => {
+      const result = await detectJiraFields();
+      return reply.send(result);
+    }
+  );
+
+  // ── Knowledge base ───────────────────────────────────────────────────────────
+
+  f.get('/config/knowledge-base', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getKnowledgeBaseConfig(prisma))
+  );
+
+  f.put(
+    '/config/knowledge-base',
+    { schema: { body: KnowledgeBasePutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      const result = await updateKnowledgeBaseConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          entityId: SYSTEM_CONFIG_IDS.knowledgeBase,
+          entityType: 'KnowledgeBaseConfig',
+        });
+      }
+      return reply.send({ data: result.data });
+    }
+  );
+
+  f.post(
+    '/config/knowledge-base/test',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await testKnowledgeBaseConnection())
   );
 
   // ── Config audit log ─────────────────────────────────────────────────────────

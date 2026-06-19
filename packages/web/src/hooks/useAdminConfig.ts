@@ -231,41 +231,118 @@ export function useUpdateGoogleOAuthConfig() {
 
 // ── Issue tracker config ──
 
-export type TrackerProvider = 'jira' | 'linear' | 'github';
+export type IssueTrackerProvider = 'jira' | 'linear' | 'github';
 
-export interface TrackerConfig {
-  provider: TrackerProvider | null;
+export interface IssueTrackerConfig {
+  provider: IssueTrackerProvider | null;
   baseUrl: string | null;
   email: string | null;
   apiToken: MaskedField | null;
+  instanceType: string | null;
+  storyPointsFieldId: string | null;
+  epicIssueType: string | null;
+  storyIssueType: string | null;
+  defaultProjectKey: string | null;
+  webhookSecret: MaskedField | null;
+  webhookTriggerStatus: string | null;
 }
 
-export interface TrackerConfigInput {
-  provider?: TrackerProvider | null;
+export interface IssueTrackerConfigInput {
+  provider?: IssueTrackerProvider | null;
   baseUrl?: string | null;
   email?: string | null;
   apiToken?: string;
+  instanceType?: string | null;
+  storyPointsFieldId?: string | null;
+  epicIssueType?: string | null;
+  storyIssueType?: string | null;
+  defaultProjectKey?: string | null;
+  webhookSecret?: string;
+  webhookTriggerStatus?: string | null;
 }
 
-export function useTrackerConfig() {
+export function useIssueTrackerConfig() {
   return useQuery({
-    queryFn: () => api.get<ConfigResponse<TrackerConfig>>('/api/v1/admin/config/tracker'),
-    queryKey: ['admin-config-tracker'],
+    queryFn: () =>
+      api.get<ConfigResponse<IssueTrackerConfig>>('/api/v1/admin/config/issue-tracker'),
+    queryKey: ['admin-config-issue-tracker'],
   });
 }
 
-export function useUpdateTrackerConfig() {
+export function useUpdateIssueTrackerConfig() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: TrackerConfigInput) =>
-      api.put<{ data: TrackerConfig }>('/api/v1/admin/config/tracker', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-tracker'] }),
+    mutationFn: (body: IssueTrackerConfigInput) =>
+      api.put<{ data: IssueTrackerConfig }>('/api/v1/admin/config/issue-tracker', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-issue-tracker'] }),
   });
 }
 
-export function testTrackerConnection(ticketId: string) {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/tracker/test', {
+export function testIssueTrackerConnection(ticketId: string) {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/issue-tracker/test', {
     ticketId,
+  });
+}
+
+export function useDetectJiraFields() {
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/v1/admin/config/issue-tracker/detect-fields', {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json() as Promise<{
+        fields: { id: string; name: string }[];
+        storyPointsFieldId: string | null;
+      }>;
+    },
+  });
+}
+
+// ── Knowledge base config ──
+
+export type KnowledgeBaseProvider = 'confluence' | 'notion';
+
+export interface KnowledgeBaseConfig {
+  provider: KnowledgeBaseProvider | null;
+  enabled: boolean;
+  baseUrl: string | null;
+  email: string | null;
+  apiToken: MaskedField | null;
+  spaces: string[];
+  maxPages: number | null;
+}
+
+export interface KnowledgeBaseConfigInput {
+  provider?: KnowledgeBaseProvider | null;
+  enabled?: boolean;
+  baseUrl?: string | null;
+  email?: string | null;
+  apiToken?: string;
+  spaces?: string[];
+  maxPages?: number | null;
+}
+
+export function useKnowledgeBaseConfig() {
+  return useQuery({
+    queryFn: () =>
+      api.get<ConfigResponse<KnowledgeBaseConfig>>('/api/v1/admin/config/knowledge-base'),
+    queryKey: ['admin-config-knowledge-base'],
+  });
+}
+
+export function useUpdateKnowledgeBaseConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: KnowledgeBaseConfigInput) =>
+      api.put<{ data: KnowledgeBaseConfig }>('/api/v1/admin/config/knowledge-base', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-knowledge-base'] }),
+  });
+}
+
+export function testKnowledgeBaseConnection(query: string) {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/knowledge-base/test', {
+    query,
   });
 }
 

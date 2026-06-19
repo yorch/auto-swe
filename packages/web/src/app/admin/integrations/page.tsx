@@ -3,19 +3,21 @@
 import { useState } from 'react';
 import { AuditLogTab } from '@/components/integrations/AuditLogTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
+import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
+import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
 import { OAuthTab } from '@/components/integrations/OAuthTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { StorageTab } from '@/components/integrations/StorageTab';
-import { TrackerTab } from '@/components/integrations/TrackerTab';
 import { TabBar } from '@/components/ui/TabBar';
 
-type Tab = 'github' | 'slack' | 'storage' | 'tracker' | 'oauth' | 'audit-log';
+type Tab = 'github' | 'slack' | 'storage' | 'tracker' | 'knowledge-base' | 'oauth' | 'audit-log';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'github', label: 'GitHub' },
   { id: 'slack', label: 'Slack' },
   { id: 'storage', label: 'Storage' },
-  { id: 'tracker', label: 'Tracker' },
+  { id: 'tracker', label: 'Issue Tracker' },
+  { id: 'knowledge-base', label: 'Knowledge Base' },
   { id: 'oauth', label: 'OAuth' },
   { id: 'audit-log', label: 'Audit log' },
 ];
@@ -40,7 +42,8 @@ export default function AdminIntegrationsPage() {
       {active === 'github' && <GitHubTab />}
       {active === 'slack' && <SlackTab />}
       {active === 'storage' && <StorageTab />}
-      {active === 'tracker' && <TrackerTab />}
+      {active === 'tracker' && <IssueTrackerTab />}
+      {active === 'knowledge-base' && <KnowledgeBaseTab />}
       {active === 'oauth' && <OAuthTab />}
       {active === 'audit-log' && <AuditLogTab />}
     </div>

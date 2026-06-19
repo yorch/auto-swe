@@ -9,21 +9,39 @@ export {
 } from './lib/credentialScope.js';
 export type { EncryptedSecret } from './lib/crypto.js';
 export { decryptSecret, encryptSecret } from './lib/crypto.js';
+export type { IssueTrackerProvider } from './lib/integrations/issueTracker.js';
+export type { KnowledgeBaseProvider } from './lib/integrations/knowledgeBase.js';
+export {
+  createIssueTrackerProvider,
+  createKnowledgeBaseProvider,
+} from './lib/integrations/registry.js';
+export type {
+  CreatedIssue,
+  CreatedPage,
+  FetchedIssue,
+  FetchIssueOptions,
+  IssueCreateFields,
+  KnowledgePage,
+  PageCreateFields,
+  SearchOptions,
+  TrackerSyncEvent,
+} from './lib/integrations/types.js';
 export type {
   ResolvedGitHubConfig,
   ResolvedGoogleOAuthConfig,
+  ResolvedIssueTrackerConfig,
+  ResolvedKnowledgeBaseConfig,
   ResolvedSlackConfig,
   ResolvedStorageConfig,
-  ResolvedTrackerConfig,
   ResolvedWorkflowDefaults,
-  TrackerProvider,
 } from './lib/systemConfig.js';
 export {
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
   resolveSlackConfig,
   resolveStorageConfig,
-  resolveTrackerConfig,
   resolveWorkflowDefaults,
 } from './lib/systemConfig.js';
 export { generateBranchName, generateWorkflowId } from './lib/workflowId.js';

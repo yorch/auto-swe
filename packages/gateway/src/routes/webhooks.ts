@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
+import { prisma } from '@auto-swe/shared/db';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { resolveGitHubConfig, resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveGitHubConfig,
+  resolveIssueTrackerConfig,
+  resolveSlackConfig,
+} from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -270,6 +276,22 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         ).catch(() => null);
       }
 
+      // Best-effort tracker sync on PR merge.
+      if (wr?.externalTicketId) {
+        const trackerConfig = await resolveIssueTrackerConfig();
+        const { baseUrl: ghBaseUrl } = await resolveGitHubConfig();
+        const prUrl = `${ghBaseUrl}/${org}/${repoName}/pull/${prNumber}`;
+        await syncTrackerOnEvent(
+          {
+            issueId: wr.externalTicketId,
+            prTitle: `PR #${prNumber}`,
+            prUrl,
+            type: 'workflow_completed',
+          },
+          trackerConfig
+        ).catch(() => null);
+      }
+
       return { data: { signalSent: true, workflowId: pullRequest.workflow.temporalWorkflowId } };
     }
   );
@@ -298,7 +320,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Find tracked PRs by commit SHA
       const pullRequests = await fastify.prisma.pullRequest.findMany({
-        include: { workflow: true },
+        include: {
+          workflow: {
+            include: {
+              workRequest: { select: { externalTicketId: true } },
+            },
+          },
+        },
         where: {
           headSha,
           repository: { organizationName: org, repoName },
@@ -362,6 +390,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       for (const r of results) {
         if (r.status === 'rejected') {
           request.log.error({ err: r.reason }, 'Failed to signal workflow');
+        }
+      }
+
+      // Best-effort tracker sync on CI result.
+      const trackerConfig = await resolveIssueTrackerConfig();
+      for (const pr of pullRequests) {
+        const ticketId = pr.workflow?.workRequest?.externalTicketId;
+        if (ticketId) {
+          await syncTrackerOnEvent(
+            passed
+              ? { issueId: ticketId, type: 'ci_passed' }
+              : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
+            trackerConfig
+          ).catch(() => null);
         }
       }
 
@@ -472,6 +514,85 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       return reply
         .status(201)
         .send({ data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId } });
+    }
+  );
+
+  // POST /api/v1/webhooks/jira — receives Jira issue transition events and auto-creates work requests
+  fastify.post(
+    '/jira',
+    {
+      config: { rawBody: true, skipAuth: true },
+      schema: { body: z.object({}).passthrough() },
+    },
+    async (request, reply) => {
+      // 1. Verify HMAC-SHA256 signature (if webhookSecret is configured)
+      const config = await resolveIssueTrackerConfig();
+      if (config.webhookSecret) {
+        const signature = request.headers['x-hub-signature-256'] as string | undefined;
+        if (!signature) {
+          return reply.code(401).send({ error: 'Missing signature' });
+        }
+        const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+        if (!rawBody) {
+          return reply.code(401).send({ error: 'Missing raw body' });
+        }
+        if (!verifyGitHubSignature(rawBody, signature, config.webhookSecret)) {
+          return reply.code(401).send({ error: 'Invalid signature' });
+        }
+      }
+
+      // 2. Parse the Jira webhook payload
+      const payload = request.body as Record<string, unknown>;
+      const issue = payload?.issue as Record<string, unknown> | undefined;
+      const transition = payload?.transition as Record<string, unknown> | undefined;
+      if (!issue || !transition) {
+        return reply.code(200).send({ skipped: true }); // not an issue transition event
+      }
+
+      // 3. Check if the transition matches webhookTriggerStatus
+      const triggerStatus = config.webhookTriggerStatus;
+      const toStatus = (transition?.to as Record<string, unknown> | undefined)?.name as
+        | string
+        | undefined;
+      if (!triggerStatus || !toStatus) {
+        return reply.code(200).send({ skipped: true });
+      }
+      if (toStatus.toLowerCase() !== triggerStatus.toLowerCase()) {
+        return reply.code(200).send({ skipped: true });
+      }
+
+      // 4. Auto-create a work request — find the first active git_repo connection
+      const ticketId = issue.key as string | undefined;
+      if (!ticketId) {
+        return reply.code(200).send({ reason: 'missing issue key', skipped: true });
+      }
+      const fields = issue.fields as Record<string, unknown> | undefined;
+      const summary = (fields?.summary as string | undefined) ?? ticketId;
+      const defaultRepo = await prisma.connection.findFirst({
+        where: { isActive: true, type: 'git_repo' },
+      });
+      if (!defaultRepo) {
+        return reply.code(200).send({ reason: 'no active repos', skipped: true });
+      }
+
+      // Resolve the default workflow template so the RunInput is processable.
+      const defaultTemplate = await fastify.prisma.workflowTemplate.findFirst({
+        where: { isDefault: true, status: 'ACTIVE' },
+      });
+
+      await prisma.runInput.create({
+        data: {
+          connectionId: defaultRepo.id,
+          description: summary,
+          externalTicketId: ticketId,
+          requestPayload: JSON.stringify({ source: 'jira_webhook', summary, ticketId }),
+          ...(defaultTemplate
+            ? { templateId: defaultTemplate.id, templateVersion: defaultTemplate.activeVersion }
+            : {}),
+        },
+      });
+
+      return reply.code(200).send({ ok: true, ticketId });
     }
   );
 };

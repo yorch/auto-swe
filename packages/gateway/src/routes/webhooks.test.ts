@@ -1,27 +1,61 @@
 import crypto from 'node:crypto';
 import Fastify from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mutable per-test view of the DB-backed GitHub config. resolveGitHubConfig is
-// called both by the HMAC verifier (webhookSecret) and by the /ci check-run
-// aggregation (apiUrl + token).
+// Mutable per-test view of the DB-backed configs.
+// resolveGitHubConfig is called by the HMAC verifier (webhookSecret) and by
+// the /ci check-run aggregation (apiUrl + token).
+// resolveIssueTrackerConfig is called by the /jira route for sig + trigger checks,
+// and by /git + /ci for best-effort tracker sync.
 const state = vi.hoisted(() => ({
   github: {
     apiUrl: 'https://api.github.com',
     token: 'gh-pat-token' as string | null,
     webhookSecret: 'hook-secret' as string | null,
   },
+  jira: {
+    provider: 'jira' as string | null,
+    webhookSecret: null as string | null,
+    webhookTriggerStatus: 'Ready for Dev' as string | null,
+  },
 }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubConfig: vi.fn(async () => state.github),
+  resolveIssueTrackerConfig: vi.fn(async () => state.jira),
   resolveSlackConfig: vi.fn(async () => ({
     botToken: null,
     clientId: null,
     clientSecret: null,
     signingSecret: null,
   })),
+}));
+
+vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
+  syncTrackerOnEvent: vi.fn(async () => {}),
+}));
+
+// Module-level prisma used directly by the /jira route handler.
+// Mutable per-test via jiraPrismaState.
+const jiraPrismaState = vi.hoisted(() => ({
+  activeRepo: null as Record<string, unknown> | null,
+  runInputCreateCalls: [] as Record<string, unknown>[],
+}));
+
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    connection: {
+      findFirst: vi.fn(async () => jiraPrismaState.activeRepo),
+    },
+    runInput: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        jiraPrismaState.runInputCreateCalls.push(args.data);
+        return { id: 'ri-1', ...args.data };
+      }),
+    },
+  },
 }));
 
 import { webhookRoutes } from './webhooks.js';
@@ -54,6 +88,8 @@ describe('webhook routes', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeAll(async () => {
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
     await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
     app.decorate('prisma', {
@@ -90,6 +126,13 @@ describe('webhook routes', () => {
       token: 'gh-pat-token',
       webhookSecret: SECRET,
     };
+    state.jira = {
+      provider: 'jira',
+      webhookSecret: null,
+      webhookTriggerStatus: 'Ready for Dev',
+    };
+    jiraPrismaState.activeRepo = null;
+    jiraPrismaState.runInputCreateCalls.length = 0;
     fetchMock = vi.fn(async () => {
       throw new Error('fetch not stubbed for this test');
     });
@@ -359,6 +402,74 @@ describe('webhook routes', () => {
         reason: 'No tracked PR for this commit',
       });
       expect(signalCalls).toHaveLength(0);
+    });
+  });
+
+  // ── POST /api/v1/webhooks/jira ──
+
+  describe('POST /jira', () => {
+    const JIRA_SECRET = 'jira-webhook-secret';
+
+    function jiraSign(body: string, secret = JIRA_SECRET): string {
+      return `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
+    }
+
+    function transitionPayload(toName: string, issueKey = 'PROJ-42'): string {
+      return JSON.stringify({
+        issue: { fields: { summary: 'Add health endpoint' }, key: issueKey },
+        transition: { to: { name: toName } },
+      });
+    }
+
+    it('skips non-transition payloads', async () => {
+      const res = await inject('/api/v1/webhooks/jira', JSON.stringify({}));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
+    });
+
+    it("skips when transition.to.name doesn't match webhookTriggerStatus", async () => {
+      const body = transitionPayload('In Progress');
+      const res = await inject('/api/v1/webhooks/jira', body);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
+    });
+
+    it('creates a work request when transition matches', async () => {
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      const body = transitionPayload('Ready for Dev', 'PROJ-42');
+      const res = await inject('/api/v1/webhooks/jira', body);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ ok: true, ticketId: 'PROJ-42' });
+      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.runInputCreateCalls[0]).toMatchObject({
+        connectionId: 'conn-1',
+        externalTicketId: 'PROJ-42',
+      });
+    });
+
+    it('returns 401 when signature is required but missing', async () => {
+      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
+      const res = await inject('/api/v1/webhooks/jira', JSON.stringify({}));
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('returns 401 when signature is wrong', async () => {
+      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
+      const body = transitionPayload('Ready for Dev');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body, 'wrong-secret'));
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('accepts a valid HMAC-SHA256 signature and creates the work request', async () => {
+      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      const body = transitionPayload('Ready for Dev', 'PROJ-99');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ ok: true, ticketId: 'PROJ-99' });
+      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(1);
     });
   });
 });

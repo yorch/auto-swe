@@ -9,7 +9,11 @@
  */
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveIssueTrackerConfig,
+  resolveKnowledgeBaseConfig,
+} from '@auto-swe/shared/lib/systemConfig';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,
@@ -203,7 +207,7 @@ export async function createTrackerItems(
 ): Promise<TrackerItemsResult> {
   heartbeat('loading tracker config');
   const [trackerConfig, payload] = await Promise.all([
-    resolveTrackerConfig(),
+    resolveIssueTrackerConfig(),
     loadPrdPayload(request.workRequestId),
   ]);
 
@@ -248,6 +252,29 @@ export async function createTrackerItems(
       } else {
         failedCount++;
       }
+    }
+
+    // Best-effort Confluence write-back — never blocks tracker item creation.
+    try {
+      const kbConfig = await resolveKnowledgeBaseConfig();
+      const kbProvider = createKnowledgeBaseProvider(kbConfig);
+      if (kbProvider) {
+        const spaceKey = kbConfig.spaces[0] ?? 'PRD';
+        const bodyText = [
+          epic.description,
+          ...epic.stories.map((s) => `## ${s.title}\n${s.description}`),
+        ].join('\n\n');
+        const page = await kbProvider.createPage({
+          bodyText,
+          spaceKey,
+          title: `PRD: ${epic.title}`,
+        });
+        if (page) {
+          heartbeat(`KB page created: ${page.url}`);
+        }
+      }
+    } catch {
+      // KB write is best-effort — never fails the tracker items activity
     }
   }
 

@@ -1,6 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveIssueTrackerConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type {
   CodeResult,
   CodeSecurityFinding,
@@ -112,6 +116,13 @@ export async function executeImplementation(
     }
 
     heartbeat('lessons retrieved');
+
+    // Fire-and-forget tracker sync — never blocks implementation
+    resolveIssueTrackerConfig()
+      .then((trackerConfig) =>
+        syncTrackerOnEvent({ issueId: request.externalTicketId, type: 'workflow_started' }, trackerConfig)
+      )
+      .catch(() => null);
 
     let testResult: TestRunResult = {
       duration_ms: 0,
