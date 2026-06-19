@@ -1099,36 +1099,3 @@ export async function testDecryptSecrets(prisma: PrismaClient): Promise<Record<s
   return results;
 }
 
-// ─── Jira field detection ─────────────────────────────────────────────────────
-
-/// Calls Jira GET /rest/api/3/field and returns all custom fields plus a best-guess
-/// for the Story Points field ID (e.g. `story_points` or a custom field named like it).
-export async function detectJiraFields(): Promise<{
-  storyPointsFieldId: string | null;
-  fields: { id: string; name: string }[];
-}> {
-  const config = await resolveTrackerConfig();
-  if (config.provider !== 'jira' || !config.baseUrl || !config.apiToken) {
-    throw new Error('Jira is not configured');
-  }
-  const url = `${config.baseUrl.replace(/\/$/, '')}/rest/api/3/field`;
-  const authHeader = Buffer.from(`${config.email ?? ''}:${config.apiToken}`).toString('base64');
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Basic ${authHeader}`,
-    },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
-    throw new Error(`Jira field list failed: ${res.status}`);
-  }
-  const allFields = (await res.json()) as { id: string; name: string }[];
-  const spField = allFields.find(
-    (f) => f.name.toLowerCase().includes('story point') || f.id === 'story_points'
-  );
-  return {
-    fields: allFields.map((f) => ({ id: f.id, name: f.name })),
-    storyPointsFieldId: spField?.id ?? null,
-  };
-}
