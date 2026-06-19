@@ -143,7 +143,6 @@ export default defineConfig({
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
     },
-    environment: 'node',
     // Some modules (e.g. @auto-swe/shared/db) construct a PrismaClient at import
     // time and require DATABASE_URL to be set. PrismaClient connects lazily, so a
     // dummy DSN is enough for tests that mock prisma or decorate a fake one — it
@@ -152,6 +151,7 @@ export default defineConfig({
       DATABASE_URL:
         process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5432/test?schema=public',
     },
+    environment: 'node',
     globals: true,
     // Default `.test.ts` is Node; React component tests are `.test.tsx` and
     // opt into jsdom via a `// @vitest-environment jsdom` pragma at the top

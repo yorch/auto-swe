@@ -1,9 +1,10 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
@@ -16,12 +17,14 @@ import {
   useRemoveOrgMember,
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
+import { useUsers } from '@/hooks/useUsers';
 
 export default function OrgAdminPage({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId } = use(params);
 
   const { data: members, isLoading: membersLoading } = useOrgMembers(orgId);
   const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId);
+  const { data: users = [] } = useUsers();
   const upsertMember = useUpsertOrgMember(orgId);
   const patchMember = usePatchOrgMember(orgId);
   const removeMember = useRemoveOrgMember(orgId);
@@ -32,11 +35,25 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [budgetInput, setBudgetInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<{ userId: string; email: string } | null>(
+    null
+  );
+
+  // Only offer active users who aren't already members for the add picker.
+  const eligibleUsers = useMemo(() => {
+    const memberIds = new Set((members ?? []).map((m) => m.userId));
+    return users.filter((u) => u.isActive && !memberIds.has(u.id));
+  }, [users, members]);
 
   async function handleAddMember() {
     setError(null);
+    const userId = addUserId || eligibleUsers[0]?.id;
+    if (!userId) {
+      setError('Pick a user to add');
+      return;
+    }
     try {
-      await upsertMember.mutateAsync({ role: addRole, userId: addUserId });
+      await upsertMember.mutateAsync({ role: addRole, userId });
       setAddUserId('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add member');
@@ -121,7 +138,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       </Select>
                     </td>
                     <td className="py-3 text-right">
-                      <Button onClick={() => handleRemove(m.userId)} size="sm" variant="ghost">
+                      <Button
+                        onClick={() => setPendingRemoval({ email: m.user.email, userId: m.userId })}
+                        size="sm"
+                        variant="ghost"
+                      >
                         Remove
                       </Button>
                     </td>
@@ -130,28 +151,41 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               </tbody>
             </table>
             <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
-              <Input
-                hint="User UUID"
-                label="Add user"
-                onChange={(e) => setAddUserId(e.target.value)}
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                value={addUserId}
-              />
-              <Select
-                label="Role"
-                onChange={(e) => setAddRole(e.target.value as OrgRole)}
-                value={addRole}
-              >
-                <option value="ORG_MEMBER">ORG_MEMBER</option>
-                <option value="ORG_ADMIN">ORG_ADMIN</option>
-              </Select>
-              <Button
-                disabled={!addUserId || upsertMember.isPending}
-                onClick={handleAddMember}
-                variant="primary"
-              >
-                Add
-              </Button>
+              {eligibleUsers.length === 0 ? (
+                <p className="text-xs text-paper-500">
+                  No active non-member users left to add. Invite one from{' '}
+                  <span className="text-paper-200">/users</span> first.
+                </p>
+              ) : (
+                <>
+                  <Select
+                    label="Add user"
+                    onChange={(e) => setAddUserId(e.target.value)}
+                    value={addUserId || eligibleUsers[0]?.id}
+                  >
+                    {eligibleUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.email} · {u.role}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    label="Role"
+                    onChange={(e) => setAddRole(e.target.value as OrgRole)}
+                    value={addRole}
+                  >
+                    <option value="ORG_MEMBER">ORG_MEMBER</option>
+                    <option value="ORG_ADMIN">ORG_ADMIN</option>
+                  </Select>
+                  <Button
+                    disabled={upsertMember.isPending}
+                    onClick={handleAddMember}
+                    variant="primary"
+                  >
+                    Add
+                  </Button>
+                </>
+              )}
             </div>
           </>
         )}
@@ -214,6 +248,20 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           </div>
         )}
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Remove"
+        dangerous
+        message={`Remove ${pendingRemoval?.email ?? 'this member'} from the organization? They will lose access to all teams nested under it.`}
+        onClose={() => setPendingRemoval(null)}
+        onConfirm={() => {
+          if (pendingRemoval) {
+            handleRemove(pendingRemoval.userId);
+          }
+        }}
+        open={pendingRemoval !== null}
+        title="Remove member"
+      />
     </div>
   );
 }
