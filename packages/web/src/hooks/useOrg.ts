@@ -37,10 +37,7 @@ export interface OrgBudgetRow {
 export function useOrgMembers(orgId: string) {
   return useQuery({
     enabled: !!orgId,
-    queryFn: () =>
-      api
-        .get<OrgMemberRow[]>(`/api/v1/admin/organizations/${orgId}/members`)
-        .then((r) => (Array.isArray(r) ? r : ((r as { data: OrgMemberRow[] }).data ?? r))),
+    queryFn: () => api.get<OrgMemberRow[]>(`/api/v1/admin/organizations/${orgId}/members`),
     queryKey: ['org-members', orgId],
   });
 }
