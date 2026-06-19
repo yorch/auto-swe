@@ -94,7 +94,12 @@ vi.mock('../lib/activityContext.js', () => ({
 }));
 
 vi.mock('../lib/costTracking.js', () => ({
-  recordLlmUsage: vi.fn(async () => {}),
+  recordLlmUsage: vi.fn(async () => ({
+    costUsd: 0,
+    inputTokens: 0,
+    modelSpec: '',
+    outputTokens: 0,
+  })),
 }));
 
 vi.mock('../lib/config/agentSkills.js', () => ({

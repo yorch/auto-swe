@@ -20,7 +20,12 @@ vi.mock('../lib/config/mcpConnection.js', () => ({
 
 vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 
+vi.mock('../lib/activityContext.js', () => ({
+  persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { loadMcpTools } from '../agents/mcpTools.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { runAgent } from './runAgent.js';
@@ -85,7 +90,10 @@ describe('runAgentNode', () => {
 
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
 
-    expect(mockedLoadMcpTools).toHaveBeenCalledWith('https://mcp.example.com/mcp');
+    expect(mockedLoadMcpTools).toHaveBeenCalledWith(
+      'https://mcp.example.com/mcp',
+      expect.any(AgentTracer)
+    );
     // Spec/built-in tools win over MCP tools on key collision.
     expect(mockedRunAgent).toHaveBeenCalledWith(
       expect.objectContaining({ tools: { existing: 't', mcp_x: 'mt' } }),

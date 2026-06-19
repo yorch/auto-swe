@@ -75,12 +75,15 @@ function checkScalar(
     errors.push(`'${key}' must be a ${prop.type} (got ${actual})`);
     return;
   }
-  if (
-    ((prop.type === 'string' && prop.format === 'uuid') || prop.type === 'connection') &&
-    typeof value === 'string' &&
-    !UUID_RE.test(value)
-  ) {
-    errors.push(`'${key}' must be a valid connection ID (UUID)`);
+  const expectsUuid =
+    (prop.type === 'string' && prop.format === 'uuid') || prop.type === 'connection';
+  if (expectsUuid && typeof value === 'string' && !UUID_RE.test(value)) {
+    // A `connection` field is a connection ID; a plain uuid-format string is just a UUID.
+    errors.push(
+      prop.type === 'connection'
+        ? `'${key}' must be a valid connection ID (UUID)`
+        : `'${key}' must be a UUID`
+    );
   }
   if (prop.enum && !prop.enum.includes(value as string | number)) {
     errors.push(`'${key}' must be one of: ${prop.enum.join(', ')}`);
