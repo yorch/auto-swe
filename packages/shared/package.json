@@ -17,6 +17,7 @@
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
+    "./lib/billing": "./dist/lib/billing.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",

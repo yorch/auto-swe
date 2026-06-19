@@ -85,6 +85,30 @@ describe('POST /:orgId/members', () => {
     });
     expect(res.statusCode).toBeOneOf([200, 201]);
   });
+
+  it('allows an ORG_ADMIN who is only a platform ENGINEER to manage members', async () => {
+    const app = buildApp('ENGINEER', 'ORG_ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      url: `/${ORG_ID}/members`,
+    });
+    expect(res.statusCode).toBeOneOf([200, 201]);
+  });
+
+  it('returns 403 for a platform ENGINEER who is only an ORG_MEMBER', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      url: `/${ORG_ID}/members`,
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });
 
 describe('DELETE /:orgId/members/:userId', () => {

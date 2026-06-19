@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
@@ -120,6 +121,7 @@ export async function finalizeWorkflowRun(
   // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
     select: {
+      endedAt: true,
       workflowId: true,
       workRequest: {
         select: {
@@ -140,7 +142,20 @@ export async function finalizeWorkflowRun(
   const tokensInputTotal = workflows.reduce((sum, aw) => sum + aw.tokensInputUsed, 0);
   const tokensOutputTotal = workflows.reduce((sum, aw) => sum + aw.tokensOutputUsed, 0);
 
-  await prisma.workflowRun.update({
+  // P5: aggregate cost into OrgMonthlyUsage with Prisma's increment operator
+  // (race-safe across concurrent finalizations). The increment is NOT
+  // idempotent, but finalizeWorkflowRun is a Temporal activity that can be
+  // retried — so we guard on the pre-read `endedAt` (only the first finalize
+  // bills) and run the denormalize update + org upsert in one transaction.
+  // That makes the pair atomic: a retry after commit sees endedAt set and
+  // skips the upsert; a retry after rollback re-reads endedAt null and redoes
+  // both — no double-count and no under-count. runsCompleted counts only
+  // SUCCESS; cost/tokens accrue for every terminal status (real spend).
+  const alreadyFinalized = run?.endedAt != null;
+  const orgId = run?.workRequest?.connection?.team?.orgId;
+  const runsIncrement = status === 'SUCCESS' ? 1 : 0;
+
+  const denormalizeUpdate = prisma.workflowRun.update({
     data: {
       contextSnapshot: contextSnapshot as object | undefined,
       costUsdAccrued,
@@ -152,6 +167,32 @@ export async function finalizeWorkflowRun(
     where: { id: runId },
   });
 
+  if (orgId && !alreadyFinalized) {
+    const yearMonth = currentYearMonth();
+    await prisma.$transaction([
+      denormalizeUpdate,
+      prisma.orgMonthlyUsage.upsert({
+        create: {
+          costUsdAccrued,
+          orgId,
+          runsCompleted: runsIncrement,
+          tokensInput: tokensInputTotal,
+          tokensOutput: tokensOutputTotal,
+          yearMonth,
+        },
+        update: {
+          costUsdAccrued: { increment: costUsdAccrued },
+          runsCompleted: { increment: runsIncrement },
+          tokensInput: { increment: tokensInputTotal },
+          tokensOutput: { increment: tokensOutputTotal },
+        },
+        where: { orgId_yearMonth: { orgId, yearMonth } },
+      }),
+    ]);
+  } else {
+    await denormalizeUpdate;
+  }
+
   // Write the terminal status back to the ActiveWorkflow row. Templates only
   // advance currentStatus through happy-path states, so without this a
   // failed/timed-out/cancelled run leaves its row "active" forever and the
@@ -162,30 +203,6 @@ export async function finalizeWorkflowRun(
     await prisma.activeWorkflow.updateMany({
       data: { currentStatus: terminalStatus },
       where: { temporalWorkflowId: run.workflowId },
-    });
-  }
-
-  // P5: aggregate cost into OrgMonthlyUsage using Prisma's increment operator
-  // to avoid read-modify-write races on concurrent run finalization.
-  const orgId = run?.workRequest?.connection?.team?.orgId;
-  if (orgId) {
-    const yearMonth = new Date().toISOString().slice(0, 7);
-    await prisma.orgMonthlyUsage.upsert({
-      create: {
-        costUsdAccrued,
-        orgId,
-        runsCompleted: 1,
-        tokensInput: tokensInputTotal,
-        tokensOutput: tokensOutputTotal,
-        yearMonth,
-      },
-      update: {
-        costUsdAccrued: { increment: costUsdAccrued },
-        runsCompleted: { increment: 1 },
-        tokensInput: { increment: tokensInputTotal },
-        tokensOutput: { increment: tokensOutputTotal },
-      },
-      where: { orgId_yearMonth: { orgId, yearMonth } },
     });
   }
 

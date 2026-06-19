@@ -25,9 +25,11 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/admin/organizations/:orgId/members
+  // Platform-role floor is just "authenticated"; assertOrgAccess is the real
+  // gate so any org member can list, regardless of platform role.
   f.get(
     '/:orgId/members',
-    { onRequest: requireAuth({ requiredRole: 'LEAD' }) },
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
     async (request, reply) => {
       const user = requireUser(request);
       const { orgId } = OrgParamsSchema.parse(request.params);
@@ -53,10 +55,12 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /api/v1/admin/organizations/:orgId/members
+  // assertOrgAdmin is the real gate (ORG_ADMIN or platform ADMIN); the
+  // platform-role floor is just "authenticated".
   f.post(
     '/:orgId/members',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: UpsertMemberSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
@@ -90,7 +94,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.patch(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: PatchMemberSchema, params: MemberParamsSchema },
     },
     async (request, reply) => {
@@ -123,7 +127,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.delete(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: MemberParamsSchema },
     },
     async (request, reply) => {

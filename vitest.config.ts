@@ -36,6 +36,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/systemConfig.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/billing',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillScanner',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },

@@ -18,6 +18,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    $transaction: vi.fn(),
     activeWorkflow: {
       updateMany: vi.fn(),
     },
@@ -26,6 +27,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     connection: {
       findUniqueOrThrow: vi.fn(),
+    },
+    orgMonthlyUsage: {
+      upsert: vi.fn(),
     },
     team: { findUnique: vi.fn() },
     workflowRun: {
@@ -239,6 +243,91 @@ describe('finalizeWorkflowRun', () => {
 
     findRun.mockReset();
     updateActive.mockReset();
+  });
+
+  it('aggregates org usage in a transaction on first finalize (SUCCESS counts a run)', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tx = vi.mocked(prisma.$transaction);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    findRun.mockResolvedValue({
+      endedAt: null, // not yet finalized → bill
+      workRequest: {
+        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100, tokensOutputUsed: 50 }],
+        connection: { team: { orgId: 'org-1' } },
+      },
+    } as never);
+    updateRun.mockResolvedValue({} as never);
+
+    await finalizeWorkflowRun('run-5', 'SUCCESS');
+
+    expect(tx).toHaveBeenCalledTimes(1);
+    expect(orgUpsert).toHaveBeenCalledTimes(1);
+    const args = orgUpsert.mock.calls[0]?.[0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+      where: Record<string, unknown>;
+    };
+    expect(args.create.runsCompleted).toBe(1);
+    expect(args.create.costUsdAccrued).toBe(2);
+    expect(args.update.runsCompleted).toEqual({ increment: 1 });
+    expect((args.where.orgId_yearMonth as { orgId: string }).orgId).toBe('org-1');
+
+    findRun.mockReset();
+    tx.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  it('does not count a run for non-SUCCESS terminal status but still accrues cost', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workRequest: {
+        activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 10, tokensOutputUsed: 5 }],
+        connection: { team: { orgId: 'org-1' } },
+      },
+    } as never);
+    updateRun.mockResolvedValue({} as never);
+
+    await finalizeWorkflowRun('run-6', 'FAILED');
+
+    const args = orgUpsert.mock.calls[0]?.[0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(args.create.runsCompleted).toBe(0);
+    expect(args.create.costUsdAccrued).toBe(3);
+    expect(args.update.runsCompleted).toEqual({ increment: 0 });
+
+    findRun.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  it('skips org billing on retry when the run was already finalized (idempotency)', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tx = vi.mocked(prisma.$transaction);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    tx.mockClear();
+    orgUpsert.mockClear();
+    updateRun.mockClear();
+    findRun.mockResolvedValue({
+      endedAt: new Date(), // already finalized by a prior attempt
+      workRequest: {
+        activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100, tokensOutputUsed: 50 }],
+        connection: { team: { orgId: 'org-1' } },
+      },
+    } as never);
+    updateRun.mockResolvedValue({} as never);
+
+    await finalizeWorkflowRun('run-7', 'SUCCESS');
+
+    expect(tx).not.toHaveBeenCalled();
+    expect(orgUpsert).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalled(); // denormalize still runs
+
+    findRun.mockReset();
+    tx.mockReset();
+    orgUpsert.mockReset();
   });
 });
 
