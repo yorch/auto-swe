@@ -120,7 +120,10 @@ export async function executeImplementation(
     // Fire-and-forget tracker sync — never blocks implementation
     resolveIssueTrackerConfig()
       .then((trackerConfig) =>
-        syncTrackerOnEvent({ issueId: request.externalTicketId, type: 'workflow_started' }, trackerConfig)
+        syncTrackerOnEvent(
+          { issueId: request.externalTicketId, type: 'workflow_started' },
+          trackerConfig
+        )
       )
       .catch(() => null);
 
