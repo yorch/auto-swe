@@ -59,7 +59,9 @@ interface NotionCreatePageResponse {
 
 function extractTitle(page: NotionPage): string {
   const props = page.properties;
-  if (!props) return '';
+  if (!props) {
+    return '';
+  }
   // Notion pages created via integration often use 'title' or 'Name'
   const titleProp = props.title ?? props.Name;
   return titleProp?.title?.[0]?.plain_text ?? '';
@@ -73,7 +75,9 @@ function blocksToPlainText(blocks: NotionBlock[]): string {
   return blocks
     .map((block) => {
       const type = block.type;
-      if (!type) return '';
+      if (!type) {
+        return '';
+      }
       const richText = (block as Record<string, { rich_text?: NotionRichText[] } | undefined>)[type]
         ?.rich_text;
       return richTextToPlain(richText);
@@ -152,7 +156,9 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
       if (spaces.length > 0) {
         const spaceSet = new Set(spaces.map((s) => s.replace(/-/g, '')));
         results = results.filter((page) => {
-          if (page.parent?.type !== 'database_id') return false;
+          if (page.parent?.type !== 'database_id') {
+            return false;
+          }
           const dbId = (page.parent.database_id ?? '').replace(/-/g, '');
           return spaceSet.has(dbId);
         });

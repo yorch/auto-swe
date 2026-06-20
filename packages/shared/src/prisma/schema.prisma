@@ -15,6 +15,11 @@ enum Role {
   ENGINEER
 }
 
+enum OrgRole {
+  ORG_ADMIN
+  ORG_MEMBER
+}
+
 enum WorkflowRunStatus {
   RUNNING
   SUCCESS
@@ -240,23 +245,25 @@ model Connection {
   @@map("connections")
 }
 
-/// Top-level tenant boundary (P5 multi-org foundation). Every Team belongs to
-/// exactly one Organization; the config cascade gains an ORGANIZATION tier that
-/// sits between TEAM and GLOBAL. Billing, org-level RBAC, and row-level data
-/// isolation are intentionally NOT part of this foundation — only identity and
-/// the scope cascade. A single 'default' Organization is seeded so existing
-/// teams/global content keep working unchanged.
+/// Top-level tenant boundary (P5 multi-org). Every Team belongs to exactly one
+/// Organization. The config cascade has an ORGANIZATION tier between TEAM and GLOBAL.
+/// `monthlyBudgetUsdCents` is optional; when set, work-request creation is rejected
+/// once the org's spend for the current calendar month meets or exceeds the cap.
 model Organization {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String   @unique
-  slug      String   @unique
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String   @unique
+  slug                   String   @unique
+  isActive               Boolean  @default(true) @map("is_active")
+  /// Optional monthly spend cap in USD cents. Null = no cap enforced.
+  monthlyBudgetUsdCents  Int?     @map("monthly_budget_usd_cents")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   teams               Team[]
   agents              Agent[]
   providerCredentials ProviderCredential[]
+  memberships         OrganizationMembership[]
+  monthlyUsages       OrgMonthlyUsage[]
 
   @@map("organizations")
 }
@@ -315,6 +322,43 @@ model TeamMembership {
   @@map("team_memberships")
 }
 
+/// Org-level membership (P5 RBAC). Users must be a member of an org to access
+/// org-scoped resources and to submit work to teams within that org.
+/// Platform ADMINs bypass these checks implicitly (no membership row required).
+model OrganizationMembership {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId        String       @map("org_id") @db.Uuid
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  role         OrgRole      @default(ORG_MEMBER)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+  @@map("organization_memberships")
+}
+
+/// Per-org monthly cost aggregation (P5 billing). One row per org per calendar
+/// month (yearMonth = 'YYYY-MM'). Upserted by `finalizeWorkflowRun` in the worker
+/// using Prisma's increment operator to avoid read-modify-write races.
+model OrgMonthlyUsage {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId          String       @map("org_id") @db.Uuid
+  organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  /// Calendar month as 'YYYY-MM', e.g. '2026-06'.
+  yearMonth      String       @map("year_month")
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
+  runsCompleted  Int          @default(0) @map("runs_completed")
+  tokensInput    BigInt       @default(0) @map("tokens_input")
+  tokensOutput   BigInt       @default(0) @map("tokens_output")
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([orgId, yearMonth])
+  @@index([orgId])
+  @@map("org_monthly_usage")
+}
+
 model User {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email          String         @unique
@@ -334,6 +378,7 @@ model User {
   preferences    Json           @default("{}") @map("preferences")
 
   memberships           TeamMembership[]
+  orgMemberships        OrganizationMembership[]
   accessTokens          PersonalAccessToken[]
   /// Better-auth relations.
   accounts              Account[]

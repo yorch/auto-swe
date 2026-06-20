@@ -8,13 +8,14 @@ import { api } from '@/lib/api';
 // (managed at /admin/agents/library). This hook module is what remains: the
 // provider-credential, embedding-config, and config-audit surfaces.
 
-export type ConfigScope = 'GLOBAL' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+export type ConfigScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
 
 export interface ProviderCredentialRow {
   id: string;
   provider: string;
   scope: ConfigScope;
   teamId: string | null;
+  orgId: string | null;
   apiBase: string | null;
   lastFour: string;
   maskedKey: string;
@@ -68,8 +69,9 @@ export function useAdminCreateCredential() {
   return useMutation({
     mutationFn: (body: {
       provider: string;
-      scope: 'GLOBAL' | 'TEAM';
+      scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
       teamId?: string;
+      orgId?: string;
       apiBase?: string;
       apiKey: string;
     }) => api.post<{ data: ProviderCredentialRow }>('/api/v1/admin/credentials', body),

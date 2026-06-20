@@ -46,6 +46,11 @@ describe('POST /api/v1/work-requests', () => {
   // Per-test control over the resolved template's inputSchema (P3). Null =
   // no schema → submit validation is skipped (the default for most tests).
   let templateInputSchema: unknown = null;
+  // Per-test control over the P5 org-access + budget-cap guards. Defaults make
+  // every test pass them (member of the org, no cap, no prior spend).
+  let orgMembershipRole: string | null = 'ORG_MEMBER';
+  let orgBudgetCents: number | null = null;
+  let orgSpentUsd: number | null = null;
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -76,7 +81,11 @@ describe('POST /api/v1/work-requests', () => {
           isActive: true,
           organizationName: 'org',
           repoName: 'test',
-          team: { memberships: [{ userId: 'user-1' }] },
+          team: {
+            memberships: [{ userId: 'user-1' }],
+            organization: { id: 'org-1', monthlyBudgetUsdCents: orgBudgetCents },
+            orgId: 'org-1',
+          },
           teamId: 'team-1',
           type: 'git_repo',
         }),
@@ -86,6 +95,12 @@ describe('POST /api/v1/work-requests', () => {
           snapshotUpserts.push(args);
           return { id: 'cs-1' };
         },
+      },
+      organizationMembership: {
+        findUnique: async () => (orgMembershipRole ? { role: orgMembershipRole } : null),
+      },
+      orgMonthlyUsage: {
+        findUnique: async () => (orgSpentUsd != null ? { costUsdAccrued: orgSpentUsd } : null),
       },
       runInput: {
         create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
@@ -169,6 +184,63 @@ describe('POST /api/v1/work-requests', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
     expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+  });
+
+  it('returns 403 when the submitter is not a member of the org (P5 row isolation)', async () => {
+    existingWorkflows = [];
+    orgMembershipRole = null; // not a member of org-1
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-403',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    orgMembershipRole = 'ORG_MEMBER'; // restore default
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('FORBIDDEN');
+  });
+
+  it('returns 402 when the org has exceeded its monthly budget cap (P5 billing)', async () => {
+    existingWorkflows = [];
+    orgBudgetCents = 100; // $1.00 cap
+    orgSpentUsd = 5; // $5.00 already accrued → 500 cents >= 100
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-402',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    orgBudgetCents = null; // restore defaults
+    orgSpentUsd = null;
+    expect(res.statusCode).toBe(402);
+    expect(JSON.parse(res.payload).error.code).toBe('ORG_BUDGET_EXCEEDED');
+  });
+
+  it('allows submission when accrued spend is below the cap (P5 billing)', async () => {
+    existingWorkflows = [];
+    orgBudgetCents = 100_000; // $1000 cap
+    orgSpentUsd = 5; // $5 accrued → 500 cents < 100000
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-OK-BUDGET',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    orgBudgetCents = null;
+    orgSpentUsd = null;
+    expect(res.statusCode).toBe(201);
   });
 
   it('accepts a submission that satisfies the template inputSchema', async () => {

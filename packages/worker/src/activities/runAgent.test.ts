@@ -15,7 +15,11 @@ vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../lib/costTracking.js', () => ({
+  recordLlmUsage: vi
+    .fn()
+    .mockResolvedValue({ costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 }),
+}));
 
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';

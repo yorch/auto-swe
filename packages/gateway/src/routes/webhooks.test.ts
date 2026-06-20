@@ -55,6 +55,9 @@ vi.mock('@auto-swe/shared/db', () => ({
         return { id: 'ri-1', ...args.data };
       }),
     },
+    workflowTemplate: {
+      findFirst: vi.fn(async () => ({ activeVersion: 1, id: 'tpl-1' })),
+    },
   },
 }));
 

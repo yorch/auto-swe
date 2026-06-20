@@ -576,7 +576,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Resolve the default workflow template so the RunInput is processable.
-      const defaultTemplate = await fastify.prisma.workflowTemplate.findFirst({
+      // Use the module-level `prisma` (the singleton) for consistency with the
+      // rest of this handler — `fastify.prisma` is the same instance.
+      const defaultTemplate = await prisma.workflowTemplate.findFirst({
         where: { isDefault: true, status: 'ACTIVE' },
       });
 

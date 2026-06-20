@@ -36,6 +36,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/systemConfig.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/billing',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillScanner',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },
@@ -138,6 +142,14 @@ export default defineConfig({
       exclude: ['**/*.test.ts', '**/prisma/migrations/**'],
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
+    },
+    // Some modules (e.g. @auto-swe/shared/db) construct a PrismaClient at import
+    // time and require DATABASE_URL to be set. PrismaClient connects lazily, so a
+    // dummy DSN is enough for tests that mock prisma or decorate a fake one — it
+    // just keeps the import-time guard from throwing. Mirrors the CI env.
+    env: {
+      DATABASE_URL:
+        process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5432/test?schema=public',
     },
     environment: 'node',
     globals: true,

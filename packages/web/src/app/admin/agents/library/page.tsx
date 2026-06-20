@@ -34,6 +34,7 @@ const EMPTY_CREATE: CreateAgentBody = {
   key: '',
   modelSpec: '',
   name: '',
+  orgId: undefined,
   scope: 'GLOBAL',
   skillRefs: [],
   systemPrompt: '',
@@ -333,6 +334,7 @@ export default function AgentLibraryPage() {
                 <th className="py-2 pr-3">Model</th>
                 <th className="py-2 pr-3">Skills</th>
                 <th className="py-2 pr-3">Tools</th>
+                <th className="py-2 pr-3">Scope</th>
                 <th className="py-2 pr-3">Ver</th>
                 <th className="py-2 pr-3">Verified</th>
                 <th className="py-2 pr-3">Origin</th>
@@ -363,6 +365,9 @@ export default function AgentLibraryPage() {
                   </td>
                   <td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
                     {toolKeysLabel(a.toolKeys)}
+                  </td>
+                  <td className="py-3 pr-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                    {a.scope === 'ORGANIZATION' && a.orgId ? `ORG:${a.orgId.slice(0, 8)}` : a.scope}
                   </td>
                   <td className="py-3 pr-3 tabular-nums text-paper-400">v{a.version}</td>
                   <td className="py-3 pr-3">
@@ -404,6 +409,36 @@ export default function AgentLibraryPage() {
               placeholder="Code Reviewer"
               value={createForm.name}
             />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              hint="GLOBAL is visible system-wide; ORGANIZATION pins to a single org"
+              label="Scope"
+              onChange={(e) =>
+                setCreateForm({
+                  ...createForm,
+                  orgId: e.target.value !== 'ORGANIZATION' ? undefined : createForm.orgId,
+                  scope: e.target.value as CreateAgentBody['scope'],
+                })
+              }
+              value={createForm.scope}
+            >
+              <option value="GLOBAL">GLOBAL</option>
+              <option value="ORGANIZATION">ORGANIZATION</option>
+              <option value="TEAM">TEAM</option>
+              <option value="WORKFLOW_TEMPLATE">WORKFLOW_TEMPLATE</option>
+            </Select>
+            {createForm.scope === 'ORGANIZATION' && (
+              <Input
+                hint="UUID of the owning organization"
+                label="Organization ID"
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, orgId: e.target.value || undefined })
+                }
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                value={createForm.orgId ?? ''}
+              />
+            )}
           </div>
           <Input
             hint="Short summary shown in the agent table"

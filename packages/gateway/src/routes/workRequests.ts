@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
+import { assertOrgAccess, currentYearMonth } from '../lib/orgAccess.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -46,7 +47,7 @@ async function enrichWithTicketData(
 
     // Resolve KB config independently so a missing/broken KB table never
     // aborts ticket enrichment (which is the more critical path).
-    let kbConfig = await resolveKnowledgeBaseConfig().catch((err: unknown) => {
+    const kbConfig = await resolveKnowledgeBaseConfig().catch((err: unknown) => {
       fastify.log.warn({ err }, 'KB config resolution failed; enriching without knowledge base');
       return null;
     });
@@ -297,8 +298,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
 
       // Verify repository exists and is accessible to the requesting user.
-      // Include team membership so non-admins can only trigger work on their
-      // own team's repos without a second round-trip query.
+      // Include team membership + org info so non-admins can only trigger work
+      // on their own team's repos and the org budget cap can be checked.
       const repo = await fastify.prisma.connection.findUnique({
         include: {
           team: {
@@ -307,6 +308,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
                 select: { userId: true },
                 where: { userId: user.sub },
               },
+              organization: {
+                select: { id: true, monthlyBudgetUsdCents: true },
+              },
+              orgId: true,
             },
           },
         },
@@ -325,6 +330,32 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send({
           error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
         });
+      }
+
+      // Org access check (P5): non-admins must be members of the repo's org.
+      const orgId = repo.team.orgId;
+      if (user.role !== 'ADMIN') {
+        const hasAccess = await assertOrgAccess(fastify.prisma, user, orgId, reply);
+        if (!hasAccess) {
+          return;
+        }
+      }
+
+      // Org budget cap check (P5): reject if the org has exceeded its monthly cap.
+      const budgetCap = repo.team.organization?.monthlyBudgetUsdCents;
+      if (budgetCap != null) {
+        const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
+          where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
+        });
+        const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
+        if (spentCents >= budgetCap) {
+          return reply.status(402).send({
+            error: {
+              code: 'ORG_BUDGET_EXCEEDED',
+              message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
+            },
+          });
+        }
       }
 
       // A SWE work request targets a git_repo connection (org/repo are nullable
