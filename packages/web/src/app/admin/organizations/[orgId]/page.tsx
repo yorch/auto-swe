@@ -45,15 +45,22 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     return users.filter((u) => u.isActive && !memberIds.has(u.id));
   }, [users, members]);
 
+  // The selected user, falling back to the first eligible one. Derived (not
+  // stored) so the controlled <Select> and the submit handler always agree even
+  // if a refetch drops the previously-picked user from `eligibleUsers`.
+  const effectiveUserId =
+    addUserId && eligibleUsers.some((u) => u.id === addUserId)
+      ? addUserId
+      : (eligibleUsers[0]?.id ?? '');
+
   async function handleAddMember() {
     setError(null);
-    const userId = addUserId || eligibleUsers[0]?.id;
-    if (!userId) {
+    if (!effectiveUserId) {
       setError('Pick a user to add');
       return;
     }
     try {
-      await upsertMember.mutateAsync({ role: addRole, userId });
+      await upsertMember.mutateAsync({ role: addRole, userId: effectiveUserId });
       setAddUserId('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add member');
@@ -161,7 +168,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   <Select
                     label="Add user"
                     onChange={(e) => setAddUserId(e.target.value)}
-                    value={addUserId || eligibleUsers[0]?.id}
+                    value={effectiveUserId}
                   >
                     {eligibleUsers.map((u) => (
                       <option key={u.id} value={u.id}>

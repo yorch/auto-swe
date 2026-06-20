@@ -180,7 +180,7 @@ third-party coded capability) is **P4**.
 | **P2. Declarative agent node + MCP** | ✅ Done | `agent` node (WS1); `'mcp'` tool key (WS2); full MCP integration — first-class `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path (WS3); `mcp` workflow node (WS4); canvas palette + inspector for both new node types (WS5). The no/low-code tiers. |
 | **P3. Generic Connections, inputs, triggers, memory** | ✅ Done | `Connection` replaces `Repository` (slice 2); `MemoryItem` replaces `AgentLesson` (slice 1); template `inputSchema` + generic `RunInput` with submit-time validation (slice 3); config-driven trigger event→`RunInput` mappings (slice 4). SWE specializes via seed/config. Surface polish (generic `POST /runs`, live issues-webhook receiver, nullable `externalTicketId`) deferred — see `platform-pivot-p3.md`. |
 | **P4. Distribution layer** | ✅ Done | Export/import versioned, dependency-aware bundles of library entities; cross-deployment install as a managed base layer; signature-based provenance/trust; third-party **capability** extension via container-contract coded steps; authoring SDK. All 5 work-streams (WS1–WS5) — see [platform-pivot-p4.md](./platform-pivot-p4.md). |
-| **P5. UX layering + multi-org** | ✅ Done | **Multi-org foundation** (first-class `Organization`; `ORGANIZATION` config scope; 4-level cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`). **Org-level RBAC** (`OrganizationMembership` + `OrgRole`; `assertOrgAccess`/`assertOrgAdmin`; member CRUD API; platform `ADMIN` bypass). **Row-level data isolation** (application-layer: org-membership gate on work-request submit + org-scoped routes). **Org-granularity billing** (`OrgMonthlyUsage` increment-upsert aggregation; `monthlyBudgetUsdCents` cap → `402 ORG_BUDGET_EXCEEDED`; budget API + admin UI). **Authoring-SDK polish** (`auto-swe bundle` local init/validate/sign + `auto-swe bundles` install/export). **Coded-step transports** (containerStep NDJSON streaming + sidecar HTTP). **Canvas palette org-scope polish** (`ORGANIZATION` tier in agent/credential scope selectors + Scope column + `/admin/organizations/[orgId]` page). |
+| **P5. UX layering + multi-org** | ✅ Done | **Multi-org foundation** (first-class `Organization`; `ORGANIZATION` config scope; 4-level cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`). **Org-level RBAC** (`OrganizationMembership` + `OrgRole`; enforced by the `requireAuth({ requiredOrgRole })` hook; member CRUD API; platform `ADMIN` bypass). **Row-level data isolation** (application-layer: org-membership gate on work-request submit + org-scoped routes). **Org-granularity billing** (`OrgMonthlyUsage` increment-upsert aggregation; `monthlyBudgetUsdCents` cap → `402 ORG_BUDGET_EXCEEDED`; budget API + admin UI). **Authoring-SDK polish** (`auto-swe bundle` local init/validate/sign + `auto-swe bundles` install/export). **Coded-step transports** (containerStep NDJSON streaming + sidecar HTTP). **Canvas palette org-scope polish** (`ORGANIZATION` tier in agent/credential scope selectors + Scope column + `/admin/organizations/[orgId]` page). |
 
 ---
 
@@ -342,11 +342,12 @@ a goal. The P0–P3 libraries are designed export/import-friendly specifically s
   nests under one), `ORGANIZATION` added to `ConfigScope`, and the agent + credential cascades are
   now `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL` (the ORGANIZATION tier fires only when the
   run's team has an org, so single-tenant behavior is unchanged). **RBAC done:**
-  `OrganizationMembership` join table + `OrgRole` enum (`ORG_ADMIN` / `ORG_MEMBER`);
-  `assertOrgAccess` / `assertOrgAdmin` gateway helpers; member CRUD at
-  `/api/v1/admin/organizations/:orgId/members`; platform `ADMIN` bypasses membership checks.
-  **Row-level data isolation done** (application-layer): work-request submission requires org
-  membership, and every org-scoped route enforces `assertOrgAccess`. **Billing done:**
+  `OrganizationMembership` join table + `OrgRole` enum (`ORG_ADMIN` / `ORG_MEMBER`); enforced
+  declaratively by the `requireAuth({ requiredOrgRole, orgIdParam })` onRequest hook (mirroring
+  `requiredTeamRole`); member CRUD at `/api/v1/admin/organizations/:orgId/members`; platform `ADMIN`
+  bypasses membership checks. **Row-level data isolation done** (application-layer): work-request
+  submission requires org membership (the `assertOrgAccess` helper, since the org is derived from the
+  connection, not a route param), and every other org-scoped route enforces the hook. **Billing done:**
   `OrgMonthlyUsage` aggregates per-org cost/runs/tokens via Prisma `increment` upserts (race-safe)
   at run finalize; `Organization.monthlyBudgetUsdCents` caps spend and returns
   `402 ORG_BUDGET_EXCEEDED` at submit time; budget read/update API at

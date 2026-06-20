@@ -100,4 +100,28 @@ describe('PATCH /:orgId/budget', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it('allows a platform-ENGINEER who is ORG_ADMIN to edit the cap', async () => {
+    const app = buildApp('ENGINEER', 'ORG_ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ monthlyBudgetUsdCents: 5000 }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+      url: `/${ORG_ID}/budget`,
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ monthlyBudgetUsdCents: 5000 }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+      url: `/${ORG_ID}/budget`,
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });

@@ -111,6 +111,22 @@ describe('POST /:orgId/members', () => {
   });
 });
 
+describe('PATCH /:orgId/members/:userId', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ role: 'ORG_ADMIN' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+      url: `/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
 describe('DELETE /:orgId/members/:userId', () => {
   afterEach(() => vi.clearAllMocks());
 
@@ -122,5 +138,15 @@ describe('DELETE /:orgId/members/:userId', () => {
       url: `/${ORG_ID}/members/${TARGET_USER}`,
     });
     expect(res.statusCode).toBe(204);
+  });
+
+  it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

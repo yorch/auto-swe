@@ -30,7 +30,6 @@ declare module 'fastify' {
   interface FastifyRequest {
     user?: JwtPayload;
     teamRole?: string;
-    orgRole?: string;
   }
 }
 
@@ -455,8 +454,6 @@ export function requireAuth(options: RBACOptions = {}) {
           },
         });
       }
-
-      request.orgRole = membership.role;
     }
   };
 }
