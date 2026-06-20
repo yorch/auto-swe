@@ -1,6 +1,5 @@
-import Fastify from 'fastify';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { makeAuthedApp } from '../test/authedApp.js';
 import { orgMembersRoutes } from './orgMembers.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
@@ -17,35 +16,26 @@ const MEMBER_ROW = {
 };
 
 function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
-  const app = Fastify();
-  app.setValidatorCompiler(validatorCompiler);
-  app.setSerializerCompiler(serializerCompiler);
-
-  app.decorate('prisma', {
-    organizationMembership: {
-      create: vi.fn().mockResolvedValue(MEMBER_ROW),
-      delete: vi.fn().mockResolvedValue({}),
-      findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
-      findUnique: vi
-        .fn()
-        .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
-          if (where.id) {
-            return Promise.resolve(MEMBER_ROW);
-          }
-          return Promise.resolve(membershipRole ? { id: 'row-1', role: membershipRole } : null);
-        }),
-      update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
+  const app = makeAuthedApp({
+    prisma: {
+      organizationMembership: {
+        create: vi.fn().mockResolvedValue(MEMBER_ROW),
+        delete: vi.fn().mockResolvedValue({}),
+        findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
+        findUnique: vi
+          .fn()
+          .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
+            if (where.id) {
+              return Promise.resolve(MEMBER_ROW);
+            }
+            return Promise.resolve(membershipRole ? { id: 'row-1', role: membershipRole } : null);
+          }),
+        update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
+      },
     },
-  } as unknown as never);
-
-  app.decorate('auth', {
-    verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: USER_ID }),
-  } as unknown as never);
-
-  app.addHook('onRequest', async (req) => {
-    req.headers.authorization = 'Bearer fake-token';
+    role,
+    sub: USER_ID,
   });
-
   app.register(orgMembersRoutes);
   return app;
 }

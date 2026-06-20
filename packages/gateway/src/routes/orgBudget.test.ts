@@ -1,6 +1,5 @@
-import Fastify from 'fastify';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { makeAuthedApp } from '../test/authedApp.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
@@ -21,31 +20,22 @@ const USAGE_ROW = {
 };
 
 function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
-  const app = Fastify();
-  app.setValidatorCompiler(validatorCompiler);
-  app.setSerializerCompiler(serializerCompiler);
-
-  app.decorate('prisma', {
-    organization: {
-      findUnique: vi.fn().mockResolvedValue(ORG_ROW),
-      update: vi.fn().mockResolvedValue({ ...ORG_ROW, monthlyBudgetUsdCents: 5000 }),
+  const app = makeAuthedApp({
+    prisma: {
+      organization: {
+        findUnique: vi.fn().mockResolvedValue(ORG_ROW),
+        update: vi.fn().mockResolvedValue({ ...ORG_ROW, monthlyBudgetUsdCents: 5000 }),
+      },
+      organizationMembership: {
+        findUnique: vi.fn().mockResolvedValue(membershipRole ? { role: membershipRole } : null),
+      },
+      orgMonthlyUsage: {
+        findUnique: vi.fn().mockResolvedValue(USAGE_ROW),
+      },
     },
-    organizationMembership: {
-      findUnique: vi.fn().mockResolvedValue(membershipRole ? { role: membershipRole } : null),
-    },
-    orgMonthlyUsage: {
-      findUnique: vi.fn().mockResolvedValue(USAGE_ROW),
-    },
-  } as unknown as never);
-
-  app.decorate('auth', {
-    verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: USER_ID }),
-  } as unknown as never);
-
-  app.addHook('onRequest', async (req) => {
-    req.headers.authorization = 'Bearer fake-token';
+    role,
+    sub: USER_ID,
   });
-
   app.register(orgBudgetRoutes);
   return app;
 }
