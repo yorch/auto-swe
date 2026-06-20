@@ -69,7 +69,43 @@ Two axes structure the design:
    only ~64–68%, and temperature-0 does **not** guarantee determinism — run judges N× and report
    mean ± std.
 3. **Programmatic / guardrail** — regex/assertion/policy checks (the existing scanners).
-4. **Human** — the calibration ground-truth. The PR merge/reject signal is the cheapest source.
+4. **Trajectory / process** — scores *how the agent got there*, not just the end-state, from the
+   `AgentTrace` rows the system already records (every tool call + LLM response). Programmatic, no
+   LLM cost: tool-call correctness (did it call the right tools or flail), efficiency (step count /
+   token cost vs. a baseline — a correct diff in 40 steps is worse than in 8), and guardrail
+   respect (did it *try* to write `.env` or run a blocked command — the scanners already flag
+   these; the scorer counts them). This is the τ-bench dimension: outcome correctness **and**
+   policy adherence. A good diff reached via a reckless path is still a failure mode.
+5. **Human** — the calibration ground-truth. The PR merge/reject signal is the cheapest source.
+
+### How a score is computed (the combination model)
+
+The scorers above are **not averaged into one mushy number** — that would hide regressions and
+invite gaming. A run's quality is computed in three deliberate stages, mirroring how a good
+engineering org reviews a PR ("does it work → is it good → did it behave"):
+
+1. **Gate on the objective floor (hard, binary).** Execution + guardrail scorers must pass:
+   tests green, build/typecheck clean, no security block. Fail here ⇒ aggregate score **0**, full
+   stop — no judge runs (saves cost on already-failed output). These are ground-truth, so they are
+   non-negotiable and never overridden by a favorable judge.
+2. **Rank passing candidates on the soft axes.** Among outputs that clear the floor, the judge
+   (rubric) and trajectory scorers produce per-axis numbers (correctness-of-intent, scope,
+   readability, efficiency, …) used to *compare* configurations — e.g. prompt A vs. prompt B.
+3. **Report per-axis, never one blended verdict.** Each axis is surfaced separately with its N and
+   error bars, so a regression is **attributable**: *"tests still pass, but the judge's scope
+   score dropped — the new prompt makes the implementer touch unrelated files."* That is
+   actionable; a single collapsed number is not.
+
+Two invariants fall out of this model and are enforced everywhere downstream:
+- **Execution anchors the subjective.** A judge score is never trusted alone — it is calibrated
+  against the one hard signal that already exists (did a human merge it; §4.4). An uncalibrated
+  judge may rank, but may not gate.
+- **Stacked, not summed.** Keeping the axes separate (execution + judge + trajectory + guardrail)
+  is the primary defense against Goodhart's law (§6): there is no single scalar to game.
+
+`EvalResult` stores one row **per scorer** (not per run) precisely so these axes stay
+decomposable for trend and regression queries; the eval node's `nodes.<id>.output.score`
+aggregate (§4.1) is a *convenience for `cond` branching*, not the system of record.
 
 ### Prior art to borrow from
 
@@ -124,14 +160,21 @@ evaluates a target value already in the run context and records a score:
   "type": "eval",
   "target": { "from": "nodes.implement.output.diff" },  // Binding, like every node input
   "scorers": [
-    { "kind": "gate", "gate": "runTests" },             // execution-based, reuses qualityGates
-    { "kind": "judge", "agentRef": "evalJudge", "rubric": "code-review-quality@3" },
-    { "kind": "assert", "expr": "$.linesChanged < 500" }
+    { "kind": "gate", "gate": "runTests" },             // floor: execution, reuses qualityGates
+    { "kind": "assert", "expr": "$.linesChanged < 500" }, // floor: programmatic guardrail
+    { "kind": "trajectory", "from": "nodes.implement.traceRef",  // soft: process, reads AgentTrace
+      "metrics": ["toolCorrectness", "stepCount", "guardrailHits"] },
+    { "kind": "judge", "agentRef": "evalJudge", "rubric": "code-review-quality@3" } // soft: rubric
   ],
   "onFail": "warn",        // a low score warns (or blocks, or retries) — reuses OnFailSchema
   "next": "review"
 }
 ```
+
+Scorer `kind`s map to the four machine-scored families in §2 (`gate`/`assert` = floor;
+`trajectory`/`judge` = soft axes). The activity evaluates floor scorers first and short-circuits
+the judge when the floor fails (per the combination model above), so a broken diff never costs a
+judge call.
 
 The node dispatches to a new `evaluateOutput` activity (an LLM activity when a `judge` scorer is
 present — wrapped in `AgentTracer` + `persistActivityTrace` like every other LLM activity). It
@@ -223,7 +266,7 @@ shippable; P0 delivers value with **zero new LLM cost**.
 | Phase | Scope | New LLM cost | Headline value |
 | --- | --- | --- | --- |
 | **P0** | `EvalResult` + `EvalScoreType` models; persist existing **gate results** and **review verdicts** as scores; per-run eval panel on `/runs/[id]` | none | Make the signals the system already computes *queryable and trended* |
-| **P1** | Offline harness: `EvalDataset`/`EvalCase` (seed from run history), `auto-swe evals run`, gateway endpoints, baseline comparison **with error bars**, CI integration. Scorers = execution gates first | low (no judge yet) | **Regression-gate** prompt/model/skill changes before they ship |
+| **P1** | Offline harness: `EvalDataset`/`EvalCase` (seed from run history), `auto-swe evals run`, gateway endpoints, baseline comparison **with error bars**, CI integration. Scorers = execution gates + **trajectory** (both programmatic, no judge yet) | low (no judge yet) | **Regression-gate** prompt/model/skill changes before they ship |
 | **P2** | `eval` workflow node + LLM-as-**judge** scorer (rubrics, admin-extensible like `ScannerPattern`); **calibrate** the judge vs merge/reject labels (track κ/correlation) | medium | In-workflow quality scoring; a *measured*, improvable review network |
 | **P3** | Online sampling + drift dashboard at `/admin/evals`; dataset compression (anchor subsets); cost controls (small judge model, tiered scoring) | medium (sampled) | Continuous quality monitoring + drift detection at controlled cost |
 
@@ -282,8 +325,11 @@ invariant the rest of the system holds to — hence native-first.
   Likely auto-harvest → human-promote to the golden set, with contamination tagging.
 - **CI gate strictness.** Block merge on any regression, or only on a statistically significant
   one (paired, powered)? Leaning significance-gated to avoid flakiness blocking developers.
-- **Trajectory scoring rubric.** What defines a "good" agent trajectory beyond outcome — tool-call
-  efficiency, guardrail respect, step count? Needs its own rubric design (τ-bench as a model).
+- **Trajectory metric weights.** The trajectory scorer is defined (§2, §4.1) — programmatic, over
+  `AgentTrace` — but the *relative weight* of its metrics (tool-call correctness vs. step-count
+  efficiency vs. guardrail hits) and the per-repo baselines they compare against still need
+  tuning against real runs (τ-bench as a model). This is calibration, not a question of whether to
+  build it.
 
 ---
 
