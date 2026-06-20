@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useAddTeamMember, useUsers } from '@/hooks/useWorkflows';
+import { useAddTeamMember, useEligibleUsers } from '@/hooks/useWorkflows';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -19,17 +20,15 @@ export function AddMemberModal({
   teamId: string;
   existingUserIds: string[];
 }) {
-  const { data: users = [] } = useUsers();
+  const eligible = useEligibleUsers(existingUserIds);
   const add = useAddTeamMember(teamId);
   const [userId, setUserId] = useState('');
   const [role, setRole] = useState<Role>('ENGINEER');
   const [error, setError] = useState<string | null>(null);
 
-  const eligible = users.filter((u) => !existingUserIds.includes(u.id) && u.isActive);
-
   // Two effects, not one — keeping the role/error reset gated to `open` only
-  // means typing or selecting doesn't get stomped when `users` / `eligible`
-  // re-resolve to a new array reference on the next render.
+  // means typing or selecting doesn't get stomped when `eligible` re-resolves
+  // to a new array reference on the next render.
   useEffect(() => {
     if (!open) {
       return;
@@ -71,28 +70,7 @@ export function AddMemberModal({
       title="Add a member"
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
-        <div className="space-y-1.5">
-          <label
-            className="block font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500"
-            htmlFor="user"
-          >
-            User
-          </label>
-          {eligible.length === 0 ? (
-            <p className="text-xs text-brick-400">
-              No active users left to add. Invite one from{' '}
-              <span className="text-paper-200">/users</span> first.
-            </p>
-          ) : (
-            <Select id="user" onChange={(e) => setUserId(e.target.value)} required value={userId}>
-              {eligible.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.email} · {u.role}
-                </option>
-              ))}
-            </Select>
-          )}
-        </div>
+        <EligibleUserSelect eligible={eligible} onChange={setUserId} value={userId} />
         <Select
           id="role"
           label="Team role"

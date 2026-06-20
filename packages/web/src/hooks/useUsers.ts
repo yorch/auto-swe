@@ -24,6 +24,17 @@ export function useUsers() {
   });
 }
 
+/**
+ * Active users who aren't already members of the scope being edited — the
+ * candidate list for an "add member" picker. Shared by the teams AddMemberModal
+ * and the org admin page so the eligibility rule lives in one place.
+ */
+export function useEligibleUsers(existingUserIds: string[]): UserSummary[] {
+  const { data: users = [] } = useUsers();
+  const existing = new Set(existingUserIds);
+  return users.filter((u) => u.isActive && !existing.has(u.id));
+}
+
 export function useUpdateUser() {
   const qc = useQueryClient();
   return useMutation({

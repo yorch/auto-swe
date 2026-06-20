@@ -1,6 +1,7 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useState } from 'react';
+import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -17,14 +18,13 @@ import {
   useRemoveOrgMember,
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
-import { useUsers } from '@/hooks/useUsers';
+import { useEligibleUsers } from '@/hooks/useUsers';
 
 export default function OrgAdminPage({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId } = use(params);
 
   const { data: members, isLoading: membersLoading } = useOrgMembers(orgId);
   const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId);
-  const { data: users = [] } = useUsers();
   const upsertMember = useUpsertOrgMember(orgId);
   const patchMember = usePatchOrgMember(orgId);
   const removeMember = useRemoveOrgMember(orgId);
@@ -40,10 +40,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   );
 
   // Only offer active users who aren't already members for the add picker.
-  const eligibleUsers = useMemo(() => {
-    const memberIds = new Set((members ?? []).map((m) => m.userId));
-    return users.filter((u) => u.isActive && !memberIds.has(u.id));
-  }, [users, members]);
+  const eligibleUsers = useEligibleUsers((members ?? []).map((m) => m.userId));
 
   // The selected user, falling back to the first eligible one. Derived (not
   // stored) so the controlled <Select> and the submit handler always agree even
@@ -158,24 +155,14 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               </tbody>
             </table>
             <div className="mt-4 flex items-end gap-3 border-t border-ink-600 pt-4">
-              {eligibleUsers.length === 0 ? (
-                <p className="text-xs text-paper-500">
-                  No active non-member users left to add. Invite one from{' '}
-                  <span className="text-paper-200">/users</span> first.
-                </p>
-              ) : (
+              <EligibleUserSelect
+                eligible={eligibleUsers}
+                label="Add user"
+                onChange={setAddUserId}
+                value={effectiveUserId}
+              />
+              {eligibleUsers.length > 0 && (
                 <>
-                  <Select
-                    label="Add user"
-                    onChange={(e) => setAddUserId(e.target.value)}
-                    value={effectiveUserId}
-                  >
-                    {eligibleUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.email} · {u.role}
-                      </option>
-                    ))}
-                  </Select>
                   <Select
                     label="Role"
                     onChange={(e) => setAddRole(e.target.value as OrgRole)}
