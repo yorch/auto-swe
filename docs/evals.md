@@ -1,6 +1,6 @@
 # Evals — RFC & Roadmap
 
-Living planning doc for **evals**: a first-class, native capability that measures the
+Planning doc (RFC + roadmap) for **evals**: a first-class, native capability that measures the
 quality of agent/LLM output in auto-swe — offline (regression-gating prompt/model/skill
 changes before they ship) and online (scoring real runs to catch drift). Like the platform
 pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the engine gains a
@@ -65,9 +65,9 @@ Two axes structure the design:
    pass." Objective and cheap. auto-swe already has the runner (quality gates). **Prefer these
    first**: they are the SWE-bench-Verified model and they don't cost LLM tokens.
 2. **LLM-as-judge** — a model grades output against a rubric (pointwise) or against a baseline
-   (pairwise A/B). Flexible, but with caveats (see §6): expert-domain judge–human agreement is
-   only ~64–68%, and temperature-0 does **not** guarantee determinism — run judges N× and report
-   mean ± std.
+   (pairwise A/B). Flexible, but with caveats (see §7): expert-domain judge–human agreement
+   often falls to ~60–70% (lower on highly subjective tasks), at or below inter-expert agreement;
+   and temperature-0 does **not** guarantee determinism — run judges N× and report mean ± std.
 3. **Programmatic / guardrail** — regex/assertion/policy checks (the existing scanners).
 4. **Trajectory / process** — scores *how the agent got there*, not just the end-state, from the
    `AgentTrace` rows the system already records (every tool call + LLM response). Programmatic, no
@@ -77,6 +77,11 @@ Two axes structure the design:
    these; the scorer counts them). This is the τ-bench dimension: outcome correctness **and**
    policy adherence. A good diff reached via a reckless path is still a failure mode.
 5. **Human** — the calibration ground-truth. The PR merge/reject signal is the cheapest source.
+
+Families 1–4 are **machine-scored** (no human in the loop at scoring time); family 5 (Human) is
+the ground-truth the machine judges are calibrated against. A single scorer may emit several
+**metrics** (sub-axes) — e.g. the trajectory scorer emits tool-correctness, step-count, and
+guardrail-hits — so "scorer" names the family and "metric" names a number it produces.
 
 ### How a score is computed (the combination model)
 
@@ -101,7 +106,9 @@ Two invariants fall out of this model and are enforced everywhere downstream:
   against the one hard signal that already exists (did a human merge it; §4.4). An uncalibrated
   judge may rank, but may not gate.
 - **Stacked, not summed.** Keeping the axes separate (execution + judge + trajectory + guardrail)
-  is the primary defense against Goodhart's law (§6): there is no single scalar to game.
+  is a primary defense against Goodhart's law (§7): it removes any single scalar to optimize and
+  raises the cost of gaming — necessary, but not sufficient on its own (frozen held-out sets +
+  periodic human trace review are still required; §7).
 
 `EvalResult` stores one row **per scorer** (not per run) precisely so these axes stay
 decomposable for trend and regression queries; the eval node's `nodes.<id>.output.score`
@@ -151,8 +158,9 @@ These mirror the platform-pivot principles so evals stay coherent with the rest 
 
 ### 4.1 The `eval` workflow node (new node type)
 
-A new declarative node alongside the existing `step` / `agent` / `mcp` / `fanOut` / `cond` /
-`signal` / `terminate` / `shell` / `human*` nodes (`packages/shared/src/workflow/spec.ts`). It
+A new declarative node alongside the existing `step` / `agent` / `mcp` / `set` / `cond` /
+`fanOut` / `signal` / `terminate` / `shell` / `containerStep` / `human*` nodes
+(`packages/shared/src/workflow/spec.ts`). It
 evaluates a target value already in the run context and records a score:
 
 ```jsonc
@@ -247,8 +255,10 @@ instead of via failed PRs. It's the SWE-bench-Verified pattern pointed inward.
 
 Minimal work, immediate value: the verdicts already exist. Persist each `ReviewVerdict` as an
 `EvalResult` (severity → numeric), and **calibrate** the judge against human merge/reject
-outcomes (track Cohen's κ / correlation over time). This converts the review network from an
-opaque gate into a measured, improvable judge.
+outcomes (track Cohen's κ / correlation over time). Calibrate against the **human–human
+agreement ceiling, not perfection** — merge/reject labels are themselves noisy, so a judge that
+reaches inter-annotator agreement is as good as the ground truth allows. This converts the
+review network from an opaque gate into a measured, improvable judge.
 
 ### 4.5 Online scoring + drift dashboard
 
@@ -258,7 +268,32 @@ alongside the existing security-events panel). The PR-merge signal feeds judge c
 
 ---
 
-## 5. Phased roadmap
+## 5. Practical use cases
+
+Concrete walkthroughs of what evals unlock — each is something the system **cannot do reliably
+today**.
+
+1. **Safely change a prompt or skill.** An engineer edits the implementer's system prompt and runs
+   `auto-swe evals run swe-implementer-golden --against main`. The harness replays ~200 historical
+   tickets, scores each (tests pass + judge + trajectory), and prints a paired report: *"pass@1
+   71% → 64% (Δ −7pp, p=0.01) — regression."* CI blocks the merge. Today this is discovered only by
+   watching real PRs fail in production.
+2. **Survive a model swap or provider update.** `implementer` is moved to a cheaper model (or a
+   provider silently updates a pinned ID — cf. the seeded `claude-sonnet` retirement note in
+   CLAUDE.md). A nightly eval run flags the quality delta *before* target repos feel it, turning
+   "we think the new model is fine" into a measured cost/quality trade-off.
+3. **Prove the review network earns its cost.** §4.4 persists each `ReviewVerdict` as a score and
+   tracks agreement with human merge/reject. If the network rejects diffs humans merge 40% of the
+   time, that shows up as low κ — evidence to retune the rubric instead of paying a silent
+   productivity tax.
+4. **Catch drift and grow a regression suite from failures.** Online scoring (§4.5) surfaces
+   *"implementer success on repo X fell over three weeks"* as a dashboard trend. Each production
+   failure (already tagged via `MemoryItem.failureType`) is promoted into an `EvalCase`, so the
+   same class of bug can't silently return.
+
+---
+
+## 6. Phased roadmap
 
 Each phase is sized to land in one (or a few) PR(s). Phases are additive and independently
 shippable; P0 delivers value with **zero new LLM cost**.
@@ -270,17 +305,24 @@ shippable; P0 delivers value with **zero new LLM cost**.
 | **P2** | `eval` workflow node + LLM-as-**judge** scorer (rubrics, admin-extensible like `ScannerPattern`); **calibrate** the judge vs merge/reject labels (track κ/correlation) | medium | In-workflow quality scoring; a *measured*, improvable review network |
 | **P3** | Online sampling + drift dashboard at `/admin/evals`; dataset compression (anchor subsets); cost controls (small judge model, tiered scoring) | medium (sampled) | Continuous quality monitoring + drift detection at controlled cost |
 
+**Exit criteria** (a phase is done when):
+- **P0** — gate + review-verdict scores are written as `EvalResult` rows and visible/queryable on `/runs/[id]`; a per-scorer trend query returns rows across runs.
+- **P1** — `auto-swe evals run` scores a seeded dataset and emits a paired, error-barred candidate-vs-baseline report; a CI job fails on a seeded regression.
+- **P2** — the `eval` node runs a judge scorer in-workflow; judge-vs-human agreement (κ) is tracked and surfaced.
+- **P3** — a configurable sample of production runs is scored online; the `/admin/evals` dashboard shows a drift trend; eval `costUsd` is reported.
+
 > Suggested split-out docs as phases are committed: `evals-p0.md`, `evals-p1.md`, … (mirrors
 > `platform-pivot-p*.md`).
 
 ---
 
-## 6. Pitfalls & guardrails (design constraints, not afterthoughts)
+## 7. Pitfalls & guardrails (design constraints, not afterthoughts)
 
 These are baked into the principles above; collected here so they aren't lost.
 
-- **Judge calibration degrades in expert/subjective domains** (~64–68% agreement with experts —
-  below inter-expert agreement). "Is this a good code review?" is exactly such a domain → always
+- **Judge calibration degrades in expert/subjective domains** (often ~60–70% agreement with
+  experts, lower on highly subjective tasks — at or below inter-expert agreement). "Is this a good
+  code review?" is exactly such a domain → always
   validate the judge against human merge/reject labels; don't trust an uncalibrated judge as a
   gate.
 - **Temperature 0 ≠ deterministic.** Judge verdicts can flip across identical runs. Run each
@@ -288,9 +330,14 @@ These are baked into the principles above; collected here so they aren't lost.
 - **Goodhart's law.** Once a score is a target, prompts/agents optimize the metric, not the goal.
   Use *stacked* scorers (execution + judge + guardrail), freeze a held-out subset, and keep
   periodic human trace review in the loop.
-- **Dataset contamination.** Cases harvested from production can leak into agent context/memory
-  (`MemoryItem`), inflating scores. Tag provenance, hold out a frozen subset, and exclude
-  eval-case repos/tickets from memory retrieval during eval runs.
+- **Dataset contamination & train/eval leakage.** Cases harvested from production can leak into
+  agent context/memory (`MemoryItem`), inflating scores. Separately, the *same* harvested cases
+  must not be used to both tune prompts and evaluate them — keep a **frozen held-out split** for
+  judging changes. Tag provenance, hold out that subset, and exclude eval-case repos/tickets from
+  memory retrieval during eval runs.
+- **Eval-set sizing.** Start small and grow from harvested failures: golden sets are typically
+  ~50–500 cases (SWE-bench Verified is 500). Power-analyze (§3) before trusting a delta on a small
+  set; use anchor-subset compression only once a set is large enough to be costly.
 - **Error bars are mandatory.** Report N + standard error; use clustered SEs when cases group by
   repo; power-analyze before trusting a delta. A bare "score went up 2%" is not a result.
 - **Cost is the new bottleneck.** Default execution-based; sample online; small judge model;
@@ -298,7 +345,7 @@ These are baked into the principles above; collected here so they aren't lost.
 
 ---
 
-## 7. Tooling: build vs buy
+## 8. Tooling: build vs buy
 
 This is a **TypeScript** monorepo, which rules out most mature eval frameworks (OpenAI Evals,
 DeepEval, Inspect, Ragas are Python-first). Given the project's DB-backed, self-hosted,
@@ -317,7 +364,7 @@ invariant the rest of the system holds to — hence native-first.
 
 ---
 
-## 8. Open questions
+## 9. Open questions
 
 - **Judge model selection.** A dedicated `evalJudge` Agent (own `modelSpec`, cheap model) vs
   reusing the `reviewer` model? Leaning dedicated, for cost control and independent calibration.
@@ -333,11 +380,11 @@ invariant the rest of the system holds to — hence native-first.
 
 ---
 
-## 9. References
+## 10. References
 
 - SWE-bench / SWE-bench Verified — execution-graded coding-agent benchmark (the inward model for §4.3)
 - τ-bench (tau-bench) — tool-use + policy-adherence agent eval
 - Anthropic, *Adding Error Bars to Evals* — statistical rigor for eval scores
 - Anthropic, *Demystifying evals for AI agents* — engineering guidance
-- LLM-as-a-judge calibration & contamination literature (see research notes)
+- LLM-as-a-judge calibration & contamination literature (judge–human agreement studies; benchmark-contamination work on GSM8K/MMLU)
 - Tooling: OpenAI Evals, Promptfoo, Langfuse, Braintrust, Arize Phoenix, Inspect (UK AISI), DeepEval, Ragas
