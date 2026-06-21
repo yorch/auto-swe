@@ -6,7 +6,7 @@
   ],
   "scripts": {
     "build": "yarn workspaces foreach -At run build",
-    "typecheck": "yarn workspace @auto-swe/shared run build && yarn workspaces foreach -A run typecheck",
+    "typecheck": "yarn workspaces foreach -At --exclude @auto-swe/web run build && yarn workspaces foreach -A run typecheck",
     "dev": "yarn workspaces foreach -Api run dev",
     "dev:gateway": "yarn workspace @auto-swe/gateway dev",
     "dev:worker": "yarn workspace @auto-swe/worker dev",
