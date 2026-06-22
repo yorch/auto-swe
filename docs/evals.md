@@ -7,10 +7,14 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **Proposed** (rev. 2026-06-20). Nothing here is built yet. This doc establishes
-> the vision, the conceptual grounding, and a phased build plan sized so each phase lands in
-> one (or a small handful of) PR(s). Per-phase build plans (`evals-p0.md`, …) will be split
-> out as phases are committed for build, mirroring the `platform-pivot-p*.md` convention.
+> Status: **Proposed — P0 greenlit; P1–P3 pending two spikes** (rev. 2026-06-22). Nothing here is
+> built yet. This doc establishes the vision, the conceptual grounding, and a phased build plan
+> sized so each phase lands in one (or a small handful of) PR(s). An adversarial review
+> (feasibility, methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**; its
+> load-bearing conclusion drives the roadmap (§6): ship a thin **P0 (signal capture)** now, but gate
+> P1–P3 on a **repo-state-replay spike** and a **build-vs-buy bake-off** (§8) — the offline-harness
+> thesis (§4.3) is not yet proven feasible on this codebase. Per-phase build plans (`evals-p0.md`, …)
+> split out as phases are committed, mirroring `platform-pivot-p*.md`.
 
 ---
 
@@ -92,7 +96,10 @@ engineering org reviews a PR ("does it work → is it good → did it behave"):
 1. **Gate on the objective floor (hard, binary).** Execution + guardrail scorers must pass:
    tests green, build/typecheck clean, no security block. Fail here ⇒ aggregate score **0**, full
    stop — no judge runs (saves cost on already-failed output). These are ground-truth, so they are
-   non-negotiable and never overridden by a favorable judge.
+   non-negotiable and never overridden by a favorable judge. *Caveat:* this treats the suite as
+   **deterministic** ground-truth. Real suites are flaky (~10% of SWE-bench Lite cases), so a hard
+   gate-to-0 over an unscreened suite can measure infra noise, not agent quality — cases must be
+   flake-screened at curation and the floor re-run on failure before zeroing (§9).
 2. **Rank passing candidates on the soft axes.** Among outputs that clear the floor, the judge
    (rubric) and trajectory scorers produce per-axis numbers (correctness-of-intent, scope,
    readability, efficiency, …) used to *compare* configurations — e.g. prompt A vs. prompt B.
@@ -248,17 +255,35 @@ gateway endpoint (`/api/v1/admin/evals/*`). It:
 4. Reports **mean ± standard error vs the baseline**, paired per case, with a pass/fail verdict
    on the regression gate.
 
-This makes prompt edits and model swaps **safe**: a regression is caught in CI before it ships,
-instead of via failed PRs. It's the SWE-bench-Verified pattern pointed inward.
+This makes prompt edits and model swaps **safer**: a large regression is caught by a **nightly /
+release-gate** run before it ships, instead of via failed PRs. It is the SWE-bench-Verified pattern
+pointed inward — and it inherits SWE-bench's hard prerequisites, which auto-swe does **not** yet
+satisfy (this is the make-or-break feasibility risk; see §9):
+
+- **Frozen repo state per case.** SWE-bench scores against a pinned commit + a known FAIL_TO_PASS
+  test set. auto-swe today clones at `defaultBranch` HEAD with **no SHA pinned** and discards the
+  workspace container, so a replayed historical ticket runs against a repo that has moved on —
+  making the score incomparable (a −7pp delta could be a worse prompt, moved tests, or upgraded
+  deps, and you can't tell which). P1 must first capture a **baseline SHA + the in-scope passing
+  test set** per case and check that SHA out at replay.
+- **This is not a per-PR gate.** One implementer case is a multi-minute Docker run with several LLM
+  calls (on the order of tens of dollars per case at current implementer pricing); a 200-case
+  baseline-plus-candidate run with error-bar resampling is **hours and thousands of dollars** —
+  viable nightly or at release, not on every push. The §5 walkthrough's "gate" means that nightly
+  run, not a per-PR block.
 
 ### 4.4 Promote review-network verdicts to first-class scores
 
 Minimal work, immediate value: the verdicts already exist. Persist each `ReviewVerdict` as an
-`EvalResult` (severity → numeric), and **calibrate** the judge against human merge/reject
-outcomes (track Cohen's κ / correlation over time). Calibrate against the **human–human
-agreement ceiling, not perfection** — merge/reject labels are themselves noisy, so a judge that
-reaches inter-annotator agreement is as good as the ground truth allows. This converts the
-review network from an opaque gate into a measured, improvable judge.
+`EvalResult` (severity → numeric), and **calibrate** the judge against human labels (track Cohen's
+κ / correlation over time). But the raw merge/reject label is **confounded, not merely noisy**: the
+review network already gated the diff (self-reinforcing), rejected diffs never become PRs
+(survivorship bias), and a merge is partly a business decision (deadline, trust-the-bot). More
+confounded data narrows nothing. So calibrate against a **decontaminated channel** — a small,
+periodically refreshed set re-reviewed by a human who did *not* see the bot's verdict, **including
+sampled diffs the network rejected** — against the human–human agreement ceiling, not raw
+production merges (§9). Done right, this converts the review network from an opaque gate into a
+measured, improvable judge.
 
 ### 4.5 Online scoring + drift dashboard
 
@@ -274,10 +299,13 @@ Concrete walkthroughs of what evals unlock — each is something the system **ca
 today**.
 
 1. **Safely change a prompt or skill.** An engineer edits the implementer's system prompt and runs
-   `auto-swe evals run swe-implementer-golden --against main`. The harness replays ~200 historical
-   tickets, scores each (tests pass + judge + trajectory), and prints a paired report: *"pass@1
-   71% → 64% (Δ −7pp, p=0.01) — regression."* CI blocks the merge. Today this is discovered only by
-   watching real PRs fail in production.
+   `auto-swe evals run swe-implementer-golden --against main`. The **nightly** harness replays the
+   golden tickets, scores each (tests pass + judge + trajectory), and prints a paired report:
+   *"pass@1 78% → 61% (Δ −17pp, 95% CI [−27, −7]) — regression."* The nightly gate flags it before
+   the change ships. Realism matters here: at affordable N (tens–low-hundreds of expensive cases,
+   k=1) the suite reliably catches **large** regressions like this, but a 5–7pp delta sits inside
+   the error bars and is **not** detectable without far more cases or repeated sampling (§9). Today
+   even the large regression is found only by watching real PRs fail in production.
 2. **Survive a model swap or provider update.** `implementer` is moved to a cheaper model (or a
    provider silently updates a pinned ID — cf. the seeded `claude-sonnet` retirement note in
    CLAUDE.md). A nightly eval run flags the quality delta *before* target repos feel it, turning
@@ -300,10 +328,23 @@ shippable; P0 delivers value with **zero new LLM cost**.
 
 | Phase | Scope | New LLM cost | Headline value |
 | --- | --- | --- | --- |
-| **P0** | `EvalResult` + `EvalScoreType` models; persist existing **gate results** and **review verdicts** as scores; per-run eval panel on `/runs/[id]` | none | Make the signals the system already computes *queryable and trended* |
-| **P1** | Offline harness: `EvalDataset`/`EvalCase` (seed from run history), `auto-swe evals run`, gateway endpoints, baseline comparison **with error bars**, CI integration. Scorers = execution gates + **trajectory** (both programmatic, no judge yet) | low (no judge yet) | **Regression-gate** prompt/model/skill changes before they ship |
+| **P0** | `EvalResult` + `EvalScoreType` models; **passively capture** existing gate + review-verdict + merge/reject signals as `EvalResult` rows (with provenance tags). Dashboard deferred until a consumer exists. | none | **Accumulate a labeled corpus for free** so a future harness has data — not dashboards nobody acts on |
+| **P1** *(gated — see below)* | Offline harness: `EvalDataset`/`EvalCase` (incl. **per-case baseline SHA + golden test set**), `auto-swe evals run`, gateway endpoints, paired error-barred comparison, **nightly** CI integration. Scorers = execution gates + **trajectory** (programmatic; trajectory advisory until baselined) | low (no judge yet) | **Nightly regression-gate** for prompt/model/skill changes (large regressions) |
 | **P2** | `eval` workflow node + LLM-as-**judge** scorer (rubrics, admin-extensible like `ScannerPattern`); **calibrate** the judge vs merge/reject labels (track κ/correlation) | medium | In-workflow quality scoring; a *measured*, improvable review network |
 | **P3** | Online sampling + drift dashboard at `/admin/evals`; dataset compression (anchor subsets); cost controls (small judge model, tiered scoring) | medium (sampled) | Continuous quality monitoring + drift detection at controlled cost |
+
+**Sequencing & readiness gates** (why P0 ships now but P1 waits — see §9):
+- **Replay spike (before P1).** Prove one historical ticket can be replayed deterministically:
+  capture a baseline SHA in `executeImplementation`, check it out at replay, run the pinned test
+  set, produce one paired score. If starting state can't be cheaply reproduced, the offline-harness
+  thesis (§4.3) is in doubt — learn that in week 1, not month 3.
+- **Build-vs-buy bake-off (before P1).** Self-host Langfuse + thin score adapters vs. the native
+  build, each costed in eng-weeks (§8). Build native only if it wins.
+- **Corpus readiness gate (before P1).** Don't commit P1 until ≥~150 merged/rejected production
+  runs across several repos exist — below that, error bars are too wide to reject realistic
+  regressions. P0 accumulates this for free.
+- **P2–P3** additionally defer until a named owner exists for judge calibration + dataset
+  governance, and (for the `eval` *node* / product surface) a real user actually pulls for it.
 
 **Exit criteria** (a phase is done when):
 - **P0** — gate + review-verdict scores are written as `EvalResult` rows and visible/queryable on `/runs/[id]`; a per-scorer trend query returns rows across runs.
@@ -359,12 +400,80 @@ system of record, and treat external tools as **optional exporters** for richer 
 - **Braintrust** (commercial, TS+Py, CI deploy-gating) and **Arize Phoenix** (OSS, has a TS
   `@arizeai/phoenix-evals` package) are alternatives if a hosted experiment loop is wanted later.
 
-Buying a platform as the *source of truth* would break the "no external SaaS owns our data"
-invariant the rest of the system holds to — hence native-first.
+**Be honest about the choice.** The "no external SaaS owns our data" invariant only rules out
+*hosted* platforms as the system of record (Braintrust). It does **not** apply to **Langfuse and
+Promptfoo, which are OSS and self-hostable** — self-hosted Langfuse is Postgres-backed, OTel-native,
+and you already run Grafana LGTM, so it plausibly delivers much of P0 (score persistence + trends)
+and P3 (online scoring + drift) out of the box. And "a TS monorepo rules out Python-first
+frameworks" is half-true: the eval *harness* runs as a separate CI process, not in the worker
+isolate, so Python tools (Inspect, Promptfoo red-team) are invokable regardless. So before
+committing P1, run the **bake-off** (§6): self-hosted Langfuse + thin adapters vs. the native build,
+costed in eng-weeks. Build native only if it wins — otherwise the native layer is undifferentiated
+plumbing and a standing maintenance liability.
 
 ---
 
-## 9. Open questions
+## 9. Risks & open feasibility gaps
+
+This plan was adversarially reviewed from three angles (codebase feasibility, eval methodology,
+strategy). No flaw is *architectural* — the plumbing (`EvalResult`/`EvalCase`, the additive `eval`
+node, execution-first scoring) is sound — but several load-bearing claims do not survive contact and
+must be closed before P1. Severity: 🔴 blocks P1 · 🟠 serious · 🟡 moderate.
+
+- 🔴 **Repo state is not frozen → replay is not yet meaningful** (§4.3). The make-or-break gap.
+  *Fix:* capture a per-case baseline SHA + in-scope passing-test set; check the SHA out at replay and
+  run only that set. Prove it with the replay spike (§6) before building the harness.
+- 🔴 **Flaky execution floor poisons the headline metric.** Gate-to-0 over an unscreened suite
+  measures infra noise, not agent quality (~10% of SWE-bench Lite cases are flaky). *Fix:*
+  flake-screen at curation (promote a case only if the reference solution passes k× consistently —
+  SWE-bench Verified's method); re-run the floor on failure and only zero on *consistent* failure;
+  record per-case flake rate; report infra-failures separately from quality-failures.
+- 🔴 **Underpowered for small deltas; the original §5 example was statistically wrong.** At n≈200,
+  k=1, the two-proportion SE of a difference is ≈4.7pp, so the minimum detectable effect is ~10–15pp,
+  not the 5–7pp the value prop implied (the old "−7pp, p=0.01" was really ≈p=0.13). *Fix (applied):*
+  §5 now shows a large, detectable regression and states the limit. Do a real power analysis before
+  trusting any sub-10pp delta; budget k>1 on a core anchor set so within-config variance is
+  estimable. Clustered SEs (§2) shrink the *effective* N further when cases group by repo.
+- 🟠 **Judge-calibration label is confounded, not just noisy** (§4.4). Self-reinforcing gating +
+  survivorship + merge-as-business-decision. *Fix:* decontaminated human channel that re-reviews
+  *rejected* diffs too; track κ against that, not raw merges.
+- 🟠 **The judge axis is leaned on hardest where it's weakest** (κ≈0.45 on subjective SE tasks), yet
+  §10 defaults to a single cheap judge — the worst quadrant for a gating signal. *Fix:* pairwise
+  (relative) judging by default; ensemble or a stronger model when a judge axis influences a gate;
+  the **judge model must differ from the implementer model** (self-preference bias); keep the judge
+  **advisory / non-blocking** until its κ clears a stated threshold — wire the gate to execution +
+  trajectory.
+- 🟠 **The Goodhart defense is necessary but unmechanized.** *Fix:* make the held-out set a real
+  mechanism — separate `EvalDataset` scope, RBAC so prompt-authors can't read its cases or per-case
+  scores, a stated rotation policy — plus an **implementer/rubric wall**: golden references and
+  rubric text are never visible to the implementer agent in any run (reward-hacking guard).
+- 🟠 **No decision rule for conflicting axes.** "Report per-axis, never blended" (§2) has no
+  tie-breaker: when scope↑ but readability↓, does the gate block? *Fix:* execution + guardrail are
+  blocking; trajectory + judge are advisory-with-thresholds; a named approver adjudicates mixed soft
+  results. A gate must terminate in a decision.
+- 🟡 **On-distribution coverage limit.** Evals catch regressions *resembling past failures*; new
+  repos/ticket-shapes pass green and still need a production canary. *Fix:* state the precondition in
+  §5; add per-tag (repo/capability) **stratified reporting** with its own N + error bar (without it,
+  use-cases §5.2/§5.4 don't actually close); keep a canary as the off-distribution backstop.
+- 🟡 **Dataset rot has no owner or re-validation loop.** A 6-month-old case's reference can stop
+  applying to today's repo, silently becoming a permanent floor-failure. *Fix:* a periodic job that
+  re-runs each golden case's reference against current repo state and quarantines now-failing (stale)
+  cases; a named owner + cadence; treat the golden set as a carrying-cost liability, not a one-time
+  asset.
+- 🟡 **The eval system itself needs evals; cost can spiral.** A stale/flaky/miscalibrated suite
+  yields *false confidence* — worse than none. *Fix:* surface suite-health (flake rate, stale-case
+  rate, judge κ) on `/admin/evals` as first-class blocking signals; add a per-suite cost ceiling +
+  tiered scoring (cheap floor on all, expensive judge on a sampled anchor subset) as hard policy.
+
+**Strategic posture.** Three independent forces (immature labeled corpus, the unfinished platform
+pivot reshaping these abstractions, and a build-vs-buy case that must be tested against self-hosted
+OSS) say: ship **P0 now** (cheap, additive, pivot-agnostic, accumulates the corpus), run the two
+spikes (§6), and **defer P1–P3** until the spikes clear and the corpus exists. The thesis is sound;
+the timing and scope are what this review pulls back.
+
+---
+
+## 10. Open questions
 
 - **Judge model selection.** A dedicated `evalJudge` Agent (own `modelSpec`, cheap model) vs
   reusing the `reviewer` model? Leaning dedicated, for cost control and independent calibration.
@@ -380,7 +489,7 @@ invariant the rest of the system holds to — hence native-first.
 
 ---
 
-## 10. References
+## 11. References
 
 - SWE-bench / SWE-bench Verified — execution-graded coding-agent benchmark (the inward model for §4.3)
 - τ-bench (tau-bench) — tool-use + policy-adherence agent eval
