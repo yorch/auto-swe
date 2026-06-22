@@ -49,8 +49,23 @@ tokens list                          List your personal access tokens
 tokens create <name>                 Issue a long-lived API token (printed once)
 tokens revoke <id>                   Revoke a token
 
+bundle init [dir] [--name=N] [--version=V]
+                                     Scaffold a bundle authoring project (local, no token)
+bundle validate <path>               Validate a bundle manifest (schema + content hash)
+bundle sign <path> --key=<pem> [--signed-by=ID] [-o <path>]
+                                     Attach a detached ed25519 signature
+
+bundles list                         List installed bundles (admin token)
+bundles export <name> <version> [--origin=TAG] [-o <path>]
+                                     Export GLOBAL content to a bundle file
+bundles install <path>               Install a bundle from a file
+bundles install-from-url <url>       Install a bundle from a URL
+
 help                                 Show usage
 ```
+
+`bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
+(plural) hits `/api/v1/admin/bundles` and needs an admin token.
 
 ## Exit codes
 

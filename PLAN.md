@@ -28,7 +28,6 @@ The system is delivered incrementally across four phases. Each phase produces a 
 > **Dedicated MVP documents:**
 >
 > - **[docs/mvp-architecture.md](docs/mvp-architecture.md)** — MVP architecture, component design, data flow, and design rationale
-> - **[docs/mvp-implementation.md](docs/mvp-implementation.md)** — Step-by-step implementation guide with project structure, code, and build order
 
 **Delivers:**
 

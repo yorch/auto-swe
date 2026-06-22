@@ -1,5 +1,12 @@
 # auto-swe — Multi-Agent Repository Review
 
+> **Point-in-time snapshot (superseded).** This is a one-shot audit from 2026-06-09 at commit
+> `9778506`. Nearly all P0/P1/P2 findings were remediated in the review's own remediation rounds
+> (see §7); the codebase has since moved well beyond this snapshot (platform pivot P0–P5). It is
+> preserved for historical rationale, **not** as a live issue tracker — verify against current
+> code before acting on any finding. For current state see [`AGENTS.md`](../AGENTS.md),
+> [`architecture.md`](./architecture.md), and [`platform-pivot.md`](./platform-pivot.md).
+
 > Produced by a six-agent review (Product, Architecture, Security, Documentation, Testing & Reliability, Evolution Strategy), synthesized by a review orchestrator. Review date: 2026-06-09, at commit `9778506`. Findings are namespaced per agent (`PROD-*`, `ARCH-*`, `SEC-*`, `DOC-*`, `TEST-*`, `EVOL-*`); every finding cites code evidence and carries a confidence tag (`[confirmed]` = verified in code, `[suspected]` = needs human verification).
 
 ---

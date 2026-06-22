@@ -69,13 +69,13 @@ packages/
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/index.ts` | Re-exports types and enums from `@auto-swe/shared` |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 35 models (see §6; the `Agent` + `AgentSkillRef` entities replaced `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` in P1/P1.5) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 40 models (see §6; the `Agent` + `AgentSkillRef` entities replaced `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` in P1/P1.5) |
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample `git_repo` connection, default workflow template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
-| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 51 patterns across `INJECTION` (13), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
+| `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 52 patterns across `INJECTION` (14), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
-| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/agent/set/cond/signal/terminate/fanOut/shell/human*) |
+| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/agent/mcp/set/cond/signal/terminate/fanOut/shell/containerStep/human*) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` node predicates (jsonpath + comparison, no JS sandbox) |
 | `src/workflow/stepRegistry.ts` | Step catalog (metadata, input schemas) — imported by gateway + web without worker dependency |
@@ -407,7 +407,7 @@ Sub-role usage:
 - `decomposer` — loaded by `planDecomposition`; the decomposer agent gets its own skill suffix (model comes from the parent `planner` role config).
 
 **Skills vs tools:**
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 51 built-in patterns (all 5 types) synced by `syncBuiltins()` at gateway startup, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
+- **Skill** = named prompt fragment (`promptText`) injected into the agent system message. Controls *how* an agent reasons. Each skill has an `isVerified` flag (`true` for built-ins seeded from `packages/shared/src/skills/`; `false` for custom skills, reset whenever `promptText` is updated). Custom skill content is scanned for injection/exfiltration patterns by `scanSkillContent` in `packages/shared/src/lib/skillScanner.ts` (non-blocking; returns warnings). Scan patterns are stored in the `ScannerPattern` table — 52 built-in patterns (all 5 types) synced by `syncBuiltins()` at gateway startup, plus any custom patterns added by admins at `/admin/scanner`. Patterns have `flags` (safe subset: `i`, `m`, `s`, `u`, `v` only) and `isActive` toggle. The scanner caches active patterns for 60 s and invalidates on any pattern mutation.
 - **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) tracked in `IMPLEMENTER_TOOL_IDS` and controlled by the resolved `Agent`'s `toolKeys` (P1.5: replaced the `AgentToolConfig` table; `null` = all four enabled). A fifth tool, `loadSkill`, is automatically added alongside the workspace tools when skills are present — it is not part of `toolKeys`. Other agents have no tools; they use skills for reasoning guidance only.
 
 **Progressive skill disclosure (implementer agent):** Skills are not pre-injected wholesale. The implementer agent receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch the full `promptText` only when it decides to engage a skill. This avoids token bloat from unused skills. Other agents (reviewer sub-agents, planner, decomposer) continue to receive their skill fragments directly in the system prompt since they have no tools.
@@ -597,7 +597,7 @@ Unknown model specs emit `llm.cost_pricing_known=false` and accrue zero cost rat
 
 ## 9. Runtime Security Scanners
 
-Six independent scanners run during agent execution, at distinct stages, each advisory or blocking. Five are backed by DB regex patterns (`ScannerPattern`, 60 s TTL cache via `makePatternLoader`); the pre-write content scanner uses static OWASP-aligned rules. Built-in patterns total **51** (13 `INJECTION`, 11 `EXFILTRATION`, 11 `SHELL_COMMAND`, 10 `CODE_SECURITY`, 6 `SENSITIVE_FILE`), synced by `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
+Six independent scanners run during agent execution, at distinct stages, each advisory or blocking. Five are backed by DB regex patterns (`ScannerPattern`, 60 s TTL cache via `makePatternLoader`); the pre-write content scanner uses static OWASP-aligned rules. Built-in patterns total **52** (14 `INJECTION`, 11 `EXFILTRATION`, 11 `SHELL_COMMAND`, 10 `CODE_SECURITY`, 6 `SENSITIVE_FILE`), synced by `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 
 | Scanner | Stage | Behavior | Source |
 |---|---|---|---|

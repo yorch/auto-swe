@@ -231,7 +231,8 @@ packages/
 ├── gateway/    # Fastify 5.x HTTP API (auth, RBAC, routes, webhooks)
 ├── worker/     # Temporal worker, Mastra agents, activities
 ├── web/        # Next.js 16 web dashboard (App Router, React Flow template editor)
-└── cli/        # auto-swe binary — thin REST client over the gateway
+├── cli/        # auto-swe binary — thin REST client over the gateway (+ local bundle authoring)
+└── sdk/        # @auto-swe/sdk — bundle authoring SDK (defineAgent/Skill/Template, signBundle)
 ```
 
 See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes, and design decisions.
