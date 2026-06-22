@@ -1,6 +1,10 @@
 # STATUS.md — Implementation Status
 
-> Maps the original plan (`PLAN.md`) against what was actually built. Updated 2026-06-10.
+> **Frozen reference.** This file maps the original 4-phase plan (`PLAN.md`) against what
+> was actually built, plus the post-Phase-4 work through the June 2026 burst. It is **no
+> longer updated** for ongoing work. For the platform-pivot phases (P0–P5) and current
+> system state, see [`docs/platform-pivot.md`](./docs/platform-pivot.md), [`AGENTS.md`](./AGENTS.md),
+> and [`docs/architecture.md`](./docs/architecture.md). Last content update: 2026-06-10.
 
 ## Legend
 
@@ -171,18 +175,19 @@ The early-June feature burst (PRs #48–#68 plus the post-review remediation pas
 
 ---
 
-## Platform Pivot: SWE-system → generic durable-workflow platform (in progress)
+## Platform Pivot: SWE-system → generic durable-workflow platform (complete)
 
-RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p3.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
+RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p5.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
 
 | Phase | Status | Notes |
 | ----- | ------ | ----- |
 | **P0 — de-domainify the engine** | Done | enum→string node kinds, step registry, `AgentSpec` + generic `runAgent`, computed `assertConfigReady`, identity-agnostic cost, content provenance. All 6 work-streams. |
 | **P1 — Agent library** | Done | First-class `Agent` entity + `resolveAgent`, `inheritsModelFrom`, versioning + run snapshot, governed CRUD API + UI (`/admin/agents/library`). All 6 work-streams. |
 | **P1.5 — retire the role tables** | Done | `Agent` is the sole source of truth; `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` deleted. All 4 slices. |
-| **P4 — distribution layer** | In progress (P4 branch) | WS1 bundle format + export · WS2 install as a managed base layer · WS3 ed25519 signature trust + `InstalledBundle` registry + install-from-URL + `/admin/bundles` UI · WS4 container-contract coded steps (`containerStep` node) · WS5 authoring SDK (`packages/sdk`). All 5 work-streams implemented; see `docs/platform-pivot-p4.md`. |
+| **P4 — distribution layer** | Done | WS1 bundle format + export · WS2 install as a managed base layer · WS3 ed25519 signature trust + `InstalledBundle` registry + install-from-URL + `/admin/bundles` UI · WS4 container-contract coded steps (`containerStep` node) · WS5 authoring SDK (`packages/sdk`). All 5 work-streams merged (#76); see `docs/platform-pivot-p4.md`. |
 | **P3 — generic Connections / inputs / triggers / memory** | Done | `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + generic `RunInput`←`WorkRequest` (with submit validation), config-driven trigger event→`RunInput` mappings. All 4 slices. |
 | **P2 — declarative `agent` node + MCP** | Done | WS1 (`agent` node + `runAgentNode`); WS2 (`'mcp'` tool key); WS3 (first-class `mcp` Connection; MCP binding across all three implementer activities + the generic `runAgentNode` path via `buildImplementerForActivity`; non-git read/submit paths filtered + guarded by `isGitRepoConnection`; admin write-path — `/api/v1/admin/mcp-connections` + `/admin/mcp-connections` UI + `mcpConnectionId` agent field with `validateMcpConnectionRef` tenancy check); WS4 (`mcp` workflow node — `McpNodeSchema` + interpreter dispatch → `mcpCallTool` activity); WS5 (canvas palette + `McpSection` inspector for the `agent`/`mcp` nodes). All 5 work-streams complete. |
+| **P5 — UX layering + multi-org** | Done | Multi-org foundation (first-class `Organization`; `ORGANIZATION` config scope → 4-level cascade); org-level RBAC (`OrganizationMembership`/`OrgRole`, `requireAuth({ requiredOrgRole })`); application-layer row isolation; org-granularity billing (`OrgMonthlyUsage` + `monthlyBudgetUsdCents` cap → `402 ORG_BUDGET_EXCEEDED`); authoring-SDK polish + coded-step transports + canvas org-scope polish. Merged (#91, #102); see `docs/platform-pivot-p5.md`. |
 
 ---
 
