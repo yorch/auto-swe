@@ -1,6 +1,6 @@
 # auto-swe
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](./LICENSE)
 
 An autonomous agentic software engineering system. Submit a ticket ID — get a reviewed, tested pull request.
 
