@@ -59,28 +59,3 @@ For a Competing Use, or any use the FSL grant does not cover, you need a separat
 commercial license from the Licensor. Reach out by **opening a GitHub issue** on
 this repository (or contacting the copyright holder directly) describing the
 intended use; licensing terms are handled case by case.
-
-## Relicensing history
-
-This project was previously licensed under the MIT License and was relicensed to
-FSL-1.1-MIT (see PR #106). The project has **never been publicly distributed**
-under MIT — the repository has always been private with no external contributors —
-so no MIT grant was ever conveyed to any third party. The copyright holder retains
-full rights to relicense.
-
-## ⚠️ Before making this repository public
-
-The git history of this private repository still contains commits in which
-`LICENSE` reads "MIT License." Publishing that history intact could be argued to
-distribute those historical snapshots under MIT (which is perpetual and
-irrevocable for the code as it existed in those commits).
-
-To avoid this:
-
-1. **Do not push the existing history to a public repository.** Instead, publish
-   via a **fresh public repository whose first commit is a single squashed
-   snapshot** of the current tree under FSL-1.1-MIT. Keep this private repository
-   (with full history) for internal reference.
-2. **Do not push any git tags or GitHub Releases** created while the project was
-   under MIT. (There are no tags in this repository today, so there is nothing to
-   scrub yet — but re-check before going public.)
