@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
@@ -138,6 +139,46 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
       });
       return { data: { id: run.id, status: 'CANCELLED' } };
+    }
+  );
+
+  // ── Get captured eval signals for a run (P0 evals) ──
+  app.get(
+    '/:id/eval-results',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RunIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...runVisibilityFilter(user) },
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
+        });
+      }
+      const rows = await fastify.prisma.evalResult.findMany({
+        orderBy: { createdAt: 'asc' },
+        where: { runId: run.id },
+      });
+      const data: EvalResultDto[] = rows.map((r) => ({
+        agentKey: r.agentKey,
+        createdAt: r.createdAt.toISOString(),
+        id: r.id,
+        metadata: r.metadata,
+        nodeId: r.nodeId,
+        passed: r.passed,
+        rationale: r.rationale,
+        runId: r.runId,
+        scorer: r.scorer,
+        scoreType: r.scoreType,
+        source: r.source,
+        value: r.value,
+      }));
+      return { data };
     }
   );
 

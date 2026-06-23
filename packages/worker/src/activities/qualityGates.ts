@@ -26,6 +26,7 @@ import { heartbeat } from '@temporalio/activity';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { recordGateEval } from '../lib/evalCapture.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -202,7 +203,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
     const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
     const passed = result.exitCode === 0 && !result.signal;
 
-    return {
+    const gateResult: GateResult = {
       artifactId: artifact?.id,
       exitCode: result.exitCode,
       passed,
@@ -211,6 +212,11 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
         ? `${gate} passed (exit 0)`
         : `${gate} failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
     };
+
+    // P0 evals: capture the gate verdict as a normalized signal (best-effort).
+    await recordGateEval(gate, gateResult, runId);
+
+    return gateResult;
   } finally {
     await workspace.destroy();
   }

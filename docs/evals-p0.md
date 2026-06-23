@@ -151,12 +151,15 @@ try/catch.
     select: { id: true },
   });
   ```
-  Then write `{ source: 'MERGE', scorer: 'merge', scoreType: 'BOOLEAN', value: merged?1:0,
-  passed: merged, runId: run?.id, metadata: { prNumber } }`. Capture on **both** merge and
-  close-without-merge (reject = `value 0`) so the label isn't survivorship-only (RFC §9).
-- Best-effort: wrap so a capture miss never blocks the webhook's signal path.
-- **Acceptance:** a merge webhook writes a `value:1` row linked to the run; a close writes `value:0`;
-  an unlinked PR is a no-op (no throw).
+  Then write `{ source: 'MERGE', scorer: 'merge', scoreType: 'BOOLEAN', value: 1, passed: true,
+  runId: run.id, metadata: { prNumber } }`. **Status: shipped for merge.** Close-without-merge
+  (the reject = `value 0` label) is **deferred**: the PR event normalizer maps non-merge closes to
+  `ignored`, so capturing rejects needs a normalizer change. It matters for survivorship bias in P2
+  calibration (RFC §9) and is a tracked follow-up.
+- Best-effort: the whole block is wrapped in try/catch so a capture miss (or a missing
+  `workflowRun`/`evalResult` accessor) never blocks the webhook's signal path.
+- **Acceptance:** a merge webhook writes a `value:1` row linked to the run; an unlinked PR is a
+  no-op; the merge + signal path still succeeds even if capture throws.
 
 ### WS5 — Minimal read path (the consumer)
 **Why:** captured data needs one consumer so P0 isn't write-only; full trend dashboards wait for P3.

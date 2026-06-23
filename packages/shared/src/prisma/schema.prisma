@@ -75,6 +75,20 @@ enum HumanStepStatus {
   CANCELLED
 }
 
+enum EvalScoreType {
+  BOOLEAN
+  NUMERIC
+  CATEGORICAL
+}
+
+enum EvalSignalSource {
+  GATE
+  REVIEW
+  MERGE
+  JUDGE
+  TRAJECTORY
+}
+
 model ActiveWorkflow {
   id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   temporalWorkflowId String         @unique @map("temporal_workflow_id")
@@ -598,10 +612,50 @@ model WorkflowRun {
   traces          AgentTrace[]
   memoryItems     MemoryItem[]
   humanSteps      WorkflowHumanStep[]
+  evalResults     EvalResult[]
 
   @@index([templateId])
   @@index([workRequestId])
   @@map("workflow_runs")
+}
+
+/// A single captured quality signal, normalized to a 0..1 score. P0 of the
+/// evals feature records the signals the system already computes — quality-gate
+/// pass/fail (GATE), review-network verdicts (REVIEW), and the human PR
+/// merge/reject (MERGE) — one row per scorer so axes stay decomposable for
+/// trend/regression queries. `caseId`/`judgeModel` are reserved for later
+/// phases (P1 datasets, P2 judge). Persisted best-effort — capture failures are
+/// swallowed so they never break the activity, workflow, or webhook that
+/// produced the signal. See docs/evals-p0.md.
+model EvalResult {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId      String?          @map("run_id") @db.Uuid
+  run        WorkflowRun?     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Temporal activity type / spec node that produced the signal, when known.
+  nodeId     String?          @map("node_id")
+  /// Reserved for P1: the EvalCase this row scored (offline harness). Bare
+  /// column for now — the FK is added with the EvalCase model in P1.
+  caseId     String?          @map("case_id") @db.Uuid
+  /// Agent identity that produced the scored output, when applicable.
+  agentKey   String?          @map("agent_key")
+  source     EvalSignalSource
+  /// Scorer identity, e.g. 'gate:runTests', 'review:SECURITY', 'merge'.
+  scorer     String
+  scoreType  EvalScoreType    @map("score_type")
+  /// Normalized score in [0,1] (0/1 for BOOLEAN).
+  value      Float
+  passed     Boolean?
+  rationale  String?
+  /// Reserved for the P2 judge scorer.
+  judgeModel String?          @map("judge_model")
+  costUsd    Float?           @map("cost_usd")
+  metadata   Json?
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId])
+  @@index([scorer, createdAt])
+  @@index([source, createdAt])
+  @@map("eval_results")
 }
 
 /// One tool call, LLM response, or activity event captured during an agent activity execution.

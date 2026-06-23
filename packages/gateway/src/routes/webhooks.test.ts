@@ -88,6 +88,8 @@ describe('webhook routes', () => {
   let openPrs: Array<Record<string, unknown>> = [];
   const updateCalls: UpdateCall[] = [];
   const signalCalls: SignalCall[] = [];
+  const evalCreateCalls: Array<Record<string, unknown>> = [];
+  let workflowRunRow: { id: string } | null = null;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeAll(async () => {
@@ -97,6 +99,12 @@ describe('webhook routes', () => {
 
     app.decorate('prisma', {
       $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
+      evalResult: {
+        create: async (args: { data: Record<string, unknown> }) => {
+          evalCreateCalls.push(args.data);
+          return { id: 'eval-1' };
+        },
+      },
       pullRequest: {
         findFirst: async () => trackedPr,
         findMany: async () => openPrs,
@@ -104,6 +112,9 @@ describe('webhook routes', () => {
           updateCalls.push(args);
           return { id: args.where.id };
         },
+      },
+      workflowRun: {
+        findFirst: async () => workflowRunRow,
       },
     } as unknown as never);
 
@@ -124,6 +135,8 @@ describe('webhook routes', () => {
     openPrs = [];
     updateCalls.length = 0;
     signalCalls.length = 0;
+    evalCreateCalls.length = 0;
+    workflowRunRow = null;
     state.github = {
       apiUrl: 'https://api.github.com',
       token: 'gh-pat-token',
@@ -203,6 +216,7 @@ describe('webhook routes', () => {
 
     it('marks the PR MERGED and signals humanMergeSignal on a merged close', async () => {
       trackedPr = trackedRow();
+      workflowRunRow = { id: 'run-1' };
       const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toEqual({
@@ -217,6 +231,27 @@ describe('webhook routes', () => {
           workflowId: 'eng-acme-payments-api-JIRA-1',
         },
       ]);
+      // P0 evals: captured the human merge label, linked to the resolved run.
+      expect(evalCreateCalls).toEqual([
+        {
+          metadata: { prNumber: 42 },
+          passed: true,
+          runId: 'run-1',
+          scorer: 'merge',
+          scoreType: 'BOOLEAN',
+          source: 'MERGE',
+          value: 1,
+        },
+      ]);
+    });
+
+    it('still merges + signals when eval capture finds no linked run', async () => {
+      trackedPr = trackedRow();
+      workflowRunRow = null; // no WorkflowRun row resolves
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(res.statusCode).toBe(200);
+      expect(signalCalls).toHaveLength(1);
+      expect(evalCreateCalls).toHaveLength(0);
     });
 
     it('ignores a non-merged close', async () => {
