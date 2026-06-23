@@ -379,8 +379,11 @@ shippable; P0 delivers value with **zero new LLM cost**.
 - **P2** — the `eval` node runs a judge scorer in-workflow; judge-vs-human agreement (κ) is tracked and surfaced.
 - **P3** — a configurable sample of production runs is scored online; the `/admin/evals` dashboard shows a drift trend; eval `costUsd` is reported.
 
-> Suggested split-out docs as phases are committed: `evals-p0.md`, `evals-p1.md`, … (mirrors
-> `platform-pivot-p*.md`).
+> **Per-phase build plans** (code-grounded, mirroring `platform-pivot-p*.md`):
+> [`evals-p0.md`](./evals-p0.md) (signal capture) · [`evals-p1.md`](./evals-p1.md) (frozen-benchmark
+> harness + online drift) · [`evals-p2.md`](./evals-p2.md) (`eval` node + judge + calibration +
+> canary) · [`evals-p3.md`](./evals-p3.md) (drift dashboard, cost control, suite health, optional
+> historical replay).
 
 ---
 
