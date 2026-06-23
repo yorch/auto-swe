@@ -7,14 +7,16 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **Proposed — P0 greenlit; P1–P3 pending two spikes** (rev. 2026-06-22). Nothing here is
+> Status: **Proposed — P0 greenlit; P1 on robust foundations** (rev. 2026-06-23). Nothing here is
 > built yet. This doc establishes the vision, the conceptual grounding, and a phased build plan
-> sized so each phase lands in one (or a small handful of) PR(s). An adversarial review
-> (feasibility, methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**; its
-> load-bearing conclusion drives the roadmap (§6): ship a thin **P0 (signal capture)** now, but gate
-> P1–P3 on a **repo-state-replay spike** and a **build-vs-buy bake-off** (§8) — the offline-harness
-> thesis (§4.3) is not yet proven feasible on this codebase. Per-phase build plans (`evals-p0.md`, …)
-> split out as phases are committed, mirroring `platform-pivot-p*.md`.
+> sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
+> methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision
+> acts on its central finding: the regression gate now rests on a **small frozen benchmark** +
+> **online scoring / canary** (§4) — deterministic, cheap mechanisms — while *replaying real
+> production history* (the original load-bearing but infeasible idea) is **demoted to an optional P3
+> tier**. So: ship a thin **P0 (signal capture)** now; P1 needs an authored frozen benchmark + a
+> **build-vs-buy bake-off** (§8), not a replay spike. Per-phase build plans (`evals-p0.md`, …) split
+> out as phases are committed, mirroring `platform-pivot-p*.md`.
 
 ---
 
@@ -124,8 +126,9 @@ aggregate (§4.1) is a *convenience for `cond` branching*, not the system of rec
 ### Prior art to borrow from
 
 - **SWE-bench / SWE-bench Verified** — agent produces a patch, graded by whether hidden tests
-  pass. This is *almost exactly auto-swe's own loop* — so the offline harness can run a
-  SWE-bench-style suite against the project's **own historical tickets** as regression cases.
+  pass. This is *almost exactly auto-swe's own loop* — so the offline harness runs a
+  **small frozen benchmark** (own pinned fixtures, or a SWE-bench Verified slice) as its regression
+  set, rather than trying to refreeze moving production history (§4.3).
 - **τ-bench (tau-bench)** — tool-use + **policy adherence** in multi-turn agent tasks; measures
   outcome correctness *and* rule-following (pass^k consistency). Directly relevant to "did the
   agent respect the security/policy guardrails."
@@ -162,6 +165,18 @@ These mirror the platform-pivot principles so evals stay coherent with the rest 
 ---
 
 ## 4. Architecture (where evals slot in)
+
+The plan rests on **three measurement mechanisms, ordered by robustness.** The foundation is online
+scoring + a small frozen benchmark — both deterministic and cheap. Replaying *real production
+history* is a **demoted, optional tier** because it depends on snapshot infra auto-swe lacks (§9);
+the foundation does not depend on it.
+
+| Need | Mechanism | Status |
+| --- | --- | --- |
+| Quality trends / drift | Online scoring of live runs (§4.5) | **foundation** |
+| Pre-merge regression gate | Small **frozen benchmark** — own fixtures / SWE-bench slice (§4.3) | **foundation** |
+| Fast A/B on one change | **Production canary** (§4.5) | **foundation** |
+| Mirror real traffic exactly | Replay historical tickets against their original repos (§4.3) | deferred / optional |
 
 ### 4.1 The `eval` workflow node (new node type)
 
@@ -243,34 +258,33 @@ model EvalCase {
 `EvalResult` linked to `WorkflowRun`/`WorkflowStep`/`AgentTrace` turns one-off verdicts into
 **trends per template / model / prompt-version** — the thing that's impossible today.
 
-### 4.3 Offline eval harness (CLI + dataset) — the highest-leverage piece
+### 4.3 Offline eval harness (CLI + frozen benchmark) — the regression gate
 
 A new CLI surface (`auto-swe evals run <dataset> --agent implementer --against baseline`) over a
-gateway endpoint (`/api/v1/admin/evals/*`). It:
+gateway endpoint (`/api/v1/admin/evals/*`). The **default dataset is a small, frozen benchmark** —
+~20–50 cases that are *our own pinned fixtures* (a pinned commit + a known passing/failing test set
+per case), or a slice of an existing benchmark such as **SWE-bench Verified**. Because the eval
+repos are frozen and owned, the "repos move under you" problem (§9) **does not arise**: the cases
+are deterministic by construction, an order of magnitude cheaper than replaying full history, and
+need no snapshot-reconstruction infra. The harness:
 
-1. Loads an `EvalDataset` (seeded from real `WorkflowRun` history + curated golden tickets).
-2. Replays each case against a **candidate** agent/model/prompt configuration (using the existing
-   per-agent `modelSpec` cascade and agent-version pinning).
+1. Loads the frozen `EvalDataset`.
+2. Runs each case against a **candidate** agent/model/prompt config (existing `modelSpec` cascade +
+   agent-version pinning).
 3. Scores via execution gates first (objective), then judge.
-4. Reports **mean ± standard error vs the baseline**, paired per case, with a pass/fail verdict
-   on the regression gate.
+4. Reports **mean ± standard error vs the baseline**, paired per case, with a regression verdict.
 
-This makes prompt edits and model swaps **safer**: a large regression is caught by a **nightly /
-release-gate** run before it ships, instead of via failed PRs. It is the SWE-bench-Verified pattern
-pointed inward — and it inherits SWE-bench's hard prerequisites, which auto-swe does **not** yet
-satisfy (this is the make-or-break feasibility risk; see §9):
+This is a **nightly / release gate**, not per-PR: one implementer case is a multi-minute Docker run
+with several LLM calls (on the order of tens of dollars per case), so even a 20–50-case run with
+resampling is best run nightly. The §5 "gate" means that nightly run.
 
-- **Frozen repo state per case.** SWE-bench scores against a pinned commit + a known FAIL_TO_PASS
-  test set. auto-swe today clones at `defaultBranch` HEAD with **no SHA pinned** and discards the
-  workspace container, so a replayed historical ticket runs against a repo that has moved on —
-  making the score incomparable (a −7pp delta could be a worse prompt, moved tests, or upgraded
-  deps, and you can't tell which). P1 must first capture a **baseline SHA + the in-scope passing
-  test set** per case and check that SHA out at replay.
-- **This is not a per-PR gate.** One implementer case is a multi-minute Docker run with several LLM
-  calls (on the order of tens of dollars per case at current implementer pricing); a 200-case
-  baseline-plus-candidate run with error-bar resampling is **hours and thousands of dollars** —
-  viable nightly or at release, not on every push. The §5 walkthrough's "gate" means that nightly
-  run, not a per-PR block.
+> **Deferred tier — replaying real production history.** Replaying *historical tickets against their
+> original repos* (the "SWE-bench pointed inward" idea) is more representative of real traffic but
+> inherits SWE-bench's hard prerequisite: a per-case baseline SHA + golden test set that auto-swe
+> does **not** capture today (it clones `defaultBranch` HEAD, no SHA pinned, and discards the
+> container), so a replayed score is incomparable as the repo moves on. This is demoted to an
+> **optional later tier**, gated on the replay spike (§6). The regression gate above does **not**
+> depend on it — it stands on the frozen benchmark alone.
 
 ### 4.4 Promote review-network verdicts to first-class scores
 
@@ -285,11 +299,20 @@ sampled diffs the network rejected** — against the human–human agreement cei
 production merges (§9). Done right, this converts the review network from an opaque gate into a
 measured, improvable judge.
 
-### 4.5 Online scoring + drift dashboard
+### 4.5 Online scoring, drift, and canary
 
 Sample N% of production runs, score trajectory (from `AgentTrace`) + outcome (from
 `WorkflowRun`), and surface drift on `/admin/evals` (and a per-run panel on `/runs/[id]`,
-alongside the existing security-events panel). The PR-merge signal feeds judge calibration.
+alongside the existing security-events panel). The PR-merge signal feeds judge calibration. This
+needs no replay — the data already exists per run — which is why it's a **foundation** mechanism,
+not a deferred one.
+
+For a *fast* signal on a specific change (without waiting for the nightly benchmark), **canary** the
+new prompt/model on a small % of live production traffic and compare outcomes (test-pass rate, merge
+rate) against the control. The repo state is real and current by construction, so there is nothing
+to replay or freeze. Canary + frozen benchmark together cover the two cases the demoted
+historical-replay tier was meant to serve — fast per-change feedback, and a stable regression gate —
+without its infra cost.
 
 ---
 
@@ -299,8 +322,8 @@ Concrete walkthroughs of what evals unlock — each is something the system **ca
 today**.
 
 1. **Safely change a prompt or skill.** An engineer edits the implementer's system prompt and runs
-   `auto-swe evals run swe-implementer-golden --against main`. The **nightly** harness replays the
-   golden tickets, scores each (tests pass + judge + trajectory), and prints a paired report:
+   `auto-swe evals run swe-implementer-golden --against main`. The **nightly** harness runs the
+   frozen benchmark, scores each case (tests pass + judge + trajectory), and prints a paired report:
    *"pass@1 78% → 61% (Δ −17pp, 95% CI [−27, −7]) — regression."* The nightly gate flags it before
    the change ships. Realism matters here: at affordable N (tens–low-hundreds of expensive cases,
    k=1) the suite reliably catches **large** regressions like this, but a 5–7pp delta sits inside
@@ -329,26 +352,30 @@ shippable; P0 delivers value with **zero new LLM cost**.
 | Phase | Scope | New LLM cost | Headline value |
 | --- | --- | --- | --- |
 | **P0** | `EvalResult` + `EvalScoreType` models; **passively capture** existing gate + review-verdict + merge/reject signals as `EvalResult` rows (with provenance tags). Dashboard deferred until a consumer exists. | none | **Accumulate a labeled corpus for free** so a future harness has data — not dashboards nobody acts on |
-| **P1** *(gated — see below)* | Offline harness: `EvalDataset`/`EvalCase` (incl. **per-case baseline SHA + golden test set**), `auto-swe evals run`, gateway endpoints, paired error-barred comparison, **nightly** CI integration. Scorers = execution gates + **trajectory** (programmatic; trajectory advisory until baselined) | low (no judge yet) | **Nightly regression-gate** for prompt/model/skill changes (large regressions) |
-| **P2** | `eval` workflow node + LLM-as-**judge** scorer (rubrics, admin-extensible like `ScannerPattern`); **calibrate** the judge vs merge/reject labels (track κ/correlation) | medium | In-workflow quality scoring; a *measured*, improvable review network |
-| **P3** | Online sampling + drift dashboard at `/admin/evals`; dataset compression (anchor subsets); cost controls (small judge model, tiered scoring) | medium (sampled) | Continuous quality monitoring + drift detection at controlled cost |
+| **P1** | Foundation: a **small frozen benchmark** (own fixtures / SWE-bench slice — no history reconstruction) + `auto-swe evals run` + paired error-barred **nightly** gate; **and** thin **online scoring + drift** off existing run data. Scorers = execution gates + **trajectory** (programmatic; trajectory advisory until baselined) | low (no judge yet) | **Nightly regression-gate** (large regressions) + live drift, both on robust mechanisms |
+| **P2** | `eval` workflow node + LLM-as-**judge** scorer (rubrics, admin-extensible like `ScannerPattern`); **calibrate** the judge vs a decontaminated human channel (track κ/correlation); **production canary** for fast per-change A/B | medium | In-workflow quality scoring; a *measured*, improvable review network; fast change feedback |
+| **P3** *(optional)* | Drift dashboard polish; dataset compression (anchor subsets); cost controls (small judge model, tiered scoring); **deferred historical-replay tier** (per-case SHA + golden test set) *iff* the replay spike cleared | medium (sampled) | Richer coverage that mirrors real traffic — only if it earns its infra cost |
 
-**Sequencing & readiness gates** (why P0 ships now but P1 waits — see §9):
-- **Replay spike (before P1).** Prove one historical ticket can be replayed deterministically:
-  capture a baseline SHA in `executeImplementation`, check it out at replay, run the pinned test
-  set, produce one paired score. If starting state can't be cheaply reproduced, the offline-harness
-  thesis (§4.3) is in doubt — learn that in week 1, not month 3.
+**Sequencing & readiness gates** (why P0 ships now — see §9):
 - **Build-vs-buy bake-off (before P1).** Self-host Langfuse + thin score adapters vs. the native
   build, each costed in eng-weeks (§8). Build native only if it wins.
-- **Corpus readiness gate (before P1).** Don't commit P1 until ≥~150 merged/rejected production
-  runs across several repos exist — below that, error bars are too wide to reject realistic
-  regressions. P0 accumulates this for free.
+- **Author the frozen benchmark (the P1 critical path).** P1's gate needs ~20–50 curated, pinned
+  cases — this is authored, not harvested, so it does **not** wait on production corpus volume. Use
+  representative own-fixtures and/or a SWE-bench Verified slice.
+- **Replay spike (gates the *optional* P3 historical tier — not P1).** Prove one historical ticket
+  can be replayed deterministically (capture a baseline SHA in `executeImplementation`, check it out
+  at replay, run the pinned test set, produce one paired score). If it's not cheap, the
+  frozen-benchmark foundation stands alone and historical replay stays deferred — nothing in P1 is
+  blocked.
+- **Corpus readiness (for online drift, not the gate).** The online-drift and harvest-to-`EvalCase`
+  signals get statistically meaningful only past ~150 merged/rejected runs across several repos; P0
+  accumulates this for free while the frozen-benchmark gate works from day one.
 - **P2–P3** additionally defer until a named owner exists for judge calibration + dataset
   governance, and (for the `eval` *node* / product surface) a real user actually pulls for it.
 
 **Exit criteria** (a phase is done when):
 - **P0** — gate + review-verdict scores are written as `EvalResult` rows and visible/queryable on `/runs/[id]`; a per-scorer trend query returns rows across runs.
-- **P1** — `auto-swe evals run` scores a seeded dataset and emits a paired, error-barred candidate-vs-baseline report; a CI job fails on a seeded regression.
+- **P1** — `auto-swe evals run` scores the frozen benchmark and emits a paired, error-barred candidate-vs-baseline report; a nightly CI job fails on a seeded regression; online drift is visible.
 - **P2** — the `eval` node runs a judge scorer in-workflow; judge-vs-human agreement (κ) is tracked and surfaced.
 - **P3** — a configurable sample of production runs is scored online; the `/admin/evals` dashboard shows a drift trend; eval `costUsd` is reported.
 
@@ -418,11 +445,15 @@ plumbing and a standing maintenance liability.
 This plan was adversarially reviewed from three angles (codebase feasibility, eval methodology,
 strategy). No flaw is *architectural* — the plumbing (`EvalResult`/`EvalCase`, the additive `eval`
 node, execution-first scoring) is sound — but several load-bearing claims do not survive contact and
-must be closed before P1. Severity: 🔴 blocks P1 · 🟠 serious · 🟡 moderate.
+must be closed before P1. Severity: 🔴 blocks P1 · 🟠 serious · 🟡 moderate. *This revision demotes
+the original top 🔴 (historical replay) out of the P1 critical path — see the first item.*
 
-- 🔴 **Repo state is not frozen → replay is not yet meaningful** (§4.3). The make-or-break gap.
-  *Fix:* capture a per-case baseline SHA + in-scope passing-test set; check the SHA out at replay and
-  run only that set. Prove it with the replay spike (§6) before building the harness.
+- 🟡 **Repo state is not frozen → replaying live history is not meaningful** (§4.3). *Originally the
+  make-or-break 🔴 gap; demoted by design.* The P1 gate no longer depends on replaying history — it
+  runs a **frozen benchmark** of owned/pinned cases, where this problem can't arise. Replaying real
+  production history is now an **optional P3 tier**; *if* pursued, its fix is to capture a per-case
+  baseline SHA + in-scope passing-test set and check the SHA out at replay — proven first by the
+  replay spike (§6). Demoting it is the single biggest de-risking move in this revision.
 - 🔴 **Flaky execution floor poisons the headline metric.** Gate-to-0 over an unscreened suite
   measures infra noise, not agent quality (~10% of SWE-bench Lite cases are flaky). *Fix:*
   flake-screen at curation (promote a case only if the reference solution passes k× consistently —
