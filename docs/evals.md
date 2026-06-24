@@ -7,16 +7,18 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **P0 shipped; P1–P3 logic layers shipped; integration layer remaining** (rev. 2026-06-24).
-> **60 eval unit tests green; all packages typecheck; every migration verified against a live
-> Postgres.** Built + tested: P0 capture (gate/review/merge) + read API + run panel; P1 schema +
-> paired-stats + trajectory scorer + SHA-pinned workspace + standalone gate runner + admin API +
-> `auto-swe evals` CLI + harness orchestration; P2 scorer-combination + decision-rule + judge-prompt
-> + implementer/rubric wall + `EvalRubric` schema/API; P3 suite-health (fail-closed) + cost policy +
-> anchor-subset compression. **Remaining (integration layer, not verifiable without
-> Temporal/Docker/LLM infra):** the durable harness + `eval` workflow node + judge LLM execution +
-> agent-diff generation + decontaminated calibration channel + production canary + drift dashboard +
-> golden-set re-validation + nightly CI + historical-replay tier.
+> Status: **P0–P3 built across logic + integration; execution seams remain** (rev. 2026-06-24).
+> **86 eval tests green; all 4 packages typecheck; every migration verified against a live Postgres.**
+> Built + tested: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
+> SHA-pinned workspace + standalone gate runner + admin API + `auto-swe evals` CLI (incl. `run`) +
+> harness orchestration + start-run endpoint + nightly CI; P2 scorer-combination + decision-rule +
+> judge-prompt + implementer/rubric wall + `EvalRubric` schema/API + the **`eval` workflow node**
+> wired end-to-end (spec → interpreter → activity → worker registration → web canvas); P3
+> suite-health (fail-closed) + cost policy + anchor-subset compression + `/admin/evals` drift
+> dashboard. **Remaining = the execution seams that need live Temporal/Docker/LLM infra to verify:**
+> the durable harness Temporal workflow, the node-level gate execution + judge LLM call, agent-diff
+> generation, the decontaminated calibration channel + κ, production canary routing, the golden-set
+> re-validation job, and the historical-replay tier.
 > This doc establishes the vision, the conceptual grounding, and a phased build plan
 > sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
 > methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision
