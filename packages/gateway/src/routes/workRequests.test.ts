@@ -134,6 +134,7 @@ describe('POST /api/v1/work-requests', () => {
         paused: false,
       }),
       signalWorkflow: async () => {},
+      startChannelAssistant: async () => {},
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},

@@ -1,4 +1,5 @@
 import type {
+  ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
   EpicRequest,
   RepoWorkRequest,
@@ -75,6 +76,10 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      startChannelAssistant: (
+        workflowId: string,
+        input: ChannelAssistantTurnInput
+      ) => Promise<void>;
       startEvalRunWorkflow: (
         workflowId: string,
         input: {
@@ -229,6 +234,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startChannelAssistant(
+      workflowId: string,
+      input: ChannelAssistantTurnInput
+    ): Promise<void> {
+      await client.workflow.start('ChannelAssistantWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
     },
 
     async startConsolidationWorkflow(

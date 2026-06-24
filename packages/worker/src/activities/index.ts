@@ -1,3 +1,5 @@
+// Claude Tag (Phase 0) — channel-resident Slack assistant
+export { postChannelReply, runChannelAssistantTurn } from './channelAssistant.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,

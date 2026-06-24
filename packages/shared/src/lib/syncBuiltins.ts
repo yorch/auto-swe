@@ -3,6 +3,7 @@ import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatter
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
+  CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
   DECOMPOSER_AGENT_PROMPT,
@@ -168,6 +169,16 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Memory Committer',
     systemPrompt: MEMORY_SUMMARIZER_PROMPT,
+  },
+  {
+    // Claude Tag (Phase 0): the shared, per-channel Slack assistant. Model-backed
+    // so each channel can resolve its own model via the CHANNEL config tier; the
+    // GLOBAL row seeded here is the default the cascade falls back to.
+    description: 'Shared per-channel Slack teammate that answers @mentions in-thread.',
+    key: 'channelAssistant',
+    modelSpec: 'anthropic/claude-opus-4-8',
+    name: 'Channel Assistant',
+    systemPrompt: CHANNEL_ASSISTANT_PROMPT,
   },
   {
     // Evals P2 (RFC §9): the judge model MUST differ from the implementer's

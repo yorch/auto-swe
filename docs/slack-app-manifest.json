@@ -6,7 +6,7 @@
   "display_information": {
     "background_color": "#0f172a",
     "description": "Run, monitor, and review autonomous engineering workflows from Slack.",
-    "long_description": "auto-swe wires LLM agents through a configurable workflow DAG to ship code: implement, review, gate, merge, PR. The Slack app surfaces /auto-swe workflows list/show, the /auto-swe run modal for kicking off a work request, and per-step failure + final-status notifications threaded back to the originating channel.",
+    "long_description": "auto-swe wires LLM agents through a configurable workflow DAG to ship code: implement, review, gate, merge, PR. The Slack app surfaces /auto-swe workflows list/show, the /auto-swe run modal for kicking off a work request, per-step failure + final-status notifications threaded back to the originating channel, and an @mention teammate: mention the bot in any channel (or DM it) and it replies in-thread.",
     "name": "auto-swe"
   },
   "features": {
@@ -27,12 +27,21 @@
   "oauth_config": {
     "redirect_urls": ["https://YOUR-GATEWAY-HOST/api/v1/auth/slack/callback"],
     "scopes": {
-      "bot": ["chat:write", "chat:write.public", "commands", "users:read", "users:read.email"]
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "im:history",
+        "users:read",
+        "users:read.email"
+      ]
     }
   },
   "settings": {
     "event_subscriptions": {
-      "bot_events": []
+      "bot_events": ["app_mention", "message.im"],
+      "request_url": "https://YOUR-GATEWAY-HOST/api/v1/auth/slack/events"
     },
     "interactivity": {
       "is_enabled": true,

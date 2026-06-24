@@ -197,6 +197,37 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
+/**
+ * Claude Tag (Phase 0): post a plain text reply into a Slack thread. Unlike the
+ * best-effort notification surfaces above, this is the assistant's actual reply —
+ * a failure to deliver matters — so it resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
+ * or a `{ok:false}` response so the calling activity can retry / surface it.
+ */
+export async function postSlackThreadMessage(
+  slackChannelId: string,
+  threadTs: string,
+  text: string
+): Promise<void> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    throw new Error('postSlackThreadMessage: no Slack bot token configured');
+  }
+
+  const res = await fetch(SLACK_POST_URL, {
+    body: JSON.stringify({ channel: slackChannelId, text, thread_ts: threadTs }),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    method: 'POST',
+  });
+  const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+  if (!data.ok) {
+    throw new Error(`postSlackThreadMessage: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+  }
+}
+
 /** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */
 export async function notifySlackStepFailure(input: {
   runId: string;

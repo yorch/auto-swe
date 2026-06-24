@@ -53,6 +53,7 @@ interface FakeState {
   humanStepUpdateCount: number;
   humanStepUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }>;
+  channelAssistantStarts: Array<{ workflowId: string; input: Record<string, unknown> }>;
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -74,6 +75,9 @@ function buildApp(state: FakeState): FastifyInstance {
     signalWorkflow: async (workflowId: string, signalName: string, args: unknown[] = []) => {
       state.signalCalls.push({ args, signalName, workflowId });
     },
+    startChannelAssistant: async (workflowId: string, input: Record<string, unknown>) => {
+      state.channelAssistantStarts.push({ input, workflowId });
+    },
     startRunnableWorkflow: async () => undefined,
   } as unknown as never);
 
@@ -82,6 +86,15 @@ function buildApp(state: FakeState): FastifyInstance {
     repository: {
       findMany: async () => [],
       findUnique: async () => null,
+    },
+    slackChannel: {
+      upsert: async () => ({ id: 'chan-1', orgId: 'org-1', teamId: 'team-default' }),
+    },
+    slackWorkspace: {
+      upsert: async () => ({ id: 'ws-1', orgId: 'org-1', slackTeamId: 'T1' }),
+    },
+    team: {
+      findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
     user: {
       findFirst: async ({ where }: { where: { slackId?: string } }) =>
@@ -149,6 +162,7 @@ beforeEach(async () => {
     await app.close();
   }
   state = {
+    channelAssistantStarts: [],
     humanStep: null,
     humanStepUpdateCalls: [],
     humanStepUpdateCount: 1,
@@ -500,5 +514,127 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     });
     expect(state.signalCalls).toHaveLength(0);
     expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+});
+
+describe('POST /api/v1/auth/slack/events — Claude Tag teammate', () => {
+  it('echoes the challenge on url_verification (no signature required)', async () => {
+    const res = await app.inject({
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      payload: JSON.stringify({ challenge: 'abc123', type: 'url_verification' }),
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ challenge: 'abc123' });
+  });
+
+  it('rejects an event_callback with a bad signature', async () => {
+    const body = JSON.stringify({ event: { type: 'app_mention' }, type: 'event_callback' });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': 'v0=deadbeef',
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('acks and starts the assistant workflow for an app_mention', async () => {
+    const body = JSON.stringify({
+      event: {
+        channel: 'C9',
+        team: 'T1',
+        text: '<@UBOT> hello there',
+        ts: '1700000000.000100',
+        type: 'app_mention',
+        user: 'UME',
+      },
+      team_id: 'T1',
+      type: 'event_callback',
+    });
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(200);
+    // Processing is out-of-band after the ack — give the microtask a tick.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(1);
+    const started = state.channelAssistantStarts[0];
+    expect(started.workflowId).toBe('chan-chan-1-1700000000.000100');
+    expect(started.input).toMatchObject({
+      channelId: 'chan-1',
+      orgId: 'org-1',
+      slackChannelId: 'C9',
+      teamId: 'team-default',
+      threadTs: '1700000000.000100',
+      userSlackId: 'UME',
+      userText: 'hello there',
+    });
+  });
+
+  it('skips Slack retries (x-slack-retry-num) without starting a workflow', async () => {
+    const body = JSON.stringify({
+      event: {
+        channel: 'C9',
+        team: 'T1',
+        text: '<@UBOT> hi',
+        ts: '1.1',
+        type: 'app_mention',
+        user: 'U',
+      },
+      team_id: 'T1',
+      type: 'event_callback',
+    });
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-retry-num': '1',
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('ignores bot-authored and subtype messages', async () => {
+    const body = JSON.stringify({
+      event: { bot_id: 'B1', channel: 'C9', team: 'T1', ts: '1.2', type: 'app_mention' },
+      team_id: 'T1',
+      type: 'event_callback',
+    });
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(0);
   });
 });
