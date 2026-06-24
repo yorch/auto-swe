@@ -1,3 +1,4 @@
+import { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
 import type {
   CodeResult,
   RepoWorkRequest,
@@ -309,6 +310,18 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     }
   }
 
+  // 2b. Channel steering: an append-only buffer fed by the `steer` signal. The
+  // gateway signals `steer` with new user guidance on a thread reply; the next
+  // `agent` node drains and incorporates it (SOFT — the in-progress node, if
+  // any, is never preempted). A plain in-workflow array is Temporal-deterministic
+  // (mirrors `epicOrchestrator`'s `cancelled` flag). The signal name is the
+  // shared `CHANNEL_TASK_STEER_SIGNAL` const — `@auto-swe/shared/lib/channelTask`
+  // is pure (no Node deps), so the value import is isolate-safe.
+  const steerBuffer: string[] = [];
+  setHandler(defineSignal<[string]>(CHANNEL_TASK_STEER_SIGNAL), (msg: string) => {
+    steerBuffer.push(msg);
+  });
+
   // 3. Build the Temporal-backed dispatcher.
   //
   // Phase-8: when the interpreter passes a `cancellation` sink (every dispatch
@@ -336,6 +349,11 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       return runWithCancellation(cancellation, () =>
         dispatchStepImpl(step, ctx, input.request, config, inputs)
       );
+    },
+    drainSteering() {
+      // Drain (return + clear) so each agent node consumes only the steering
+      // that arrived since the previous one.
+      return steerBuffer.splice(0);
     },
     async notifyHumanStep(args) {
       await stateActivities.createHumanStep({ ...args, runId });
@@ -472,6 +490,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ...(request.channelId ? { channelId: request.channelId } : {}),
         inputs,
         spanName: config.spanName as string | undefined,
+        // Phase C: soft steering drained by the interpreter from the `steer`
+        // signal buffer; the activity prepends it as a labeled prompt block.
+        ...(config.steering ? { steering: config.steering as string[] } : {}),
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
       }),

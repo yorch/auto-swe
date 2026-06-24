@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
@@ -481,8 +482,17 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
       const isMention = event.type === 'app_mention';
       const isDm = event.type === 'message' && event.channel_type === 'im';
-      if (!isMention && !isDm) {
-        // Plain channel messages (ambient) are a later phase.
+      // A thread reply is a message whose thread root (`thread_ts`) differs from
+      // its own `ts`. We additionally process plain (non-mention) channel
+      // `message` events when they're thread replies — ONLY to attempt steering
+      // an in-flight task run bound to that thread. If no run matches, they're
+      // ignored (we never start a turn off arbitrary channel chatter).
+      const isThreadReply = !!event.thread_ts && event.thread_ts !== event.ts;
+      const isPlainChannelMessage =
+        event.type === 'message' && event.channel_type !== 'im' && !isMention;
+      if (!isMention && !isDm && !(isPlainChannelMessage && isThreadReply)) {
+        // Non-thread plain channel chatter (ambient) is a later phase — never act
+        // on it here, so the bot doesn't become a firehose responder.
         return reply.send({ ok: true });
       }
 
@@ -569,6 +579,38 @@ async function processChannelEvent(
     return;
   }
 
+  // Signal-steering (Phase C): a reply inside a thread that already has an
+  // in-flight task run STEERS that run instead of starting a fresh turn. A reply
+  // is identified by `thread_ts` differing from this message's own `ts`. We try
+  // the `steer` signal first — and only when it succeeds do we treat the event
+  // as handled. A WorkflowNotFoundError (no active task run in this thread) is
+  // benign: we fall through to normal handling below (a fresh mention → a turn;
+  // a plain non-mention reply → ignored). Steering takes precedence over
+  // launching a new turn in the same thread, so a thread reply that is ALSO an
+  // app_mention still steers an active run.
+  const isThreadReply = !!event.thread_ts && event.thread_ts !== eventTs;
+  if (isThreadReply && event.thread_ts) {
+    const steered = await trySteerThreadTask(
+      fastify,
+      channelRow.id,
+      event.thread_ts,
+      slackChannelId,
+      userText
+    );
+    if (steered) {
+      return;
+    }
+  }
+
+  const isMention = event.type === 'app_mention';
+  const isDm = event.type === 'message' && event.channel_type === 'im';
+  // No active task run to steer. Plain (non-mention, non-DM) channel thread
+  // replies must NOT start a turn — they only exist to attempt a steer. Drop
+  // them here so arbitrary channel chatter never spawns a workflow.
+  if (!isMention && !isDm) {
+    return;
+  }
+
   const input: ChannelAssistantTurnInput = {
     channelId: channelRow.id,
     orgId: channelRow.orgId,
@@ -595,6 +637,57 @@ async function processChannelEvent(
     }
     throw err;
   }
+}
+
+/**
+ * Attempt to steer an in-flight channel task run bound to this thread. The task
+ * run's Temporal workflowId is deterministic — `channelTaskWorkflowId(channelId,
+ * threadTs)` — so we reconstruct it without a DB lookup and deliver the new
+ * guidance via the `steer` signal.
+ *
+ * Returns `true` only when the signal was delivered (an active run exists and
+ * was steered). A `WorkflowNotFoundError` — no run, or the run already
+ * closed/terminated — means "nothing to steer here"; we return `false` so the
+ * caller falls through to normal handling. On a successful steer we post a tiny
+ * best-effort in-thread ack (never fails the steer).
+ */
+async function trySteerThreadTask(
+  fastify: FastifyInstance,
+  channelId: string,
+  threadTs: string,
+  slackChannelId: string,
+  userText: string
+): Promise<boolean> {
+  const workflowId = channelTaskWorkflowId(channelId, threadTs);
+  try {
+    await fastify.temporal.signalWorkflow(workflowId, CHANNEL_TASK_STEER_SIGNAL, [userText]);
+  } catch (err) {
+    // No active task run in this thread (or it already closed) — fall through.
+    if (getErrorName(err) === 'WorkflowNotFoundError') {
+      return false;
+    }
+    throw err;
+  }
+
+  // Best-effort in-thread ack so the human sees the steer landed. Never let
+  // chatter failures undo the (already-delivered) steer.
+  try {
+    const { botToken } = await resolveSlackConfig();
+    await postSlackMessage(
+      {
+        channel: slackChannelId,
+        text: ':writing_hand: noted — steering the task.',
+        threadTs,
+      },
+      botToken ?? undefined
+    );
+  } catch (err) {
+    fastify.log.warn(
+      { channelId, err, threadTs },
+      'steer ack post failed (steer already delivered)'
+    );
+  }
+  return true;
 }
 
 /**

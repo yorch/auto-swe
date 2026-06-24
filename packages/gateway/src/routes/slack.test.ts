@@ -695,3 +695,197 @@ describe('POST /api/v1/auth/slack/events — channel assistant teammate', () => 
     expect(state.channelAssistantStarts).toHaveLength(0);
   });
 });
+
+describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase C)', () => {
+  // SlackChannel resolves to id `chan-1` (see provisionChannel mock above), so
+  // the deterministic task workflowId for thread root `1700.root` is
+  // `chantask-chan-1-1700.root` — sanitized to the Temporal-safe charset.
+  const STEER_WORKFLOW_ID = 'chantask-chan-1-1700-root';
+
+  // The best-effort steer ack posts to chat.postMessage — stub fetch so a
+  // successful steer never makes a real network call.
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = (async () =>
+      ({ json: async () => ({ ok: true, ts: '1.0' }) }) as unknown as Response) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function makeNotFound(): Error {
+    const err = new Error('workflow not found');
+    err.name = 'WorkflowNotFoundError';
+    return err;
+  }
+
+  /** Override the temporal signal mock so steers throw not-found (records the
+   * attempt first, then throws — mirrors a real signal that found no run). */
+  function setSteerNotFound(): void {
+    (app as unknown as { temporal: { signalWorkflow: unknown } }).temporal.signalWorkflow = (async (
+      workflowId: string,
+      signalName: string,
+      args: unknown[] = []
+    ) => {
+      state.signalCalls.push({ args, signalName, workflowId });
+      throw makeNotFound();
+    }) as unknown;
+  }
+
+  function postEvent(event: Record<string, unknown>) {
+    const body = JSON.stringify({ event, team_id: 'T1', type: 'event_callback' });
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+  }
+
+  it('steers an in-flight task on a plain thread reply — no new turn started', async () => {
+    const res = await postEvent({
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'actually use a queue instead',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'message',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(state.signalCalls).toEqual([
+      {
+        args: ['actually use a queue instead'],
+        signalName: 'steer',
+        workflowId: STEER_WORKFLOW_ID,
+      },
+    ]);
+    // Steering replaces the turn — no ChannelAssistantWorkflow started.
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('steers an in-flight task on a thread reply that is ALSO an app_mention (steer precedence)', async () => {
+    const res = await postEvent({
+      channel: 'C9',
+      team: 'T1',
+      text: '<@UBOT> tighten the validation',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'app_mention',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(state.signalCalls).toEqual([
+      { args: ['tighten the validation'], signalName: 'steer', workflowId: STEER_WORKFLOW_ID },
+    ]);
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('falls through to a turn for a mention thread reply with NO in-flight task', async () => {
+    setSteerNotFound();
+    const res = await postEvent({
+      channel: 'C9',
+      team: 'T1',
+      text: '<@UBOT> any update?',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'app_mention',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Steer was attempted and rejected (not-found) — fall through to a turn.
+    expect(state.signalCalls).toHaveLength(1);
+    expect(state.channelAssistantStarts).toHaveLength(1);
+    expect(state.channelAssistantStarts[0]?.input).toMatchObject({
+      threadTs: '1700.root',
+      userText: 'any update?',
+    });
+  });
+
+  it('ignores a plain (non-mention) thread reply with NO in-flight task — no turn', async () => {
+    setSteerNotFound();
+    const res = await postEvent({
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'just some channel chatter',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'message',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Steer attempted (rejected); a plain non-mention reply must NOT start a turn.
+    expect(state.signalCalls).toHaveLength(1);
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('drops a plain non-mention channel message that is NOT a thread reply (never steers/starts)', async () => {
+    const res = await postEvent({
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'random message in the channel',
+      ts: '1700.standalone',
+      type: 'message',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // No thread root → no steer attempt and no turn (not a firehose responder).
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('does not steer a fresh mention in a NEW thread (thread_ts === ts) — normal turn', async () => {
+    const res = await postEvent({
+      channel: 'C9',
+      team: 'T1',
+      text: '<@UBOT> kick this off',
+      thread_ts: '1700.same',
+      ts: '1700.same',
+      type: 'app_mention',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // thread_ts === ts ⇒ not a reply ⇒ no steer; a normal turn starts.
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.channelAssistantStarts).toHaveLength(1);
+  });
+
+  it('ignores the bot’s own thread-reply messages (bot_id present)', async () => {
+    const res = await postEvent({
+      bot_id: 'B1',
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'bot self message',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'message',
+      user: 'UBOT',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+});

@@ -42,7 +42,7 @@
   },
   "settings": {
     "event_subscriptions": {
-      "bot_events": ["app_mention", "message.im"],
+      "bot_events": ["app_mention", "message.channels", "message.im"],
       "request_url": "https://YOUR-GATEWAY-HOST/api/v1/auth/slack/events"
     },
     "interactivity": {

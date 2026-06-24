@@ -27,6 +27,14 @@ export interface RunAgentNodeInput {
    * `ActiveWorkflow` row), so the workflow threads it from the run request.
    */
   channelId?: string;
+  /**
+   * Channel assistant (Phase C): soft steering guidance the interpreter drained
+   * from the `steer` signal buffer before invoking this agent node. When present,
+   * it is prepended to the user message as a clearly-labeled block so the agent
+   * incorporates the new direction. SOFT semantics: this only reaches the NEXT
+   * agent node after the signal arrived — an already-running node is not preempted.
+   */
+  steering?: string[];
 }
 
 export interface RunAgentNodeResult {
@@ -79,7 +87,8 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
   }
 
   try {
-    const userMessage = input.userMessage ?? JSON.stringify(input.inputs ?? {});
+    const baseMessage = input.userMessage ?? JSON.stringify(input.inputs ?? {});
+    const userMessage = prependSteering(baseMessage, input.steering);
     const result = await runAgent(spec, userMessage, {
       spanName: input.spanName ?? 'llm.agent_node',
     });
@@ -88,4 +97,17 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
     await closeMcp?.();
     await persistActivityTrace(tracer, key);
   }
+}
+
+/**
+ * Append the steering messages as a labeled block after the base user message so
+ * the agent treats them as new direction to incorporate. Empty/absent steering
+ * leaves the message untouched.
+ */
+function prependSteering(message: string, steering: string[] | undefined): string {
+  if (!steering || steering.length === 0) {
+    return message;
+  }
+  const block = steering.map((s) => `- ${s}`).join('\n');
+  return `${message}\n\n[Steering update from the channel — incorporate this]:\n${block}`;
 }

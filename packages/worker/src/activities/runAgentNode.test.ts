@@ -107,4 +107,24 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
     expect(mockedLoadMcpTools).not.toHaveBeenCalled();
   });
+
+  it('prepends a labeled steering block to the user message when steering is present', async () => {
+    await runAgentNode({
+      agentRef: 'reviewer',
+      steering: ['use the v2 endpoint', 'keep it backwards compatible'],
+      userMessage: 'implement the change',
+    });
+    expect(mockedRunAgent).toHaveBeenCalledWith(
+      { agentKey: 'reviewer' },
+      'implement the change\n\n[Steering update from the channel — incorporate this]:\n- use the v2 endpoint\n- keep it backwards compatible',
+      { spanName: 'llm.agent_node' }
+    );
+  });
+
+  it('leaves the user message untouched when steering is empty', async () => {
+    await runAgentNode({ agentRef: 'reviewer', steering: [], userMessage: 'hi' });
+    expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'hi', {
+      spanName: 'llm.agent_node',
+    });
+  });
 });
