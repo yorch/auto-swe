@@ -38,6 +38,7 @@ import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
+import { slackChannelRoutes } from './routes/slackChannels.js';
 import { systemConfigRoutes } from './routes/systemConfig.js';
 import { teamRoutes } from './routes/teams.js';
 import { tokenRoutes } from './routes/tokens.js';
@@ -229,6 +230,7 @@ async function start() {
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
+  await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
   await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });

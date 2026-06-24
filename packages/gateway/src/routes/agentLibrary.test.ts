@@ -26,6 +26,8 @@ function newMockPrisma() {
     connection: { findUnique: vi.fn() },
     // P5: org-scoped agent creation validates the org exists via this lookup.
     organization: { findUnique: vi.fn() },
+    // Claude Tag Phase 1: CHANNEL-scoped agent creation validates the channel exists.
+    slackChannel: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },
@@ -206,6 +208,59 @@ describe('agentLibraryRoutes — admin', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('INVALID_MCP_CONNECTION');
+    await app.close();
+  });
+
+  it('creates a CHANNEL-scoped agent (Claude Tag Phase 1)', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1' });
+    mockPrisma.agent.findFirst.mockResolvedValue(null); // maxVersion = 0
+    mockPrisma.agent.create.mockResolvedValue({
+      channelId: '44444444-4444-4444-8444-444444444444',
+      id: 'chan-agent-1',
+      key: 'channelAssistant',
+      name: 'Channel Assistant',
+      scope: 'CHANNEL',
+      version: 1,
+    });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      channelId: '44444444-4444-4444-8444-444444444444',
+      id: 'chan-agent-1',
+      key: 'channelAssistant',
+      name: 'Channel Assistant',
+      scope: 'CHANNEL',
+      skillRefs: [],
+      version: 1,
+    });
+    const res = await app.inject({
+      body: {
+        channelId: '44444444-4444-4444-8444-444444444444',
+        key: 'channelAssistant',
+        name: 'Channel Assistant',
+        scope: 'CHANNEL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ channelId: '44444444-4444-4444-8444-444444444444' }),
+      })
+    );
+    await app.close();
+  });
+
+  it('400s when a CHANNEL-scope create omits channelId', async () => {
+    const { app } = await buildAdminApp();
+    const res = await app.inject({
+      body: { key: 'channelAssistant', name: 'Channel Assistant', scope: 'CHANNEL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
     await app.close();
   });
 

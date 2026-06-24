@@ -13,6 +13,7 @@ export type AuditEntityType =
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'Skill'
+  | 'SlackChannel'
   | 'SlackConfig'
   | 'StorageConfig';
 
