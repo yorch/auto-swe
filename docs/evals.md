@@ -7,14 +7,16 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **P0 shipped; P1 logic layer shipped; P2–P3 specified** (rev. 2026-06-24). **P0 is
-> implemented** (EvalResult capture from gates/review/merge + read API + run panel). **P1's
-> data + scoring + API + CLI + harness-orchestration layers are implemented and unit-tested**
-> (schema/migration verified against a live Postgres; paired-stats, trajectory scorer,
-> SHA-pinned workspace, standalone gate runner, admin API, `auto-swe evals` CLI, harness with an
-> injectable Docker/LLM boundary). **Remaining for P1:** the durable Temporal workflow wrapper +
-> worker registration, the agent-diff-generation step inside `runCaseDefault`, and the nightly CI
-> job — all Docker/Temporal-dependent. **P2–P3 remain specified** (see their per-phase docs).
+> Status: **P0 shipped; P1–P3 logic layers shipped; integration layer remaining** (rev. 2026-06-24).
+> **60 eval unit tests green; all packages typecheck; every migration verified against a live
+> Postgres.** Built + tested: P0 capture (gate/review/merge) + read API + run panel; P1 schema +
+> paired-stats + trajectory scorer + SHA-pinned workspace + standalone gate runner + admin API +
+> `auto-swe evals` CLI + harness orchestration; P2 scorer-combination + decision-rule + judge-prompt
+> + implementer/rubric wall + `EvalRubric` schema/API; P3 suite-health (fail-closed) + cost policy +
+> anchor-subset compression. **Remaining (integration layer, not verifiable without
+> Temporal/Docker/LLM infra):** the durable harness + `eval` workflow node + judge LLM execution +
+> agent-diff generation + decontaminated calibration channel + production canary + drift dashboard +
+> golden-set re-validation + nightly CI + historical-replay tier.
 > This doc establishes the vision, the conceptual grounding, and a phased build plan
 > sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
 > methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision
