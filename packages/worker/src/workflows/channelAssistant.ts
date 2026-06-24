@@ -3,7 +3,7 @@ import { log, proxyActivities } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 
 /**
- * ChannelAssistantWorkflow — Claude Tag (Phase 0 + Phase 4 live-progress).
+ * ChannelAssistantWorkflow — channel assistant (Phase 0 + Phase 4 live-progress).
  *
  * One @mention → one reply. The gateway's Slack Events route starts this
  * workflow (name `'ChannelAssistantWorkflow'`, task queue `'engineering-workflow'`)

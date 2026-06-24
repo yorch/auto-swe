@@ -705,8 +705,8 @@ export default function AdminSlackChannelsPage() {
         <div>
           <h2 className="text-2xl font-bold">Slack Channels</h2>
           <p className="mt-1 text-sm text-paper-400">
-            Registered Slack channels that Claude-Tag workflows respond in. Each channel is scoped
-            to a team and can override agent key, ambient scheduling, and monthly spend caps.
+            Registered Slack channels that channel-assistant workflows respond in. Each channel is
+            scoped to a team and can override agent key, ambient scheduling, and monthly spend caps.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} variant="primary">

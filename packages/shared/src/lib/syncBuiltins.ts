@@ -171,7 +171,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     systemPrompt: MEMORY_SUMMARIZER_PROMPT,
   },
   {
-    // Claude Tag (Phase 0): the shared, per-channel Slack assistant. Model-backed
+    // Channel assistant (Phase 0): the shared, per-channel Slack assistant. Model-backed
     // so each channel can resolve its own model via the CHANNEL config tier; the
     // GLOBAL row seeded here is the default the cascade falls back to.
     description: 'Shared per-channel Slack teammate that answers @mentions in-thread.',

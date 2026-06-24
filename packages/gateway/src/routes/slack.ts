@@ -413,7 +413,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/auth/slack/events — Slack Events API callback (Claude Tag).
+  // POST /api/v1/auth/slack/events — Slack Events API callback (channel assistant).
   // Drives the conversational teammate: an @mention in a channel (or a DM)
   // starts a `ChannelAssistantWorkflow` that generates + posts the reply
   // in-thread (the worker owns the reply; the gateway only starts the workflow).
@@ -498,7 +498,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
   );
 };
 
-// ── Slack Events API (Claude Tag) ───────────────────────────────────────────
+// ── Slack Events API (channel assistant) ────────────────────────────────────
 
 interface SlackEventInner {
   type?: string;

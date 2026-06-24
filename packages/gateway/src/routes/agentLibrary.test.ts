@@ -26,7 +26,7 @@ function newMockPrisma() {
     connection: { findUnique: vi.fn() },
     // P5: org-scoped agent creation validates the org exists via this lookup.
     organization: { findUnique: vi.fn() },
-    // Claude Tag Phase 1: CHANNEL-scoped agent creation validates the channel exists.
+    // Channel assistant Phase 1: CHANNEL-scoped agent creation validates the channel exists.
     slackChannel: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
@@ -211,7 +211,7 @@ describe('agentLibraryRoutes — admin', () => {
     await app.close();
   });
 
-  it('creates a CHANNEL-scoped agent (Claude Tag Phase 1)', async () => {
+  it('creates a CHANNEL-scoped agent (channel assistant Phase 1)', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1' });
     mockPrisma.agent.findFirst.mockResolvedValue(null); // maxVersion = 0

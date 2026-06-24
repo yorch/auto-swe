@@ -8,7 +8,7 @@ import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
 /**
- * SlackChannel admin management (Claude Tag, Phase 1). Phase 0 auto-provisions a
+ * SlackChannel admin management (channel assistant, Phase 1). Phase 0 auto-provisions a
  * channel on the first @mention (see routes/slack.ts `provisionChannel`); this
  * surface lets admins register/retune channels explicitly: which Agent drives
  * the channel, ambient mode + cron, the per-channel budget cap, and the owning
@@ -112,7 +112,7 @@ function channelWritableData(body: {
 
 /**
  * Reconcile the channel's ambient-mode Temporal Schedule with its current row
- * state (Claude-Tag P3). A schedule should exist iff the channel is active,
+ * state (channel assistant P3). A schedule should exist iff the channel is active,
  * ambient mode is on, and a cron is set; any other state means no schedule.
  * Best-effort: a Temporal hiccup is logged and swallowed so it never fails the
  * CRUD response (the schedule re-syncs on the next save).
@@ -246,7 +246,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /:id/memory — list this channel's active (un-consolidated) memory items
-  // (Claude Tag, Phase 2). The worker writes channel-scoped rows
+  // (channel assistant, Phase 2). The worker writes channel-scoped rows
   // (scope='channel-memory', agentKey='channelAssistant', channelId set); this
   // surface lets admins/team members audit the channel's accumulated memory.
   //

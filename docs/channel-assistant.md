@@ -1,9 +1,9 @@
-# Claude Tag — Slack channel teammate
+# Channel assistant — Slack channel teammate
 
 > Status: **Foundation + Phases 0–4 shipped.** Living doc — code is authoritative where this diverges.
 
-A Claude-Tag-style teammate: one shared Claude that lives in a Slack channel,
-that anyone can `@mention` to delegate work, with per-channel scoping of
+A channel-assistant-style teammate: one shared assistant that lives in a Slack
+channel, that anyone can `@mention` to delegate work, with per-channel scoping of
 tools/agents/memory/budget and (planned) an ambient mode that posts proactively.
 Modeled on Anthropic's Claude Tag (see [`claude-tag-research.md`](./claude-tag-research.md)
 for the source-product research); built on the platform's existing agent
@@ -16,13 +16,15 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where Claude is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend. Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend. Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
 
-Migrations: `00000000000002_claude_tag_channel_scope` (adds the `CHANNEL` enum
-value, isolated per the Postgres same-tx rule) and `00000000000003_claude_tag_foundation`.
+Migrations: these models, the `CHANNEL` enum value, and the scoping columns are
+folded into the consolidated Prisma baseline (`00000000000000_init`); the one
+piece Prisma's DSL can't express — the `CHANNEL`-scoped partial unique index on
+`agents` — lives in `00000000000001_custom_constraints_and_indexes`.
 
 ## 2. Config-scope cascade
 
@@ -125,8 +127,8 @@ Proactive posting via a per-channel Temporal Schedule:
   scanner): on a hit it records a `channel.suspicious_input` event and proceeds,
   wrapped so a scanner failure never aborts the turn.
 - The shared per-channel agent + channel memory already make the assistant
-  multiplayer (one Claude, shared context); this phase adds the live-edit UX +
-  input safety.
+  multiplayer (one shared assistant, shared context); this phase adds the
+  live-edit UX + input safety.
 
 ## 8. Future refinements (not built)
 

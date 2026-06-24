@@ -23,7 +23,7 @@ export interface ResolveCtx {
   /// ORGANIZATION tier between TEAM and GLOBAL in every config cascade. The tier
   /// only fires when set, so GLOBAL/TEAM-only deployments behave unchanged.
   orgId?: string;
-  /// Claude Tag: the SlackChannel a channel-resident assistant is running in.
+  /// Channel assistant: the SlackChannel a channel-resident assistant is running in.
   /// Inserts a CHANNEL tier between WORKFLOW_TEMPLATE and TEAM in the agent
   /// cascade. Only fires when set, so non-Slack runs behave unchanged.
   channelId?: string;

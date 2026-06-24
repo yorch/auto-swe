@@ -1,6 +1,6 @@
 // ── Workflow Types ──
 
-/// Claude Tag (Phase 0): input to the per-mention channel-assistant workflow.
+/// Channel assistant (Phase 0): input to the per-mention channel-assistant workflow.
 /// Temporal workflow name `'ChannelAssistantWorkflow'`, task queue
 /// `'engineering-workflow'`. Produced by the gateway Slack Events route when a
 /// user @mentions the bot (or DMs it); consumed by the worker, which resolves

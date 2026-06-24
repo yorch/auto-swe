@@ -4,7 +4,7 @@
 > 2026-06-24 from the official announcement + press coverage. This is the
 > **inspiration / reference** for our own implementation; it documents the
 > *product we are replicating*, not our code. For what we actually built, see
-> [`claude-tag.md`](./claude-tag.md).
+> [`channel-assistant.md`](./channel-assistant.md).
 
 ---
 
@@ -78,7 +78,7 @@ From press coverage and the Hacker News launch discussion:
 
 ## 7. How this maps to our build
 
-| Claude Tag capability | Our implementation (see `claude-tag.md`) |
+| Claude Tag capability | Our implementation (see `channel-assistant.md`) |
 | --- | --- |
 | One shared `@Claude` per channel | `SlackChannel` + a channel-resident `channelAssistant` agent; `@mention` → `ChannelAssistantWorkflow` |
 | Per-channel scoping of tools/data | `CHANNEL` config-scope tier in the agent resolver cascade; channel-scoped `Agent` rows |

@@ -18,7 +18,7 @@ export const MODEL_BACKED_AGENT_KEYS = [
   'securityReview',
   'validateContext',
   'commitToMemory',
-  // Claude Tag (Phase 0): the per-channel Slack assistant. Model-backed (its own
+  // Channel assistant (Phase 0): the per-channel Slack assistant. Model-backed (its own
   // `modelSpec`) so it drives cost pricing + gets a model-config label. It is
   // NOT in `requiredAgentKeys()` (no workflow step needs it), so it does not gate
   // worker boot via `assertConfigReady`; `syncBuiltins` seeds its GLOBAL Agent.

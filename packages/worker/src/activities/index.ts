@@ -1,6 +1,6 @@
-// Claude Tag (Phase 3) — ambient digest
+// Channel assistant (Phase 3) — ambient digest
 export { runChannelAmbientDigest } from './channelAmbient.js';
-// Claude Tag (Phase 0) — channel-resident Slack assistant
+// Channel assistant (Phase 0) — channel-resident Slack assistant
 // Phase 4 adds live-progress (placeholder + chat.update) activities.
 export {
   postChannelPlaceholder,
@@ -64,7 +64,7 @@ export {
   runTypecheck,
   runVulnScan,
 } from './qualityGates.js';
-// Claude Tag — admin memory edit-with-reembed
+// Channel assistant — admin memory edit-with-reembed
 export type { ReembedMemoryInput } from './reembedMemory.js';
 export { reembedMemoryItemActivity } from './reembedMemory.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';

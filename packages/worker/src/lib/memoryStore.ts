@@ -5,7 +5,7 @@ import { generateEmbeddingWithSpec } from './embeddings.js';
  * Shared pgvector helpers for the `memory_items` table.
  *
  * Two flows write/read this table with near-identical SQL: the SWE lesson flow
- * (`commitToMemory` / `lessonRetrieval`, scoped by `repo_id`) and the Claude Tag
+ * (`commitToMemory` / `lessonRetrieval`, scoped by `repo_id`) and the channel-assistant
  * channel-memory flow (`channelMemory`, scoped by `channel_id`). This module is
  * the single source of truth for the cosine-similarity SELECT and the row
  * INSERT, so the two callers can't drift.
@@ -96,7 +96,7 @@ export async function searchMemoryItemsByVector(opts: {
  * Insert one `memory_items` row with a vector embedding for the `lessonSummary`
  * text, RETURNING its id. Every scope column (`repo_id`, `channel_id`, `team_id`,
  * `org_id`, …) is nullable, so a single statement serves both the repo-scoped
- * SWE lesson flow and the channel-scoped Claude Tag flow without behavior change:
+ * SWE lesson flow and the channel-scoped channel-assistant flow without behavior change:
  * each caller supplies exactly the columns it sets and leaves the rest null.
  *
  * `scope` defaults to `'swe-lessons'` (matching the DB column default) when the

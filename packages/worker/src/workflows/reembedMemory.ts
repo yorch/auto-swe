@@ -2,7 +2,7 @@ import { proxyActivities } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 
 /**
- * ReembedMemoryWorkflow — Claude Tag admin memory edit-with-reembed.
+ * ReembedMemoryWorkflow — channel assistant admin memory edit-with-reembed.
  *
  * Started BY NAME by the gateway after an admin edits a channel memory item's
  * text (the gateway updates `lesson_summary` / `rationale` synchronously, then

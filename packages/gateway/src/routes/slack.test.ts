@@ -523,7 +523,7 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
   });
 });
 
-describe('POST /api/v1/auth/slack/events — Claude Tag teammate', () => {
+describe('POST /api/v1/auth/slack/events — channel assistant teammate', () => {
   it('echoes the challenge on url_verification once the signature passes', async () => {
     const body = JSON.stringify({ challenge: 'abc123', type: 'url_verification' });
     const { ts, sig } = signRequest(body);

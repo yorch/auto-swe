@@ -2,7 +2,7 @@ import { log, proxyActivities } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 
 /**
- * ChannelAmbientWorkflow — Claude Tag (Phase 3, ambient mode).
+ * ChannelAmbientWorkflow — channel assistant (Phase 3, ambient mode).
  *
  * Started BY NAME by the gateway's per-channel Temporal Schedule, which fires on
  * the channel's `ambientCron`. Name MUST be `'ChannelAmbientWorkflow'`, task

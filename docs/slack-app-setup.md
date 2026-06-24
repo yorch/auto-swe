@@ -28,7 +28,7 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 | `GET  /callback` | OAuth redirect target after the user clicks the install URL |
 | `GET  /connect` | Linkage flow surfaced in the unknown-Slack-user ephemeral hint |
 
-## @mention teammate (Claude Tag)
+## @mention teammate (channel assistant)
 
 Once Event Subscriptions are enabled with the `app_mention` and `message.im` bot events, the bot becomes a conversational teammate:
 

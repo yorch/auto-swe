@@ -25,7 +25,7 @@ export function workRequestScheduleId(scheduleRowId: string): string {
   return `auto-swe-scheduled-wr-${scheduleRowId}`;
 }
 
-/** Temporal Schedule ID for a SlackChannel's ambient-mode digest (Claude-Tag P3). */
+/** Temporal Schedule ID for a SlackChannel's ambient-mode digest (channel assistant P3). */
 export function channelAmbientScheduleId(channelId: string): string {
   return `auto-swe-channel-ambient-${channelId}`;
 }

@@ -202,7 +202,7 @@ function truncate(s: string, max: number): string {
 }
 
 /**
- * Claude Tag (Phase 0): post a plain text reply into a Slack thread. Unlike the
+ * Channel assistant (Phase 0): post a plain text reply into a Slack thread. Unlike the
  * best-effort notification surfaces above, this is the assistant's actual reply —
  * a failure to deliver matters — so it resolves the bot token via
  * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
@@ -217,7 +217,7 @@ export async function postSlackThreadMessage(
 }
 
 /**
- * Claude Tag (Phase 4): post a threaded message and return its Slack timestamp
+ * Channel assistant (Phase 4): post a threaded message and return its Slack timestamp
  * (`ts`). Used by the channel-assistant "live progress" flow to drop a
  * placeholder into the thread and later edit it in place via
  * {@link updateSlackMessage}. Same token resolution + throw-on-failure
@@ -241,7 +241,7 @@ export async function postSlackThreadMessageReturningTs(
 }
 
 /**
- * Claude Tag (Phase 4): edit an already-posted message in place via Slack
+ * Channel assistant (Phase 4): edit an already-posted message in place via Slack
  * `chat.update`. Used to replace the channel-assistant placeholder with the
  * final reply (or a friendly error). Resolves the bot token via
  * {@link resolveSlackConfig} (never `process.env`) and throws on a missing
@@ -295,7 +295,7 @@ interface SlackConversationsRepliesResponse {
 }
 
 /**
- * Claude Tag (thread-history refinement): fetch the replies in a Slack thread via
+ * Channel assistant (thread-history refinement): fetch the replies in a Slack thread via
  * `conversations.replies`, oldest→newest, for use as conversational context in a
  * channel-assistant turn. Resolves the bot token via {@link resolveSlackConfig}
  * (never `process.env`) and uses the same AbortController-timeout pattern as the
@@ -350,7 +350,7 @@ export async function fetchThreadReplies(
 }
 
 /**
- * Claude Tag (Phase 3): post a plain top-level (un-threaded) message into a Slack
+ * Channel assistant (Phase 3): post a plain top-level (un-threaded) message into a Slack
  * channel. Used by the ambient digest, which posts proactively to the channel
  * rather than into a thread. Like {@link postSlackThreadMessage}, this is real
  * content (not a best-effort notification): it resolves the bot token via

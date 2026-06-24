@@ -71,7 +71,7 @@ export function shouldPostDigest(reply: string): boolean {
 }
 
 /**
- * Claude Tag (Phase 3) — ambient digest. Started by the per-channel Temporal
+ * Channel assistant (Phase 3) — ambient digest. Started by the per-channel Temporal
  * Schedule (managed by the gateway) on the channel's `ambientCron`, via the
  * {@link ChannelAmbientWorkflow}. Proactively posts a short, top-level digest to
  * the channel surfacing recent / forgotten items from its memory.

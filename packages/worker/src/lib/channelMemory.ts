@@ -15,7 +15,7 @@ interface RetrievedChannelMemoryRow {
 }
 
 /**
- * Claude Tag (Phase 2). Retrieve channel-scoped memory rows that are
+ * Channel assistant (Phase 2). Retrieve channel-scoped memory rows that are
  * semantically similar to the current message, so the assistant can build
  * context over time. Mirrors `retrieveSimilarLessons` (repo-scoped) but scopes
  * to a single `channel_id` instead of a `repo_id`.
@@ -55,7 +55,7 @@ export interface RecentChannelMemoryItem {
 }
 
 /**
- * Claude Tag (Phase 3). Fetch the most recent un-consolidated channel-memory
+ * Channel assistant (Phase 3). Fetch the most recent un-consolidated channel-memory
  * rows for the ambient digest — recency-ordered rather than similarity-ranked,
  * so the digest can surface forgotten / follow-up-worthy items.
  *
@@ -76,7 +76,7 @@ export async function recentChannelMemory(
 }
 
 /**
- * Claude Tag (Phase 2). Persist one channel-scoped memory row with a vector
+ * Channel assistant (Phase 2). Persist one channel-scoped memory row with a vector
  * embedding for future semantic search. Mirrors `writeMemoryItemRow` from
  * `commitToMemory`, but for the channel case: `repo_id` is NULL while
  * `channel_id`/`team_id`/`org_id` are set.

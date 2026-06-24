@@ -1,5 +1,5 @@
 /**
- * Claude Tag (Phase 4): workflow-level tests for ChannelAssistantWorkflow via
+ * Channel assistant (Phase 4): workflow-level tests for ChannelAssistantWorkflow via
  * TestWorkflowEnvironment. These run the REAL workflow code (placeholder →
  * chat.update live-progress, fallback to a fresh post, graceful error path)
  * inside Temporal's time-skipping test server with every activity replaced by an

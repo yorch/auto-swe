@@ -84,7 +84,7 @@ Respond with valid JSON matching this schema:
 }`;
 
 /**
- * Claude Tag (Phase 2). Prepend a compact context block built from retrieved
+ * Channel assistant (Phase 2). Prepend a compact context block built from retrieved
  * channel memory to the user's message, keeping the original text intact below
  * it. Pure (no I/O) so it's directly unit-testable. Returns `userText`
  * unchanged when there are no items.
@@ -229,7 +229,7 @@ export async function runChannelAgentTurn(
 }
 
 /**
- * Claude Tag (Phase 1). One conversational turn for a channel-resident Slack
+ * Channel assistant (Phase 1). One conversational turn for a channel-resident Slack
  * assistant: load the channel's configured agent key, resolve it through the
  * Agent library with the CHANNEL config tier active (`ctx.channelId`), and
  * generate a reply to the user's message.
@@ -461,7 +461,7 @@ export async function postChannelReply(args: {
 }
 
 /**
- * Claude Tag (Phase 4): advisory injection/exfiltration scan of the ingested
+ * Channel assistant (Phase 4): advisory injection/exfiltration scan of the ingested
  * channel message. Channel content is untrusted input fed to the agent, so we
  * scan `input.userText` with the same {@link scanSkillContent} the implementer's
  * LLM-output scanner uses. NON-BLOCKING: if warnings are returned, we record a
@@ -487,7 +487,7 @@ async function scanChannelInput(input: ChannelAssistantTurnInput): Promise<void>
 }
 
 /**
- * Claude Tag (Phase 4): post the "working on it" placeholder into the thread and
+ * Channel assistant (Phase 4): post the "working on it" placeholder into the thread and
  * return its Slack `ts` so the workflow can edit it in place once the reply is
  * ready (live-progress UX). Returns `{ ts: null }` when the placeholder couldn't
  * be posted (no ts) — the workflow then falls back to a fresh reply message.
@@ -517,7 +517,7 @@ export async function postChannelPlaceholder(args: {
 }
 
 /**
- * Claude Tag (Phase 4): edit a previously posted placeholder in place with the
+ * Channel assistant (Phase 4): edit a previously posted placeholder in place with the
  * final reply (or a friendly error) via Slack `chat.update`.
  */
 export async function updateChannelReply(args: {
