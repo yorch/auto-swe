@@ -24,10 +24,13 @@ import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 // every workflow during a Slack outage.
 const SLACK_POST_TIMEOUT_MS = 2_000;
 const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
+const SLACK_UPDATE_URL = 'https://slack.com/api/chat.update';
 
 interface SlackChatPostMessageResponse {
   ok: boolean;
   error?: string;
+  /** Timestamp of the posted/updated message — used by the live-edit (chat.update) flow. */
+  ts?: string;
 }
 
 interface ResolvedChannel {
@@ -213,6 +216,62 @@ export async function postSlackThreadMessage(
 }
 
 /**
+ * Claude Tag (Phase 4): post a threaded message and return its Slack timestamp
+ * (`ts`). Used by the channel-assistant "live progress" flow to drop a
+ * placeholder into the thread and later edit it in place via
+ * {@link updateSlackMessage}. Same token resolution + throw-on-failure
+ * semantics as {@link postSlackThreadMessage}.
+ */
+export async function postSlackThreadMessageReturningTs(
+  slackChannelId: string,
+  threadTs: string,
+  text: string
+): Promise<{ ts: string }> {
+  const { ts } = await postChannelMessage(
+    'postSlackThreadMessageReturningTs',
+    slackChannelId,
+    text,
+    threadTs
+  );
+  if (!ts) {
+    throw new Error('postSlackThreadMessageReturningTs: Slack returned no message ts');
+  }
+  return { ts };
+}
+
+/**
+ * Claude Tag (Phase 4): edit an already-posted message in place via Slack
+ * `chat.update`. Used to replace the channel-assistant placeholder with the
+ * final reply (or a friendly error). Resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing
+ * token or a `{ok:false}` response — same style as the other "real content"
+ * helpers — so the calling activity can retry / surface it.
+ */
+export async function updateSlackMessage(
+  slackChannelId: string,
+  ts: string,
+  text: string
+): Promise<void> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    throw new Error('updateSlackMessage: no Slack bot token configured');
+  }
+
+  const res = await fetch(SLACK_UPDATE_URL, {
+    body: JSON.stringify({ channel: slackChannelId, text, ts }),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    method: 'POST',
+  });
+  const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+  if (!data.ok) {
+    throw new Error(`updateSlackMessage: chat.update failed: ${data.error ?? 'unknown'}`);
+  }
+}
+
+/**
  * Claude Tag (Phase 3): post a plain top-level (un-threaded) message into a Slack
  * channel. Used by the ambient digest, which posts proactively to the channel
  * rather than into a thread. Like {@link postSlackThreadMessage}, this is real
@@ -225,17 +284,18 @@ export async function postSlackChannelMessage(slackChannelId: string, text: stri
 }
 
 /**
- * Shared base for the two "real content" posts above. Resolves the bot token,
+ * Shared base for the "real content" posts above. Resolves the bot token,
  * posts to `chat.postMessage` (threaded when `threadTs` is set, top-level
  * otherwise), and throws on a missing token or a `{ok:false}` response so the
- * caller can retry / surface it.
+ * caller can retry / surface it. Returns the posted message timestamp (`ts`)
+ * for callers that need to edit it in place later (chat.update).
  */
 async function postChannelMessage(
   label: string,
   slackChannelId: string,
   text: string,
   threadTs: string | undefined
-): Promise<void> {
+): Promise<{ ts: string | undefined }> {
   const { botToken: token } = await resolveSlackConfig();
   if (!token) {
     throw new Error(`${label}: no Slack bot token configured`);
@@ -258,6 +318,7 @@ async function postChannelMessage(
   if (!data.ok) {
     throw new Error(`${label}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
   }
+  return { ts: data.ts };
 }
 
 /** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */

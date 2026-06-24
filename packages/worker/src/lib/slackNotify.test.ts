@@ -23,6 +23,8 @@ import {
   notifySlackPrReady,
   notifySlackRunComplete,
   notifySlackStepFailure,
+  postSlackThreadMessageReturningTs,
+  updateSlackMessage,
 } from './slackNotify.js';
 
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
@@ -304,6 +306,61 @@ describe('notifySlackRunComplete (phase 8)', () => {
     delete process.env.SLACK_BOT_TOKEN;
     await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
     expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe('postSlackThreadMessageReturningTs / updateSlackMessage (Phase 4 live-progress)', () => {
+  it('posts a threaded message and returns the Slack ts', async () => {
+    globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+      fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url });
+      return { json: async () => ({ ok: true, ts: '171.42' }) } as unknown as Response;
+    }) as typeof fetch;
+
+    const result = await postSlackThreadMessageReturningTs('C1', '100.1', 'working…');
+
+    expect(result).toEqual({ ts: '171.42' });
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]?.url).toBe('https://slack.com/api/chat.postMessage');
+    const body = fetchCalls[0]?.body as { channel: string; thread_ts: string; text: string };
+    expect(body.channel).toBe('C1');
+    expect(body.thread_ts).toBe('100.1');
+    expect(body.text).toBe('working…');
+  });
+
+  it('throws when Slack returns ok but no ts', async () => {
+    globalThis.fetch = (async () =>
+      ({ json: async () => ({ ok: true }) }) as unknown as Response) as typeof fetch;
+
+    await expect(postSlackThreadMessageReturningTs('C1', '100.1', 'x')).rejects.toThrow(
+      /no message ts/
+    );
+  });
+
+  it('throws on a missing bot token', async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    await expect(postSlackThreadMessageReturningTs('C1', '100.1', 'x')).rejects.toThrow(
+      /no Slack bot token/
+    );
+  });
+
+  it('updateSlackMessage edits in place via chat.update', async () => {
+    await updateSlackMessage('C1', '171.42', 'the final answer');
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]?.url).toBe('https://slack.com/api/chat.update');
+    const body = fetchCalls[0]?.body as { channel: string; ts: string; text: string };
+    expect(body.channel).toBe('C1');
+    expect(body.ts).toBe('171.42');
+    expect(body.text).toBe('the final answer');
+  });
+
+  it('updateSlackMessage throws on a {ok:false} response', async () => {
+    globalThis.fetch = (async () =>
+      ({
+        json: async () => ({ error: 'message_not_found', ok: false }),
+      }) as unknown as Response) as typeof fetch;
+
+    await expect(updateSlackMessage('C1', '1.0', 'x')).rejects.toThrow(/message_not_found/);
   });
 });
 

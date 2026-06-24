@@ -1,6 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
+import { persistActivityTrace } from '../lib/activityContext.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import {
   type ChannelMemoryItem,
   retrieveChannelMemory,
@@ -8,7 +11,11 @@ import {
 } from '../lib/channelMemory.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
-import { postSlackThreadMessage } from '../lib/slackNotify.js';
+import {
+  postSlackThreadMessage,
+  postSlackThreadMessageReturningTs,
+  updateSlackMessage,
+} from '../lib/slackNotify.js';
 import { runAgent } from './runAgent.js';
 
 /** Fallback when a channel row has no explicit agent key (should never happen — the
@@ -18,6 +25,14 @@ const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 /** Friendly reply returned when a channel has hit its monthly assistant budget. */
 const BUDGET_EXCEEDED_REPLY =
   ':moneybag: This channel has reached its monthly assistant budget. An admin can raise it in the dashboard.';
+
+/** Placeholder posted immediately so the user sees the teammate "working" while
+ *  the LLM turn runs; later edited in place with the reply via chat.update. */
+export const CHANNEL_PLACEHOLDER_TEXT = ':hourglass_flowing_sand: _Working on it…_';
+
+/** Friendly text the placeholder is edited to (or posted as) when the turn errors. */
+export const CHANNEL_ERROR_REPLY =
+  ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
 
 /** Cap on how many retrieved memory items are injected into the prompt. */
 const MAX_MEMORY_CONTEXT_ITEMS = 5;
@@ -134,6 +149,14 @@ export async function runChannelAssistantTurn(
   }
   const userMessage = formatMemoryContext(memory, input.userText);
 
+  // Phase 4: scan the ingested channel message — untrusted user input fed to the
+  // LLM — for injection/exfiltration patterns. ADVISORY only (mirrors the
+  // implementer's LLM-output scanner): warnings are recorded as a named security
+  // event, but the turn always proceeds. Wrapped in try/catch so a scanner/DB
+  // failure never aborts the turn. We scan only `input.userText`, not the
+  // prepended memory context — that originated from prior, already-scanned input.
+  await scanChannelInput(input);
+
   const result = await runAgent(spec, userMessage, { spanName: 'llm.channel_assistant' });
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
@@ -214,4 +237,60 @@ export async function postChannelReply(args: {
   text: string;
 }): Promise<void> {
   await postSlackThreadMessage(args.slackChannelId, args.threadTs, args.text);
+}
+
+/**
+ * Claude Tag (Phase 4): advisory injection/exfiltration scan of the ingested
+ * channel message. Channel content is untrusted input fed to the agent, so we
+ * scan `input.userText` with the same {@link scanSkillContent} the implementer's
+ * LLM-output scanner uses. NON-BLOCKING: if warnings are returned, we record a
+ * named `channel.suspicious_input` advisory security event (via {@link AgentTracer}
+ * → `activity_event`, mirroring `llm.suspicious_output`) and proceed. The whole
+ * thing is wrapped in try/catch so a scanner/DB failure can never abort the turn.
+ */
+async function scanChannelInput(input: ChannelAssistantTurnInput): Promise<void> {
+  try {
+    const scan = await scanSkillContent(input.userText);
+    if (!scan.safe) {
+      const tracer = new AgentTracer();
+      tracer.addActivityEvent({
+        inputJson: { channelId: input.channelId, userSlackId: input.userSlackId },
+        name: 'channel.suspicious_input',
+        outputJson: { warnings: scan.warnings },
+      });
+      await persistActivityTrace(tracer, 'channelAssistant');
+    }
+  } catch {
+    // Advisory scan failure is non-fatal — the turn continues without the check.
+  }
+}
+
+/**
+ * Claude Tag (Phase 4): post the "working on it" placeholder into the thread and
+ * return its Slack `ts` so the workflow can edit it in place once the reply is
+ * ready (live-progress UX). Returns `{ ts: null }` when the placeholder couldn't
+ * be posted (no ts) — the workflow then falls back to a fresh reply message.
+ */
+export async function postChannelPlaceholder(args: {
+  slackChannelId: string;
+  threadTs: string;
+}): Promise<{ ts: string | null }> {
+  const { ts } = await postSlackThreadMessageReturningTs(
+    args.slackChannelId,
+    args.threadTs,
+    CHANNEL_PLACEHOLDER_TEXT
+  );
+  return { ts };
+}
+
+/**
+ * Claude Tag (Phase 4): edit a previously posted placeholder in place with the
+ * final reply (or a friendly error) via Slack `chat.update`.
+ */
+export async function updateChannelReply(args: {
+  slackChannelId: string;
+  ts: string;
+  text: string;
+}): Promise<void> {
+  await updateSlackMessage(args.slackChannelId, args.ts, args.text);
 }
