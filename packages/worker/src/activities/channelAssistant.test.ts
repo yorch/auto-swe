@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
+vi.mock('@auto-swe/shared/db', () => {
+  const prismaMock = {
+    // The budget gate now reads inside a Serializable $transaction; the mock runs
+    // the callback against the same mocked `tx` (the prisma object itself), so the
+    // existing `channelMonthlyUsage.findUnique` mock backs the transactional read.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
-  },
+  };
+  return { prisma: prismaMock };
+});
+
+vi.mock('@auto-swe/shared/lib/agentPrompts', () => ({
+  MEMORY_SUMMARIZER_PROMPT: 'memory summarizer prompt',
 }));
 
 vi.mock('@auto-swe/shared/lib/billing', () => ({
@@ -24,7 +33,9 @@ vi.mock('./runAgent.js', () => ({
 const postSlackThreadMessageMock = vi.fn().mockResolvedValue(undefined);
 const postSlackThreadMessageReturningTsMock = vi.fn();
 const updateSlackMessageMock = vi.fn().mockResolvedValue(undefined);
+const fetchThreadRepliesMock = vi.fn();
 vi.mock('../lib/slackNotify.js', () => ({
+  fetchThreadReplies: (...args: unknown[]) => fetchThreadRepliesMock(...args),
   postSlackThreadMessage: (...args: unknown[]) => postSlackThreadMessageMock(...args),
   postSlackThreadMessageReturningTs: (...args: unknown[]) =>
     postSlackThreadMessageReturningTsMock(...args),
@@ -66,6 +77,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import {
   CHANNEL_PLACEHOLDER_TEXT,
   formatMemoryContext,
+  formatThreadContext,
   isChannelOverBudget,
   postChannelPlaceholder,
   runChannelAssistantTurn,
@@ -98,19 +110,62 @@ beforeEach(() => {
     agentKey: 'channelAssistant',
     modelSpec: 'anthropic/claude-opus-4-8',
   });
-  runAgentMock.mockResolvedValue({
-    costUsd: 0.0175,
-    inputTokens: 1000,
-    outputTokens: 500,
-    text: 'hi there',
-    usage: { inputTokens: 1000, outputTokens: 500 },
-  });
+  // runAgent is now called for BOTH the conversational turn and the
+  // memory-summarizer pass. Branch on the span name so each path gets a
+  // suitable shape: the turn returns prose `text`; the summarizer returns a
+  // structured `object` ({ lessonSummary, rationale }). Per-test overrides below
+  // re-`mockResolvedValue` the TURN reply; the summarizer falls back to this
+  // implementation only when a test doesn't override it (see helper).
+  runAgentMock.mockImplementation(
+    async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+      if (opts.spanName === 'llm.channel_memory_summary') {
+        return {
+          costUsd: 0.001,
+          object: { lessonSummary: 'distilled durable fact', rationale: 'why it matters' },
+          usage: { inputTokens: 100, outputTokens: 50 },
+        };
+      }
+      return {
+        costUsd: 0.0175,
+        inputTokens: 1000,
+        outputTokens: 500,
+        text: 'hi there',
+        usage: { inputTokens: 1000, outputTokens: 500 },
+      };
+    }
+  );
   retrieveChannelMemoryMock.mockResolvedValue([]);
+  fetchThreadRepliesMock.mockResolvedValue([]);
   writeChannelMemoryMock.mockResolvedValue('mem-1');
   // Clean input by default — no advisory event.
   scanSkillContentMock.mockResolvedValue({ safe: true, warnings: [] });
   postSlackThreadMessageReturningTsMock.mockResolvedValue({ ts: '999.000' });
 });
+
+/**
+ * Helper: route the conversational TURN reply through `runAgentMock` while
+ * keeping the structured summarizer response on the `llm.channel_memory_summary`
+ * span. Tests that need a specific turn reply use this instead of a bare
+ * `mockResolvedValue` (which would also clobber the summarizer branch).
+ */
+function setTurnReply(turn: { text: string; costUsd?: number }): void {
+  runAgentMock.mockImplementation(
+    async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+      if (opts.spanName === 'llm.channel_memory_summary') {
+        return {
+          costUsd: 0.001,
+          object: { lessonSummary: 'distilled durable fact', rationale: 'why it matters' },
+          usage: { inputTokens: 100, outputTokens: 50 },
+        };
+      }
+      return {
+        costUsd: turn.costUsd ?? 0.0175,
+        text: turn.text,
+        usage: { inputTokens: 1000, outputTokens: 500 },
+      };
+    }
+  );
+}
 
 describe('isChannelOverBudget', () => {
   it('returns false when no cap is set', () => {
@@ -159,6 +214,43 @@ describe('formatMemoryContext', () => {
     }));
     const out = formatMemoryContext(items, 'q');
     expect(out.match(/- fact \d/g)?.length).toBe(5);
+  });
+});
+
+describe('formatThreadContext', () => {
+  it('returns the user text unchanged when there are no thread messages', () => {
+    expect(formatThreadContext([], 'what is the deploy command?')).toBe(
+      'what is the deploy command?'
+    );
+  });
+
+  it('prepends a compact transcript above the user text', () => {
+    const out = formatThreadContext(
+      [
+        { text: 'how do we deploy?', user: 'U1' },
+        { text: 'run yarn release', user: 'U2' },
+      ],
+      'and the rollback?'
+    );
+    expect(out).toContain('Conversation so far in this thread (oldest first):');
+    expect(out).toContain('<@U1>: how do we deploy?');
+    expect(out).toContain('<@U2>: run yarn release');
+    expect(out.endsWith('and the rollback?')).toBe(true);
+  });
+
+  it('drops empty-text messages and labels missing users as "someone"', () => {
+    const out = formatThreadContext([{ text: '   ', user: 'U1' }, { text: 'a real message' }], 'q');
+    expect(out).not.toContain('<@U1>');
+    expect(out).toContain('someone: a real message');
+  });
+
+  it('keeps only the last 15 messages', () => {
+    const msgs = Array.from({ length: 30 }, (_, i) => ({ text: `msg ${i}`, user: 'U1' }));
+    const out = formatThreadContext(msgs, 'q');
+    expect(out.match(/msg \d+/g)?.length).toBe(15);
+    // The oldest survivor is msg 15 (last 15 of 0..29).
+    expect(out).toContain('msg 15');
+    expect(out).not.toContain('msg 14');
   });
 });
 
@@ -251,31 +343,92 @@ describe('runChannelAssistantTurn', () => {
     expect(passedMessage).toContain('User: how do I deploy?');
   });
 
-  it('passes the raw user text when there is no relevant memory', async () => {
+  it('passes the raw user text when there is no relevant memory or thread context', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: null,
     } as never);
     retrieveChannelMemoryMock.mockResolvedValue([]);
+    fetchThreadRepliesMock.mockResolvedValue([]);
 
     await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
 
     expect(runAgentMock.mock.calls[0]?.[1]).toBe('hello');
   });
 
-  it('writes channel memory after a successful, non-trivial turn', async () => {
+  it('injects the thread transcript (alongside memory) into the message passed to runAgent', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: null,
     } as never);
-    runAgentMock.mockResolvedValue({
+    retrieveChannelMemoryMock.mockResolvedValue([
+      { id: 'a', similarity: 0.9, summary: 'we deploy with yarn release' },
+    ]);
+    fetchThreadRepliesMock.mockResolvedValue([
+      { text: 'can someone help with the deploy?', user: 'U1' },
+    ]);
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(fetchThreadRepliesMock).toHaveBeenCalledWith('C123', '111.222');
+    const passed = runAgentMock.mock.calls[0]?.[1] as string;
+    // Both context blocks present, with the user message at the bottom.
+    expect(passed).toContain("Relevant context from this channel's memory:");
+    expect(passed).toContain('- we deploy with yarn release');
+    expect(passed).toContain('Conversation so far in this thread (oldest first):');
+    expect(passed).toContain('<@U1>: can someone help with the deploy?');
+    expect(passed).toContain('User: how do I deploy?');
+  });
+
+  it('still produces a normal turn when the thread fetch returns empty (graceful degrade)', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    retrieveChannelMemoryMock.mockResolvedValue([]);
+    // e.g. missing channels:history scope → helper returns [] (never throws).
+    fetchThreadRepliesMock.mockResolvedValue([]);
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+    expect(result.reply).toBe('hi there');
+    // No thread transcript injected — raw user text passed straight through.
+    expect(runAgentMock.mock.calls[0]?.[1]).toBe('hello');
+  });
+
+  it('still produces a normal turn when the thread fetch throws', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    retrieveChannelMemoryMock.mockResolvedValue([]);
+    fetchThreadRepliesMock.mockRejectedValue(new Error('slack down'));
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'hello' }));
+
+    expect(result.reply).toBe('hi there');
+    expect(runAgentMock.mock.calls[0]?.[1]).toBe('hello');
+  });
+
+  it('writes the DISTILLED SUMMARY (not the raw reply) as memory after a non-trivial turn', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({
       costUsd: 0.02,
       text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
-      usage: { inputTokens: 1, outputTokens: 1 },
     });
 
     await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
 
+    // The summarizer pass runs (one extra runAgent call on the summary span)…
+    const summaryCall = runAgentMock.mock.calls.find(
+      (c) => (c[2] as { spanName?: string } | undefined)?.spanName === 'llm.channel_memory_summary'
+    );
+    expect(summaryCall).toBeDefined();
+
+    // …and the SUMMARY (not the raw transcript) is what gets persisted.
     expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
     const writeArg = writeChannelMemoryMock.mock.calls[0]?.[0] as {
       channelId: string;
@@ -288,9 +441,60 @@ describe('runChannelAssistantTurn', () => {
     expect(writeArg.channelId).toBe('chan-1');
     expect(writeArg.teamId).toBe('team-1');
     expect(writeArg.orgId).toBe('org-1');
-    expect(writeArg.summary).toContain('yarn release');
-    expect(writeArg.rationale).toBe('how do I deploy?');
+    expect(writeArg.summary).toBe('distilled durable fact');
+    expect(writeArg.rationale).toBe('why it matters');
     expect(writeArg.userSlackId).toBe('U999');
+  });
+
+  it('accrues the summarizer call cost in addition to the turn cost', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({
+      costUsd: 0.02,
+      text: 'To deploy, run `yarn release` from the repo root after the CI checks pass.',
+    });
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    // Two accruals: the turn ($0.02) and the summarizer ($0.001).
+    expect(upsertUsage).toHaveBeenCalledTimes(2);
+    const accrued = upsertUsage.mock.calls.map(
+      (c) => (c[0] as { create: { costUsdAccrued: number } }).create.costUsdAccrued
+    );
+    expect(accrued).toContain(0.02);
+    expect(accrued).toContain(0.001);
+  });
+
+  it('falls back to storing the raw exchange when summarization fails', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    const rawReply = 'To deploy, run `yarn release` from the repo root after the CI checks pass.';
+    // Turn succeeds; the summarizer span throws → fallback to raw-exchange store.
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw new Error('summarizer model unavailable');
+        }
+        return { costUsd: 0.02, text: rawReply, usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    );
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    // The reply is unaffected by the summarizer failure.
+    expect(result.reply).toBe(rawReply);
+    // Memory still accrues — but via the raw-exchange fallback shape.
+    expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
+    const writeArg = writeChannelMemoryMock.mock.calls[0]?.[0] as {
+      summary: string;
+      rationale: string;
+    };
+    expect(writeArg.summary).toBe(rawReply);
+    expect(writeArg.rationale).toBe('how do I deploy?');
   });
 
   it('does not write memory for a trivial reply', async () => {
@@ -309,11 +513,11 @@ describe('runChannelAssistantTurn', () => {
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: null,
     } as never);
-    runAgentMock.mockResolvedValue({
+    setTurnReply({
       costUsd: 0.02,
       text: 'A sufficiently long and helpful reply that should be persisted to memory.',
-      usage: { inputTokens: 1, outputTokens: 1 },
     });
+    // Both the summary write and the raw-exchange fallback write fail.
     writeChannelMemoryMock.mockRejectedValue(new Error('embed down'));
 
     const result = await runChannelAssistantTurn(makeInput());

@@ -134,11 +134,16 @@ Proactive posting via a per-channel Temporal Schedule:
   in-flight mid-task hand-off. The current design uses per-mention turns +
   scheduled ambient, which covers reactive + proactive needs without the
   rearchitecture.
-- **Full thread-history context** via `conversations.replies` (needs a Slack read
-  scope) so a turn sees the whole thread, not just channel memory.
 - **Summarizing memory pass** instead of storing the raw exchange; **hard**
   per-channel budget (transactional reserve) instead of the current soft cap;
   **admin memory edit** with re-embedding.
+
+> **Thread-history context** via `conversations.replies` is now implemented
+> (previously listed here as a future refinement). Each assistant turn fetches
+> the current thread's prior messages and prepends them as context before the
+> LLM call. Requires the `channels:history` and `groups:history` bot scopes
+> (added in the manifest); see `docs/slack-app-setup.md` for reinstall
+> instructions.
 
 ## 9. Key files
 

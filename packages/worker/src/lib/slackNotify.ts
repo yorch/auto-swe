@@ -25,6 +25,7 @@ import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 const SLACK_POST_TIMEOUT_MS = 2_000;
 const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
 const SLACK_UPDATE_URL = 'https://slack.com/api/chat.update';
+const SLACK_REPLIES_URL = 'https://slack.com/api/conversations.replies';
 
 interface SlackChatPostMessageResponse {
   ok: boolean;
@@ -274,6 +275,75 @@ export async function updateSlackMessage(
     if (!data.ok) {
       throw new Error(`updateSlackMessage: chat.update failed: ${data.error ?? 'unknown'}`);
     }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One message returned by {@link fetchThreadReplies} (oldest→newest). */
+export interface SlackThreadMessage {
+  /** Slack user id (`U…`) or bot id who posted, when present. */
+  user?: string;
+  /** The message text (may be empty for non-text messages). */
+  text: string;
+}
+
+interface SlackConversationsRepliesResponse {
+  ok: boolean;
+  error?: string;
+  messages?: Array<{ user?: string; bot_id?: string; text?: string }>;
+}
+
+/**
+ * Claude Tag (thread-history refinement): fetch the replies in a Slack thread via
+ * `conversations.replies`, oldest→newest, for use as conversational context in a
+ * channel-assistant turn. Resolves the bot token via {@link resolveSlackConfig}
+ * (never `process.env`) and uses the same AbortController-timeout pattern as the
+ * other helpers.
+ *
+ * BEST-EFFORT by design: returns `[]` on a missing token, a hung/aborted fetch,
+ * or any `{ok:false}` response (including `missing_scope` when the
+ * `channels:history`/`groups:history`/`im:history` scope hasn't been granted to
+ * the app yet). It NEVER throws — the caller degrades to a memory-only turn. The
+ * caller is responsible for any filtering/formatting; we return everything Slack
+ * gives us (including the bot's own past messages, which are valid context).
+ */
+export async function fetchThreadReplies(
+  channelId: string,
+  threadTs: string,
+  limit = 20
+): Promise<SlackThreadMessage[]> {
+  let token: string | null;
+  try {
+    ({ botToken: token } = await resolveSlackConfig());
+  } catch {
+    return [];
+  }
+  if (!token) {
+    return [];
+  }
+
+  const url = `${SLACK_REPLIES_URL}?channel=${encodeURIComponent(channelId)}&ts=${encodeURIComponent(threadTs)}&limit=${limit}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackConversationsRepliesResponse;
+    if (!data.ok || !Array.isArray(data.messages)) {
+      // eslint-disable-next-line no-console
+      console.warn(`fetchThreadReplies: conversations.replies failed: ${data.error ?? 'unknown'}`);
+      return [];
+    }
+    // `conversations.replies` already returns messages oldest→newest.
+    return data.messages.map((m) => ({ text: m.text ?? '', user: m.user ?? m.bot_id }));
+  } catch {
+    // Hung connection / abort / network error — degrade to no thread context.
+    return [];
   } finally {
     clearTimeout(timer);
   }

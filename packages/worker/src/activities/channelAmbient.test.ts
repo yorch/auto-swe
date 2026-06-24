@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
+vi.mock('@auto-swe/shared/db', () => {
+  const prismaMock = {
+    // The budget gate reads inside a Serializable $transaction; run the callback
+    // against the same mocked client so `channelMonthlyUsage.findUnique` backs it.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
-  },
-}));
+  };
+  return { prisma: prismaMock };
+});
 
 vi.mock('@auto-swe/shared/lib/billing', () => ({
   currentYearMonth: vi.fn().mockReturnValue('2026-06'),

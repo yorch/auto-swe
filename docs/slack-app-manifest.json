@@ -29,9 +29,11 @@
     "scopes": {
       "bot": [
         "app_mentions:read",
+        "channels:history",
         "chat:write",
         "chat:write.public",
         "commands",
+        "groups:history",
         "im:history",
         "users:read",
         "users:read.email"

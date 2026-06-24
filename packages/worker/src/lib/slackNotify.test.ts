@@ -19,6 +19,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import {
+  fetchThreadReplies,
   notifySlackHumanStep,
   notifySlackPrReady,
   notifySlackRunComplete,
@@ -361,6 +362,69 @@ describe('postSlackThreadMessageReturningTs / updateSlackMessage (Phase 4 live-p
       }) as unknown as Response) as typeof fetch;
 
     await expect(updateSlackMessage('C1', '1.0', 'x')).rejects.toThrow(/message_not_found/);
+  });
+});
+
+describe('fetchThreadReplies (thread-history context)', () => {
+  it('returns messages oldest→newest on a successful call', async () => {
+    globalThis.fetch = (async (url: string) => {
+      fetchCalls.push({ body: null, url });
+      return {
+        json: async () => ({
+          messages: [
+            { text: 'first', user: 'U1' },
+            { text: 'second', user: 'U2' },
+          ],
+          ok: true,
+        }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const out = await fetchThreadReplies('C1', '100.1', 10);
+
+    expect(out).toEqual([
+      { text: 'first', user: 'U1' },
+      { text: 'second', user: 'U2' },
+    ]);
+    // Hits conversations.replies with the channel + ts + limit as query params.
+    expect(fetchCalls[0]?.url).toContain('https://slack.com/api/conversations.replies');
+    expect(fetchCalls[0]?.url).toContain('channel=C1');
+    expect(fetchCalls[0]?.url).toContain('ts=100.1');
+    expect(fetchCalls[0]?.url).toContain('limit=10');
+  });
+
+  it('maps a bot message (no user) onto its bot_id', async () => {
+    globalThis.fetch = (async () =>
+      ({
+        json: async () => ({ messages: [{ bot_id: 'B9', text: 'from the bot' }], ok: true }),
+      }) as unknown as Response) as typeof fetch;
+
+    const out = await fetchThreadReplies('C1', '100.1');
+    expect(out).toEqual([{ text: 'from the bot', user: 'B9' }]);
+  });
+
+  it('returns [] (never throws) on an unauthorized {ok:false} response (missing scope)', async () => {
+    globalThis.fetch = (async () =>
+      ({
+        json: async () => ({ error: 'missing_scope', ok: false }),
+      }) as unknown as Response) as typeof fetch;
+
+    await expect(fetchThreadReplies('C1', '100.1')).resolves.toEqual([]);
+  });
+
+  it('returns [] on a thrown / hung fetch', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('network down');
+    }) as typeof fetch;
+
+    await expect(fetchThreadReplies('C1', '100.1')).resolves.toEqual([]);
+  });
+
+  it('returns [] when no bot token is configured', async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    const out = await fetchThreadReplies('C1', '100.1');
+    expect(out).toEqual([]);
+    expect(fetchCalls).toHaveLength(0);
   });
 });
 

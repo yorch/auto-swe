@@ -41,7 +41,14 @@ The first @mention in a channel auto-creates the channel mapping using the defau
 
 ## Bot scopes
 
-`app_mentions:read`, `chat:write`, `chat:write.public`, `commands`, `im:history`, `users:read`, `users:read.email` — slash-command handling, channel posts, resolving Slack users to platform users, plus receiving @mentions (`app_mentions:read`) and DMs (`im:history`) for the conversational teammate.
+`app_mentions:read`, `channels:history`, `chat:write`, `chat:write.public`, `commands`, `groups:history`, `im:history`, `users:read`, `users:read.email` — slash-command handling, channel posts, resolving Slack users to platform users, plus receiving @mentions (`app_mentions:read`) and DMs (`im:history`) for the conversational teammate.
+
+The bot now reads the current thread's recent messages via `conversations.replies` to provide full in-thread context on each turn. This requires two additional history scopes beyond the original `im:history`:
+
+- `channels:history` — read message history in public channels
+- `groups:history` — read message history in private channels
+
+> **Scope change requires reinstall.** Adding new OAuth scopes to a Slack app requires reinstalling the app to the workspace. After updating the manifest, go to **Settings → Install App** and click **Reinstall to Workspace** to grant the new scopes.
 
 ## After install
 

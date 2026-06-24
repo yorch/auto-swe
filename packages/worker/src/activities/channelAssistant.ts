@@ -1,7 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
+import { MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
+import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
@@ -12,8 +14,10 @@ import {
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import {
+  fetchThreadReplies,
   postSlackThreadMessage,
   postSlackThreadMessageReturningTs,
+  type SlackThreadMessage,
   updateSlackMessage,
 } from '../lib/slackNotify.js';
 import { runAgent } from './runAgent.js';
@@ -37,6 +41,12 @@ export const CHANNEL_ERROR_REPLY =
 /** Cap on how many retrieved memory items are injected into the prompt. */
 const MAX_MEMORY_CONTEXT_ITEMS = 5;
 
+/** Cap on how many recent thread messages are injected as conversational context. */
+const MAX_THREAD_CONTEXT_MESSAGES = 15;
+
+/** Max chars kept per injected thread message (defensive against a huge paste). */
+const MAX_THREAD_MESSAGE_CHARS = 500;
+
 /** Minimum reply length (chars) worth persisting as channel memory. Below this,
  *  the reply is likely a trivial acknowledgement not worth remembering. */
 const MIN_MEMORY_REPLY_LENGTH = 40;
@@ -44,6 +54,34 @@ const MIN_MEMORY_REPLY_LENGTH = 40;
 /** Max chars persisted for the summary (reply) and rationale (user text). */
 const MEMORY_SUMMARY_MAX_CHARS = 500;
 const MEMORY_RATIONALE_MAX_CHARS = 500;
+
+/**
+ * Structured output for the channel-memory summarizer pass. We distill the
+ * (userText, reply) exchange into a durable fact + why it matters, rather than
+ * storing the raw transcript. Mirrors the `commitToMemory` lesson shape
+ * (`lessonSummary` + `rationale`) so channel memory reads like SWE lessons.
+ */
+const ChannelMemorySummarySchema = z.object({
+  lessonSummary: z.string(),
+  rationale: z.string(),
+});
+
+/**
+ * System prompt for the channel-memory summarizer. Reuses the same framing as
+ * the SWE {@link MEMORY_SUMMARIZER_PROMPT} (distill into a reusable lesson) but
+ * targets a single conversational exchange instead of a whole workflow.
+ */
+const CHANNEL_MEMORY_SUMMARIZER_PROMPT = `${MEMORY_SUMMARIZER_PROMPT}
+
+You are summarizing a single Slack conversational exchange (a user's question and
+the assistant's answer) into ONE durable, reusable fact for this channel's memory.
+Capture the concrete knowledge worth remembering — not the pleasantries.
+
+Respond with valid JSON matching this schema:
+{
+  "lessonSummary": "The durable fact worth remembering (1-2 sentences, specific and concrete)",
+  "rationale": "Why this matters / when it's useful (1 sentence)"
+}`;
 
 /**
  * Claude Tag (Phase 2). Prepend a compact context block built from retrieved
@@ -60,6 +98,32 @@ export function formatMemoryContext(items: ChannelMemoryItem[], userText: string
     .map((item) => `- ${item.summary}`)
     .join('\n');
   return `Relevant context from this channel's memory:\n${bullets}\n\nUser: ${userText}`;
+}
+
+/**
+ * Pure (no I/O) — render the most recent thread messages as a compact transcript
+ * to inject above the user's message, so the assistant has the conversation it is
+ * replying inside (not just channel memory). Returns `userText` unchanged when
+ * there are no thread messages.
+ *
+ * Caps to the LAST {@link MAX_THREAD_CONTEXT_MESSAGES} messages (most recent
+ * context wins) and truncates each line to {@link MAX_THREAD_MESSAGE_CHARS}.
+ * Messages with no text (e.g. a file-only post) are dropped. The bot's own past
+ * messages are kept — they are valid context for a follow-up.
+ */
+export function formatThreadContext(messages: SlackThreadMessage[], userText: string): string {
+  const lines = messages
+    .filter((m) => m.text.trim().length > 0)
+    .slice(-MAX_THREAD_CONTEXT_MESSAGES)
+    .map((m) => {
+      const who = m.user ? `<@${m.user}>` : 'someone';
+      const text = m.text.trim().slice(0, MAX_THREAD_MESSAGE_CHARS);
+      return `${who}: ${text}`;
+    });
+  if (lines.length === 0) {
+    return userText;
+  }
+  return `Conversation so far in this thread (oldest first):\n${lines.join('\n')}\n\n${userText}`;
 }
 
 /**
@@ -86,11 +150,28 @@ export function isChannelOverBudget(
  * Shared pre-LLM budget gate for both the assistant turn and the ambient digest.
  * Returns `true` when the channel has a positive `monthlyBudgetUsdCents` cap and
  * the current month's accrued spend has reached it. When no cap is set, returns
- * `false` immediately without issuing the usage query (the no-cap fast path).
+ * `false` immediately without issuing any query (the no-cap fast path — channels
+ * without a cap pay no extra DB round-trip).
  *
- * Centralises the cap-set → `findUnique(ChannelMonthlyUsage)` → `Number(...)` →
- * `isChannelOverBudget` sequence so the assistant and ambient paths stay in
- * lockstep (same query, same predicate).
+ * Centralises the cap-set → read(ChannelMonthlyUsage) → `Number(...)` →
+ * {@link isChannelOverBudget} sequence so the assistant and ambient paths stay in
+ * lockstep (same read, same predicate).
+ *
+ * BUDGET GUARANTEE ("at most one in-flight turn can overshoot"):
+ *   This is the strongest *pragmatic* cap for post-hoc LLM cost. The actual cost
+ *   of a turn is not known until AFTER the model responds, so a turn cannot
+ *   reserve its (unknown) spend before running — a perfectly hard cap would
+ *   require a cost-estimation/reservation system, which is deliberately out of
+ *   scope. Instead we read the accrued total inside a Serializable transaction so
+ *   the read reflects all *committed* accruals (no stale snapshot under
+ *   concurrency), then accrue the real cost post-turn via {@link accrueChannelUsage}.
+ *   The window that remains: while one turn is mid-flight (LLM call running, cost
+ *   not yet committed), a second turn can read the not-yet-incremented total and
+ *   pass the gate. So once the cap is reached, AT MOST ONE additional turn can
+ *   slip through and overshoot — never an unbounded stampede. After that turn's
+ *   cost commits, every subsequent gate read sees it and blocks. This matches the
+ *   org-budget soft cap at work-request submit; both accept a single-turn
+ *   overshoot rather than build cost estimation.
  */
 export async function isChannelOverBudgetNow(
   channelId: string,
@@ -99,13 +180,21 @@ export async function isChannelOverBudgetNow(
   if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
     return false;
   }
-  const usage = await prisma.channelMonthlyUsage.findUnique({
-    select: { costUsdAccrued: true },
-    where: {
-      channelId_yearMonth: { channelId, yearMonth: currentYearMonth() },
+  // Serializable read so the accrued total can't be a stale snapshot taken before
+  // a concurrently-committed accrual — tightening (not eliminating; see the
+  // guarantee above) the race window for post-hoc cost.
+  const accruedUsd = await prisma.$transaction(
+    async (tx) => {
+      const usage = await tx.channelMonthlyUsage.findUnique({
+        select: { costUsdAccrued: true },
+        where: {
+          channelId_yearMonth: { channelId, yearMonth: currentYearMonth() },
+        },
+      });
+      return usage ? Number(usage.costUsdAccrued) : 0;
     },
-  });
-  const accruedUsd = usage ? Number(usage.costUsdAccrued) : 0;
+    { isolationLevel: 'Serializable' }
+  );
   return isChannelOverBudget(accruedUsd, monthlyBudgetUsdCents);
 }
 
@@ -189,7 +278,29 @@ export async function runChannelAssistantTurn(
       err instanceof Error ? err.message : err
     );
   }
-  const userMessage = formatMemoryContext(memory, input.userText);
+
+  // Thread-history refinement: fetch the recent replies in the thread we're
+  // replying in so the assistant sees the actual conversation, not just memory.
+  // BEST-EFFORT and DEGRADES GRACEFULLY: `fetchThreadReplies` returns `[]` on a
+  // missing token, a hung fetch, or an unauthorized response (e.g. the
+  // `channels:history` scope not yet granted), so an empty transcript simply
+  // yields a normal memory-only turn — it never throws.
+  let thread: SlackThreadMessage[] = [];
+  try {
+    thread = await fetchThreadReplies(input.slackChannelId, input.threadTs);
+  } catch (err) {
+    // Defensive: fetchThreadReplies already swallows its own errors, but guard
+    // the call site too so a thread-context failure can never break the reply.
+    console.error(
+      `[channelAssistant] failed to fetch thread replies for ${input.channelId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // Compose context: channel memory block first, then the thread transcript, then
+  // the user's message at the bottom (closest to the model's attention).
+  const withMemory = formatMemoryContext(memory, input.userText);
+  const userMessage = formatThreadContext(thread, withMemory);
 
   // Phase 4: scan the ingested channel message — untrusted user input fed to the
   // LLM — for injection/exfiltration patterns. ADVISORY only (mirrors the
@@ -214,12 +325,79 @@ export async function runChannelAssistantTurn(
   // run-level ledger rather than re-deriving cost from the raw spec string.
   await accrueChannelUsage(input.channelId, costUsd);
 
-  // Phase 2: persist this exchange as channel-scoped memory so future turns can
-  // retrieve it. Best-effort — a failure here must never break the reply. Only
-  // write non-trivial replies (skip terse acknowledgements). Storing the raw
-  // exchange (reply as summary, user text as rationale) is the Phase-2 baseline;
-  // a summarizing pass over the exchange is a future refinement.
+  // Persist this exchange as channel-scoped memory so future turns can retrieve
+  // it. Best-effort — a failure here must never break the reply. Only write
+  // non-trivial replies (skip terse acknowledgements). Refinement: distill the
+  // exchange into a durable fact via a cheap summarizer pass instead of storing
+  // the raw transcript (see {@link summarizeAndStoreChannelMemory}).
   if (reply.length > MIN_MEMORY_REPLY_LENGTH) {
+    await summarizeAndStoreChannelMemory(input, reply);
+  }
+
+  return { reply: reply || "I wasn't able to come up with a response. Could you rephrase?" };
+}
+
+/**
+ * Refinement (summarizing memory pass). Distill the (userText, reply) exchange
+ * into a durable `{ lessonSummary, rationale }` fact via ONE cheap summarization
+ * call, then store the SUMMARY (not the raw transcript) as channel memory so the
+ * channel accumulates durable knowledge rather than a conversation log.
+ *
+ * Reuses the {@link MEMORY_SUMMARIZER_PROMPT} framing and resolves the
+ * `commitToMemory` model-backed role via {@link resolveAgentSpec} + {@link runAgent}
+ * with a structured-output schema — the same approach as `commitToMemory`.
+ *
+ * BEST-EFFORT, never breaks the reply:
+ *  - The summarizer's USD cost is accrued to the channel ledger (it's a real LLM
+ *    call on the channel).
+ *  - On any failure (summarizer throws, returns no object, or the memory write
+ *    fails) we FALL BACK to storing the truncated raw exchange so memory still
+ *    accrues. A failure in the fallback path is itself swallowed + logged.
+ */
+async function summarizeAndStoreChannelMemory(
+  input: ChannelAssistantTurnInput,
+  reply: string
+): Promise<void> {
+  try {
+    const spec = await resolveAgentSpec(
+      {
+        agentKey: 'commitToMemory' as ModelBackedAgentKey,
+        outputSchema: ChannelMemorySummarySchema,
+        // Override the role's default prompt with the channel-exchange framing.
+        promptOverride: CHANNEL_MEMORY_SUMMARIZER_PROMPT,
+      },
+      { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
+    );
+
+    const exchange = JSON.stringify({ assistantReply: reply, userMessage: input.userText });
+    const result = await runAgent<z.infer<typeof ChannelMemorySummarySchema>>(spec, exchange, {
+      spanName: 'llm.channel_memory_summary',
+    });
+
+    // The summarizer is a real LLM call on the channel — account its cost too.
+    await accrueChannelUsage(input.channelId, result.costUsd ?? 0);
+
+    const summary = result.object;
+    if (!summary?.lessonSummary) {
+      throw new Error('channel memory summarizer returned no structured output');
+    }
+
+    await writeChannelMemory({
+      channelId: input.channelId,
+      orgId: input.orgId,
+      rationale: summary.rationale.slice(0, MEMORY_RATIONALE_MAX_CHARS),
+      summary: summary.lessonSummary.slice(0, MEMORY_SUMMARY_MAX_CHARS),
+      teamId: input.teamId,
+      userSlackId: input.userSlackId,
+    });
+  } catch (err) {
+    // Summarization (or its write) failed — fall back to storing the truncated
+    // raw exchange so channel memory still accrues. Never let this break the reply.
+    console.error(
+      `[channelAssistant] memory summarization failed for ${input.channelId}, ` +
+        `falling back to raw-exchange store:`,
+      err instanceof Error ? err.message : err
+    );
     try {
       await writeChannelMemory({
         channelId: input.channelId,
@@ -229,15 +407,13 @@ export async function runChannelAssistantTurn(
         teamId: input.teamId,
         userSlackId: input.userSlackId,
       });
-    } catch (err) {
+    } catch (fallbackErr) {
       console.error(
-        `[channelAssistant] failed to write channel memory for ${input.channelId}:`,
-        err instanceof Error ? err.message : err
+        `[channelAssistant] fallback raw-exchange memory write failed for ${input.channelId}:`,
+        fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
       );
     }
   }
-
-  return { reply: reply || "I wasn't able to come up with a response. Could you rephrase?" };
 }
 
 /**
