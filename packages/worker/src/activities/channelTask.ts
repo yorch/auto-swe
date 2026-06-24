@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
@@ -58,16 +59,6 @@ export async function isChannelOverBudgetForTask(channelId: string): Promise<boo
     where: { id: channelId },
   });
   return isChannelOverBudgetNow(channelId, channel?.monthlyBudgetUsdCents ?? null);
-}
-
-/**
- * Sanitize a string into a Temporal-id-safe fragment. Temporal accepts most
- * characters but Slack channel/thread ids contain `.`/uppercase which we keep
- * deterministic by normalising to `[A-Za-z0-9_-]`. Collapses runs of disallowed
- * chars to a single `-` so the id stays readable and stable per (channel, thread).
- */
-function sanitizeIdPart(s: string): string {
-  return s.replace(/[^A-Za-z0-9_-]+/g, '-');
 }
 
 /**
@@ -135,7 +126,7 @@ export async function createChannelTaskRun(
   // Deterministic workflowId: one task run per thread. A reject-duplicate reuse
   // policy on `startChild` then makes a second delegate in the same thread a
   // no-op rather than a clobber.
-  const workflowId = `chantask-${sanitizeIdPart(input.channelId)}-${sanitizeIdPart(input.threadTs)}`;
+  const workflowId = channelTaskWorkflowId(input.channelId, input.threadTs);
 
   const request: RepoWorkRequest = {
     channelId: input.channelId,
@@ -294,7 +285,7 @@ export async function createChannelCodeTaskRun(
 
   // Deterministic workflowId: one task run per thread (shared with the general
   // route so a re-delegate in the same thread is rejected, not clobbered).
-  const workflowId = `chantask-${sanitizeIdPart(input.channelId)}-${sanitizeIdPart(input.threadTs)}`;
+  const workflowId = channelTaskWorkflowId(input.channelId, input.threadTs);
 
   const request: RepoWorkRequest = {
     channelId: input.channelId,
