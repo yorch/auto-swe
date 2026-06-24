@@ -121,3 +121,15 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
 }
 
 export const _defaults = { defaultFinalize, defaultLoadCases };
+
+/**
+ * Temporal activity entry: run the harness with the real DB + Docker deps. The
+ * durable `EvalRunWorkflow` proxies this; the per-case execution (workspace at
+ * the pinned SHA + golden test) happens here, not in the workflow isolate.
+ */
+export async function runEvalHarnessActivity(input: HarnessInput): Promise<void> {
+  await runEvalHarness(input, {
+    loadCases: defaultLoadCases,
+    runCase: runCaseDefault,
+  });
+}

@@ -130,6 +130,7 @@ describe('POST /api/v1/work-requests', () => {
       signalWorkflow: async () => {},
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
+      startEvalRunWorkflow: async () => {},
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },

@@ -20,6 +20,7 @@ export {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+export { runEvalHarnessActivity } from './evalHarness.js';
 export { executeImplementation } from './executeImplementation.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
 export { getReposForConsolidation } from './getReposForConsolidation.js';

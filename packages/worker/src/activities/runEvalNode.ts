@@ -15,11 +15,16 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import type { EvalScorer } from '@auto-swe/shared/workflow';
+import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
+import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
+import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { combineScores, decideGate, type ScoreInput } from '../lib/scorerCombination.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
+import { runAgent } from './runAgent.js';
 
 export interface RunEvalNodeInput {
   targetValue: unknown;
@@ -114,10 +119,18 @@ function lookup(obj: unknown, path: string): unknown {
   }, obj);
 }
 
+const JudgeOutput = z.object({
+  rationale: z.string().optional(),
+  score: z.number().min(0).max(1),
+});
+
 /**
- * Run the LLM judge for a rubric against the target. UNVERIFIED — makes a real
- * model call. Returns a normalized 0..1 (defaults to 0.5/neutral on any
- * failure so a judge error never blocks; the judge is advisory by default).
+ * Run the LLM judge for a rubric against the target via the `evalJudge` agent.
+ * Returns a normalized 0..1 — defaults to 0.5/neutral on any failure (missing
+ * rubric, agent error, unparseable output) so a judge error never blocks (the
+ * judge is advisory by default). Makes a real model call; the model resolution
+ * is verified by `assertConfigReady` at worker boot, but the call itself is only
+ * exercised end-to-end against a provider.
  */
 async function runJudge(rubricRef: string, targetValue: unknown): Promise<number> {
   try {
@@ -132,10 +145,21 @@ async function runJudge(rubricRef: string, targetValue: unknown): Promise<number
       candidate: typeof targetValue === 'string' ? targetValue : JSON.stringify(targetValue),
       rubric: rubric.promptText,
     });
-    // Integration seam: dispatch `prompt` to the evalJudge agent via runAgent and
-    // parse { score }. Wired in a follow-up; until then the judge is neutral.
-    void prompt;
-    return 0.5;
+    const ctx = await currentRequestContext();
+    const spec = await resolveAgentSpec(
+      {
+        agentKey: 'evalJudge' as ModelBackedAgentKey,
+        basePrompt: '',
+        outputSchema: JudgeOutput,
+        promptOverride: prompt.system,
+      },
+      ctx
+    );
+    const result = await runAgent<z.infer<typeof JudgeOutput>>(spec, prompt.user, {
+      spanName: 'llm.eval_judge',
+    });
+    const score = result.object?.score;
+    return typeof score === 'number' ? Math.max(0, Math.min(1, score)) : 0.5;
   } catch {
     return 0.5;
   }

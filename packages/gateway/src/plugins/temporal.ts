@@ -58,6 +58,15 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      startEvalRunWorkflow: (
+        workflowId: string,
+        input: {
+          evalRunId: string;
+          datasetId: string;
+          candidateRef: string;
+          baselineRef: string;
+        }
+      ) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -191,6 +200,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         args: [request],
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '30d',
+        workflowId,
+      });
+    },
+
+    async startEvalRunWorkflow(
+      workflowId: string,
+      input: {
+        evalRunId: string;
+        datasetId: string;
+        candidateRef: string;
+        baselineRef: string;
+      }
+    ): Promise<void> {
+      await client.workflow.start('EvalRunWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '5h',
         workflowId,
       });
     },

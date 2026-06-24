@@ -37,6 +37,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
+  app.decorate('temporal', { startEvalRunWorkflow: async () => {} } as unknown as never);
   await app.register(evalRoutes, { prefix: '/api/v1/admin' });
   await app.ready();
   return { app, prisma };
