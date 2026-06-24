@@ -1,10 +1,12 @@
 # Design — channel-assistant autonomous execution + multiplayer hand-off
 
-> Addresses gaps **#1** (autonomous multi-stage task execution) and **#2**
-> (multiplayer mid-task hand-off) from [`channel-assistant-gaps.md`](./channel-assistant-gaps.md).
-> Locked decisions: **both task routes** (general agentic + SWE code, agent
-> picks) · **full signal-steering** (thread replies steer an in-flight run) ·
-> **agent-decides launch** (a delegate tool).
+> **Status: shipped.** Addresses gaps **#1** (autonomous multi-stage task
+> execution) and **#2** (multiplayer mid-task hand-off) from
+> [`channel-assistant-gaps.md`](./channel-assistant-gaps.md). Locked decisions, all
+> implemented: **both task routes** (general agentic + SWE code, agent picks) ·
+> **full signal-steering** (thread replies steer an in-flight run) ·
+> **agent-decides launch** (a delegate tool). The four phases below (A–D) all
+> landed in this PR; this doc now describes the shipped architecture.
 
 ## Thesis
 
@@ -77,14 +79,17 @@ Run cost accrues to the channel budget (`ChannelMonthlyUsage`), not just
   default-excluded like the Channel Assistant template runs; we add the "Channel
   Task" template to that exclusion).
 
-## Phasing (commits within this PR)
-- **A — General task launch:** `delegateTask` tool + delegate intent + child run;
+## Phasing (commits within this PR) — all shipped
+- ✅ **A — General task launch:** `delegateTask` tool + delegate intent + child run;
   seed "Channel Task" template; thread binding + result/HITL reporting; budget.
-- **B — Code route:** channel→repo resolution + SWE `RunnableWorkflow` launch.
-- **C — Signal-steering (#2):** `steer` signal on `RunnableWorkflow` + agent-node
-  consumption; gateway thread-reply → signal routing; thread→run lookup.
-- **D — Polish/observability:** per-stage progress posts; `/runs` exclusion for
-  the Channel Task template; docs.
+- ✅ **B — Code route:** channel→repo resolution + SWE `RunnableWorkflow` launch.
+- ✅ **C — Signal-steering (#2):** `steer` signal on `RunnableWorkflow` + agent-node
+  consumption (`drainSteering` → prompt prepend); gateway thread-reply → signal
+  routing via the deterministic `chantask-<channelId>-<threadTs>` id.
+- ✅ **D — Polish/observability:** `/runs` default-excludes the general "Channel
+  Task" template (code-route SWE runs stay visible); docs refreshed. Per-stage
+  progress posts back into the thread remain a light follow-up (the run is already
+  observable in `/runs`).
 
 ## Risks / guards
 - **Runaway cost** — delegated runs can be expensive; gated by the per-channel

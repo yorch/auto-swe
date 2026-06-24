@@ -130,18 +130,66 @@ Proactive posting via a per-channel Temporal Schedule:
   multiplayer (one shared assistant, shared context); this phase adds the
   live-edit UX + input safety.
 
-## 8. Observability & admin UI
+## 8. Autonomous task execution + multiplayer hand-off (shipped)
+
+Closes gaps **#1** and **#2** from [`channel-assistant-gaps.md`](./channel-assistant-gaps.md)
+(full design in [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)).
+A mention that is real *work* (not a quick question) no longer just replies — it
+launches a **durable, thread-bound workflow run**.
+
+- **Launch (agent decides):** the channel agent carries a `delegateTask` tool. When
+  it judges a mention to be a task, the turn returns a delegate intent
+  (`{route, title, description, repoHint?}`) instead of (or alongside) a reply, and
+  `ChannelAssistantWorkflow` starts a child `RunnableWorkflow`.
+- **Two routes:** **general** runs the seeded GLOBAL **"Channel Task"** template
+  (a repo-less `agent` node — `agentRef: 'channelAssistant'`); **code** resolves the
+  channel's `git_repo` Connection (`resolveChannelRepo`: repo-hint match, else the
+  team's sole repo) and runs the team's default **SWE** template (real implement →
+  review → PR in a Docker workspace). The code route falls back to the general route
+  when no repo resolves unambiguously.
+- **Thread binding:** the run's workflow id is deterministic —
+  `chantask-<channelId>-<threadTs>` (`channelTaskWorkflowId` in
+  `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). One task run per
+  thread; a re-delegate in the same thread is rejected (reuse policy), not clobbered.
+  The `RunInput` carries `slackChannelId`/`slackMessageTs` so the run's terminal
+  notification threads the result back into the originating conversation, and
+  `channelId` so the run's agent nodes resolve the CHANNEL config tier and the cost
+  accrues to the channel budget.
+- **Signal-steering (multiplayer #2):** any teammate can reply in the task's thread
+  to steer the in-flight run. The gateway's `/events` route detects a thread reply,
+  reconstructs the run id, and sends a `steer` Temporal signal
+  (`CHANNEL_TASK_STEER_SIGNAL`) carrying the reply text. `RunnableWorkflow` buffers
+  steering messages; the dispatcher's `drainSteering()` hook drains the buffer into
+  the **next** agent node's prompt (`prependSteering` — soft, next-step steering that
+  preserves determinism). Steering takes precedence over starting a fresh
+  conversational turn for that reply.
+- **Budget gate:** a delegated launch is gated by the per-channel monthly budget
+  (`isChannelOverBudgetForTask`) before the child run starts, and posts an
+  acknowledgement so a launch is never silent.
+
+Key files: `packages/worker/src/activities/channelTask.ts` (`createChannelTaskRun`,
+`createChannelCodeTaskRun`, `resolveChannelRepo`), `channelAssistant.ts`
+(`delegateTask` tool), `packages/worker/src/workflows/channelAssistant.ts` (child
+launch) + `runnable.ts` (`steer` handler), `packages/shared/src/workflow/interpreter.ts`
+(`drainSteering`), `packages/worker/src/activities/runAgentNode.ts` (`prependSteering`),
+`packages/gateway/src/routes/slack.ts` (thread-reply → `signalWorkflow`),
+`packages/shared/src/lib/channelTask.ts` + `syncBuiltins.ts` (Channel Task template).
+
+## 9. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
 under a seeded GLOBAL **"Channel Assistant"** template. This fixes a silent
 trace-drop (`persistActivityTrace` needs a resolvable `runId`) so per-turn
 status/cost/tokens + the full `AgentTrace` stream show up in the `/runs` viewer.
-The main `/runs` list **default-excludes** Channel Assistant runs (opt-in
-`includeChannel` / a "Show channel-assistant runs" toggle) so channel volume
-doesn't bury engineering runs. `finalizeChannelRun` writes only the run's own
-denormalized cost — channel spend is still tracked in `ChannelMonthlyUsage` (no
-double-count into `OrgMonthlyUsage`).
+The main `/runs` list **default-excludes** both channel chatter templates —
+**"Channel Assistant"** (per-turn/ambient) and the general **"Channel Task"**
+(§8) — via `notIn: ['Channel Assistant', 'Channel Task']` (opt-in `includeChannel`
+/ a "Show channel runs" toggle) so channel volume doesn't bury engineering runs.
+The **code**-route task uses the team's SWE template and stays visible like any
+engineering run. `finalizeChannelRun` writes only the run's own denormalized cost
+— channel spend is still tracked in `ChannelMonthlyUsage` (no double-count into
+`OrgMonthlyUsage`).
 
 The advisory injection scan surfaces as a `CHANNEL_SUSPICIOUS` security event
 (`activity_event` `toolName='channel.suspicious_input'`) in `/admin/security`.
@@ -149,12 +197,18 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 9. Future refinements (not built)
+## 10. Future refinements (not built)
 
-- **Long-lived per-channel workflow** (signals + continue-as-new) for true
-  in-flight mid-task hand-off. The current design uses per-mention turns +
-  scheduled ambient, which covers reactive + proactive needs without the
-  rearchitecture.
+- **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
+  mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
+  thread-bound, and steerable from replies). A single long-lived per-*channel*
+  signal workflow (vs. per-mention conversational turns + scheduled ambient) remains
+  a possible consolidation, but isn't required for the hand-off use case anymore.
+- **Per-stage progress posts** back into the task thread (the run is already
+  observable in `/runs`; richer in-thread "working on X" updates are a polish item).
+- **Richer general-route decomposition** — the general "Channel Task" template is a
+  single agent node today; a `planDecomposition` + `fanOut` spec would let general
+  tasks break into stages like the code route's SWE template can.
 - **A true hard budget cap** (pre-flight cost reservation) — not achievable for
   post-hoc LLM cost; the current gate is a Serializable-transaction read whose
   guarantee is "at most one in-flight turn can overshoot."
@@ -166,17 +220,24 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 10. Key files
+## 11. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
   `packages/worker/src/activities/channelAssistant.ts`,
+  `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/workflows/runnable.ts` (`steer` handler),
+  `packages/worker/src/activities/runAgentNode.ts` (`prependSteering`),
   `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`).
-- Gateway: `packages/gateway/src/routes/slack.ts` (`/events`),
+- Gateway: `packages/gateway/src/routes/slack.ts` (`/events`, thread-reply steering),
   `packages/gateway/src/routes/slackChannels.ts`,
   `packages/gateway/src/plugins/temporal.ts` (`startChannelAssistant`).
 - Web: `packages/web/src/app/admin/slack-channels/`,
   `packages/web/src/hooks/useSlackChannels.ts`.
-- Seed: `packages/shared/src/lib/syncBuiltins.ts` (`channelAssistant`).
+- Shared: `packages/shared/src/lib/channelTask.ts` (`channelTaskWorkflowId`,
+  `CHANNEL_TASK_STEER_SIGNAL`), `packages/shared/src/workflow/interpreter.ts`
+  (`drainSteering`).
+- Seed: `packages/shared/src/lib/syncBuiltins.ts` (`channelAssistant`,
+  `syncChannelTaskTemplate`).

@@ -5,22 +5,34 @@
 > product it was modeled on (see [`claude-tag-research.md`](./claude-tag-research.md)).
 > Records what's at parity, what diverges by design, and what is genuinely
 > missing — with severity, so we can prioritize. Gaps **#1** and **#2** below are
-> being addressed; the rest are tracked for later.
+> now **addressed** (see [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)
+> and the "Autonomous task execution" section of `channel-assistant.md`); the rest
+> are tracked for later.
 
 Legend: **Parity** (comparable), **Divergence** (different approach, not strictly
 worse), **Gap** (we're weaker/missing). Severity is our own product judgment.
 
 ---
 
-## Gap #1 — Autonomous multi-stage task execution  ·  Severity: **High** (the core gap)
+## Gap #1 — Autonomous multi-stage task execution  ·  Severity: **High** (the core gap)  ·  **ADDRESSED**
 
 **Claude Tag:** "Given a task, Claude breaks it into stages, works through them
 independently, and delivers the result back in Slack. It can also plan tasks to
 complete in the future." You delegate a real piece of work; it executes it.
 
-**Ours today:** A channel `@mention` runs a single `runAgent` generate (with the
-channel agent's bound tools/MCP) and posts a reply. It is a **conversational
-turn**, not a task executor — it does not decompose a delegated task into stages,
+**Status — addressed:** the channel assistant now carries a `delegateTask` tool.
+When a mention is judged to be real work, the turn launches a durable,
+thread-bound `RunnableWorkflow` run (one per thread) instead of just replying.
+Two routes: a **general** "Channel Task" template (repo-less agent run) and a
+**code** route that resolves the channel's `git_repo` Connection and runs the
+team's full SWE workflow (implement → review → PR) in a Docker workspace. The
+run's terminal result is threaded back into the originating Slack conversation,
+and its cost accrues to the channel budget. See
+[`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md).
+
+**Originally:** A channel `@mention` ran a single `runAgent` generate (with the
+channel agent's bound tools/MCP) and posted a reply. It was a **conversational
+turn**, not a task executor — it did not decompose a delegated task into stages,
 run a durable multi-step job, operate in a workspace, or deliver a worked result.
 
 **Why this is the keystone gap:** the platform *already has* a generic durable
@@ -32,24 +44,35 @@ into it**. Closing the gap is primarily a *connection* problem, not new
 execution machinery. See the design discussion below + the implementation plan.
 
 **Sub-gaps:**
-- No task **decomposition** from a mention (the `planDecomposition` + `fanOut`
-  path exists but isn't reachable from a channel).
-- No **future task planning / scheduling** from a mention.
-- No **workspace-backed execution** (code tasks) from a channel — channel turns
-  run without the Docker workspace the SWE implementer uses.
+- ✅ **Workspace-backed execution** (code tasks) from a channel — the code route
+  runs the team's SWE template in the Docker workspace the implementer uses.
+- Task **decomposition** from a mention is now *reachable* (the code route runs a
+  full SWE template, which can include `planDecomposition` + `fanOut` nodes), but
+  the general route is a single agent node — richer decomposition specs are a
+  follow-up, not wired by default.
+- **Future task planning / scheduling** from a mention is still open (deferred).
 
 ---
 
-## Gap #2 — True multiplayer mid-task hand-off  ·  Severity: **High**
+## Gap #2 — True multiplayer mid-task hand-off  ·  Severity: **High**  ·  **ADDRESSED**
 
 **Claude Tag:** "One shared Claude per channel … pick up the conversation where
 the last person left off." A half-finished *task* hands off between teammates;
 everyone can see what it's working on.
 
-**Ours today:** "Multiplayer" only in the weak sense — one shared *agent* +
-shared channel memory. But work is **per-mention turns**: there is no live,
-shared, in-flight task state that person B can resume mid-execution. Continuity
-is reconstructed from memory + thread history, not a running task.
+**Status — addressed:** because a channel task is now a durable, thread-bound
+workflow run (Gap #1), it is shared, resumable state by construction. **Any**
+teammate can reply in the task's thread to steer the in-flight run: the gateway
+maps the reply to the run's deterministic workflow id and sends a `steer` Temporal
+signal, which the run drains into the next agent node's prompt (soft mid-flight
+steering). The run is also visible to the whole channel via `/runs` (a channel run
+record) — so person B picks up exactly where person A left off, on a *running*
+task, not a reconstruction.
+
+**Originally:** "Multiplayer" only in the weak sense — one shared *agent* +
+shared channel memory. Work was **per-mention turns**: there was no live, shared,
+in-flight task state that person B could resume mid-execution. Continuity was
+reconstructed from memory + thread history, not a running task.
 
 **The connection to #1:** a durable workflow *is* shared, resumable task state.
 Once a mention launches a workflow (Gap #1), the run becomes the thing the whole
@@ -58,9 +81,11 @@ advance — e.g. by answering its HITL prompt in-thread, or (deeper) by steering
 with a follow-up reply. So #1 and #2 share most of a solution.
 
 **Sub-gaps:**
-- No "what it's working on right now" channel-visible presence beyond the
-  in-thread placeholder/reply.
-- No mechanism for a *second* person to inject guidance into an *in-flight* task.
+- ✅ A *second* person can inject guidance into an *in-flight* task via a thread
+  reply (`steer` signal → next agent node).
+- Channel-visible "what it's working on right now" presence is still light — the
+  run is observable in `/runs`, but per-stage progress posts back into the thread
+  are minimal (a follow-up polish item, not load-bearing).
 
 ---
 
@@ -134,8 +159,8 @@ untested at scale, and CI hasn't validated it end-to-end yet.
 
 | # | Capability | Status | Severity |
 | --- | --- | --- | --- |
-| 1 | Autonomous multi-stage task execution | **Gap** | High |
-| 2 | Multiplayer mid-task hand-off | **Gap** | High |
+| 1 | Autonomous multi-stage task execution | **Addressed** | High |
+| 2 | Multiplayer mid-task hand-off | **Addressed** | High |
 | 3 | Ambient: reactive + org-wide + task follow-up | **Gap** | Medium |
 | 4 | Workspace-level memory + consolidation | **Gap** | Medium |
 | 5 | Maturity / scale | **Gap** | Medium |
@@ -144,6 +169,7 @@ untested at scale, and CI hasn't validated it end-to-end yet.
 | — | Admin UI & observability | Parity / ahead | — |
 | — | Extensibility (self-host, MCP, multi-model) | Ahead | — |
 
-**Being addressed now:** #1 (route channel tasks into the workflow engine) and
-#2 (the running workflow as shared, resumable task state). See the design
-discussion in the PR / the implementation plan that follows.
+**Addressed:** #1 (route channel tasks into the workflow engine — general + code
+routes) and #2 (the running workflow as shared, resumable task state, steerable
+from thread replies). See [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)
+for the shipped architecture. Remaining open: #3, #4, #5.
