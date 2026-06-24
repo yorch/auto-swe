@@ -707,6 +707,9 @@ model EvalCase {
   /// Curation gate: true once the reference passes k× consistently.
   flakeScreened Boolean     @default(false) @map("flake_screened")
   flakeRuns     Int         @default(0) @map("flake_runs")
+  /// P3 re-validation: the reference stopped passing against current repo state
+  /// (the case went stale, not the agent's fault) — excluded from the gate.
+  quarantined   Boolean     @default(false)
   /// Provenance when harvested from a real run (P3 historical tier).
   sourceRunId   String?     @map("source_run_id") @db.Uuid
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz

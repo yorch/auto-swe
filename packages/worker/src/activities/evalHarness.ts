@@ -46,9 +46,11 @@ export interface HarnessDeps {
 }
 
 async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
+  // Quarantined cases (stale references — P3 re-validation) are excluded from the
+  // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons.
   return prisma.evalCase.findMany({
     select: { baselineSha: true, goldenTest: true, id: true, repoUrl: true, tags: true },
-    where: { datasetId },
+    where: { datasetId, quarantined: false },
   });
 }
 
