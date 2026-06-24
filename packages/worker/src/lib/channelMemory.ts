@@ -60,6 +60,35 @@ export async function retrieveChannelMemory(
   return rows.map((r) => ({ id: r.id, similarity: r.similarity, summary: r.summary }));
 }
 
+/** One recent (un-consolidated) channel-memory row, for ambient digest context. */
+export interface RecentChannelMemoryItem {
+  id: string;
+  lessonSummary: string;
+  rationale: string;
+  createdAt: Date;
+}
+
+/**
+ * Claude Tag (Phase 3). Fetch the most recent un-consolidated channel-memory
+ * rows for the ambient digest — recency-ordered rather than similarity-ranked,
+ * so the digest can surface forgotten / follow-up-worthy items.
+ *
+ * Scalar `select` only: the `embedding` column is a pgvector `Unsupported(...)`
+ * type that Prisma cannot select, so it is deliberately excluded here (no raw
+ * SQL needed because there is no vector operation).
+ */
+export async function recentChannelMemory(
+  channelId: string,
+  limit = 15
+): Promise<RecentChannelMemoryItem[]> {
+  return prisma.memoryItem.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true, id: true, lessonSummary: true, rationale: true },
+    take: limit,
+    where: { channelId, consolidatedAt: null },
+  });
+}
+
 /**
  * Claude Tag (Phase 2). Persist one channel-scoped memory row with a vector
  * embedding for future semantic search. Mirrors `writeMemoryItemRow` from

@@ -1,3 +1,5 @@
+// Claude Tag (Phase 3) — ambient digest
+export { runChannelAmbientDigest } from './channelAmbient.js';
 // Claude Tag (Phase 0) — channel-resident Slack assistant
 export { postChannelReply, runChannelAssistantTurn } from './channelAssistant.js';
 export {

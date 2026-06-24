@@ -24,6 +24,11 @@ export function workRequestScheduleId(scheduleRowId: string): string {
   return `auto-swe-scheduled-wr-${scheduleRowId}`;
 }
 
+/** Temporal Schedule ID for a SlackChannel's ambient-mode digest (Claude-Tag P3). */
+export function channelAmbientScheduleId(channelId: string): string {
+  return `auto-swe-channel-ambient-${channelId}`;
+}
+
 /**
  * Everything the recurring-work-request Schedule needs to start
  * RunnableWorkflow. Args are STATIC per Temporal's schedule model — template
@@ -44,6 +49,17 @@ export interface WorkRequestScheduleStatus {
   paused: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
+}
+
+export interface ChannelAmbientScheduleInput {
+  channelId: string;
+  cronExpression: string;
+}
+
+export interface ChannelAmbientScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
 }
 
 export interface ConsolidationScheduleConfig {
@@ -111,6 +127,9 @@ declare module 'fastify' {
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       getWorkRequestScheduleStatus: (scheduleRowId: string) => Promise<WorkRequestScheduleStatus>;
+      syncChannelAmbientSchedule: (input: ChannelAmbientScheduleInput) => Promise<void>;
+      deleteChannelAmbientSchedule: (channelId: string) => Promise<void>;
+      getChannelAmbientScheduleStatus: (channelId: string) => Promise<ChannelAmbientScheduleStatus>;
     };
   }
 }
@@ -166,10 +185,38 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     };
   }
 
+  /**
+   * Schedule action for a channel's ambient digest: starts the worker's
+   * ChannelAmbientWorkflow (by name) on each fire. The base `workflowId` is
+   * `channel-ambient-<channelId>`; Temporal appends the per-fire scheduled
+   * timestamp for uniqueness, so each fire gets its own WorkflowRun.
+   */
+  function makeChannelAmbientScheduleAction(input: ChannelAmbientScheduleInput) {
+    return {
+      args: [{ channelId: input.channelId }],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowId: `channel-ambient-${input.channelId}`,
+      workflowType: 'ChannelAmbientWorkflow',
+    };
+  }
+
   fastify.decorate('temporal', {
     async cancelWorkflow(workflowId: string): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.cancel();
+    },
+
+    // ── Channel ambient-mode digest schedules (one Temporal Schedule per
+    //    SlackChannel with ambientEnabled + ambientCron) ──
+
+    async deleteChannelAmbientSchedule(channelId: string): Promise<void> {
+      const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+      try {
+        await handle.delete();
+      } catch {
+        // Already gone (or never created) — deletion is idempotent.
+      }
     },
 
     // ── Recurring work-request schedules (one Temporal Schedule per
@@ -181,6 +228,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         await handle.delete();
       } catch {
         // Already gone (or never created) — deletion is idempotent.
+      }
+    },
+
+    async getChannelAmbientScheduleStatus(
+      channelId: string
+    ): Promise<ChannelAmbientScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        return {
+          exists: true,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, nextRunAt: null, paused: false };
       }
     },
 
@@ -306,6 +370,28 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         taskQueue: 'engineering-workflow',
         workflowId,
       });
+    },
+
+    async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
+      const handle = schedules.getHandle(channelAmbientScheduleId(input.channelId));
+      try {
+        await handle.describe();
+        // Schedule exists — update the cron + action in place.
+        await handle.update((prev) => ({
+          ...prev,
+          action: makeChannelAmbientScheduleAction(input),
+          spec: { cronExpressions: [input.cronExpression] },
+        }));
+      } catch {
+        // Schedule doesn't exist yet — create it. SKIP overlap: a fire while
+        // the previous digest is still in flight is dropped rather than stacked.
+        await schedules.create({
+          action: makeChannelAmbientScheduleAction(input),
+          policies: { overlap: ScheduleOverlapPolicy.SKIP },
+          scheduleId: channelAmbientScheduleId(input.channelId),
+          spec: { cronExpressions: [input.cronExpression] },
+        });
+      }
     },
 
     async syncConsolidationSchedule(config: ConsolidationScheduleConfig): Promise<void> {

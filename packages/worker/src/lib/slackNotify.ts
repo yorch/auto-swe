@@ -209,13 +209,45 @@ export async function postSlackThreadMessage(
   threadTs: string,
   text: string
 ): Promise<void> {
+  await postChannelMessage('postSlackThreadMessage', slackChannelId, text, threadTs);
+}
+
+/**
+ * Claude Tag (Phase 3): post a plain top-level (un-threaded) message into a Slack
+ * channel. Used by the ambient digest, which posts proactively to the channel
+ * rather than into a thread. Like {@link postSlackThreadMessage}, this is real
+ * content (not a best-effort notification): it resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
+ * or a `{ok:false}` response so the calling activity can surface it.
+ */
+export async function postSlackChannelMessage(slackChannelId: string, text: string): Promise<void> {
+  await postChannelMessage('postSlackChannelMessage', slackChannelId, text, undefined);
+}
+
+/**
+ * Shared base for the two "real content" posts above. Resolves the bot token,
+ * posts to `chat.postMessage` (threaded when `threadTs` is set, top-level
+ * otherwise), and throws on a missing token or a `{ok:false}` response so the
+ * caller can retry / surface it.
+ */
+async function postChannelMessage(
+  label: string,
+  slackChannelId: string,
+  text: string,
+  threadTs: string | undefined
+): Promise<void> {
   const { botToken: token } = await resolveSlackConfig();
   if (!token) {
-    throw new Error('postSlackThreadMessage: no Slack bot token configured');
+    throw new Error(`${label}: no Slack bot token configured`);
+  }
+
+  const body: Record<string, unknown> = { channel: slackChannelId, text };
+  if (threadTs) {
+    body.thread_ts = threadTs;
   }
 
   const res = await fetch(SLACK_POST_URL, {
-    body: JSON.stringify({ channel: slackChannelId, text, thread_ts: threadTs }),
+    body: JSON.stringify(body),
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json; charset=utf-8',
@@ -224,7 +256,7 @@ export async function postSlackThreadMessage(
   });
   const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
   if (!data.ok) {
-    throw new Error(`postSlackThreadMessage: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+    throw new Error(`${label}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
   }
 }
 

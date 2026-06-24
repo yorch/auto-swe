@@ -115,7 +115,13 @@ describe('POST /api/v1/work-requests', () => {
     } as unknown as never);
     app.decorate('temporal', {
       cancelWorkflow: async () => {},
+      deleteChannelAmbientSchedule: async () => {},
       deleteWorkRequestSchedule: async () => {},
+      getChannelAmbientScheduleStatus: async () => ({
+        exists: false,
+        nextRunAt: null,
+        paused: false,
+      }),
       getConsolidationScheduleStatus: async () => ({
         exists: false,
         nextRunAt: null,
@@ -141,6 +147,7 @@ describe('POST /api/v1/work-requests', () => {
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },
+      syncChannelAmbientSchedule: async () => {},
       syncConsolidationSchedule: async () => {},
       syncEvalSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},

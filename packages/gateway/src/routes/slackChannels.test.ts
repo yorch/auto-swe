@@ -28,18 +28,30 @@ function newMockPrisma() {
   };
 }
 
+function newMockTemporal() {
+  return {
+    deleteChannelAmbientSchedule: vi.fn().mockResolvedValue(undefined),
+    getChannelAmbientScheduleStatus: vi
+      .fn()
+      .mockResolvedValue({ exists: false, nextRunAt: null, paused: false }),
+    syncChannelAmbientSchedule: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const mockPrisma = newMockPrisma();
+  const mockTemporal = newMockTemporal();
   app.decorate('prisma', mockPrisma as unknown as never);
+  app.decorate('temporal', mockTemporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
   await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
   await app.ready();
-  return { app, mockPrisma };
+  return { app, mockPrisma, mockTemporal };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
@@ -279,6 +291,181 @@ describe('slackChannelRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);
     expect(mockPrisma.slackChannel.delete).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('syncs the ambient schedule when creating a channel with ambientEnabled + cron', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, orgId: 'org-1' });
+    mockPrisma.slackWorkspace.upsert.mockResolvedValue({ id: 'ws-1', orgId: 'org-1' });
+    mockPrisma.slackChannel.findUnique.mockResolvedValue(null);
+    mockPrisma.slackChannel.create.mockResolvedValue({
+      ambientCron: '0 9 * * 1',
+      ambientEnabled: true,
+      id: CHANNEL,
+      isActive: true,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: {
+        ambientCron: '0 9 * * 1',
+        ambientEnabled: true,
+        slackChannelId: 'C123',
+        slackTeamId: 'T123',
+        teamId: TEAM,
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/slack-channels',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockTemporal.syncChannelAmbientSchedule).toHaveBeenCalledWith({
+      channelId: CHANNEL,
+      cronExpression: '0 9 * * 1',
+    });
+    expect(mockTemporal.deleteChannelAmbientSchedule).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('deletes the ambient schedule when creating a channel without ambient mode', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, orgId: 'org-1' });
+    mockPrisma.slackWorkspace.upsert.mockResolvedValue({ id: 'ws-1', orgId: 'org-1' });
+    mockPrisma.slackChannel.findUnique.mockResolvedValue(null);
+    mockPrisma.slackChannel.create.mockResolvedValue({
+      ambientCron: null,
+      ambientEnabled: false,
+      id: CHANNEL,
+      isActive: true,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/slack-channels',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
+    expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
+    await app.close();
+  });
+
+  it('syncs the ambient schedule when patching ambient mode on', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isActive: true,
+      orgId: 'org-1',
+      teamId: TEAM,
+    });
+    mockPrisma.slackChannel.update.mockResolvedValue({
+      ambientCron: '30 8 * * *',
+      ambientEnabled: true,
+      id: CHANNEL,
+      isActive: true,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { ambientCron: '30 8 * * *', ambientEnabled: true },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockTemporal.syncChannelAmbientSchedule).toHaveBeenCalledWith({
+      channelId: CHANNEL,
+      cronExpression: '30 8 * * *',
+    });
+    await app.close();
+  });
+
+  it('deletes the ambient schedule when patching ambientEnabled off', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isActive: true,
+      orgId: 'org-1',
+      teamId: TEAM,
+    });
+    mockPrisma.slackChannel.update.mockResolvedValue({
+      ambientCron: '30 8 * * *',
+      ambientEnabled: false,
+      id: CHANNEL,
+      isActive: true,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { ambientEnabled: false },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
+    expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('deletes the ambient schedule when the channel is deactivated', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isActive: true,
+      orgId: 'org-1',
+      teamId: TEAM,
+    });
+    // Ambient is still on with a cron, but the channel is now inactive.
+    mockPrisma.slackChannel.update.mockResolvedValue({
+      ambientCron: '30 8 * * *',
+      ambientEnabled: true,
+      id: CHANNEL,
+      isActive: false,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { isActive: false },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
+    expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects an invalid ambientCron on patch', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      body: { ambientCron: 'nope' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('deletes the ambient schedule when deleting the channel', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      slackChannelId: 'C123',
+      teamId: TEAM,
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
     await app.close();
   });
 

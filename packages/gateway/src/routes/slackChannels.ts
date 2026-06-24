@@ -100,6 +100,35 @@ function channelWritableData(body: {
 }
 
 /**
+ * Reconcile the channel's ambient-mode Temporal Schedule with its current row
+ * state (Claude-Tag P3). A schedule should exist iff the channel is active,
+ * ambient mode is on, and a cron is set; any other state means no schedule.
+ * Best-effort: a Temporal hiccup is logged and swallowed so it never fails the
+ * CRUD response (the schedule re-syncs on the next save).
+ */
+async function reconcileAmbientSchedule(
+  fastify: FastifyInstance,
+  request: { log: FastifyInstance['log'] },
+  channel: { id: string; isActive: boolean; ambientEnabled: boolean; ambientCron: string | null }
+): Promise<void> {
+  try {
+    if (channel.isActive && channel.ambientEnabled && channel.ambientCron) {
+      await fastify.temporal.syncChannelAmbientSchedule({
+        channelId: channel.id,
+        cronExpression: channel.ambientCron,
+      });
+    } else {
+      await fastify.temporal.deleteChannelAmbientSchedule(channel.id);
+    }
+  } catch (err) {
+    request.log.error(
+      { channelId: channel.id, err },
+      'failed to reconcile channel ambient schedule'
+    );
+  }
+}
+
+/**
  * Channel-access guard mirroring lib/orgAccess.ts `assertOrgAccess`: platform
  * ADMINs see all channels; everyone else needs a TeamMembership on the channel's
  * owning team. Sends a 404 (not 403 — don't leak channel existence) and returns
@@ -350,6 +379,8 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'SlackChannel',
       });
 
+      await reconcileAmbientSchedule(fastify, request, row);
+
       return reply.status(201).send({ data: await withCurrentUsage(fastify, row) });
     }
   );
@@ -403,6 +434,8 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'SlackChannel',
       });
 
+      await reconcileAmbientSchedule(fastify, request, row);
+
       return reply.send({ data: await withCurrentUsage(fastify, row) });
     }
   );
@@ -422,6 +455,17 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
       }
       await fastify.prisma.slackChannel.delete({ where: { id: current.id } });
+      // Best-effort schedule teardown — never block the delete on a Temporal
+      // hiccup; an orphaned schedule fires a workflow that no-ops on a missing
+      // channel and can be reaped out of band.
+      try {
+        await fastify.temporal.deleteChannelAmbientSchedule(current.id);
+      } catch (err) {
+        request.log.error(
+          { channelId: current.id, err },
+          'failed to delete channel ambient schedule'
+        );
+      }
       await writeAuditLog(fastify, {
         action: 'DELETE',
         actor,

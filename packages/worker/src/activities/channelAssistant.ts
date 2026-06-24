@@ -183,7 +183,7 @@ export async function runChannelAssistantTurn(
  * same channel), mirroring the `OrgMonthlyUsage` accrual in `finalizeWorkflowRun`.
  * Wrapped in try/catch so a DB error degrades to "reply still sent".
  */
-async function accrueChannelUsage(channelId: string, costUsd: number): Promise<void> {
+export async function accrueChannelUsage(channelId: string, costUsd: number): Promise<void> {
   try {
     const yearMonth = currentYearMonth();
     await prisma.channelMonthlyUsage.upsert({
