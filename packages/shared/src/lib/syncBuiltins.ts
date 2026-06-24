@@ -26,6 +26,43 @@ import {
 const SWE_ORIGIN = 'swe-starter';
 
 /**
+ * Name of the GLOBAL workflow template that backs channel-assistant observability.
+ *
+ * Channel workflows (`ChannelAssistantWorkflow` / `ChannelAmbientWorkflow`) are not
+ * driven by the spec interpreter, but they DO call LLM activities that persist
+ * `AgentTrace` rows — and a trace row needs a `WorkflowRun` to attach to (the FK on
+ * `AgentTrace.runId`, and `currentWorkflowRunId()` resolves the run by Temporal
+ * workflowId). The worker creates a lightweight `WorkflowRun` per channel turn keyed
+ * to this template so those traces are visible in `/runs`. The template's spec is a
+ * single terminal node — the run is a trace container, not an interpreted graph.
+ *
+ * The name is the stable lookup key (`findFirst({ name, teamId: null })`) the worker
+ * uses to resolve this template's id + active version at run time.
+ */
+export const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
+
+/**
+ * Minimal valid `WorkflowSpec` for the Channel Assistant template: a single
+ * terminal node. The `/runs` trace viewer renders the AgentTrace event stream
+ * regardless of node mapping, so a richer graph would be dead weight here.
+ *
+ * Typed loosely (object literal) so this file doesn't depend on the workflow spec
+ * package; it is parsed/validated wherever it's consumed.
+ */
+export const CHANNEL_ASSISTANT_SPEC = {
+  description:
+    'Observability shell for channel-assistant turns and ambient digests. ' +
+    'Not interpreted — a lightweight run is created per channel turn so its ' +
+    'agent traces (LLM calls) are visible in the run viewer.',
+  entry: 'done',
+  name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  nodes: {
+    done: { status: 'SUCCESS', type: 'terminate' },
+  },
+  schemaVersion: 1,
+} as const;
+
+/**
  * Upserts all built-in reference data — split by provenance so a future
  * deployment can run the platform without the SWE use case:
  *
@@ -56,10 +93,49 @@ export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
 /** SWE starter content (origin='swe-starter'). Opt-out-able in the future. */
 export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
+  await syncChannelAssistantTemplate(prisma);
   await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma);
   await syncEvalRubrics(prisma);
+}
+
+/**
+ * Seed the GLOBAL "Channel Assistant" workflow template + its v1 spec so a
+ * channel turn can create a `WorkflowRun` row (the Restrict `templateId` FK must
+ * be satisfiable). Idempotent: matches the existing row by `(name, teamId=null)`
+ * and upserts the version, exactly like {@link syncTemplates}. Active so it never
+ * trips template-status gates.
+ *
+ * Distinct from the SWE templates in `BUILTIN_TEMPLATES` on purpose: this row is
+ * an observability container, never offered as a run-on-submit option, so it
+ * isn't worth carrying through the BuiltinTemplate machinery.
+ */
+async function syncChannelAssistantTemplate(prisma: PrismaClient): Promise<void> {
+  const existing = await prisma.workflowTemplate.findFirst({
+    where: { name: CHANNEL_ASSISTANT_TEMPLATE_NAME, teamId: null },
+  });
+  const t = existing
+    ? await prisma.workflowTemplate.update({
+        data: { activeVersion: 1, isDefault: false, origin: SWE_ORIGIN, status: 'ACTIVE' },
+        where: { id: existing.id },
+      })
+    : await prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          description: CHANNEL_ASSISTANT_SPEC.description,
+          isDefault: false,
+          name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
+          origin: SWE_ORIGIN,
+          status: 'ACTIVE',
+          teamId: null,
+        },
+      });
+  await prisma.workflowTemplateVersion.upsert({
+    create: { spec: CHANNEL_ASSISTANT_SPEC as unknown as object, templateId: t.id, version: 1 },
+    update: { spec: CHANNEL_ASSISTANT_SPEC as unknown as object },
+    where: { templateId_version: { templateId: t.id, version: 1 } },
+  });
 }
 
 /** The built-in code-review-quality judge rubric (evals P2). Idempotent. */

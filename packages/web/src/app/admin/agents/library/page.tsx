@@ -25,10 +25,12 @@ import {
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
 import { type SkillOption, useSkills } from '@/hooks/useSkills';
+import { useSlackChannels } from '@/hooks/useSlackChannels';
 
 const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
 
 const EMPTY_CREATE: CreateAgentBody = {
+  channelId: undefined,
   description: '',
   inheritsModelFrom: '',
   key: '',
@@ -218,6 +220,7 @@ export default function AgentLibraryPage() {
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
+  const { data: slackChannels } = useSlackChannels();
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
@@ -412,20 +415,23 @@ export default function AgentLibraryPage() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Select
-              hint="GLOBAL is visible system-wide; ORGANIZATION pins to a single org"
+              hint="GLOBAL is visible system-wide; ORGANIZATION pins to a single org; CHANNEL pins to a Slack channel"
               label="Scope"
-              onChange={(e) =>
+              onChange={(e) => {
+                const scope = e.target.value as CreateAgentBody['scope'];
                 setCreateForm({
                   ...createForm,
-                  orgId: e.target.value !== 'ORGANIZATION' ? undefined : createForm.orgId,
-                  scope: e.target.value as CreateAgentBody['scope'],
-                })
-              }
+                  channelId: scope !== 'CHANNEL' ? undefined : createForm.channelId,
+                  orgId: scope !== 'ORGANIZATION' ? undefined : createForm.orgId,
+                  scope,
+                });
+              }}
               value={createForm.scope}
             >
               <option value="GLOBAL">GLOBAL</option>
               <option value="ORGANIZATION">ORGANIZATION</option>
               <option value="TEAM">TEAM</option>
+              <option value="CHANNEL">CHANNEL</option>
               <option value="WORKFLOW_TEMPLATE">WORKFLOW_TEMPLATE</option>
             </Select>
             {createForm.scope === 'ORGANIZATION' && (
@@ -438,6 +444,23 @@ export default function AgentLibraryPage() {
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                 value={createForm.orgId ?? ''}
               />
+            )}
+            {createForm.scope === 'CHANNEL' && (
+              <Select
+                hint="Slack channel this agent override applies to"
+                label="Channel"
+                onChange={(e) =>
+                  setCreateForm({ ...createForm, channelId: e.target.value || undefined })
+                }
+                value={createForm.channelId ?? ''}
+              >
+                <option value="">Select a channel…</option>
+                {(slackChannels ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name ?? c.slackChannelId}
+                  </option>
+                ))}
+              </Select>
             )}
           </div>
           <Input
@@ -519,7 +542,12 @@ export default function AgentLibraryPage() {
             Cancel
           </Button>
           <Button
-            disabled={!createForm.key || !createForm.name || createAgent.isPending}
+            disabled={
+              !createForm.key ||
+              !createForm.name ||
+              (createForm.scope === 'CHANNEL' && !createForm.channelId) ||
+              createAgent.isPending
+            }
             onClick={submitCreate}
             variant="primary"
           >

@@ -30,11 +30,23 @@ interface PostCall {
   text: string;
 }
 
+interface StartRunCall {
+  workflowId: string;
+  channelId: string;
+  kind: string;
+}
+interface FinalizeRunCall {
+  workflowId: string;
+  status: string;
+}
+
 const calls: {
   placeholders: Array<{ slackChannelId: string; threadTs: string }>;
   updates: UpdateCall[];
   posts: PostCall[];
-} = { placeholders: [], posts: [], updates: [] };
+  startRuns: StartRunCall[];
+  finalizeRuns: FinalizeRunCall[];
+} = { finalizeRuns: [], placeholders: [], posts: [], startRuns: [], updates: [] };
 
 // Per-test knobs.
 let placeholderTs: string | null = '999.000';
@@ -43,6 +55,9 @@ let turnThrows = false;
 let turnReply = 'here is the answer';
 
 const fakeActivities = {
+  finalizeChannelRun: async (args: FinalizeRunCall) => {
+    calls.finalizeRuns.push(args);
+  },
   postChannelPlaceholder: async (args: { slackChannelId: string; threadTs: string }) => {
     calls.placeholders.push(args);
     if (placeholderThrows) {
@@ -58,6 +73,9 @@ const fakeActivities = {
       throw new Error('turn failed');
     }
     return { reply: turnReply };
+  },
+  startChannelRun: async (args: StartRunCall) => {
+    calls.startRuns.push(args);
   },
   updateChannelReply: async (args: UpdateCall) => {
     calls.updates.push(args);
@@ -96,6 +114,8 @@ beforeEach((ctx: TestContext) => {
   calls.placeholders = [];
   calls.updates = [];
   calls.posts = [];
+  calls.startRuns = [];
+  calls.finalizeRuns = [];
   placeholderTs = '999.000';
   placeholderThrows = false;
   turnThrows = false;
@@ -140,6 +160,34 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     });
     // No fresh post when the placeholder is editable.
     expect(calls.posts).toHaveLength(0);
+  }, 60_000);
+
+  it('creates the run record FIRST (keyed to the workflowId) then finalizes it SUCCESS', async () => {
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-run-record'));
+
+    // The run row is created keyed to the SAME Temporal workflowId that
+    // currentWorkflowRunId() resolves — this is what makes the turn's agent
+    // traces persist instead of silently no-op'ing.
+    expect(calls.startRuns).toHaveLength(1);
+    expect(calls.startRuns[0]).toMatchObject({
+      channelId: 'chan-1',
+      kind: 'mention',
+      workflowId: 'ca-run-record',
+    });
+    expect(calls.finalizeRuns).toHaveLength(1);
+    expect(calls.finalizeRuns[0]).toEqual({ status: 'SUCCESS', workflowId: 'ca-run-record' });
+  }, 60_000);
+
+  it('finalizes the run record FAILED when the turn errors (fallback still delivered)', async () => {
+    turnThrows = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-run-failed'));
+
+    expect(calls.startRuns).toHaveLength(1);
+    expect(calls.finalizeRuns).toHaveLength(1);
+    expect(calls.finalizeRuns[0]).toEqual({ status: 'FAILED', workflowId: 'ca-run-failed' });
+    // The user still got the friendly fallback.
+    expect(calls.updates[0]?.text).toContain('hit an error');
   }, 60_000);
 
   it('falls back to a fresh post when the placeholder returns no ts', async () => {

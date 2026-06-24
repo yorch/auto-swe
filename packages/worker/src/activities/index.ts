@@ -8,6 +8,9 @@ export {
   runChannelAssistantTurn,
   updateChannelReply,
 } from './channelAssistant.js';
+// Channel assistant — lightweight WorkflowRun records for observability
+export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
+export { finalizeChannelRun, startChannelRun } from './channelRun.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,

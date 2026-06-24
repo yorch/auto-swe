@@ -134,7 +134,8 @@ export type SecurityEventType =
   | 'CONTENT_SECURITY_BLOCK'
   | 'CONTENT_SECURITY_WARN'
   | 'CODE_SECURITY'
-  | 'LLM_SUSPICIOUS';
+  | 'LLM_SUSPICIOUS'
+  | 'CHANNEL_SUSPICIOUS';
 
 export interface SecurityEvent {
   createdAt: string;

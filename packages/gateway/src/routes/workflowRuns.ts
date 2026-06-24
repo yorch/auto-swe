@@ -42,7 +42,16 @@ function trimTraceJson(value: unknown): unknown {
   }
   return value;
 }
+/** Name of the GLOBAL template used for channel-assistant turns + ambient digests. */
+const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
+
 const ListRunsQuery = RunListPaginationQuery.extend({
+  /**
+   * Channel-assistant runs (template name "Channel Assistant") are excluded from
+   * the list by default so a busy channel can't bury engineering runs. Opt in
+   * with `?includeChannel=true`.
+   */
+  includeChannel: z.coerce.boolean().optional().default(false),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
   workRequestId: z.string().uuid().optional(),
@@ -81,12 +90,18 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { limit, offset, status, templateId, workRequestId } = request.query;
+      const { includeChannel, limit, offset, status, templateId, workRequestId } = request.query;
       const where: Prisma.WorkflowRunWhereInput = {
         ...runVisibilityFilter(user),
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
         ...(workRequestId ? { workRequestId } : {}),
+        // Hide channel-assistant runs unless explicitly opted in. An explicit
+        // templateId filter already narrows to one template, so the exclusion
+        // only matters for the unfiltered list.
+        ...(includeChannel || templateId
+          ? {}
+          : { template: { name: { not: CHANNEL_ASSISTANT_TEMPLATE_NAME } } }),
       };
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({

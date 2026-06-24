@@ -44,6 +44,7 @@ export interface CreateAgentBody {
   scope: AgentScope;
   teamId?: string;
   orgId?: string;
+  channelId?: string;
   workflowTemplateId?: string;
   name: string;
   description?: string | null;

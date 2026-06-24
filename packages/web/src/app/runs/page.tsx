@@ -15,9 +15,11 @@ const PAGE_SIZE = 50;
 export default function WorkflowRunsPage() {
   const [status, setStatus] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [includeChannel, setIncludeChannel] = useState(false);
   const [offset, setOffset] = useState(0);
   const { data: templates = [] } = useWorkflowTemplates();
   const { data, isLoading } = useAllWorkflowRuns({
+    includeChannel,
     limit: PAGE_SIZE,
     offset,
     status: status || undefined,
@@ -71,6 +73,18 @@ export default function WorkflowRunsPage() {
             ))}
           </Select>
         </div>
+        <label className="mt-3 flex items-center gap-2 text-sm text-paper-400">
+          <input
+            checked={includeChannel}
+            className="accent-ember-500"
+            onChange={(e) => {
+              setIncludeChannel(e.target.checked);
+              setOffset(0);
+            }}
+            type="checkbox"
+          />
+          Show channel-assistant runs
+        </label>
       </Card>
 
       <Card className="p-0 overflow-hidden">

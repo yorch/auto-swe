@@ -1,5 +1,5 @@
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
-import { log, proxyActivities } from '@temporalio/workflow';
+import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 
 /**
@@ -57,10 +57,74 @@ const { postChannelReply, postChannelPlaceholder, updateChannelReply } = proxyAc
   startToCloseTimeout: '30s',
 });
 
+// Run-record lifecycle: a lightweight WorkflowRun keyed to this Temporal
+// workflowId so the turn's agent traces (LLM calls inside runChannelAssistantTurn)
+// persist + show up in /runs. Quick DB writes — short timeout, a couple retries.
+const { startChannelRun, finalizeChannelRun } = proxyActivities<
+  Pick<typeof activitiesType, 'startChannelRun' | 'finalizeChannelRun'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '2s',
+    maximumAttempts: 3,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '30s',
+});
+
 const CHANNEL_ERROR_TEXT =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
 
 export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput): Promise<void> {
+  // 0. Create the run record FIRST (keyed to this Temporal workflowId) so the
+  //    turn's agent traces resolve a runId and persist. Best-effort: a failure
+  //    here must not block the user's reply — traces are observability, not the
+  //    product. We still try to finalize at the end.
+  const workflowId = workflowInfo().workflowId;
+  try {
+    await startChannelRun({
+      channelId: input.channelId,
+      kind: 'mention',
+      label: input.slackChannelId,
+      orgId: input.orgId,
+      teamId: input.teamId,
+      workflowId,
+    });
+  } catch (err) {
+    log.warn('ChannelAssistantWorkflow: startChannelRun failed; traces may not persist', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  let runStatus: 'SUCCESS' | 'FAILED' = 'SUCCESS';
+  try {
+    runStatus = await runTurn(input);
+  } catch {
+    // runTurn only rethrows when even the fallback delivery failed.
+    runStatus = 'FAILED';
+  } finally {
+    // Finalize the run record with the terminal status + summed trace cost/tokens.
+    // Best-effort; a finalize failure must not surface to the user.
+    try {
+      await finalizeChannelRun({ status: runStatus, workflowId });
+    } catch (err) {
+      log.warn('ChannelAssistantWorkflow: finalizeChannelRun failed', {
+        channelId: input.channelId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/**
+ * The turn itself: post a placeholder, run the LLM turn, deliver the reply (or a
+ * friendly error). Extracted so the run-record lifecycle can wrap it cleanly.
+ * Returns the terminal run status — `'FAILED'` when the LLM turn threw (even
+ * though we still delivered a friendly fallback to the user), `'SUCCESS'`
+ * otherwise. Throws only when even the fallback delivery fails.
+ */
+async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'FAILED'> {
   // 1. Post a placeholder into the thread immediately so the user sees the
   //    teammate "working". Best-effort: if it fails or returns no ts, we fall
   //    back to a fresh reply message below (placeholderTs stays null).
@@ -84,14 +148,18 @@ export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput)
   try {
     const { reply } = await runChannelAssistantTurn(input);
     await deliver(input, placeholderTs, reply);
+    return 'SUCCESS';
   } catch (err) {
     log.error('ChannelAssistantWorkflow failed; posting fallback to thread', {
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });
     // Don't leave the user hanging. Best-effort: if even this fails, let the
-    // error surface so the run is recorded as failed.
+    // error surface so the run is recorded as failed (the outer catch maps it).
     await deliver(input, placeholderTs, CHANNEL_ERROR_TEXT);
+    // We recovered (the fallback was delivered) but the turn itself failed —
+    // record the run as FAILED for observability.
+    return 'FAILED';
   }
 }
 
