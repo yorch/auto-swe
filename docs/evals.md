@@ -7,8 +7,10 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **P0–P3 implemented; a few deep seams remain** (rev. 2026-06-24). **76 eval tests green;
-> all 4 packages typecheck; every migration verified against a live Postgres.** Built across all
+> Status: **P0–P3 implemented; a few deep seams remain** (rev. 2026-06-24; rebased onto main incl.
+> P5 multi-org). **76 eval tests green (full suite 1105 green); all packages typecheck; lint clean;
+> migrations consolidated into one Prisma baseline + custom file, verified against a live Postgres.**
+> Built across all
 > phases: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
 > SHA-pinned workspace + standalone gate runner + admin API + `auto-swe evals` CLI (incl. `run`) +
 > harness orchestration + **durable `EvalRunWorkflow`** + nightly CI; P2 scorer-combination +

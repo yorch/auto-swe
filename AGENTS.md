@@ -21,14 +21,15 @@
 | `docs/platform-pivot-p4.md`      | Done | P4 build plan (distribution layer): WS1 bundle format + export · WS2 install as managed base layer · WS3 signature trust + registry + install-from-URL · WS4 container-contract coded steps · WS5 authoring SDK (`packages/sdk`). All 5 merged (#76) |
 | `docs/platform-pivot-p5.md`      | Done | P5 build plan (UX layering + multi-org): multi-org foundation + `ORGANIZATION` config scope + org-level RBAC (`OrganizationMembership`/`OrgRole`) + application-layer row isolation + org-granularity billing (`OrgMonthlyUsage` + `monthlyBudgetUsdCents`) + authoring-SDK polish + coded-step transports + canvas org-scope polish. Merged (#91, #102) |
 | `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
-| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (14 node types), runtime security scanners, budget tiers, auth, data model, infra   |
-| `docs/agents.md`                 | Current    | All 10 agent roles, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
+| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (15 node types), runtime security scanners, budget tiers, auth, data model, infra   |
+| `docs/agents.md`                 | Current    | All 10 SWE agent roles (+ the eval-infra `evalJudge`), implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
 | `docs/deployment.md`             | Living     | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
 | `docs/model-configuration.md`    | Living     | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
 | `docs/oauth-setup.md`            | Living     | GitHub + Google OAuth app registration; magic-link setup                                   |
 | `docs/slack-app-setup.md`        | Living     | Slack app manifest import and admin configuration                                          |
 | `docs/github-app-setup.md`       | Living     | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
 | `docs/hitl-workflows.md`         | Living     | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
+| `docs/evals.md`                  | Current    | Evals RFC + roadmap: native output-quality measurement as an `eval` workflow node + DB-backed signals. P0 signal capture · P1 offline regression harness (frozen benchmark, paired error-barred stats) · P2 LLM judge + decision rule · P3 online drift dashboard + canary. Per-phase build plans in `docs/evals-p0.md`…`-p3.md` |
 
 **Historical** — preserved for design rationale; code is authoritative where they diverge:
 
