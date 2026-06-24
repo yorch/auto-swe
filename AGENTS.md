@@ -193,7 +193,7 @@ GitHub, Slack, artifact storage, issue-tracker connector, workflow defaults, and
 | `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
 | `/admin/integrations → Tracker` | issue-tracker connector (Jira / Linear / GitHub Issues): provider, base URL, API token, Jira email — a read-only fetch at work-request submit time populates `ContextSnapshot.rawTicketData`; failures never block submission | `resolveTrackerConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` |
+| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule, eval-regression schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` / `resolveEvalScheduleConfig()` |
 
 All six tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
 

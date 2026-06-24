@@ -121,6 +121,12 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getEvalScheduleStatus: async () => ({
+        exists: false,
+        lastRunAt: null,
+        nextRunAt: null,
+        paused: false,
+      }),
       getWorkRequestScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -135,8 +141,10 @@ describe('POST /api/v1/work-requests', () => {
         startedWorkflowIds.push(id);
       },
       syncConsolidationSchedule: async () => {},
+      syncEvalSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
+      triggerEvalNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
     });
 

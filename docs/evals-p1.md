@@ -37,7 +37,9 @@ The **replay spike** is *not* a P1 prerequisite — it gates the optional P3 his
 5. **Flake screening** at curation: a case is promoted only if its reference passes k× consistently;
    the floor re-runs on failure and zeroes only on *consistent* failure (RFC §9).
 6. **CLI + gateway:** `auto-swe evals run|list <dataset> --candidate <ref> --against <ref>` over
-   `/api/v1/admin/evals/*`; a **nightly** GitHub Action invokes it and fails on a seeded regression.
+   `/api/v1/admin/evals/*`, plus a **platform-native nightly schedule** (a Temporal Schedule firing
+   `ScheduledEvalWorkflow`, configured in the DB and managed at `/admin/workflow` — the same pattern
+   as lesson consolidation, not a repo GitHub Action).
 7. **Online drift:** a thin trend query + extension of P0 capture so per-scorer drift over time is
    computable (dashboard polish itself is P3).
 8. **Tests:** harness scores a 2-case fixture set end-to-end with fakes; paired-stats unit tests;
@@ -171,7 +173,7 @@ LLM cost on the scorer side; the *candidate run* still costs tokens, hence **nig
   (incl. the §9 worked example — a −17pp/large delta resolves significant, a 5–7pp/small delta does
   **not** at small N).
 
-### WS5 — Gateway + CLI + nightly CI
+### WS5 — Gateway + CLI + nightly schedule
 **Why:** drive the harness and gate on it.
 
 - **Gateway** `packages/gateway/src/routes/evals.ts` + `lib/evalService.ts` (NET-NEW; copy the
@@ -186,11 +188,17 @@ LLM cost on the scorer side; the *candidate run* still costs tokens, hence **nig
   `apiRequest`): `auto-swe evals list`, `evals run <dataset> --candidate <ref> --against <ref>`
   (prints the paired report; exit code 1 on regression so CI fails), `evals show <runId>`. Wire into
   `cli/src/index.ts` dispatch.
-- **Nightly CI:** a GitHub Action (`.github/workflows/evals-nightly.yml`) mints a PAT, runs
-  `auto-swe evals run swe-implementer-golden --candidate main --against <last-release>`, and fails on
-  a regression verdict. **Nightly, not per-PR** (cost — RFC §4.3).
-- **Acceptance:** CLI run returns a paired report and non-zero exit on a seeded regression; the
-  Action wiring is dry-run validated.
+- **Nightly schedule (platform-native):** a single named **Temporal Schedule**
+  (`auto-swe-eval-regression`) fires `ScheduledEvalWorkflow`, which resolves the configured benchmark
+  dataset by slug, creates a fresh `EvalRun`, and runs the harness. Config (cron + enabled + dataset
+  + candidate/baseline refs) lives on the `WorkflowDefaults` singleton (`resolveEvalScheduleConfig`),
+  is synced to Temporal at gateway boot + on admin save (`syncEvalSchedule`), and is managed at
+  `/admin/workflow` via `GET/PUT /api/v1/admin/config/eval-schedule` (+ `/trigger`). **Off by
+  default** — needs a seeded dataset and a worker that can reach Docker + the model provider.
+  **Nightly, not per-PR** (cost — RFC §4.3). This replaces the original repo GitHub Action: the
+  benchmark is a per-deployment, DB-configured capability, not a CI artifact.
+- **Acceptance:** the schedule syncs at boot and on save; a manual `/trigger` starts a run; a missing
+  dataset is a no-op.
 
 ### WS6 — Tests
 - Schema round-trip (WS1); SHA checkout integration (WS2); standalone gate + trajectory + flake

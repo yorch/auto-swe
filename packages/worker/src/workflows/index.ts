@@ -5,3 +5,4 @@ export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.j
 export { EvalRunWorkflow } from './evalRun.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
+export { ScheduledEvalWorkflow } from './scheduledEval.js';

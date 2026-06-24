@@ -673,6 +673,11 @@ CREATE TABLE "workflow_defaults" (
     "consolidation_cron" TEXT NOT NULL DEFAULT '0 3 * * 0',
     "consolidation_min_cluster_size" INTEGER NOT NULL DEFAULT 3,
     "consolidation_similarity_threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    "eval_schedule_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "eval_schedule_cron" TEXT NOT NULL DEFAULT '0 7 * * *',
+    "eval_schedule_dataset_slug" TEXT NOT NULL DEFAULT 'swe-implementer-golden',
+    "eval_schedule_candidate_ref" TEXT NOT NULL DEFAULT 'main',
+    "eval_schedule_baseline_ref" TEXT NOT NULL DEFAULT 'last-release',
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")

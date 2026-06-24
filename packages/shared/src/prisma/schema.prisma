@@ -1117,6 +1117,16 @@ model WorkflowDefaults {
   consolidationMinClusterSize      Int     @default(3) @map("consolidation_min_cluster_size")
   consolidationSimilarityThreshold Float   @default(0.85) @map("consolidation_similarity_threshold")
 
+  // Nightly eval regression schedule (the platform-native replacement for the
+  // old evals-nightly GitHub Action). Synced to a Temporal Schedule the same way
+  // as consolidation. Disabled by default — it needs a seeded benchmark dataset
+  // and a worker that can reach Docker + the model provider.
+  evalScheduleEnabled     Boolean @default(false) @map("eval_schedule_enabled")
+  evalScheduleCron        String  @default("0 7 * * *") @map("eval_schedule_cron")
+  evalScheduleDatasetSlug String  @default("swe-implementer-golden") @map("eval_schedule_dataset_slug")
+  evalScheduleCandidateRef String @default("main") @map("eval_schedule_candidate_ref")
+  evalScheduleBaselineRef  String @default("last-release") @map("eval_schedule_baseline_ref")
+
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("workflow_defaults")

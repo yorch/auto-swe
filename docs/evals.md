@@ -13,7 +13,9 @@ data.
 > Built across all
 > phases: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
 > SHA-pinned workspace + standalone gate runner + admin API + `auto-swe evals` CLI (incl. `run`) +
-> harness orchestration + **durable `EvalRunWorkflow`** + nightly CI; P2 scorer-combination +
+> harness orchestration + **durable `EvalRunWorkflow`** + a **platform-native nightly Temporal
+> Schedule** (`ScheduledEvalWorkflow`, managed at `/admin/workflow` — replaces the old repo GHA);
+> P2 scorer-combination +
 > decision-rule + judge-prompt + implementer/rubric wall + `EvalRubric` schema/API + the **`eval`
 > workflow node** (spec→interpreter→activity→canvas) + **wired LLM judge** (`evalJudge` agent,
 > distinct model) + seeded `code-review-quality` rubric; P3 suite-health + cost policy + anchor
@@ -391,7 +393,7 @@ shippable; P0 delivers value with **zero new LLM cost**.
 
 **Exit criteria** (a phase is done when):
 - **P0** — gate + review-verdict scores are written as `EvalResult` rows and visible/queryable on `/runs/[id]`; a per-scorer trend query returns rows across runs.
-- **P1** — `auto-swe evals run` scores the frozen benchmark and emits a paired, error-barred candidate-vs-baseline report; a nightly CI job fails on a seeded regression; online drift is visible.
+- **P1** — `auto-swe evals run` scores the frozen benchmark and emits a paired, error-barred candidate-vs-baseline report; a platform-scheduled nightly run (a Temporal Schedule, configured per deployment) records a regression verdict; online drift is visible.
 - **P2** — the `eval` node runs a judge scorer in-workflow; judge-vs-human agreement (κ) is tracked and surfaced.
 - **P3** — a configurable sample of production runs is scored online; the `/admin/evals` dashboard shows a drift trend; eval `costUsd` is reported.
 

@@ -4,7 +4,10 @@ import { initTelemetry } from './lib/telemetry.js';
 const otel = initTelemetry('auto-swe-gateway');
 
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
-import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveConsolidationConfig,
+  resolveEvalScheduleConfig,
+} from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -86,6 +89,12 @@ async function start() {
   resolveConsolidationConfig()
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
+
+  // Same for the eval-regression Temporal Schedule (the platform-native
+  // replacement for the old evals-nightly GitHub Action). Off by default.
+  resolveEvalScheduleConfig()
+    .then((cfg) => app.temporal.syncEvalSchedule(cfg))
+    .catch((err) => app.log.warn({ err }, 'eval schedule sync failed at startup'));
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so

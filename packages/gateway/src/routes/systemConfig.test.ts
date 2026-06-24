@@ -14,6 +14,13 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     minClusterSize: 3,
     similarityThreshold: 0.85,
   })),
+  resolveEvalScheduleConfig: vi.fn(async () => ({
+    baselineRef: 'last-release',
+    candidateRef: 'main',
+    cronExpression: '0 7 * * *',
+    datasetSlug: 'swe-implementer-golden',
+    enabled: false,
+  })),
   resolveWorkflowDefaults: vi.fn(async () => ({
     branchPrefix: 'auto',
     defaultTeamSlug: 'default',
@@ -51,6 +58,7 @@ vi.mock('../lib/systemConfigService.js', () => ({
   testSlackConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testStorageConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   updateConsolidationConfig: vi.fn(async () => {}),
+  updateEvalScheduleConfig: vi.fn(async () => {}),
   updateGitHubConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateGoogleOAuthConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateIssueTrackerConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
@@ -96,8 +104,16 @@ async function buildApp() {
       nextRunAt: null,
       paused: false,
     })),
+    getEvalScheduleStatus: vi.fn(async () => ({
+      exists: false,
+      lastRunAt: null,
+      nextRunAt: null,
+      paused: false,
+    })),
     syncConsolidationSchedule: vi.fn(async () => {}),
+    syncEvalSchedule: vi.fn(async () => {}),
     triggerConsolidationNow: vi.fn(async () => {}),
+    triggerEvalNow: vi.fn(async () => {}),
   } as unknown as never);
 
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
@@ -139,6 +155,62 @@ describe('POST /config/issue-tracker/detect-fields', () => {
       url: '/api/v1/admin/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(500);
+    await app.close();
+  });
+});
+
+describe('eval-schedule config', () => {
+  it('GET returns the resolved config plus the Temporal schedule status', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'GET',
+      url: '/api/v1/admin/config/eval-schedule',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data).toMatchObject({
+      cronExpression: '0 7 * * *',
+      datasetSlug: 'swe-implementer-golden',
+      enabled: false,
+      schedule: { exists: false },
+    });
+    await app.close();
+  });
+
+  it('PUT persists the config and syncs the Temporal schedule', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { cronExpression: '0 6 * * 1', enabled: true },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/eval-schedule',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(app.temporal.syncEvalSchedule).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('PUT rejects a malformed cron expression', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { cronExpression: 'not-a-cron' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/eval-schedule',
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('POST /trigger fires the schedule immediately', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      url: '/api/v1/admin/config/eval-schedule/trigger',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(app.temporal.triggerEvalNow).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

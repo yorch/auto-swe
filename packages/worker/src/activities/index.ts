@@ -42,6 +42,7 @@ export {
   decomposePrd,
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
+export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
 // Phase 2 quality gates
 export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
 export {
