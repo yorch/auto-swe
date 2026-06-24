@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { bundleRoutes } from './routes/bundles.js';
 import { epicRoutes } from './routes/epics.js';
+import { evalRoutes } from './routes/evals.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
@@ -232,6 +233,7 @@ async function start() {
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
+  await app.register(evalRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamAgentLibraryRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });

@@ -604,3 +604,47 @@ export interface EvalResultDto {
   metadata: unknown;
   createdAt: string;
 }
+
+// ── Eval datasets / cases / runs (P1) ──
+
+export const CONFIG_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
+export type ConfigScopeValue = (typeof CONFIG_SCOPES)[number];
+
+export interface EvalCaseDto {
+  id: string;
+  datasetId: string;
+  input: unknown;
+  repoUrl: string;
+  baselineSha: string;
+  goldenTest: string;
+  reference: unknown;
+  tags: string[];
+  flakeScreened: boolean;
+  flakeRuns: number;
+  createdAt: string;
+}
+
+export interface EvalDatasetSummary {
+  id: string;
+  slug: string;
+  scope: ConfigScopeValue;
+  name: string;
+  description: string | null;
+  caseCount: number;
+  createdAt: string;
+}
+
+export interface EvalDatasetDetail extends EvalDatasetSummary {
+  cases: EvalCaseDto[];
+}
+
+export interface EvalRunDto {
+  id: string;
+  datasetId: string;
+  candidateRef: string;
+  baselineRef: string;
+  status: string;
+  summary: unknown;
+  startedAt: string;
+  endedAt: string | null;
+}
