@@ -37,6 +37,11 @@ export interface RepoWorkRequest {
   // Phase 3+ fields
   slackChannel?: string;
   parentWorkflowId?: string;
+  /// Channel assistant (Phase A): SlackChannel.id (our row) the run originated
+  /// from. When set, the run's `agent` nodes resolve the CHANNEL config tier
+  /// (per-channel tools/MCP/model) and the run's cost accrues to that channel's
+  /// monthly budget. Only set for channel-launched task runs.
+  channelId?: string;
 }
 
 export interface CodeSecurityFinding {

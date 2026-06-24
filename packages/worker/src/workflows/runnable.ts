@@ -464,9 +464,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // P2 declarative agent node: run a library Agent by reference.
     'runAgentNode',
-    ({ config, inputs }) =>
+    ({ request, config, inputs }) =>
       agentNodeActivities.runAgentNode({
         agentRef: config.agentRef as string,
+        // Phase A: thread the run's originating channel (if any) so the agent
+        // resolves the CHANNEL config tier. Undefined for non-channel runs.
+        ...(request.channelId ? { channelId: request.channelId } : {}),
         inputs,
         spanName: config.spanName as string | undefined,
         systemPrompt: config.systemPrompt as string | undefined,

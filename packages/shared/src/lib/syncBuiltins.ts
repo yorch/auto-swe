@@ -63,6 +63,54 @@ export const CHANNEL_ASSISTANT_SPEC = {
 } as const;
 
 /**
+ * Channel assistant (Phase A): name of the GLOBAL workflow template that backs a
+ * general agentic *task* launched from a channel @mention. Unlike the
+ * observability-only "Channel Assistant" template (a single terminal node), this
+ * one is a real interpreted spec: an `agent` node runs the channel's assistant
+ * agent against the task description, followed by a `terminate` that surfaces the
+ * agent's output as the run result.
+ *
+ * The name is the stable lookup key (`findFirst({ name, teamId: null })`) the
+ * worker's `createChannelTaskRun` activity uses to resolve this template's id +
+ * active version at launch time. Repo-less: the spec never dereferences a
+ * workspace (the `agent` node needs none), so a sentinel `repoId: ''` is fine.
+ */
+export const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';
+
+/**
+ * `WorkflowSpec` for the Channel Task template: one `agent` node (the channel
+ * assistant) → `terminate { SUCCESS }`. The agent's user message binds the task
+ * description from the run request (`request.description`); its text output is
+ * surfaced as the run result (`nodes.task.output.text`). Typed loosely (object
+ * literal) so this file doesn't depend on the workflow-spec package; it is
+ * parsed/validated wherever it's consumed (`createWorkflowRun` → `parseWorkflowSpec`).
+ */
+export const CHANNEL_TASK_SPEC = {
+  description:
+    'General agentic task launched from a Slack channel @mention. Runs the ' +
+    "channel's assistant agent against the task description and reports back in-thread.",
+  entry: 'task',
+  name: CHANNEL_TASK_TEMPLATE_NAME,
+  nodes: {
+    done: {
+      result: { result: { from: 'nodes.task.output.text' } },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
+    task: {
+      agentRef: 'channelAssistant',
+      inputs: {
+        task: { from: 'request.description' },
+      },
+      next: 'done',
+      spanName: 'llm.channel_task',
+      type: 'agent',
+    },
+  },
+  schemaVersion: 1,
+} as const;
+
+/**
  * Upserts all built-in reference data — split by provenance so a future
  * deployment can run the platform without the SWE use case:
  *
@@ -94,6 +142,7 @@ export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
 export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncTemplates(prisma);
   await syncChannelAssistantTemplate(prisma);
+  await syncChannelTaskTemplate(prisma);
   await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma);
@@ -134,6 +183,43 @@ async function syncChannelAssistantTemplate(prisma: PrismaClient): Promise<void>
   await prisma.workflowTemplateVersion.upsert({
     create: { spec: CHANNEL_ASSISTANT_SPEC as unknown as object, templateId: t.id, version: 1 },
     update: { spec: CHANNEL_ASSISTANT_SPEC as unknown as object },
+    where: { templateId_version: { templateId: t.id, version: 1 } },
+  });
+}
+
+/**
+ * Seed the GLOBAL "Channel Task" workflow template + its v1 spec (Phase A) so a
+ * channel @mention judged to be a task can launch a `RunnableWorkflow` against
+ * it. Idempotent: matches the existing row by `(name, teamId=null)` and upserts
+ * the version, exactly like {@link syncChannelAssistantTemplate}/{@link syncTemplates}.
+ * Active so it never trips template-status gates. Distinct from the SWE templates
+ * in `BUILTIN_TEMPLATES`: this row is the channel-task substrate, never offered
+ * as a run-on-submit option, so it isn't worth carrying through the
+ * BuiltinTemplate machinery.
+ */
+async function syncChannelTaskTemplate(prisma: PrismaClient): Promise<void> {
+  const existing = await prisma.workflowTemplate.findFirst({
+    where: { name: CHANNEL_TASK_TEMPLATE_NAME, teamId: null },
+  });
+  const t = existing
+    ? await prisma.workflowTemplate.update({
+        data: { activeVersion: 1, isDefault: false, origin: SWE_ORIGIN, status: 'ACTIVE' },
+        where: { id: existing.id },
+      })
+    : await prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          description: CHANNEL_TASK_SPEC.description,
+          isDefault: false,
+          name: CHANNEL_TASK_TEMPLATE_NAME,
+          origin: SWE_ORIGIN,
+          status: 'ACTIVE',
+          teamId: null,
+        },
+      });
+  await prisma.workflowTemplateVersion.upsert({
+    create: { spec: CHANNEL_TASK_SPEC as unknown as object, templateId: t.id, version: 1 },
+    update: { spec: CHANNEL_TASK_SPEC as unknown as object },
     where: { templateId_version: { templateId: t.id, version: 1 } },
   });
 }

@@ -1,5 +1,13 @@
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
-import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
+import {
+  log,
+  ParentClosePolicy,
+  proxyActivities,
+  startChild,
+  WorkflowIdReusePolicy,
+  workflowInfo,
+} from '@temporalio/workflow';
+import type { DelegateIntent } from '../activities/channelAssistant.js';
 import type * as activitiesType from '../activities/index.js';
 
 /**
@@ -72,8 +80,30 @@ const { startChannelRun, finalizeChannelRun } = proxyActivities<
   startToCloseTimeout: '30s',
 });
 
+// Phase A: task-launch preparation + budget gate. Quick DB reads/writes — short
+// timeout, a couple retries. `createChannelTaskRun` is NOT idempotent (it INSERTs
+// a RunInput), but it only runs once per turn (guarded by the `delegate` branch),
+// and a duplicate RunInput would be harmless (the reject-duplicate child policy
+// keeps a single task run per thread regardless).
+const { createChannelTaskRun, isChannelOverBudgetForTask } = proxyActivities<
+  Pick<typeof activitiesType, 'createChannelTaskRun' | 'isChannelOverBudgetForTask'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '2s',
+    maximumAttempts: 3,
+    maximumInterval: '30s',
+  },
+  startToCloseTimeout: '30s',
+});
+
 const CHANNEL_ERROR_TEXT =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
+
+// Phase A: posted instead of launching a task when the channel is over budget.
+const CHANNEL_TASK_BUDGET_TEXT =
+  ':moneybag: This channel has reached its monthly assistant budget, so I can ' +
+  'not start that task right now. An admin can raise the cap in the dashboard.';
 
 export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput): Promise<void> {
   // 0. Create the run record FIRST (keyed to this Temporal workflowId) so the
@@ -146,7 +176,23 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply } = await runChannelAssistantTurn(input);
+    const { reply, delegate } = await runChannelAssistantTurn(input);
+
+    // Phase A: the agent asked to launch a durable task. Gate on the channel
+    // budget, then start a thread-bound RunnableWorkflow that works the task and
+    // reports its result back in this thread. We DO NOT await the child — the
+    // task must outlive this short turn (abandon close policy).
+    if (delegate) {
+      const overBudget = await isChannelOverBudgetForTask(input.channelId);
+      if (overBudget) {
+        // Over budget: don't launch; tell the user instead of the agent's ack.
+        await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
+        return 'SUCCESS';
+      }
+      await launchTask(input, delegate);
+    }
+
+    // Always post the agent's reply (the "on it" ack when it delegated).
     await deliver(input, placeholderTs, reply);
     return 'SUCCESS';
   } catch (err) {
@@ -179,6 +225,66 @@ async function deliver(
       slackChannelId: input.slackChannelId,
       text,
       threadTs: input.threadTs,
+    });
+  }
+}
+
+/**
+ * Phase A: launch a durable, thread-bound task run from a delegate intent.
+ * Prepares the RunInput + launch params via `createChannelTaskRun`, then starts
+ * a child `RunnableWorkflow` that works the task and reports its result back in
+ * this thread (via the run's terminal Slack notification on the originating
+ * RunInput's `slackChannelId`/`slackMessageTs`).
+ *
+ * Key Temporal semantics:
+ *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
+ *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
+ *    soon as the ack is posted; the task may run for minutes).
+ *  - `REJECT_DUPLICATE` reuse policy on the deterministic per-thread workflowId
+ *    means a second delegate in the same thread is rejected rather than
+ *    clobbering the in-flight task. We swallow that rejection (and any other
+ *    launch error) so it never breaks the user's ack — the task is best-effort
+ *    from the turn's perspective.
+ *
+ * Phase A only ships the GENERAL task route. A `route: 'code'` intent is captured
+ * but still launched through the same general Channel Task spec for now (Phase B
+ * wires the code/PR route through the SWE workflow); we log it so the deferral is
+ * visible. This keeps a 'code' pick from breaking the flow.
+ */
+async function launchTask(
+  input: ChannelAssistantTurnInput,
+  delegate: DelegateIntent
+): Promise<void> {
+  if (delegate.route === 'code') {
+    log.info('ChannelAssistantWorkflow: code-route task launched via general spec (Phase A)', {
+      channelId: input.channelId,
+      title: delegate.title,
+    });
+  }
+  try {
+    const { workflowId, templateId, templateVersion, request } = await createChannelTaskRun({
+      channelId: input.channelId,
+      description: delegate.description,
+      slackChannelId: input.slackChannelId,
+      threadTs: input.threadTs,
+      title: delegate.title,
+    });
+
+    await startChild('RunnableWorkflow', {
+      args: [{ request, templateId, templateVersion }],
+      parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
+      taskQueue: 'engineering-workflow',
+      workflowId,
+      // One task run per thread — a re-delegate in the same thread is rejected
+      // rather than starting a second competing run.
+      workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+    });
+  } catch (err) {
+    // Best-effort: a launch failure (incl. REJECT_DUPLICATE for an already-running
+    // task in this thread) must not break the ack we still post to the user.
+    log.warn('ChannelAssistantWorkflow: task launch failed; ack still delivered', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
     });
   }
 }

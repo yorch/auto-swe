@@ -20,6 +20,13 @@ export interface RunAgentNodeInput {
   spanName?: string;
   /** Per-node system-prompt override (wins over the Agent's own prompt). */
   systemPrompt?: string;
+  /**
+   * Channel assistant (Phase A): SlackChannel.id the run originated from. When
+   * set, the agent resolves the CHANNEL config tier (per-channel tools/MCP/model)
+   * — `currentRequestContext()` can't derive it (a channel-task run has no
+   * `ActiveWorkflow` row), so the workflow threads it from the run request.
+   */
+  channelId?: string;
 }
 
 export interface RunAgentNodeResult {
@@ -38,7 +45,11 @@ export interface RunAgentNodeResult {
  * the generic counterpart to the implementer's `buildImplementerForActivity`.
  */
 export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
-  const ctx = await currentRequestContext();
+  const baseCtx = await currentRequestContext();
+  // Phase A: a channel-task run carries its originating channelId on the request
+  // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
+  // Thread it in so the CHANNEL config tier fires for per-channel tools/MCP/model.
+  const ctx = input.channelId ? { ...baseCtx, channelId: input.channelId } : baseCtx;
   const { key, version } = parseAgentRef(input.agentRef);
 
   // An explicit `@version` pin overrides the run-start snapshot for this key.

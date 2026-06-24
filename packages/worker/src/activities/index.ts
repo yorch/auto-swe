@@ -11,6 +11,12 @@ export {
 // Channel assistant — lightweight WorkflowRun records for observability
 export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun } from './channelRun.js';
+// Channel assistant (Phase A) — general agentic task launch from a mention
+export type {
+  CreateChannelTaskRunInput,
+  CreateChannelTaskRunResult,
+} from './channelTask.js';
+export { createChannelTaskRun, isChannelOverBudgetForTask } from './channelTask.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,

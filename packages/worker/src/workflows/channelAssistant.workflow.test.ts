@@ -46,17 +46,58 @@ const calls: {
   posts: PostCall[];
   startRuns: StartRunCall[];
   finalizeRuns: FinalizeRunCall[];
-} = { finalizeRuns: [], placeholders: [], posts: [], startRuns: [], updates: [] };
+  taskRuns: unknown[];
+  budgetChecks: string[];
+} = {
+  budgetChecks: [],
+  finalizeRuns: [],
+  placeholders: [],
+  posts: [],
+  startRuns: [],
+  taskRuns: [],
+  updates: [],
+};
 
 // Per-test knobs.
 let placeholderTs: string | null = '999.000';
 let placeholderThrows = false;
 let turnThrows = false;
 let turnReply = 'here is the answer';
+// Phase A: optional delegate intent returned by the turn, + the budget verdict.
+let turnDelegate: { route: 'general' | 'code'; title: string; description: string } | undefined;
+let overBudget = false;
 
 const fakeActivities = {
+  // Child RunnableWorkflow lifecycle fakes — the launched (abandoned) child needs
+  // these to start + finalize cleanly. Returning an error from createWorkflowRun
+  // makes the child fail fast (it's abandoned, so the parent is unaffected).
+  cancelPendingHumanSteps: async () => {},
+  // Phase A: launch preparation. Returns a workflowId that can never collide with
+  // a real run so the abandoned child RunnableWorkflow (started but not awaited)
+  // doesn't interfere with other tests. The child's own activities are faked below.
+  createChannelTaskRun: async (input: { channelId: string; threadTs: string }) => {
+    calls.taskRuns.push(input);
+    return {
+      request: {
+        description: 'task',
+        externalTicketId: 't',
+        repoId: '',
+        requestPayload: 'task',
+        workRequestId: 'ri-1',
+      },
+      templateId: 'tmpl-x',
+      templateVersion: 1,
+      workflowId: `chantask-${input.channelId}-${input.threadTs}-${Math.random().toString(36).slice(2)}`,
+    };
+  },
+  createWorkflowRun: async () => ({ error: 'test child not run' }),
   finalizeChannelRun: async (args: FinalizeRunCall) => {
     calls.finalizeRuns.push(args);
+  },
+  finalizeWorkflowRun: async () => {},
+  isChannelOverBudgetForTask: async (channelId: string) => {
+    calls.budgetChecks.push(channelId);
+    return overBudget;
   },
   postChannelPlaceholder: async (args: { slackChannelId: string; threadTs: string }) => {
     calls.placeholders.push(args);
@@ -72,7 +113,7 @@ const fakeActivities = {
     if (turnThrows) {
       throw new Error('turn failed');
     }
-    return { reply: turnReply };
+    return { delegate: turnDelegate, reply: turnReply };
   },
   startChannelRun: async (args: StartRunCall) => {
     calls.startRuns.push(args);
@@ -116,10 +157,14 @@ beforeEach((ctx: TestContext) => {
   calls.posts = [];
   calls.startRuns = [];
   calls.finalizeRuns = [];
+  calls.taskRuns = [];
+  calls.budgetChecks = [];
   placeholderTs = '999.000';
   placeholderThrows = false;
   turnThrows = false;
   turnReply = 'here is the answer';
+  turnDelegate = undefined;
+  overBudget = false;
 });
 
 afterAll(async () => {
@@ -233,5 +278,43 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.updates).toHaveLength(0);
     expect(calls.posts).toHaveLength(1);
     expect(calls.posts[0]?.text).toContain('hit an error');
+  }, 60_000);
+
+  // ── Phase A: general agentic task launch ────────────────────────────────────
+
+  it('launches a task (prepares the run + checks budget) when the turn delegates', async () => {
+    turnDelegate = { description: 'do the thing', route: 'general', title: 'Thing' };
+    turnReply = 'On it — will follow up here.';
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-delegate'));
+
+    // Budget was checked, then the run was prepared (createChannelTaskRun → startChild).
+    expect(calls.budgetChecks).toEqual(['chan-1']);
+    expect(calls.taskRuns).toHaveLength(1);
+    // The agent's ack is still posted to the user.
+    expect(calls.updates[0]?.text).toBe('On it — will follow up here.');
+  }, 60_000);
+
+  it('does NOT launch a task when the turn does not delegate', async () => {
+    turnDelegate = undefined;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-no-delegate'));
+
+    expect(calls.budgetChecks).toHaveLength(0);
+    expect(calls.taskRuns).toHaveLength(0);
+    expect(calls.updates[0]?.text).toBe('here is the answer');
+  }, 60_000);
+
+  it('posts a budget notice and does NOT launch when the channel is over budget', async () => {
+    turnDelegate = { description: 'do the thing', route: 'general', title: 'Thing' };
+    overBudget = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-overbudget'));
+
+    // Budget checked, but no run prepared.
+    expect(calls.budgetChecks).toEqual(['chan-1']);
+    expect(calls.taskRuns).toHaveLength(0);
+    // The user gets the budget notice instead of the agent's ack.
+    expect(calls.updates[0]?.text).toContain('monthly assistant budget');
   }, 60_000);
 });
