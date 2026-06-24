@@ -105,3 +105,32 @@ export function useChannelBudget(id: string) {
     queryKey: ['admin-slack-channel-budget', id],
   });
 }
+
+export interface MemoryItemDto {
+  id: string;
+  lessonSummary: string;
+  rationale: string;
+  agentKey: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+export function useChannelMemory(channelId: string | null) {
+  return useQuery({
+    enabled: !!channelId,
+    queryFn: () =>
+      api.get<{ data: MemoryItemDto[] }>(`${BASE}/${channelId}/memory`).then((r) => r.data),
+    queryKey: ['admin-slack-channel-memory', channelId],
+  });
+}
+
+export function useDeleteChannelMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ channelId, memoryId }: { channelId: string; memoryId: string }) =>
+      api.delete<{ data: { deleted: true } }>(`${BASE}/${channelId}/memory/${memoryId}`),
+    onSuccess: (_data, { channelId }) => {
+      qc.invalidateQueries({ queryKey: ['admin-slack-channel-memory', channelId] });
+    },
+  });
+}

@@ -9,9 +9,12 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
+  type MemoryItemDto,
   type SlackChannel,
   type UpdateSlackChannelBody,
+  useChannelMemory,
   useCreateSlackChannel,
+  useDeleteChannelMemory,
   useDeleteSlackChannel,
   useSlackChannels,
   useUpdateSlackChannel,
@@ -357,16 +360,124 @@ function EditChannelModal({
   );
 }
 
+// ── Memory modal ──────────────────────────────────────────────────────────────
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
+  const { data: items, isLoading } = useChannelMemory(channel?.id ?? null);
+  const deleteMemory = useDeleteChannelMemory();
+  const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function handleDeleteConfirm() {
+    if (!confirmItem || !channel) {
+      return;
+    }
+    setDeleteError(null);
+    try {
+      await deleteMemory.mutateAsync({ channelId: channel.id, memoryId: confirmItem.id });
+      setConfirmItem(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete memory item');
+    }
+  }
+
+  return (
+    <>
+      <Modal
+        eyebrow="Admin / Slack"
+        onClose={onClose}
+        open={!!channel}
+        size="lg"
+        subtitle={
+          channel ? (
+            <span className="font-mono text-[11px]">
+              {channel.workspace.slackTeamId} / {channel.slackChannelId}
+            </span>
+          ) : undefined
+        }
+        title={channel ? `Memory — ${channel.name ?? channel.slackChannelId}` : 'Channel Memory'}
+      >
+        {isLoading ? (
+          <div className="py-6 text-center text-sm text-paper-400">Loading…</div>
+        ) : !items || items.length === 0 ? (
+          <div className="py-6 text-center text-sm text-paper-400">
+            No memory yet for this channel.
+          </div>
+        ) : (
+          <ul className="divide-y divide-ink-600">
+            {items.map((item) => (
+              <li className="flex items-start gap-4 py-3" key={item.id}>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
+                  <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
+                  <div className="flex items-center gap-3">
+                    {item.agentKey && (
+                      <span className="font-mono text-[10px] text-paper-600">{item.agentKey}</span>
+                    )}
+                    <span className="font-mono text-[10px] text-paper-600">
+                      {fmtDate(item.createdAt)}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  onClick={() => {
+                    setDeleteError(null);
+                    setConfirmItem(item);
+                  }}
+                  size="sm"
+                  variant="danger"
+                >
+                  Delete
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex justify-end pt-2">
+          <Button onClick={onClose} type="button" variant="ghost">
+            Close
+          </Button>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={
+          deleteError ??
+          `Delete this memory item? This cannot be undone.\n"${confirmItem?.lessonSummary ?? ''}"`
+        }
+        onClose={() => {
+          setConfirmItem(null);
+          setDeleteError(null);
+        }}
+        onConfirm={handleDeleteConfirm}
+        open={confirmItem !== null}
+        title="Delete memory item"
+      />
+    </>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function ChannelRow({
   channel,
   onDelete,
   onEdit,
+  onMemory,
 }: {
   channel: SlackChannel;
   onDelete: (ch: SlackChannel) => void;
   onEdit: (ch: SlackChannel) => void;
+  onMemory: (ch: SlackChannel) => void;
 }) {
   const update = useUpdateSlackChannel();
 
@@ -421,6 +532,9 @@ function ChannelRow({
       </td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-2">
+          <Button onClick={() => onMemory(channel)} size="sm" variant="secondary">
+            Memory
+          </Button>
           <Button onClick={() => onEdit(channel)} size="sm" variant="secondary">
             Edit
           </Button>
@@ -441,6 +555,7 @@ export default function AdminSlackChannelsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SlackChannel | null>(null);
+  const [memoryTarget, setMemoryTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -518,6 +633,7 @@ export default function AdminSlackChannelsPage() {
                     key={ch.id}
                     onDelete={setDeleteTarget}
                     onEdit={setEditTarget}
+                    onMemory={setMemoryTarget}
                   />
                 ))}
               </tbody>
@@ -529,6 +645,8 @@ export default function AdminSlackChannelsPage() {
       <CreateChannelModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
       <EditChannelModal channel={editTarget} onClose={() => setEditTarget(null)} />
+
+      <MemoryModal channel={memoryTarget} onClose={() => setMemoryTarget(null)} />
 
       <ConfirmModal
         confirmLabel="Delete"
