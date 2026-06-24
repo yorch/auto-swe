@@ -130,15 +130,34 @@ Proactive posting via a per-channel Temporal Schedule:
   multiplayer (one shared assistant, shared context); this phase adds the
   live-edit UX + input safety.
 
-## 8. Future refinements (not built)
+## 8. Observability & admin UI
+
+Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
+its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
+under a seeded GLOBAL **"Channel Assistant"** template. This fixes a silent
+trace-drop (`persistActivityTrace` needs a resolvable `runId`) so per-turn
+status/cost/tokens + the full `AgentTrace` stream show up in the `/runs` viewer.
+The main `/runs` list **default-excludes** Channel Assistant runs (opt-in
+`includeChannel` / a "Show channel-assistant runs" toggle) so channel volume
+doesn't bury engineering runs. `finalizeChannelRun` writes only the run's own
+denormalized cost — channel spend is still tracked in `ChannelMonthlyUsage` (no
+double-count into `OrgMonthlyUsage`).
+
+The advisory injection scan surfaces as a `CHANNEL_SUSPICIOUS` security event
+(`activity_event` `toolName='channel.suspicious_input'`) in `/admin/security`.
+Channel-scoped agents are created from the agent-library admin form (CHANNEL
+scope + channel picker), and channels themselves (agent, ambient cron, budget,
+memory) from `/admin/slack-channels`.
+
+## 9. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new) for true
   in-flight mid-task hand-off. The current design uses per-mention turns +
   scheduled ambient, which covers reactive + proactive needs without the
   rearchitecture.
-- **Summarizing memory pass** instead of storing the raw exchange; **hard**
-  per-channel budget (transactional reserve) instead of the current soft cap;
-  **admin memory edit** with re-embedding.
+- **A true hard budget cap** (pre-flight cost reservation) — not achievable for
+  post-hoc LLM cost; the current gate is a Serializable-transaction read whose
+  guarantee is "at most one in-flight turn can overshoot."
 
 > **Thread-history context** via `conversations.replies` is now implemented
 > (previously listed here as a future refinement). Each assistant turn fetches
@@ -147,7 +166,7 @@ Proactive posting via a per-channel Temporal Schedule:
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 9. Key files
+## 10. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
