@@ -134,6 +134,12 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Security',
         roles: ['ADMIN'],
       },
+      {
+        href: '/admin/evals',
+        icon: 'analytics',
+        label: 'Evals',
+        roles: ['ADMIN'],
+      },
     ],
     label: 'Insights',
   },
