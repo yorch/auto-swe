@@ -7,6 +7,7 @@ export type AuditEntityType =
   | 'Connection'
   | 'EmbeddingConfig'
   | 'EvalDataset'
+  | 'EvalRubric'
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
   | 'ProviderCredential'

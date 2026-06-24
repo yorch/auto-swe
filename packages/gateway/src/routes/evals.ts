@@ -8,11 +8,13 @@
  * datasets, cases, and result/run reads.
  */
 
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type {
   EvalCaseDto,
   EvalDatasetDetail,
   EvalDatasetSummary,
   EvalResultDto,
+  EvalRubricDto,
   EvalRunDto,
 } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
@@ -22,6 +24,39 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
+
+const CreateRubricBody = z.object({
+  promptText: z.string().min(1).max(50_000),
+  scale: z.string().max(40).default('0..1'),
+  scope: z.enum(['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE']).default('GLOBAL'),
+  slug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9_-]+$/),
+});
+
+function toRubricDto(r: {
+  id: string;
+  slug: string;
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+  version: number;
+  promptText: string;
+  scale: string;
+  isBuiltIn: boolean;
+  createdAt: Date;
+}): EvalRubricDto {
+  return {
+    createdAt: r.createdAt.toISOString(),
+    id: r.id,
+    isBuiltIn: r.isBuiltIn,
+    promptText: r.promptText,
+    scale: r.scale,
+    scope: r.scope,
+    slug: r.slug,
+    version: r.version,
+  };
+}
 
 const CaseInput = z.object({
   baselineSha: z.string().min(1).max(200),
@@ -242,6 +277,37 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         summary: run.summary,
       };
       return { data };
+    }
+  );
+
+  // ── List judge rubrics (P2) ──
+  app.get('/evals/rubrics', { onRequest: adminOnly }, async () => {
+    const rows = await fastify.prisma.evalRubric.findMany({ orderBy: { createdAt: 'desc' } });
+    const data: EvalRubricDto[] = rows.map(toRubricDto);
+    return { data };
+  });
+
+  // ── Create a judge rubric (P2) ──
+  // promptText is scanned for injection/exfiltration like Skill/agent prompt
+  // text — non-blocking warnings are returned alongside the created rubric.
+  app.post(
+    '/evals/rubrics',
+    { onRequest: adminOnly, schema: { body: CreateRubricBody } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const { promptText, scale, scope, slug } = request.body;
+      const scan = await scanSkillContent(promptText);
+      const rubric = await fastify.prisma.evalRubric.create({
+        data: { promptText, scale, scope, slug },
+      });
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor,
+        after: { scope: rubric.scope, slug: rubric.slug, version: rubric.version },
+        entityId: rubric.id,
+        entityType: 'EvalRubric',
+      });
+      return reply.status(201).send({ data: toRubricDto(rubric), scanWarnings: scan.warnings });
     }
   );
 };

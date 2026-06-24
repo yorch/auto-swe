@@ -1,6 +1,11 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
+  scanSkillContent: vi.fn(async () => ({ warnings: ['heads up'] })),
+}));
+
 import { evalRoutes } from './evals.js';
 
 function newMockPrisma() {
@@ -13,6 +18,10 @@ function newMockPrisma() {
     },
     evalResult: {
       count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    evalRubric: {
+      create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
     },
     evalRun: { findUnique: vi.fn() },
@@ -110,6 +119,30 @@ describe('evalRoutes', () => {
       url: '/api/v1/admin/evals',
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('creates a rubric, scans its text, and returns scan warnings', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalRubric.create.mockResolvedValue({
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      id: 'ru1',
+      isBuiltIn: false,
+      promptText: 'grade it',
+      scale: '0..1',
+      scope: 'GLOBAL',
+      slug: 'code-review-quality',
+      version: 1,
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { promptText: 'grade it', slug: 'code-review-quality' },
+      url: '/api/v1/admin/evals/rubrics',
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.data.slug).toBe('code-review-quality');
+    expect(body.scanWarnings).toEqual(['heads up']);
   });
 
   it('queries results with pagination meta', async () => {

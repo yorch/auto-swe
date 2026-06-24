@@ -739,6 +739,26 @@ model EvalRun {
   @@map("eval_runs")
 }
 
+/// An admin-extensible judge rubric (P2). Versioned + scoped like ScannerPattern;
+/// the judge scorer binds the most-specific active version. Custom promptText is
+/// scanned for injection/exfiltration like Skill text. See docs/evals-p2.md.
+model EvalRubric {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug       String
+  scope      ConfigScope @default(GLOBAL)
+  teamId     String?     @map("team_id") @db.Uuid
+  orgId      String?     @map("org_id") @db.Uuid
+  version    Int         @default(1)
+  promptText String      @map("prompt_text")
+  /// Score scale descriptor, e.g. '0..1' or '1..5'.
+  scale      String      @default("0..1")
+  isBuiltIn  Boolean     @default(false) @map("is_built_in")
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([scope, slug])
+  @@map("eval_rubrics")
+}
+
 /// One tool call, LLM response, or activity event captured during an agent activity execution.
 /// `nodeId` is the Temporal activity type (e.g. "executeImplementation"); correlate to a
 /// spec node by finding the node where `specSnapshot.nodes[id].step === nodeId`.

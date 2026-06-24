@@ -648,3 +648,14 @@ export interface EvalRunDto {
   startedAt: string;
   endedAt: string | null;
 }
+
+export interface EvalRubricDto {
+  id: string;
+  slug: string;
+  scope: ConfigScopeValue;
+  version: number;
+  promptText: string;
+  scale: string;
+  isBuiltIn: boolean;
+  createdAt: string;
+}
