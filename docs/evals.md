@@ -7,18 +7,21 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **P0–P3 built across logic + integration; execution seams remain** (rev. 2026-06-24).
-> **86 eval tests green; all 4 packages typecheck; every migration verified against a live Postgres.**
-> Built + tested: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
+> Status: **P0–P3 implemented; a few deep seams remain** (rev. 2026-06-24). **76 eval tests green;
+> all 4 packages typecheck; every migration verified against a live Postgres.** Built across all
+> phases: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
 > SHA-pinned workspace + standalone gate runner + admin API + `auto-swe evals` CLI (incl. `run`) +
-> harness orchestration + start-run endpoint + nightly CI; P2 scorer-combination + decision-rule +
-> judge-prompt + implementer/rubric wall + `EvalRubric` schema/API + the **`eval` workflow node**
-> wired end-to-end (spec → interpreter → activity → worker registration → web canvas); P3
-> suite-health (fail-closed) + cost policy + anchor-subset compression + `/admin/evals` drift
-> dashboard. **Remaining = the execution seams that need live Temporal/Docker/LLM infra to verify:**
-> the durable harness Temporal workflow, the node-level gate execution + judge LLM call, agent-diff
-> generation, the decontaminated calibration channel + κ, production canary routing, the golden-set
-> re-validation job, and the historical-replay tier.
+> harness orchestration + **durable `EvalRunWorkflow`** + nightly CI; P2 scorer-combination +
+> decision-rule + judge-prompt + implementer/rubric wall + `EvalRubric` schema/API + the **`eval`
+> workflow node** (spec→interpreter→activity→canvas) + **wired LLM judge** (`evalJudge` agent,
+> distinct model) + seeded `code-review-quality` rubric; P3 suite-health + cost policy + anchor
+> subset + `/admin/evals` dashboard + **golden-set re-validation** (`quarantined` + the loop) +
+> **canary routing decision**. **Genuinely deferred (need deeper schema/routing or live infra):**
+> node-level gate execution (needs a workspace+diff in the node), agent-diff generation in the
+> harness (scores the fixture tree as a proxy today), capturing per-run baseline SHA for the
+> historical-replay tier, the canary *routing integration* into `resolveAgent`, and the
+> re-validation Temporal schedule. End-to-end verification of every Temporal/Docker/LLM path needs
+> that stack running.
 > This doc establishes the vision, the conceptual grounding, and a phased build plan
 > sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
 > methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision
