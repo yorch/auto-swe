@@ -36,6 +36,18 @@ export interface PairedDelta {
 
 const Z_95 = 1.959963984540054;
 
+/** Sample mean and standard error of the mean for a list of values. */
+function meanAndSe(values: number[]): { mean: number; se: number } {
+  const n = values.length;
+  if (n === 0) {
+    return { mean: 0, se: 0 };
+  }
+  const mean = values.reduce((s, v) => s + v, 0) / n;
+  // Sample variance (n-1 denominator; guard n=1), then SE of the mean.
+  const variance = n > 1 ? values.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1) : 0;
+  return { mean, se: Math.sqrt(variance / n) };
+}
+
 /**
  * Paired difference in pass-rate with a McNemar-style standard error on the
  * per-case differences d_i = candidate_i − baseline_i. Pairing removes
@@ -47,25 +59,9 @@ export function pairedProportionDelta(pairs: PairedOutcome[]): PairedDelta {
   if (n === 0) {
     return { baselineRate: 0, candidateRate: 0, ci95: [0, 0], delta: 0, n: 0, se: 0 };
   }
-  let sumBase = 0;
-  let sumCand = 0;
-  for (const p of pairs) {
-    sumBase += p.baseline;
-    sumCand += p.candidate;
-  }
-  const baselineRate = sumBase / n;
-  const candidateRate = sumCand / n;
-  const delta = candidateRate - baselineRate;
-
-  // Sample variance of the paired differences d_i, then SE of their mean.
-  let sumSq = 0;
-  for (const p of pairs) {
-    const d = p.candidate - p.baseline;
-    sumSq += (d - delta) ** 2;
-  }
-  // n-1 denominator (sample variance); guard n=1.
-  const variance = n > 1 ? sumSq / (n - 1) : 0;
-  const se = Math.sqrt(variance / n);
+  const baselineRate = pairs.reduce((s, p) => s + p.baseline, 0) / n;
+  const candidateRate = pairs.reduce((s, p) => s + p.candidate, 0) / n;
+  const { mean: delta, se } = meanAndSe(pairs.map((p) => p.candidate - p.baseline));
   const half = Z_95 * se;
   return {
     baselineRate,
@@ -97,27 +93,24 @@ export function clusteredDelta(
       byCluster.set(k, [p]);
     }
   }
-  // Reduce each cluster to its mean difference, then treat clusters as the units.
-  const clusterDiffs: PairedOutcome[] = [];
-  for (const [k, group] of byCluster) {
-    const meanDiff = group.reduce((s, p) => s + (p.candidate - p.baseline), 0) / group.length;
-    // Encode the cluster mean as a pseudo-pair so we reuse the same SE math:
-    // baseline 0, candidate = meanDiff (which may be fractional).
-    clusterDiffs.push({ baseline: 0, candidate: meanDiff as 0 | 1, caseId: k });
-  }
-  const base = pairedProportionDelta(clusterDiffs);
-  // The point estimate should still be the overall (case-weighted) delta, not
-  // the unweighted cluster mean; recompute delta over all cases but keep the
-  // clustered SE/CI.
+  // Treat each cluster's mean difference as the unit of analysis, so the
+  // effective N is the cluster count and correlated within-cluster cases don't
+  // inflate confidence.
+  const clusterMeanDiffs = [...byCluster.values()].map(
+    (group) => group.reduce((s, p) => s + (p.candidate - p.baseline), 0) / group.length
+  );
+  const { se } = meanAndSe(clusterMeanDiffs);
+  // The point estimate stays the overall (case-weighted) delta; only the SE/CI
+  // are clustered.
   const overall = pairedProportionDelta(pairs);
-  const half = Z_95 * base.se;
+  const half = Z_95 * se;
   return {
     baselineRate: overall.baselineRate,
     candidateRate: overall.candidateRate,
     ci95: [overall.delta - half, overall.delta + half],
     delta: overall.delta,
     n: byCluster.size,
-    se: base.se,
+    se,
   };
 }
 
