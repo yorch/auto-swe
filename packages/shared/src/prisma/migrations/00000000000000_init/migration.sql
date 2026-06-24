@@ -5,14 +5,17 @@
 --
 -- Folds in every prior Prisma-generated migration: the original init,
 -- trace_enrichment, webhook_token, issue_tracker_kb (issue-tracker + knowledge
--- base), p5_org_rbac_billing (Organization RBAC + OrgMonthlyUsage billing), and
--- the evals feature (eval_results / eval_datasets / eval_cases / eval_runs /
--- eval_rubrics + the EvalScoreType / EvalSignalSource enums).
+-- base), p5_org_rbac_billing (Organization RBAC + OrgMonthlyUsage billing), the
+-- evals feature (eval_results / eval_datasets / eval_cases / eval_runs /
+-- eval_rubrics + the EvalScoreType / EvalSignalSource enums), and the Claude Tag
+-- Slack teammate (slack_workspaces / slack_channels / channel_monthly_usage, the
+-- CHANNEL value on ConfigScope, and the channel/team/org scoping columns on
+-- memory_items + agents).
 --
 -- Custom DDL that Prisma's schema DSL cannot express — the pgvector HNSW index,
--- partial unique indexes per config scope (incl. ORGANIZATION), CHECK
--- constraints, NOT NULL on array columns, and the embedding-config seed — lives
--- in the next migration, 00000000000001_custom_constraints_and_indexes.
+-- partial unique indexes per config scope (incl. ORGANIZATION and CHANNEL),
+-- CHECK constraints, NOT NULL on array columns, and the embedding-config seed —
+-- lives in the next migration, 00000000000001_custom_constraints_and_indexes.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
@@ -36,7 +39,7 @@ CREATE TYPE "WorkflowStepStatus" AS ENUM ('PENDING', 'RUNNING', 'PASSED', 'FAILE
 CREATE TYPE "WorkflowTemplateStatus" AS ENUM ('DRAFT', 'ACTIVE', 'ARCHIVED');
 
 -- CreateEnum
-CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE');
+CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE');
 
 -- CreateEnum
 CREATE TYPE "ConfigAuditAction" AS ENUM ('CREATE', 'UPDATE', 'DELETE');
@@ -80,6 +83,9 @@ CREATE TABLE "memory_items" (
     "scope" TEXT NOT NULL DEFAULT 'swe-lessons',
     "workflow_id" UUID,
     "repo_id" UUID,
+    "channel_id" UUID,
+    "team_id" UUID,
+    "org_id" UUID,
     "workflow_run_id" UUID,
     "agent_key" TEXT,
     "model" TEXT,
@@ -224,6 +230,50 @@ CREATE TABLE "org_monthly_usage" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "org_monthly_usage_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "slack_workspaces" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "slack_team_id" TEXT NOT NULL,
+    "name" TEXT,
+    "org_id" UUID NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "slack_workspaces_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "slack_channels" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "slack_channel_id" TEXT NOT NULL,
+    "workspace_id" UUID NOT NULL,
+    "name" TEXT,
+    "team_id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "agent_key" TEXT NOT NULL DEFAULT 'channelAssistant',
+    "ambient_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "ambient_cron" TEXT,
+    "monthly_budget_usd_cents" INTEGER,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "slack_channels_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "channel_monthly_usage" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "channel_id" UUID NOT NULL,
+    "year_month" TEXT NOT NULL,
+    "cost_usd_accrued" DECIMAL(12,6) NOT NULL DEFAULT 0,
+    "runs_completed" INTEGER NOT NULL DEFAULT 0,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "channel_monthly_usage_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -798,6 +848,7 @@ CREATE TABLE "agents" (
     "scope" "ConfigScope" NOT NULL,
     "team_id" UUID,
     "org_id" UUID,
+    "channel_id" UUID,
     "workflow_template_id" UUID,
     "version" INTEGER NOT NULL DEFAULT 1,
     "name" TEXT NOT NULL,
@@ -878,6 +929,15 @@ CREATE INDEX "memory_items_repo_id_consolidated_at_idx" ON "memory_items"("repo_
 CREATE INDEX "memory_items_scope_consolidated_at_idx" ON "memory_items"("scope", "consolidated_at");
 
 -- CreateIndex
+CREATE INDEX "memory_items_channel_id_consolidated_at_idx" ON "memory_items"("channel_id", "consolidated_at");
+
+-- CreateIndex
+CREATE INDEX "memory_items_team_id_consolidated_at_idx" ON "memory_items"("team_id", "consolidated_at");
+
+-- CreateIndex
+CREATE INDEX "memory_items_org_id_consolidated_at_idx" ON "memory_items"("org_id", "consolidated_at");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "context_snapshots_work_request_id_key" ON "context_snapshots"("work_request_id");
 
 -- CreateIndex
@@ -927,6 +987,27 @@ CREATE INDEX "org_monthly_usage_org_id_idx" ON "org_monthly_usage"("org_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "org_monthly_usage_org_id_year_month_key" ON "org_monthly_usage"("org_id", "year_month");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "slack_workspaces_slack_team_id_key" ON "slack_workspaces"("slack_team_id");
+
+-- CreateIndex
+CREATE INDEX "slack_workspaces_org_id_idx" ON "slack_workspaces"("org_id");
+
+-- CreateIndex
+CREATE INDEX "slack_channels_team_id_idx" ON "slack_channels"("team_id");
+
+-- CreateIndex
+CREATE INDEX "slack_channels_org_id_idx" ON "slack_channels"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "slack_channels_workspace_id_slack_channel_id_key" ON "slack_channels"("workspace_id", "slack_channel_id");
+
+-- CreateIndex
+CREATE INDEX "channel_monthly_usage_channel_id_idx" ON "channel_monthly_usage"("channel_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "channel_monthly_usage_channel_id_year_month_key" ON "channel_monthly_usage"("channel_id", "year_month");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
@@ -1040,6 +1121,9 @@ CREATE INDEX "agents_scope_team_id_idx" ON "agents"("scope", "team_id");
 CREATE INDEX "agents_scope_org_id_idx" ON "agents"("scope", "org_id");
 
 -- CreateIndex
+CREATE INDEX "agents_scope_channel_id_idx" ON "agents"("scope", "channel_id");
+
+-- CreateIndex
 CREATE INDEX "agents_scope_workflow_template_id_idx" ON "agents"("scope", "workflow_template_id");
 
 -- CreateIndex
@@ -1065,6 +1149,9 @@ ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_id_fkey" FOREIG
 
 -- AddForeignKey
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_run_id_fkey" FOREIGN KEY ("workflow_run_id") REFERENCES "workflow_runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1101,6 +1188,21 @@ ALTER TABLE "organization_memberships" ADD CONSTRAINT "organization_memberships_
 
 -- AddForeignKey
 ALTER TABLE "org_monthly_usage" ADD CONSTRAINT "org_monthly_usage_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "slack_workspaces" ADD CONSTRAINT "slack_workspaces_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_workspace_id_fkey" FOREIGN KEY ("workspace_id") REFERENCES "slack_workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "channel_monthly_usage" ADD CONSTRAINT "channel_monthly_usage_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1182,6 +1284,9 @@ ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id"
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "agents" ADD CONSTRAINT "agents_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
