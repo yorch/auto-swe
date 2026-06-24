@@ -7,6 +7,11 @@ import { formatRelativeTime } from '@/lib/utils';
 // ── Badge ────────────────────────────────────────────────────────────────────
 
 const EVENT_STYLE: Record<SecurityEventType, { color: string; dot: string; label: string }> = {
+  CHANNEL_SUSPICIOUS: {
+    color: 'bg-violet-400/20 text-violet-400',
+    dot: 'bg-violet-400',
+    label: 'Channel Suspicious',
+  },
   CODE_SECURITY: {
     color: 'bg-dust-400/20 text-dust-400',
     dot: 'bg-dust-400',
@@ -88,7 +93,8 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
         secondary: preview || undefined,
       };
     }
-    case 'LLM_SUSPICIOUS': {
+    case 'LLM_SUSPICIOUS':
+    case 'CHANNEL_SUSPICIOUS': {
       const warnings = (output?.warnings as string[]) ?? [];
       return {
         primary: `${warnings.length} pattern${warnings.length !== 1 ? 's' : ''} matched`,
@@ -129,7 +135,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
     );
   }
 
-  if (event.eventType === 'LLM_SUSPICIOUS') {
+  if (event.eventType === 'LLM_SUSPICIOUS' || event.eventType === 'CHANNEL_SUSPICIOUS') {
     const warnings = (output?.warnings as string[]) ?? [];
     return (
       <ul className="mt-1.5 space-y-0.5">
@@ -268,6 +274,9 @@ export function classifyTraceAsSecurityEvent(trace: {
   }
   if (trace.type === 'activity_event' && trace.toolName === 'llm.suspicious_output') {
     return 'LLM_SUSPICIOUS';
+  }
+  if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
+    return 'CHANNEL_SUSPICIOUS';
   }
   return null;
 }

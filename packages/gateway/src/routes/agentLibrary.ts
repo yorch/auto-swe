@@ -17,10 +17,11 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
+const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE'] as const;
 
 const ListQuery = z.object({
   all: z.coerce.boolean().optional(),
+  channelId: z.string().uuid().optional(),
   orgId: z.string().uuid().optional(),
   scope: z.enum(AGENT_SCOPES).optional(),
   teamId: z.string().uuid().optional(),
@@ -45,6 +46,7 @@ const AgentBaseFields = {
 const CreateAgentSchema = z
   .object({
     ...AgentBaseFields,
+    channelId: z.string().uuid().optional(),
     key: z
       .string()
       .min(1)
@@ -57,13 +59,22 @@ const CreateAgentSchema = z
   })
   .refine(
     (v) =>
-      (v.scope === 'GLOBAL' && !v.teamId && !v.orgId && !v.workflowTemplateId) ||
-      (v.scope === 'ORGANIZATION' && !!v.orgId && !v.teamId && !v.workflowTemplateId) ||
-      (v.scope === 'TEAM' && !!v.teamId && !v.orgId && !v.workflowTemplateId) ||
-      (v.scope === 'WORKFLOW_TEMPLATE' && !v.teamId && !v.orgId && !!v.workflowTemplateId),
+      (v.scope === 'GLOBAL' && !v.teamId && !v.orgId && !v.channelId && !v.workflowTemplateId) ||
+      (v.scope === 'ORGANIZATION' &&
+        !!v.orgId &&
+        !v.teamId &&
+        !v.channelId &&
+        !v.workflowTemplateId) ||
+      (v.scope === 'TEAM' && !!v.teamId && !v.orgId && !v.channelId && !v.workflowTemplateId) ||
+      (v.scope === 'CHANNEL' && !!v.channelId && !v.teamId && !v.orgId && !v.workflowTemplateId) ||
+      (v.scope === 'WORKFLOW_TEMPLATE' &&
+        !v.teamId &&
+        !v.orgId &&
+        !v.channelId &&
+        !!v.workflowTemplateId),
     {
       message:
-        'scope=TEAM requires teamId only; scope=ORGANIZATION requires orgId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids all',
+        'scope=TEAM requires teamId only; scope=ORGANIZATION requires orgId only; scope=CHANNEL requires channelId only; scope=WORKFLOW_TEMPLATE requires workflowTemplateId only; scope=GLOBAL forbids all',
     }
   );
 
@@ -81,6 +92,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { querystring: ListQuery } },
     async (request) => {
       const rows = await listAgents(fastify.prisma, {
+        channelId: request.query.channelId,
         latestOnly: !request.query.all,
         orgId: request.query.orgId,
         scope: request.query.scope,
@@ -125,6 +137,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const body = request.body;
       const refError = await validateAgentScopeRefs(fastify.prisma, {
+        channelId: body.channelId,
         orgId: body.orgId,
         teamId: body.teamId,
         workflowTemplateId: body.workflowTemplateId,
@@ -142,6 +155,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
       const key: AgentScopeKey = {
+        channelId: body.channelId,
         key: body.key,
         orgId: body.orgId,
         scope: body.scope,
@@ -219,7 +233,9 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
       }
       const count = await deactivateAgentLineage(fastify.prisma, {
+        channelId: current.channelId,
         key: current.key,
+        orgId: current.orgId,
         scope: current.scope as AgentScope,
         teamId: current.teamId,
         workflowTemplateId: current.workflowTemplateId,

@@ -1,5 +1,29 @@
 // ── Workflow Types ──
 
+/// Channel assistant (Phase 0): input to the per-mention channel-assistant workflow.
+/// Temporal workflow name `'ChannelAssistantWorkflow'`, task queue
+/// `'engineering-workflow'`. Produced by the gateway Slack Events route when a
+/// user @mentions the bot (or DMs it); consumed by the worker, which resolves
+/// the channel's assistant Agent (CHANNEL config tier), generates a reply, and
+/// posts it back into the originating thread. Shared so the gateway's Temporal
+/// decorator and the worker workflow agree on the shape without a code import.
+export interface ChannelAssistantTurnInput {
+  /// SlackChannel.id (our row) — drives the CHANNEL config tier + memory scope.
+  channelId: string;
+  /// Slack channel id (`C…`) the reply is posted into.
+  slackChannelId: string;
+  /// Thread to reply in: the mention's `ts`, or its `thread_ts` when the
+  /// mention is already inside a thread.
+  threadTs: string;
+  /// The user's message with the bot @mention stripped.
+  userText: string;
+  /// Slack user id (`U…`) who sent the message (attribution + multiplayer).
+  userSlackId: string;
+  /// Owning team + org for the resolver cascade + per-channel budget.
+  teamId: string;
+  orgId: string;
+}
+
 export interface RepoWorkRequest {
   workRequestId: string;
   repoId: string;

@@ -7,7 +7,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
 
 const LessonOutputSchema = z.object({
@@ -24,8 +24,9 @@ type FailureType = z.infer<typeof LessonOutputSchema>['failureType'];
 /**
  * Insert one memory_items row + its vector embedding. Shared by the
  * LLM-summarized path (`commitToMemory`) and the phase-8 direct recorder
- * (`recordLessonDirectly`). Prisma doesn't support pgvector natively, hence
- * the raw SQL.
+ * (`recordLessonDirectly`). Delegates to the shared {@link insertMemoryItem}
+ * helper (raw pgvector SQL lives there); this thin wrapper keeps the
+ * repo-scoped SWE-lesson call sites stable.
  */
 async function writeMemoryItemRow(input: {
   workflowId: string;
@@ -40,30 +41,19 @@ async function writeMemoryItemRow(input: {
   model?: string;
   costUsd?: number;
 }): Promise<string> {
-  const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
-  const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO memory_items
-       (id, workflow_id, repo_id, rationale, lesson_summary, embedding, embedding_model,
-        failure_type, metadata, skills_active, workflow_run_id, agent_key, model, cost_usd, created_at)
-     VALUES
-       (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, $5::vector, $6, $7, $8::jsonb, $9::text[],
-        $10::uuid, $11, $12, $13, now())
-     RETURNING id`,
-    input.workflowId,
-    input.repoId,
-    input.rationale,
-    input.lessonSummary,
-    JSON.stringify(embedding),
-    spec,
-    input.failureType,
-    JSON.stringify(input.metadata ?? {}),
-    input.skillsActive ?? [],
-    input.workflowRunId ?? null,
-    input.agentKey ?? null,
-    input.model ?? null,
-    input.costUsd ?? null
-  );
-  return rows[0]?.id ?? '';
+  return insertMemoryItem({
+    agentKey: input.agentKey,
+    costUsd: input.costUsd,
+    failureType: input.failureType,
+    lessonSummary: input.lessonSummary,
+    metadata: input.metadata,
+    model: input.model,
+    rationale: input.rationale,
+    repoId: input.repoId,
+    skillsActive: input.skillsActive,
+    workflowId: input.workflowId,
+    workflowRunId: input.workflowRunId,
+  });
 }
 
 /**

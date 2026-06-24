@@ -2,9 +2,10 @@ import crypto from 'node:crypto';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
-import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { openSlackView, postSlackMessage, verifySlackSignature } from '../lib/slack.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -411,7 +412,260 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
   );
+
+  // POST /api/v1/auth/slack/events — Slack Events API callback (channel assistant).
+  // Drives the conversational teammate: an @mention in a channel (or a DM)
+  // starts a `ChannelAssistantWorkflow` that generates + posts the reply
+  // in-thread (the worker owns the reply; the gateway only starts the workflow).
+  //
+  // Slack's 3-second rule: we ack 200 immediately for `event_callback`s and do
+  // the channel auto-provision + workflow start asynchronously (self-contained
+  // error handling so there are no unhandled rejections).
+  fastify.post(
+    '/events',
+    {
+      config: { rawBody: true },
+    },
+    async (request, reply) => {
+      const body = (request.body ?? {}) as SlackEventCallback;
+
+      // Verify the Slack signature FIRST — including the url_verification
+      // handshake, which Slack signs. Authenticating every request (handshake
+      // included) prevents an unauthenticated caller from echoing challenges or
+      // probing the endpoint. The signing secret must be saved in the admin UI
+      // before completing Slack's Events URL verification.
+      const { signingSecret } = await resolveSlackConfig();
+      if (!signingSecret) {
+        return reply.status(503).send({
+          error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack signing secret not configured' },
+        });
+      }
+
+      const timestamp = request.headers['x-slack-request-timestamp'] as string | undefined;
+      const signature = request.headers['x-slack-signature'] as string | undefined;
+      const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+      if (
+        !timestamp ||
+        !signature ||
+        !rawBody ||
+        !verifySlackSignature(rawBody.toString(), timestamp, signature, signingSecret)
+      ) {
+        return reply.status(401).send({
+          error: { code: 'SLACK_AUTH_FAILED', message: 'Invalid Slack signature' },
+        });
+      }
+
+      // URL-verification handshake (app setup) — echo the challenge once the
+      // signature has passed.
+      if (body.type === 'url_verification') {
+        return reply.send({ challenge: body.challenge ?? '' });
+      }
+
+      if (body.type !== 'event_callback') {
+        // Other top-level types (e.g. app_rate_limited) — ack and ignore.
+        return reply.send({ ok: true });
+      }
+
+      // Slack redelivers events it thinks failed (no 2xx within 3s). We ack
+      // every retry but skip processing so the workflow starts exactly once
+      // (Phase 0 dedup — `x-slack-retry-num` is 1-based on the first retry).
+      if (request.headers['x-slack-retry-num'] !== undefined) {
+        return reply.send({ ok: true });
+      }
+
+      const event = body.event;
+      // Ignore self-authored + system messages (bot replies, edits, joins, …).
+      if (!event || event.bot_id || event.subtype) {
+        return reply.send({ ok: true });
+      }
+
+      const isMention = event.type === 'app_mention';
+      const isDm = event.type === 'message' && event.channel_type === 'im';
+      if (!isMention && !isDm) {
+        // Plain channel messages (ambient) are a later phase.
+        return reply.send({ ok: true });
+      }
+
+      // Ack within Slack's 3s window, THEN process out-of-band. The reply is
+      // posted by the worker, so the HTTP response carries no payload.
+      reply.send({ ok: true });
+
+      void processChannelEvent(fastify, body, event).catch((err) => {
+        request.log.error({ err }, 'slack channel-assistant event processing failed');
+      });
+      return reply;
+    }
+  );
 };
+
+// ── Slack Events API (channel assistant) ────────────────────────────────────
+
+interface SlackEventInner {
+  type?: string;
+  /** Present on `message.im` events; distinguishes DMs from channel messages. */
+  channel_type?: string;
+  /** Slack user id (`U…`) of the author. Absent on some system messages. */
+  user?: string;
+  /** Bot id when authored by a bot/app — used to ignore the bot's own posts. */
+  bot_id?: string;
+  /** Message subtype (edits, joins, …). Ignored to avoid system-message noise. */
+  subtype?: string;
+  /** Channel id (`C…` / `D…`). */
+  channel?: string;
+  /** Message text (with `<@U…>` mention tokens for app_mention). */
+  text?: string;
+  /** This message's timestamp. */
+  ts?: string;
+  /** Set when the message is already inside a thread. */
+  thread_ts?: string;
+  /** Workspace/team id on the event itself (not always present). */
+  team?: string;
+}
+
+interface SlackEventCallback {
+  type?: string;
+  /** url_verification handshake. */
+  challenge?: string;
+  /** Top-level workspace id for event_callback envelopes. */
+  team_id?: string;
+  event?: SlackEventInner;
+  authorizations?: Array<{ team_id?: string }>;
+}
+
+/** Strip Slack mention tokens (`<@U…>`, `<@U…|name>`) and collapse whitespace. */
+function stripMentions(text: string): string {
+  return text
+    .replace(/<@[A-Z0-9]+(\|[^>]*)?>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Auto-provision the channel and start the assistant workflow. Runs out-of-band
+ * after the 200 ack, so it owns its errors (logged by the caller's `.catch`).
+ */
+async function processChannelEvent(
+  fastify: FastifyInstance,
+  body: SlackEventCallback,
+  event: SlackEventInner
+): Promise<void> {
+  const slackChannelId = event.channel;
+  const eventTs = event.ts;
+  if (!slackChannelId || !eventTs) {
+    return;
+  }
+
+  const slackTeamId = event.team ?? body.team_id ?? body.authorizations?.[0]?.team_id;
+  if (!slackTeamId) {
+    fastify.log.warn({ event }, 'slack event missing workspace id — cannot provision channel');
+    return;
+  }
+
+  const userText = stripMentions(event.text ?? '');
+  const threadTs = event.thread_ts ?? eventTs;
+
+  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId);
+  if (!channelRow) {
+    return;
+  }
+
+  const input: ChannelAssistantTurnInput = {
+    channelId: channelRow.id,
+    orgId: channelRow.orgId,
+    slackChannelId,
+    teamId: channelRow.teamId,
+    threadTs,
+    userSlackId: event.user ?? '',
+    userText,
+  };
+
+  try {
+    await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${eventTs}`, input);
+  } catch (err) {
+    // The workflowId is deterministic (`chan-<id>-<ts>`) and started with
+    // REJECT_DUPLICATE, so a Slack redelivery of the same event after the first
+    // run closed is rejected here. That's the desired idempotent behaviour —
+    // swallow it as a no-op rather than surfacing it as an error.
+    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+      fastify.log.info(
+        { channelId: channelRow.id, eventTs },
+        'channel-assistant workflow already started for this event — skipping redelivery'
+      );
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Resolve (or create) the `SlackWorkspace` + `SlackChannel` rows for an incoming
+ * event. New workspaces/channels are mapped to the default team (and its org)
+ * resolved from the workflow defaults. Returns null when the default team is
+ * missing (deployment not seeded) — the caller logs and drops the turn.
+ */
+async function provisionChannel(
+  fastify: FastifyInstance,
+  slackTeamId: string,
+  slackChannelId: string
+): Promise<{ id: string; teamId: string; orgId: string } | null> {
+  const { defaultTeamSlug } = await resolveWorkflowDefaults();
+  const defaultTeam = await fastify.prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
+  if (!defaultTeam) {
+    fastify.log.error(
+      { defaultTeamSlug },
+      'default team not found — cannot auto-provision Slack channel (run `yarn db:seed`)'
+    );
+    return null;
+  }
+
+  // Prisma `upsert` is find-then-create (not atomic), so two concurrent
+  // first-mentions can both reach the create branch and one loses the race with
+  // a P2002 on the unique constraint. Catch it and re-fetch the now-existing row
+  // so a redelivered/concurrent first turn isn't dropped.
+  const workspace = await fastify.prisma.slackWorkspace
+    .upsert({
+      create: { orgId: defaultTeam.orgId, slackTeamId },
+      update: {},
+      where: { slackTeamId },
+    })
+    .catch(async (err) => {
+      if (isUniqueConstraintError(err)) {
+        return fastify.prisma.slackWorkspace.findUnique({ where: { slackTeamId } });
+      }
+      throw err;
+    });
+  if (!workspace) {
+    fastify.log.error({ slackTeamId }, 'failed to resolve Slack workspace after race');
+    return null;
+  }
+
+  const channelWhere = {
+    workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id },
+  };
+  const channel = await fastify.prisma.slackChannel
+    .upsert({
+      create: {
+        orgId: workspace.orgId,
+        slackChannelId,
+        teamId: defaultTeam.id,
+        workspaceId: workspace.id,
+      },
+      update: {},
+      where: channelWhere,
+    })
+    .catch(async (err) => {
+      if (isUniqueConstraintError(err)) {
+        return fastify.prisma.slackChannel.findUnique({ where: channelWhere });
+      }
+      throw err;
+    });
+  if (!channel) {
+    fastify.log.error({ slackChannelId }, 'failed to resolve Slack channel after race');
+    return null;
+  }
+
+  return { id: channel.id, orgId: channel.orgId, teamId: channel.teamId };
+}
 
 // ── HITL resolve button (block_actions, action_id `hitl_resolve[:…]`) ───────
 

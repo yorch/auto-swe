@@ -7,11 +7,14 @@ The `slack-app-manifest.json` next to this file is a [Slack app manifest](https:
 1. Visit https://api.slack.com/apps → **Create New App** → **From an app manifest**.
 2. Pick your workspace.
 3. Paste the contents of `docs/slack-app-manifest.json`.
-4. Replace the two `https://YOUR-GATEWAY-HOST/...` placeholders with your gateway's externally reachable host:
+4. Replace the `https://YOUR-GATEWAY-HOST/...` placeholders with your gateway's externally reachable host:
    - `slash_commands[0].url` → `/api/v1/auth/slack/commands`
    - `settings.interactivity.request_url` → `/api/v1/auth/slack/interactive`
+   - `settings.event_subscriptions.request_url` → `/api/v1/auth/slack/events`
    - `oauth_config.redirect_urls[0]` → `/api/v1/auth/slack/callback`
 5. **Create**, then **Install to Workspace** to grant the bot scopes.
+
+> **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step. Note: the handshake is signature-verified like every other event, so the **signing secret must be saved in the admin UI (`/admin/integrations → Slack`) before** you complete Slack's Events URL verification — otherwise the challenge is rejected with a 401/503.
 
 ## Endpoints the manifest assumes
 
@@ -21,12 +24,31 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 |---|---|
 | `POST /commands` | `/auto-swe` slash command (HMAC-verified via `SLACK_SIGNING_SECRET`) |
 | `POST /interactive` | Modal submissions (`/auto-swe run` workflow picker) |
+| `POST /events` | Slack Events API — the @mention teammate (HMAC-verified; acks within 3s, then starts the assistant workflow) |
 | `GET  /callback` | OAuth redirect target after the user clicks the install URL |
 | `GET  /connect` | Linkage flow surfaced in the unknown-Slack-user ephemeral hint |
 
+## @mention teammate (channel assistant)
+
+Once Event Subscriptions are enabled with the `app_mention` and `message.im` bot events, the bot becomes a conversational teammate:
+
+- **@mention it in a channel** (`@auto-swe how do I …`) → the gateway strips the mention, auto-provisions a `SlackChannel` row for that channel (mapped to the default team + its org), and starts a `ChannelAssistantWorkflow`. The worker generates the answer and posts it back **in-thread**.
+- **DM the bot** → same flow; DMs (`message.im`) are treated like a private thread.
+
+The gateway acks Slack within the 3-second window and starts the workflow out-of-band, so the HTTP response never waits on the LLM. Redelivered events (`x-slack-retry-num` header) are acked but skipped to avoid duplicate turns. The bot ignores its own messages and Slack system messages (anything with a `bot_id` or `subtype`). Ambient (non-mention) channel chatter is intentionally ignored in this phase.
+
+The first @mention in a channel auto-creates the channel mapping using the default team from `/admin/workflow → Default team slug` (and that team's owning organization). If the default team is missing, the turn is dropped and a warning is logged — run `yarn db:seed` or create the team first.
+
 ## Bot scopes
 
-`chat:write`, `chat:write.public`, `commands`, `users:read`, `users:read.email` — the minimum set needed for slash-command handling, channel posts, and resolving Slack users to platform users.
+`app_mentions:read`, `channels:history`, `chat:write`, `chat:write.public`, `commands`, `groups:history`, `im:history`, `users:read`, `users:read.email` — slash-command handling, channel posts, resolving Slack users to platform users, plus receiving @mentions (`app_mentions:read`) and DMs (`im:history`) for the conversational teammate.
+
+The bot now reads the current thread's recent messages via `conversations.replies` to provide full in-thread context on each turn. This requires two additional history scopes beyond the original `im:history`:
+
+- `channels:history` — read message history in public channels
+- `groups:history` — read message history in private channels
+
+> **Scope change requires reinstall.** Adding new OAuth scopes to a Slack app requires reinstalling the app to the workspace. After updating the manifest, go to **Settings → Install App** and click **Reinstall to Workspace** to grant the new scopes.
 
 ## After install
 

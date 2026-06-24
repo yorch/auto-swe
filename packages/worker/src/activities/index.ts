@@ -1,3 +1,16 @@
+// Channel assistant (Phase 3) — ambient digest
+export { runChannelAmbientDigest } from './channelAmbient.js';
+// Channel assistant (Phase 0) — channel-resident Slack assistant
+// Phase 4 adds live-progress (placeholder + chat.update) activities.
+export {
+  postChannelPlaceholder,
+  postChannelReply,
+  runChannelAssistantTurn,
+  updateChannelReply,
+} from './channelAssistant.js';
+// Channel assistant — lightweight WorkflowRun records for observability
+export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
+export { finalizeChannelRun, startChannelRun } from './channelRun.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,
@@ -54,6 +67,9 @@ export {
   runTypecheck,
   runVulnScan,
 } from './qualityGates.js';
+// Channel assistant — admin memory edit-with-reembed
+export type { ReembedMemoryInput } from './reembedMemory.js';
+export { reembedMemoryItemActivity } from './reembedMemory.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';

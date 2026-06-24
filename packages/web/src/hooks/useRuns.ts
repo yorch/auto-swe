@@ -69,7 +69,13 @@ export function useEvalResultsForRun(runId?: string) {
 }
 
 export function useAllWorkflowRuns(
-  filters: { status?: string; templateId?: string; limit?: number; offset?: number } = {}
+  filters: {
+    status?: string;
+    templateId?: string;
+    limit?: number;
+    offset?: number;
+    includeChannel?: boolean;
+  } = {}
 ) {
   const params = new URLSearchParams();
   if (filters.status) {
@@ -77,6 +83,9 @@ export function useAllWorkflowRuns(
   }
   if (filters.templateId) {
     params.set('templateId', filters.templateId);
+  }
+  if (filters.includeChannel) {
+    params.set('includeChannel', 'true');
   }
   params.set('limit', String(filters.limit ?? 50));
   params.set('offset', String(filters.offset ?? 0));

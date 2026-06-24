@@ -10,9 +10,11 @@ export type AuditEntityType =
   | 'EvalRubric'
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
+  | 'MemoryItem'
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'Skill'
+  | 'SlackChannel'
   | 'SlackConfig'
   | 'StorageConfig';
 

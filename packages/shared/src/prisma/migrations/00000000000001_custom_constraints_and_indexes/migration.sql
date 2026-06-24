@@ -61,6 +61,10 @@ CREATE UNIQUE INDEX "agents_key_version_team_uidx"
     ON "agents" ("key", "version", "team_id")
     WHERE "scope" = 'TEAM';
 
+CREATE UNIQUE INDEX "agents_key_version_channel_uidx"
+    ON "agents" ("key", "version", "channel_id")
+    WHERE "scope" = 'CHANNEL';
+
 CREATE UNIQUE INDEX "agents_key_version_template_uidx"
     ON "agents" ("key", "version", "workflow_template_id")
     WHERE "scope" = 'WORKFLOW_TEMPLATE';

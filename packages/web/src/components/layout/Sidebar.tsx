@@ -207,6 +207,12 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Lessons',
         roles: ['ADMIN'],
       },
+      {
+        href: '/admin/slack-channels',
+        icon: 'teams',
+        label: 'Slack Channels',
+        roles: ['ADMIN'],
+      },
       { href: '/docs', icon: 'docs', label: 'Docs', roles: ['ENGINEER', 'LEAD', 'ADMIN'] },
       {
         href: '/settings',

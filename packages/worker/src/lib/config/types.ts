@@ -23,6 +23,10 @@ export interface ResolveCtx {
   /// ORGANIZATION tier between TEAM and GLOBAL in every config cascade. The tier
   /// only fires when set, so GLOBAL/TEAM-only deployments behave unchanged.
   orgId?: string;
+  /// Channel assistant: the SlackChannel a channel-resident assistant is running in.
+  /// Inserts a CHANNEL tier between WORKFLOW_TEMPLATE and TEAM in the agent
+  /// cascade. Only fires when set, so non-Slack runs behave unchanged.
+  channelId?: string;
   workflowTemplateId?: string;
   /// P1/WS3 run-start Agent-version pins (`{ agentKey: version }`). When present
   /// for a key, `resolveAgent` resolves that exact Agent version instead of the
@@ -37,7 +41,7 @@ export interface ResolvedModelConfig {
   /** `<provider>/<model-id>` spec the agent should bind to. */
   spec: string;
   /** Which scope row supplied the spec — for OTel attribution. */
-  scope: 'WORKFLOW_TEMPLATE' | 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+  scope: 'WORKFLOW_TEMPLATE' | 'CHANNEL' | 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
   /** Plaintext API key from the resolved credential. */
   apiKey: string;
   /** Base URL override from the resolved credential. */

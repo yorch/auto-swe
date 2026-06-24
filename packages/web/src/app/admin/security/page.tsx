@@ -17,6 +17,7 @@ const TYPE_OPTIONS: Array<{ label: string; value: SecurityEventType | '' }> = [
   { label: 'Content Security Warn', value: 'CONTENT_SECURITY_WARN' },
   { label: 'Code Security', value: 'CODE_SECURITY' },
   { label: 'LLM Suspicious', value: 'LLM_SUSPICIOUS' },
+  { label: 'Channel Suspicious Input', value: 'CHANNEL_SUSPICIOUS' },
 ];
 
 function SummaryBar({ events }: { events: Array<{ eventType: SecurityEventType }> }) {

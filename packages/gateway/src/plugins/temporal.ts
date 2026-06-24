@@ -1,11 +1,19 @@
 import type {
+  ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
   EpicRequest,
   RepoWorkRequest,
   ScheduledConsolidationInput,
   ScheduledEvalInput,
 } from '@auto-swe/shared/types/workflow';
-import { Client, Connection, ScheduleClient, ScheduleOverlapPolicy } from '@temporalio/client';
+import {
+  Client,
+  Connection,
+  ScheduleClient,
+  type ScheduleOptionsAction,
+  ScheduleOverlapPolicy,
+  WorkflowIdReusePolicy,
+} from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 
@@ -15,6 +23,11 @@ export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
   return `auto-swe-scheduled-wr-${scheduleRowId}`;
+}
+
+/** Temporal Schedule ID for a SlackChannel's ambient-mode digest (channel assistant P3). */
+export function channelAmbientScheduleId(channelId: string): string {
+  return `auto-swe-channel-ambient-${channelId}`;
 }
 
 /**
@@ -37,6 +50,17 @@ export interface WorkRequestScheduleStatus {
   paused: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
+}
+
+export interface ChannelAmbientScheduleInput {
+  channelId: string;
+  cronExpression: string;
+}
+
+export interface ChannelAmbientScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
 }
 
 export interface ConsolidationScheduleConfig {
@@ -75,6 +99,11 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      startChannelAssistant: (
+        workflowId: string,
+        input: ChannelAssistantTurnInput
+      ) => Promise<void>;
+      startReembedMemory: (workflowId: string, memoryId: string) => Promise<void>;
       startEvalRunWorkflow: (
         workflowId: string,
         input: {
@@ -100,6 +129,9 @@ declare module 'fastify' {
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       getWorkRequestScheduleStatus: (scheduleRowId: string) => Promise<WorkRequestScheduleStatus>;
+      syncChannelAmbientSchedule: (input: ChannelAmbientScheduleInput) => Promise<void>;
+      deleteChannelAmbientSchedule: (channelId: string) => Promise<void>;
+      getChannelAmbientScheduleStatus: (channelId: string) => Promise<ChannelAmbientScheduleStatus>;
     };
   }
 }
@@ -155,10 +187,72 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     };
   }
 
+  /**
+   * Schedule action for a channel's ambient digest: starts the worker's
+   * ChannelAmbientWorkflow (by name) on each fire. The base `workflowId` is
+   * `channel-ambient-<channelId>`; Temporal appends the per-fire scheduled
+   * timestamp for uniqueness, so each fire gets its own WorkflowRun.
+   */
+  function makeChannelAmbientScheduleAction(input: ChannelAmbientScheduleInput) {
+    return {
+      args: [{ channelId: input.channelId }],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowId: `channel-ambient-${input.channelId}`,
+      workflowType: 'ChannelAmbientWorkflow',
+    };
+  }
+
+  /**
+   * Shared describe-or-create reconciliation for a single Temporal Schedule.
+   * If the schedule already exists, its cron + action (and, when `paused` is
+   * provided, its paused state — preserving the rest of `prev.state`) are
+   * updated in place; otherwise it is created with the SKIP overlap policy (a
+   * fire while the previous run is still in flight is dropped, not stacked).
+   * When `paused` is omitted, neither branch touches schedule state.
+   */
+  async function upsertSchedule(
+    scheduleId: string,
+    opts: { action: ScheduleOptionsAction; cronExpression: string; paused?: boolean }
+  ): Promise<void> {
+    const handle = schedules.getHandle(scheduleId);
+    try {
+      await handle.describe();
+      // Schedule exists — update it in place.
+      await handle.update((prev) => ({
+        ...prev,
+        action: opts.action,
+        spec: { cronExpressions: [opts.cronExpression] },
+        ...(opts.paused !== undefined ? { state: { ...prev.state, paused: opts.paused } } : {}),
+      }));
+    } catch {
+      // Schedule doesn't exist yet — create it.
+      await schedules.create({
+        action: opts.action,
+        policies: { overlap: ScheduleOverlapPolicy.SKIP },
+        scheduleId,
+        spec: { cronExpressions: [opts.cronExpression] },
+        ...(opts.paused !== undefined ? { state: { paused: opts.paused } } : {}),
+      });
+    }
+  }
+
   fastify.decorate('temporal', {
     async cancelWorkflow(workflowId: string): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.cancel();
+    },
+
+    // ── Channel ambient-mode digest schedules (one Temporal Schedule per
+    //    SlackChannel with ambientEnabled + ambientCron) ──
+
+    async deleteChannelAmbientSchedule(channelId: string): Promise<void> {
+      const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+      try {
+        await handle.delete();
+      } catch {
+        // Already gone (or never created) — deletion is idempotent.
+      }
     },
 
     // ── Recurring work-request schedules (one Temporal Schedule per
@@ -170,6 +264,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         await handle.delete();
       } catch {
         // Already gone (or never created) — deletion is idempotent.
+      }
+    },
+
+    async getChannelAmbientScheduleStatus(
+      channelId: string
+    ): Promise<ChannelAmbientScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        return {
+          exists: true,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, nextRunAt: null, paused: false };
       }
     },
 
@@ -231,6 +342,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       await handle.signal(signalName, ...args);
     },
 
+    async startChannelAssistant(
+      workflowId: string,
+      input: ChannelAssistantTurnInput
+    ): Promise<void> {
+      // REJECT_DUPLICATE makes the deterministic `chan-<id>-<ts>` workflowId
+      // idempotent: a re-delivered Slack event (same id) after the first run
+      // has closed is rejected with WorkflowExecutionAlreadyStartedError rather
+      // than silently starting a second run (duplicate reply + double cost).
+      // The caller treats that error as a benign no-op.
+      await client.workflow.start('ChannelAssistantWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+      });
+    },
+
     async startConsolidationWorkflow(
       workflowId: string,
       input: ConsolidateLessonsInput
@@ -269,6 +397,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    async startReembedMemory(workflowId: string, memoryId: string): Promise<void> {
+      // Re-embed one MemoryItem so its pgvector embedding catches up to edited
+      // text. Mirrors startChannelAssistant's start-by-name; the caller wraps
+      // this best-effort (a Temporal hiccup must not fail the synchronous edit).
+      await client.workflow.start('ReembedMemoryWorkflow', {
+        args: [{ memoryId }],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
+    },
+
     async startRunnableWorkflow(
       workflowId: string,
       input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -280,32 +419,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
+      await upsertSchedule(channelAmbientScheduleId(input.channelId), {
+        action: makeChannelAmbientScheduleAction(input),
+        cronExpression: input.cronExpression,
+      });
+    },
+
     async syncConsolidationSchedule(config: ConsolidationScheduleConfig): Promise<void> {
       const input: ScheduledConsolidationInput = {
         minClusterSize: config.minClusterSize,
         similarityThreshold: config.similarityThreshold,
       };
-      const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
-
-      try {
-        await handle.describe();
-        // Schedule exists — update it in place.
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeScheduleAction(input),
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { ...prev.state, paused: !config.enabled },
-        }));
-      } catch {
-        // Schedule doesn't exist yet — create it.
-        await schedules.create({
-          action: makeScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: CONSOLIDATION_SCHEDULE_ID,
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { paused: !config.enabled },
-        });
-      }
+      await upsertSchedule(CONSOLIDATION_SCHEDULE_ID, {
+        action: makeScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
     },
 
     // ── Eval regression schedule (one system-wide Temporal Schedule) ──
@@ -316,51 +446,19 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         candidateRef: config.candidateRef,
         datasetSlug: config.datasetSlug,
       };
-      const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
-      try {
-        await handle.describe();
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeEvalScheduleAction(input),
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { ...prev.state, paused: !config.enabled },
-        }));
-      } catch {
-        // SKIP overlap: a full benchmark can run for hours, so a fire while the
-        // previous run is still in flight is dropped rather than stacked.
-        await schedules.create({
-          action: makeEvalScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: EVAL_SCHEDULE_ID,
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { paused: !config.enabled },
-        });
-      }
+      await upsertSchedule(EVAL_SCHEDULE_ID, {
+        action: makeEvalScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
     },
 
     async syncWorkRequestSchedule(input: WorkRequestScheduleInput): Promise<void> {
-      const handle = schedules.getHandle(workRequestScheduleId(input.scheduleRowId));
-      try {
-        await handle.describe();
-        // Schedule exists — update it in place (cron, args, paused state).
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeWorkRequestScheduleAction(input),
-          spec: { cronExpressions: [input.cronExpression] },
-          state: { ...prev.state, paused: input.paused },
-        }));
-      } catch {
-        // Schedule doesn't exist yet — create it. SKIP overlap: if last
-        // week's run is still in flight, this week's fire is dropped rather
-        // than stacked (matches budget-cap intent).
-        await schedules.create({
-          action: makeWorkRequestScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: workRequestScheduleId(input.scheduleRowId),
-          spec: { cronExpressions: [input.cronExpression] },
-          state: { paused: input.paused },
-        });
-      }
+      await upsertSchedule(workRequestScheduleId(input.scheduleRowId), {
+        action: makeWorkRequestScheduleAction(input),
+        cronExpression: input.cronExpression,
+        paused: input.paused,
+      });
     },
 
     async triggerConsolidationNow(): Promise<void> {

@@ -12,7 +12,7 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 
 export type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
 
-export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
 
 /** Identifies one Agent lineage: a key at a scope. Versions live underneath. */
 export interface AgentScopeKey {
@@ -20,6 +20,7 @@ export interface AgentScopeKey {
   scope: AgentScope;
   teamId?: string | null;
   orgId?: string | null;
+  channelId?: string | null;
   workflowTemplateId?: string | null;
 }
 
@@ -45,6 +46,7 @@ export interface AgentBaseInput {
 
 function scopeWhere(key: AgentScopeKey) {
   return {
+    channelId: key.scope === 'CHANNEL' ? (key.channelId ?? null) : null,
     key: key.key,
     orgId: key.scope === 'ORGANIZATION' ? (key.orgId ?? null) : null,
     scope: key.scope,
@@ -66,8 +68,22 @@ async function maxVersion(prisma: PrismaClient, key: AgentScopeKey): Promise<num
 /** Validate that referenced scope rows (team / template) exist. */
 export async function validateAgentScopeRefs(
   prisma: PrismaClient,
-  args: { teamId?: string | null; orgId?: string | null; workflowTemplateId?: string | null }
+  args: {
+    teamId?: string | null;
+    orgId?: string | null;
+    channelId?: string | null;
+    workflowTemplateId?: string | null;
+  }
 ): Promise<string | null> {
+  if (args.channelId) {
+    const channel = await prisma.slackChannel.findUnique({
+      select: { id: true },
+      where: { id: args.channelId },
+    });
+    if (!channel) {
+      return 'Slack channel not found';
+    }
+  }
   if (args.teamId) {
     const team = await prisma.team.findUnique({ select: { id: true }, where: { id: args.teamId } });
     if (!team) {
@@ -130,6 +146,7 @@ export async function listAgents(
     scope?: AgentScope;
     teamId?: string;
     orgId?: string;
+    channelId?: string;
     workflowTemplateId?: string;
     latestOnly?: boolean;
   }
@@ -141,6 +158,7 @@ export async function listAgents(
       ...(filter.scope && { scope: filter.scope }),
       ...(filter.teamId && { teamId: filter.teamId }),
       ...(filter.orgId && { orgId: filter.orgId }),
+      ...(filter.channelId && { channelId: filter.channelId }),
       ...(filter.workflowTemplateId && { workflowTemplateId: filter.workflowTemplateId }),
     },
   });
@@ -151,7 +169,7 @@ export async function listAgents(
   const seen = new Set<string>();
   const latest: AgentRow[] = [];
   for (const r of rows) {
-    const lineage = `${r.key}:${r.scope}:${r.teamId ?? ''}:${r.orgId ?? ''}:${r.workflowTemplateId ?? ''}`;
+    const lineage = `${r.key}:${r.scope}:${r.teamId ?? ''}:${r.orgId ?? ''}:${r.channelId ?? ''}:${r.workflowTemplateId ?? ''}`;
     if (!seen.has(lineage)) {
       seen.add(lineage);
       latest.push(r);
@@ -177,6 +195,7 @@ export async function createAgent(
   const scan = base.systemPrompt ? await scanSkillContent(base.systemPrompt) : { warnings: [] };
   const agentBase = await prisma.agent.create({
     data: {
+      channelId: scopeWhere(key).channelId,
       createdById: actorId,
       credentialId: base.credentialId ?? null,
       description: base.description ?? null,
@@ -222,6 +241,7 @@ export async function updateAgent(
   actorId: string
 ): Promise<{ agent: AgentRow; scanWarnings: string[] }> {
   const key: AgentScopeKey = {
+    channelId: current.channelId,
     key: current.key,
     orgId: current.orgId,
     scope: current.scope as AgentScope,
@@ -252,6 +272,7 @@ export async function updateAgent(
 
   const agentBase = await prisma.agent.create({
     data: {
+      channelId: current.channelId,
       createdById: actorId,
       credentialId: pick(base.credentialId, current.credentialId),
       description: pick(base.description, current.description),

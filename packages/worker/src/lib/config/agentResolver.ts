@@ -34,10 +34,11 @@ function parseToolKeys(value: unknown): string[] | null {
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
 
 /**
- * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → TEAM →
+ * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → CHANNEL → TEAM →
  * ORGANIZATION → GLOBAL, highest `version` at the first scope that has a row.
- * Returns null when no Agent row exists for the key. The ORGANIZATION tier only
- * fires when `ctx.orgId` is present, so existing TEAM/GLOBAL behavior is intact.
+ * Returns null when no Agent row exists for the key. The CHANNEL tier only fires
+ * when `ctx.channelId` is set, and the ORGANIZATION tier only when `ctx.orgId` is
+ * present, so existing TEAM/GLOBAL behavior is intact.
  *
  * When the run carries a version pin for `key` (`ctx.agentVersions`), the exact
  * pinned version is resolved instead of the latest — freezing an in-flight run
@@ -65,6 +66,17 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
         workflowTemplateId: ctx.workflowTemplateId,
         ...versionClause,
       },
+    });
+    if (row) {
+      return row;
+    }
+  }
+
+  if (ctx?.channelId) {
+    const row = await prisma.agent.findFirst({
+      include,
+      orderBy,
+      where: { channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL', ...versionClause },
     });
     if (row) {
       return row;
@@ -166,7 +178,7 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // Version pin is part of the cache key so two runs pinned to different
   // versions of the same key+scope don't collide within the TTL.
   const pin = ctx?.agentVersions?.[key] ?? '';
-  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pin}`;
+  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pin}`;
   return withCache(cacheKey, configCacheTtlMs(), () => resolveAgentUncached(key, ctx));
 }
 

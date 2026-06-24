@@ -19,6 +19,17 @@ export interface RunAgentResult<T = unknown> {
   text?: string;
   /** Token usage as reported by the provider, if any. */
   usage?: Awaited<ReturnType<InstanceType<typeof Agent>['generate']>>['usage'];
+  /**
+   * Authoritative USD cost for this call, priced by `recordLlmUsage` against the
+   * agent KEY's configured model (the same number debited to the run-level
+   * ledger). `0` when the provider reported no usage. Callers should use this
+   * rather than re-pricing `usage` to stay consistent with the run ledger.
+   */
+  costUsd?: number;
+  /** Input tokens attributed by `recordLlmUsage` (0 when there was no usage). */
+  inputTokens?: number;
+  /** Output tokens attributed by `recordLlmUsage` (0 when there was no usage). */
+  outputTokens?: number;
 }
 
 /**
@@ -90,7 +101,14 @@ export async function runAgent<T = unknown>(
           role: spec.agentKey,
         });
 
-        return { object, text, usage: genResult.usage };
+        return {
+          costUsd: attribution.costUsd,
+          inputTokens: attribution.inputTokens,
+          object,
+          outputTokens: attribution.outputTokens,
+          text,
+          usage: genResult.usage,
+        };
       } catch (e) {
         tracer.addLlmResponse({
           durationMs: Date.now() - start,

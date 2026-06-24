@@ -9,7 +9,8 @@ export type SecurityEventType =
   | 'CONTENT_SECURITY_BLOCK'
   | 'CONTENT_SECURITY_WARN'
   | 'CODE_SECURITY'
-  | 'LLM_SUSPICIOUS';
+  | 'LLM_SUSPICIOUS'
+  | 'CHANNEL_SUSPICIOUS';
 
 // Maps each SecurityEventType to the Prisma predicate that identifies it.
 // Keeping this inline in the query ensures pagination is correct — the type
@@ -22,6 +23,7 @@ function activityEvent(toolName: string) {
 }
 
 const TYPE_PREDICATES: Record<SecurityEventType, object> = {
+  CHANNEL_SUSPICIOUS: activityEvent('channel.suspicious_input'),
   CODE_SECURITY: activityEvent('code_security.scan'),
   CONTENT_SECURITY_BLOCK: { error: { startsWith: 'blocked by content security' } },
   CONTENT_SECURITY_WARN: { error: 'content security warning' },
@@ -50,6 +52,9 @@ function classifyEvent(trace: {
   if (trace.type === 'activity_event' && trace.toolName === 'llm.suspicious_output') {
     return 'LLM_SUSPICIOUS';
   }
+  if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
+    return 'CHANNEL_SUSPICIOUS';
+  }
   // Remaining rows that passed the OR filter must be code_security.scan activity events
   return 'CODE_SECURITY';
 }
@@ -66,6 +71,7 @@ const ListQuery = z.object({
       'CONTENT_SECURITY_WARN',
       'CODE_SECURITY',
       'LLM_SUSPICIOUS',
+      'CHANNEL_SUSPICIOUS',
     ])
     .optional(),
 });

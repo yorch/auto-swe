@@ -24,10 +24,14 @@ import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 // every workflow during a Slack outage.
 const SLACK_POST_TIMEOUT_MS = 2_000;
 const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
+const SLACK_UPDATE_URL = 'https://slack.com/api/chat.update';
+const SLACK_REPLIES_URL = 'https://slack.com/api/conversations.replies';
 
 interface SlackChatPostMessageResponse {
   ok: boolean;
   error?: string;
+  /** Timestamp of the posted/updated message — used by the live-edit (chat.update) flow. */
+  ts?: string;
 }
 
 interface ResolvedChannel {
@@ -195,6 +199,212 @@ async function resolveSlackChannelByWorkRequest(
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
+}
+
+/**
+ * Channel assistant (Phase 0): post a plain text reply into a Slack thread. Unlike the
+ * best-effort notification surfaces above, this is the assistant's actual reply —
+ * a failure to deliver matters — so it resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
+ * or a `{ok:false}` response so the calling activity can retry / surface it.
+ */
+export async function postSlackThreadMessage(
+  slackChannelId: string,
+  threadTs: string,
+  text: string
+): Promise<void> {
+  await postChannelMessage('postSlackThreadMessage', slackChannelId, text, threadTs);
+}
+
+/**
+ * Channel assistant (Phase 4): post a threaded message and return its Slack timestamp
+ * (`ts`). Used by the channel-assistant "live progress" flow to drop a
+ * placeholder into the thread and later edit it in place via
+ * {@link updateSlackMessage}. Same token resolution + throw-on-failure
+ * semantics as {@link postSlackThreadMessage}.
+ */
+export async function postSlackThreadMessageReturningTs(
+  slackChannelId: string,
+  threadTs: string,
+  text: string
+): Promise<{ ts: string }> {
+  const { ts } = await postChannelMessage(
+    'postSlackThreadMessageReturningTs',
+    slackChannelId,
+    text,
+    threadTs
+  );
+  if (!ts) {
+    throw new Error('postSlackThreadMessageReturningTs: Slack returned no message ts');
+  }
+  return { ts };
+}
+
+/**
+ * Channel assistant (Phase 4): edit an already-posted message in place via Slack
+ * `chat.update`. Used to replace the channel-assistant placeholder with the
+ * final reply (or a friendly error). Resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing
+ * token or a `{ok:false}` response — same style as the other "real content"
+ * helpers — so the calling activity can retry / surface it.
+ */
+export async function updateSlackMessage(
+  slackChannelId: string,
+  ts: string,
+  text: string
+): Promise<void> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    throw new Error('updateSlackMessage: no Slack bot token configured');
+  }
+
+  // AbortController guards against a hung Slack connection holding up the activity.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(SLACK_UPDATE_URL, {
+      body: JSON.stringify({ channel: slackChannelId, text, ts }),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      throw new Error(`updateSlackMessage: chat.update failed: ${data.error ?? 'unknown'}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One message returned by {@link fetchThreadReplies} (oldest→newest). */
+export interface SlackThreadMessage {
+  /** Slack user id (`U…`) or bot id who posted, when present. */
+  user?: string;
+  /** The message text (may be empty for non-text messages). */
+  text: string;
+}
+
+interface SlackConversationsRepliesResponse {
+  ok: boolean;
+  error?: string;
+  messages?: Array<{ user?: string; bot_id?: string; text?: string }>;
+}
+
+/**
+ * Channel assistant (thread-history refinement): fetch the replies in a Slack thread via
+ * `conversations.replies`, oldest→newest, for use as conversational context in a
+ * channel-assistant turn. Resolves the bot token via {@link resolveSlackConfig}
+ * (never `process.env`) and uses the same AbortController-timeout pattern as the
+ * other helpers.
+ *
+ * BEST-EFFORT by design: returns `[]` on a missing token, a hung/aborted fetch,
+ * or any `{ok:false}` response (including `missing_scope` when the
+ * `channels:history`/`groups:history`/`im:history` scope hasn't been granted to
+ * the app yet). It NEVER throws — the caller degrades to a memory-only turn. The
+ * caller is responsible for any filtering/formatting; we return everything Slack
+ * gives us (including the bot's own past messages, which are valid context).
+ */
+export async function fetchThreadReplies(
+  channelId: string,
+  threadTs: string,
+  limit = 20
+): Promise<SlackThreadMessage[]> {
+  let token: string | null;
+  try {
+    ({ botToken: token } = await resolveSlackConfig());
+  } catch {
+    return [];
+  }
+  if (!token) {
+    return [];
+  }
+
+  const url = `${SLACK_REPLIES_URL}?channel=${encodeURIComponent(channelId)}&ts=${encodeURIComponent(threadTs)}&limit=${limit}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackConversationsRepliesResponse;
+    if (!data.ok || !Array.isArray(data.messages)) {
+      // eslint-disable-next-line no-console
+      console.warn(`fetchThreadReplies: conversations.replies failed: ${data.error ?? 'unknown'}`);
+      return [];
+    }
+    // `conversations.replies` already returns messages oldest→newest.
+    return data.messages.map((m) => ({ text: m.text ?? '', user: m.user ?? m.bot_id }));
+  } catch {
+    // Hung connection / abort / network error — degrade to no thread context.
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Channel assistant (Phase 3): post a plain top-level (un-threaded) message into a Slack
+ * channel. Used by the ambient digest, which posts proactively to the channel
+ * rather than into a thread. Like {@link postSlackThreadMessage}, this is real
+ * content (not a best-effort notification): it resolves the bot token via
+ * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
+ * or a `{ok:false}` response so the calling activity can surface it.
+ */
+export async function postSlackChannelMessage(slackChannelId: string, text: string): Promise<void> {
+  await postChannelMessage('postSlackChannelMessage', slackChannelId, text, undefined);
+}
+
+/**
+ * Shared base for the "real content" posts above. Resolves the bot token,
+ * posts to `chat.postMessage` (threaded when `threadTs` is set, top-level
+ * otherwise), and throws on a missing token or a `{ok:false}` response so the
+ * caller can retry / surface it. Returns the posted message timestamp (`ts`)
+ * for callers that need to edit it in place later (chat.update).
+ */
+async function postChannelMessage(
+  label: string,
+  slackChannelId: string,
+  text: string,
+  threadTs: string | undefined
+): Promise<{ ts: string | undefined }> {
+  const { botToken: token } = await resolveSlackConfig();
+  if (!token) {
+    throw new Error(`${label}: no Slack bot token configured`);
+  }
+
+  const body: Record<string, unknown> = { channel: slackChannelId, text };
+  if (threadTs) {
+    body.thread_ts = threadTs;
+  }
+
+  // AbortController guards against a hung Slack connection holding up the activity.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(SLACK_POST_URL, {
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      throw new Error(`${label}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+    }
+    return { ts: data.ts };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */
