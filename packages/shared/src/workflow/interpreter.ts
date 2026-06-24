@@ -282,6 +282,10 @@ async function walk(
           currentNodeId = await runMcpNode(recordingId, node, ctx, dispatcher, cancellationSink);
           break;
         }
+        case 'eval': {
+          currentNodeId = await runEvalNode(recordingId, node, ctx, dispatcher, cancellationSink);
+          break;
+        }
         case 'containerStep': {
           currentNodeId = await runContainerStep(
             recordingId,
@@ -418,6 +422,50 @@ async function runAgentNode(
         inputs,
         nodeId,
         step: 'runAgentNode',
+      }),
+    next: node.next,
+    nodeId,
+    onError: node.onError,
+    onFail: node.onFail,
+  });
+}
+
+async function runEvalNode(
+  nodeId: string,
+  node: import('./spec.js').EvalNode,
+  ctx: Context,
+  dispatcher: Dispatcher,
+  cancellationSink?: { token?: CancellationToken }
+): Promise<string | undefined> {
+  const inputs = resolveInputs(node.inputs, ctx);
+  // Pack the eval-node fields into the step config; the worker's `runEvalNode`
+  // executor runs each scorer (floor first, judge short-circuited on floor
+  // failure), records per-scorer EvalResult rows, and binds an aggregate at
+  // `nodes.<id>.output.score`. The target binding is resolved here (the activity
+  // has no context); dispatching through the same step path gives identical
+  // retry/onFail/recording semantics.
+  const config: Record<string, unknown> = {
+    scorers: node.scorers,
+    targetValue: resolveInputs({ target: node.target }, ctx).target,
+  };
+  if (node.judgeAdvisory !== undefined) {
+    config.judgeAdvisory = node.judgeAdvisory;
+  }
+  if (node.spanName !== undefined) {
+    config.spanName = node.spanName;
+  }
+  return runRetryable({
+    ctx,
+    dispatcher,
+    inputs,
+    invoke: () =>
+      dispatcher.dispatchStep({
+        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
+        config,
+        ctx,
+        inputs,
+        nodeId,
+        step: 'runEvalNode',
       }),
     next: node.next,
     nodeId,

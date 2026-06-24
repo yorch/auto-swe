@@ -50,6 +50,7 @@ const CATEGORY_RING: Record<SpecNode['type'], string> = {
   agent: 'border-l-indigo-400',
   cond: 'border-l-violet-400',
   containerStep: 'border-l-brick-400',
+  eval: 'border-l-moss-500',
   fanOut: 'border-l-moss-400',
   humanApproval: 'border-l-amber-500',
   humanDecision: 'border-l-amber-500',
@@ -67,6 +68,7 @@ const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
   agent: 'agent',
   cond: 'cond',
   containerStep: 'container ⚠',
+  eval: 'eval',
   fanOut: 'fan-out',
   humanApproval: 'approval',
   humanDecision: 'decision',
@@ -101,6 +103,7 @@ export function handleKindsFor(node: SpecNode): HandleKind[] {
     case 'step':
     case 'agent':
     case 'mcp':
+    case 'eval':
     case 'containerStep':
     case 'set':
     case 'shell':

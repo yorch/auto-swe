@@ -134,6 +134,42 @@ const McpNodeSchema = z.object({
   type: z.literal('mcp'),
 });
 
+/**
+ * Declarative `eval` node (P2; docs/evals-p2.md). Scores a target value already
+ * in the run context with a list of scorers and records the result. Floor
+ * scorers (`gate`/`assert`) run first and short-circuit the judge on failure
+ * (the combination model — RFC §2); soft scorers (`trajectory`/`judge`) are
+ * advisory. The worker's `runEvalNode` executor evaluates them and binds an
+ * aggregate at `nodes.<id>.output.score` for downstream `cond` branching.
+ */
+const EvalScorerSchema = z.discriminatedUnion('kind', [
+  z.object({ command: z.string().optional(), gate: z.string().min(1), kind: z.literal('gate') }),
+  z.object({ expr: z.string().min(1), kind: z.literal('assert') }),
+  z.object({ from: z.string().optional(), kind: z.literal('trajectory') }),
+  z.object({
+    baselineFrom: z.string().optional(),
+    kind: z.literal('judge'),
+    rubricRef: z.string().min(1),
+  }),
+]);
+
+const EvalNodeSchema = z.object({
+  heartbeatTimeout: z.string().optional(),
+  inputs: InputMapSchema.optional(),
+  /** When false, a calibrated judge axis may block the gate (RFC §9). Default: advisory. */
+  judgeAdvisory: z.boolean().optional(),
+  next: NodeIdSchema.optional(),
+  onError: OnErrorSchema.optional(),
+  onFail: OnFailSchema.optional(),
+  retry: RetryPolicySchema,
+  scorers: z.array(EvalScorerSchema).min(1),
+  spanName: z.string().optional(),
+  startToCloseTimeout: z.string().optional(),
+  /** Binding to the value being scored (e.g. a diff at `nodes.implement.output.diff`). */
+  target: BindingSchema,
+  type: z.literal('eval'),
+});
+
 const SetNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   type: z.literal('set'),
@@ -404,6 +440,7 @@ export const NodeSchema = z.discriminatedUnion('type', [
   StepNodeSchema,
   AgentNodeSchema,
   McpNodeSchema,
+  EvalNodeSchema,
   SetNodeSchema,
   CondNodeSchema,
   SignalNodeSchema,
@@ -420,6 +457,8 @@ export type Node = z.infer<typeof NodeSchema>;
 export type StepNode = z.infer<typeof StepNodeSchema>;
 export type AgentNode = z.infer<typeof AgentNodeSchema>;
 export type McpNode = z.infer<typeof McpNodeSchema>;
+export type EvalNode = z.infer<typeof EvalNodeSchema>;
+export type EvalScorer = z.infer<typeof EvalScorerSchema>;
 export type SetNode = z.infer<typeof SetNodeSchema>;
 export type CondNode = z.infer<typeof CondNodeSchema>;
 export type SignalNode = z.infer<typeof SignalNodeSchema>;

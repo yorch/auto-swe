@@ -182,6 +182,9 @@ export function nodeCategoryColor(node: Node): { fill: string; stroke: string; t
     case 'mcp':
       // Cyan/teal for the external MCP tool-call node.
       return { fill: '#cffafe', stroke: '#0e7490', text: '#164e63' };
+    case 'eval':
+      // Green for the eval/scoring node.
+      return { fill: '#dcfce7', stroke: '#15803d', text: '#14532d' };
     case 'set':
       return { fill: '#fef3c7', stroke: '#d97706', text: '#78350f' };
     case 'cond':
