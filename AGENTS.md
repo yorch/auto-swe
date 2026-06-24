@@ -30,6 +30,7 @@
 | `docs/github-app-setup.md`       | Living     | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
 | `docs/hitl-workflows.md`         | Living     | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
 | `docs/evals.md`                  | Current    | Evals RFC + roadmap: native output-quality measurement as an `eval` workflow node + DB-backed signals. P0 signal capture · P1 offline regression harness (frozen benchmark, paired error-barred stats) · P2 LLM judge + decision rule · P3 online drift dashboard + canary. Per-phase build plans in `docs/evals-p0.md`…`-p3.md` |
+| `docs/claude-tag.md`             | In progress | Claude-Tag-style Slack channel teammate: one shared `@Claude` per channel. Adds `SlackWorkspace`/`SlackChannel`/`ChannelMonthlyUsage` models + a `CHANNEL` config-scope tier (`WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL`). **Shipped:** foundation + Phase 0 (`@mention` → `ChannelAssistantWorkflow` → in-thread reply via `/api/v1/auth/slack/events`) + Phase 1 (per-channel agent/tool scoping, admin CRUD at `/admin/slack-channels`, soft budget caps). **Planned:** P2 channel-scoped team memory · P3 ambient mode · P4 multiplayer polish |
 
 **Historical** — preserved for design rationale; code is authoritative where they diverge:
 
