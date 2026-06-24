@@ -226,6 +226,18 @@ export interface ScheduledConsolidationInput {
   similarityThreshold: number;
 }
 
+/**
+ * Static input for the system-wide scheduled eval-regression workflow. Args are
+ * fixed per Temporal's schedule model — the dataset is referenced by slug (not
+ * id) so the schedule survives dataset re-seeding; the workflow resolves the
+ * slug → dataset and creates a fresh EvalRun row on each fire.
+ */
+export interface ScheduledEvalInput {
+  datasetSlug: string;
+  candidateRef: string;
+  baselineRef: string;
+}
+
 /** Per-repo outcome within a scheduled run. */
 export interface ScheduledConsolidationRepoResult {
   repoId: string;

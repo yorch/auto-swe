@@ -580,3 +580,89 @@ export interface ScheduledWorkRequestSummary {
   createdAt: string;
   updatedAt: string;
 }
+
+// ── Evaluations (P0: captured quality signals) ──
+
+export const EVAL_SIGNAL_SOURCES = [
+  'GATE',
+  'ASSERT',
+  'REVIEW',
+  'MERGE',
+  'JUDGE',
+  'TRAJECTORY',
+] as const;
+export type EvalSignalSourceValue = (typeof EVAL_SIGNAL_SOURCES)[number];
+
+export const EVAL_SCORE_TYPES = ['BOOLEAN', 'NUMERIC', 'CATEGORICAL'] as const;
+export type EvalScoreTypeValue = (typeof EVAL_SCORE_TYPES)[number];
+
+/** One captured eval signal (gate / review verdict / merge), normalized to 0..1. */
+export interface EvalResultDto {
+  id: string;
+  runId: string | null;
+  nodeId: string | null;
+  agentKey: string | null;
+  source: EvalSignalSourceValue;
+  scorer: string;
+  scoreType: EvalScoreTypeValue;
+  value: number;
+  passed: boolean | null;
+  rationale: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+// ── Eval datasets / cases / runs (P1) ──
+
+export const CONFIG_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
+export type ConfigScopeValue = (typeof CONFIG_SCOPES)[number];
+
+export interface EvalCaseDto {
+  id: string;
+  datasetId: string;
+  input: unknown;
+  repoUrl: string;
+  baselineSha: string;
+  goldenTest: string;
+  reference: unknown;
+  tags: string[];
+  flakeScreened: boolean;
+  flakeRuns: number;
+  createdAt: string;
+}
+
+export interface EvalDatasetSummary {
+  id: string;
+  slug: string;
+  scope: ConfigScopeValue;
+  name: string;
+  description: string | null;
+  caseCount: number;
+  createdAt: string;
+}
+
+export interface EvalDatasetDetail extends EvalDatasetSummary {
+  cases: EvalCaseDto[];
+}
+
+export interface EvalRunDto {
+  id: string;
+  datasetId: string;
+  candidateRef: string;
+  baselineRef: string;
+  status: string;
+  summary: unknown;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface EvalRubricDto {
+  id: string;
+  slug: string;
+  scope: ConfigScopeValue;
+  version: number;
+  promptText: string;
+  scale: string;
+  isBuiltIn: boolean;
+  createdAt: string;
+}

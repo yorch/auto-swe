@@ -3,6 +3,7 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { formatCost, formatDate, formatDuration } from '@/lib/utils';
+import { EvalSignalsPanel } from './EvalSignalsPanel';
 import { FailureCard } from './FailureCard';
 
 interface RunMetaRailProps {
@@ -113,6 +114,9 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
           </div>
         </>
       )}
+
+      {/* Eval signals (P0) */}
+      <EvalSignalsPanel runId={run.id} />
 
       {/* Failure card */}
       {failedStep && (

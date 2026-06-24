@@ -56,6 +56,8 @@ export type {
   Binding,
   CondNode,
   ContainerStepNode,
+  EvalNode,
+  EvalScorer,
   FanOutNode,
   HumanApprovalNode,
   HumanDecisionNode,

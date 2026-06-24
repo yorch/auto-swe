@@ -1,11 +1,16 @@
 import type { Prisma } from '@auto-swe/shared';
+import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+import {
+  projectEvalResult,
+  projectRunSummary,
+  RunListPaginationQuery,
+} from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
 const RunDetailQuery = z.object({
@@ -138,6 +143,33 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
       });
       return { data: { id: run.id, status: 'CANCELLED' } };
+    }
+  );
+
+  // ── Get captured eval signals for a run (P0 evals) ──
+  app.get(
+    '/:id/eval-results',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RunIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: { id: request.params.id, ...runVisibilityFilter(user) },
+      });
+      if (!run) {
+        return reply.status(404).send({
+          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
+        });
+      }
+      const rows = await fastify.prisma.evalResult.findMany({
+        orderBy: { createdAt: 'asc' },
+        where: { runId: run.id },
+      });
+      const data: EvalResultDto[] = rows.map(projectEvalResult);
+      return { data };
     }
   );
 

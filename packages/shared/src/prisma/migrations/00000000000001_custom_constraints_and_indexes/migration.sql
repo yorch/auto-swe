@@ -90,11 +90,11 @@ ALTER TABLE "google_oauth_config"
     ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "embedding_configs"
     ADD CONSTRAINT "embedding_configs_singleton_check" CHECK ("id" = 'default');
-ALTER TABLE "tracker_config"
-    ADD CONSTRAINT "tracker_config_singleton" CHECK ("id" = 'default');
-ALTER TABLE "tracker_config"
-    ADD CONSTRAINT "tracker_config_provider_check"
-    CHECK ("provider" IS NULL OR "provider" IN ('jira', 'linear', 'github'));
+-- NOTE: the original `tracker_config` singleton + provider CHECK constraints are
+-- intentionally not carried forward. The issue-tracker pivot dropped
+-- `tracker_config` and created `issue_tracker_config` (no such guards), so the
+-- consolidated baseline — regenerated from the current schema.prisma — has no
+-- `tracker_config` table to constrain.
 
 -- ── Seeds ────────────────────────────────────────────────────────────────────
 -- Default embedding config so the worker can resolve a spec before the admin

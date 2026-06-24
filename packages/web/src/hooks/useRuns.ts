@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  EvalResultDto,
   WorkflowDetail,
   WorkflowRunDetail,
   WorkflowRunSummary,
@@ -51,6 +52,19 @@ export function useWorkflowRun(id: string, includeTraces = true) {
       const data = q.state.data as WorkflowRunDetail | undefined;
       return data?.status === 'RUNNING' ? 3_000 : 30_000;
     },
+  });
+}
+
+/** P0 evals: captured quality signals (gate / review / merge) for a run. */
+export function useEvalResultsForRun(runId?: string) {
+  return useQuery({
+    enabled: !!runId,
+    queryFn: () =>
+      api
+        .get<{ data: EvalResultDto[] }>(`/api/v1/workflow-runs/${runId}/eval-results`)
+        .then((r) => r.data),
+    queryKey: ['eval-results', runId],
+    refetchInterval: 10_000,
   });
 }
 

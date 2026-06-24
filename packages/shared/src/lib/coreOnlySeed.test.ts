@@ -49,6 +49,10 @@ function makeMockPrisma() {
       create: vi.fn(async () => ({ id: 'ref-id' })),
       findFirst: vi.fn(async () => null),
     },
+    evalRubric: {
+      create: vi.fn(async () => ({ id: 'rubric-id' })),
+      findFirst: vi.fn(async () => null),
+    },
     scannerPattern: {
       upsert: vi.fn(
         async ({

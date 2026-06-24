@@ -20,6 +20,8 @@ export {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+export { runEvalHarnessActivity } from './evalHarness.js';
+export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
 export { getReposForConsolidation } from './getReposForConsolidation.js';
@@ -40,6 +42,7 @@ export {
   decomposePrd,
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
+export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
 // Phase 2 quality gates
 export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
 export {
@@ -53,6 +56,8 @@ export {
 } from './qualityGates.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
+export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';
+export { runEvalNode } from './runEvalNode.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
 // Phase 6 — user-authored shell steps
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';

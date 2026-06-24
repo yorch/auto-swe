@@ -75,24 +75,39 @@ enum HumanStepStatus {
   CANCELLED
 }
 
-model ActiveWorkflow {
-  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  temporalWorkflowId String         @unique @map("temporal_workflow_id")
-  parentWorkflowId   String?        @map("parent_workflow_id")
-  workRequestId      String?        @map("work_request_id") @db.Uuid
-  workRequest        RunInput?      @relation(fields: [workRequestId], references: [id])
-  repoId             String?        @map("repo_id") @db.Uuid
-  repository         Connection?    @relation(fields: [repoId], references: [id])
-  currentStatus      String         @map("current_status")
-  assignedBranch     String?        @map("assigned_branch")
-  budgetTier         String         @default("STANDARD") @map("budget_tier")
-  tokensInputUsed    Int            @default(0) @map("tokens_input_used")
-  tokensOutputUsed   Int            @default(0) @map("tokens_output_used")
-  costUsdAccrued     Float          @default(0) @map("cost_usd_accrued")
-  updatedAt          DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+enum EvalScoreType {
+  BOOLEAN
+  NUMERIC
+  CATEGORICAL
+}
 
-  pullRequests       PullRequest[]
-  memoryItems        MemoryItem[]
+enum EvalSignalSource {
+  GATE
+  ASSERT
+  REVIEW
+  MERGE
+  JUDGE
+  TRAJECTORY
+}
+
+model ActiveWorkflow {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  temporalWorkflowId String      @unique @map("temporal_workflow_id")
+  parentWorkflowId   String?     @map("parent_workflow_id")
+  workRequestId      String?     @map("work_request_id") @db.Uuid
+  workRequest        RunInput?   @relation(fields: [workRequestId], references: [id])
+  repoId             String?     @map("repo_id") @db.Uuid
+  repository         Connection? @relation(fields: [repoId], references: [id])
+  currentStatus      String      @map("current_status")
+  assignedBranch     String?     @map("assigned_branch")
+  budgetTier         String      @default("STANDARD") @map("budget_tier")
+  tokensInputUsed    Int         @default(0) @map("tokens_input_used")
+  tokensOutputUsed   Int         @default(0) @map("tokens_output_used")
+  costUsdAccrued     Float       @default(0) @map("cost_usd_accrued")
+  updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  pullRequests PullRequest[]
+  memoryItems  MemoryItem[]
 
   @@index([workRequestId])
   @@index([repoId, assignedBranch])
@@ -111,36 +126,36 @@ model ActiveWorkflow {
 /// the SWE memory flow and migrate further in later P3 slices (repoId →
 /// Connection); `metadata` is the generic tags bag.
 model MemoryItem {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  scope           String          @default("swe-lessons")
-  workflowId      String?         @map("workflow_id") @db.Uuid
-  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
-  repoId          String?         @map("repo_id") @db.Uuid
-  repository      Connection?     @relation(fields: [repoId], references: [id])
+  id             String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope          String                       @default("swe-lessons")
+  workflowId     String?                      @map("workflow_id") @db.Uuid
+  workflow       ActiveWorkflow?              @relation(fields: [workflowId], references: [id])
+  repoId         String?                      @map("repo_id") @db.Uuid
+  repository     Connection?                  @relation(fields: [repoId], references: [id])
   /// WorkflowRun that produced this lesson. Null on rows written before this
   /// column existed. Enables lineage queries: "which run created this lesson?"
-  workflowRunId   String?         @map("workflow_run_id") @db.Uuid
-  workflowRun     WorkflowRun?    @relation(fields: [workflowRunId], references: [id])
+  workflowRunId  String?                      @map("workflow_run_id") @db.Uuid
+  workflowRun    WorkflowRun?                 @relation(fields: [workflowRunId], references: [id])
   /// Agent key that produced this lesson (e.g. "commitToMemory").
-  agentKey        String?         @map("agent_key")
+  agentKey       String?                      @map("agent_key")
   /// `<provider>/<model>` spec the LLM summarizer used. Null on pre-tracking rows.
-  model           String?
+  model          String?
   /// USD cost of the LLM call that produced this lesson. Null on pre-tracking rows.
-  costUsd         Float?          @map("cost_usd")
-  rationale       String
-  lessonSummary   String          @map("lesson_summary")
-  embedding       Unsupported("vector(1536)")?
+  costUsd        Float?                       @map("cost_usd")
+  rationale      String
+  lessonSummary  String                       @map("lesson_summary")
+  embedding      Unsupported("vector(1536)")?
   /// `<provider>/<model>` spec the embedding was generated with. Null on rows
   /// written before tracking existed — those are assumed to share the space
   /// of whatever model was configured at the time (single-model deployments).
-  embeddingModel  String?         @map("embedding_model")
-  failureType     String?         @map("failure_type")
-  metadata        Json?
-  skillsActive    String[]        @default([]) @map("skills_active")
-  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  embeddingModel String?                      @map("embedding_model")
+  failureType    String?                      @map("failure_type")
+  metadata       Json?
+  skillsActive   String[]                     @default([]) @map("skills_active")
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz
   // Soft-delete: set when this item has been merged into a consolidated one.
   // Active items always have consolidatedAt = null.
-  consolidatedAt  DateTime?       @map("consolidated_at") @db.Timestamptz
+  consolidatedAt DateTime?                    @map("consolidated_at") @db.Timestamptz
 
   @@index([repoId, consolidatedAt])
   @@index([scope, consolidatedAt])
@@ -148,27 +163,27 @@ model MemoryItem {
 }
 
 model ContextSnapshot {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workRequestId    String       @unique @map("work_request_id") @db.Uuid
-  workRequest      RunInput     @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
-  rawTicketData    Json?        @map("raw_ticket_data")
-  rawDocumentation Json?        @map("raw_documentation")
-  successCriteria  String[]     @map("success_criteria")
-  capturedAt       DateTime     @default(now()) @map("captured_at") @db.Timestamptz
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workRequestId    String   @unique @map("work_request_id") @db.Uuid
+  workRequest      RunInput @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
+  rawTicketData    Json?    @map("raw_ticket_data")
+  rawDocumentation Json?    @map("raw_documentation")
+  successCriteria  String[] @map("success_criteria")
+  capturedAt       DateTime @default(now()) @map("captured_at") @db.Timestamptz
 
   @@map("context_snapshots")
 }
 
 model PullRequest {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workflowId      String?         @map("workflow_id") @db.Uuid
-  workflow        ActiveWorkflow? @relation(fields: [workflowId], references: [id])
-  repoId          String?         @map("repo_id") @db.Uuid
-  repository      Connection?     @relation(fields: [repoId], references: [id])
-  prNumber        Int?            @map("pr_number")
-  headSha         String          @map("head_sha")
-  status          String
-  ciStatus        String          @default("PENDING") @map("ci_status")
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId String?         @map("workflow_id") @db.Uuid
+  workflow   ActiveWorkflow? @relation(fields: [workflowId], references: [id])
+  repoId     String?         @map("repo_id") @db.Uuid
+  repository Connection?     @relation(fields: [repoId], references: [id])
+  prNumber   Int?            @map("pr_number")
+  headSha    String          @map("head_sha")
+  status     String
+  ciStatus   String          @default("PENDING") @map("ci_status")
 
   @@index([workflowId])
   @@index([repoId])
@@ -180,19 +195,19 @@ model PullRequest {
 /// hash is stored. `lastUsedAt` is updated best-effort on each successful
 /// auth so admins can prune stale tokens.
 model PersonalAccessToken {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String    @map("user_id") @db.Uuid
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
-  tokenHash   String    @unique @map("token_hash")
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique @map("token_hash")
   /// The first 12 chars of the plaintext token (`ats_` + 8 random chars).
   /// Non-secret — exists so the admin UI can disambiguate listed tokens
   /// without re-issuing them.
-  prefix      String
-  expiresAt   DateTime? @map("expires_at") @db.Timestamptz
-  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz
-  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  prefix     String
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([userId])
   @@map("personal_access_tokens")
@@ -206,41 +221,41 @@ model PersonalAccessToken {
 /// `git_repo` specifics (GitHub coords, default branch, gate commands) stay as
 /// typed columns for parity and migrate further in later slices.
 model Connection {
-  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                   String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Connection-type discriminator. Defaults to SWE's `'git_repo'`.
-  type             String           @default("git_repo")
+  type                 String  @default("git_repo")
   /// Generic typed config for non-`git_repo` types. SWE `git_repo` connections
   /// keep their specifics in the typed columns below; other types use this bag.
-  config           Json?
+  config               Json?
   /// Human label for non-`git_repo` connections (e.g. an `mcp` server name).
   /// git_repo connections identify by org/repo below and may leave this null.
-  name             String?
+  name                 String?
   /// git_repo identity — nullable so non-git connection types (e.g. `mcp`) need
   /// not supply them. Uniqueness is enforced by a partial unique index
   /// (`WHERE type = 'git_repo'`) in the custom-constraints migration.
-  organizationName String?          @map("organization_name")
-  repoName         String?          @map("repo_name")
-  defaultBranch    String           @default("main") @map("default_branch")
-  language         String?          @map("language")
-  description      String?          @map("description")
-  githubUrl        String?          @map("github_url")
-  githubApiUrl     String?          @map("github_api_url")
-  teamId           String           @map("team_id") @db.Uuid
-  team             Team             @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  executorImage    String?          @default("node:24-alpine") @map("executor_image")
-  isActive         Boolean          @default(true) @map("is_active")
-  consolidationEnabled Boolean      @default(true) @map("consolidation_enabled")
+  organizationName     String? @map("organization_name")
+  repoName             String? @map("repo_name")
+  defaultBranch        String  @default("main") @map("default_branch")
+  language             String? @map("language")
+  description          String? @map("description")
+  githubUrl            String? @map("github_url")
+  githubApiUrl         String? @map("github_api_url")
+  teamId               String  @map("team_id") @db.Uuid
+  team                 Team    @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  executorImage        String? @default("node:24-alpine") @map("executor_image")
+  isActive             Boolean @default(true) @map("is_active")
+  consolidationEnabled Boolean @default(true) @map("consolidation_enabled")
   /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:
   /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
   /// Resolution order: step config → this field → built-in defaults.
-  gateCommands     Json?            @map("gate_commands")
+  gateCommands         Json?   @map("gate_commands")
 
-  activeWorkflows  ActiveWorkflow[]
-  pullRequests     PullRequest[]
-  memoryItems      MemoryItem[]
-  runInputs        RunInput[]
+  activeWorkflows       ActiveWorkflow[]
+  pullRequests          PullRequest[]
+  memoryItems           MemoryItem[]
+  runInputs             RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
-  mcpAgents        Agent[]          @relation("AgentMcpConnection")
+  mcpAgents             Agent[]                @relation("AgentMcpConnection")
 
   @@map("connections")
 }
@@ -269,39 +284,39 @@ model Organization {
 }
 
 model Team {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String   @unique
-  slug        String   @unique
-  description String   @default("")
-  isActive    Boolean  @default(true) @map("is_active")
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String       @unique
+  slug                String       @unique
+  description         String       @default("")
+  isActive            Boolean      @default(true) @map("is_active")
   /// Owning Organization (P5). Required: a team always nests under one org.
-  orgId        String       @map("org_id") @db.Uuid
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId               String       @map("org_id") @db.Uuid
+  organization        Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
   /// Per-team additions to the phase-6 shell-step image allowlist. The built-in
   /// images (BUILTIN_SHELL_IMAGES in shared/workflow/shellImageAllowlist.ts) are
   /// always allowed; entries here grant additional `image:tag` strings.
   /// Managed by team admins via the gateway.
-  shellImageAllowlist String[] @default([]) @map("shell_image_allowlist")
-  egressAllowlist  String[]  @default([]) @map("egress_allowlist")
+  shellImageAllowlist String[]     @default([]) @map("shell_image_allowlist")
+  egressAllowlist     String[]     @default([]) @map("egress_allowlist")
   /// Phase-7 optional Slack channel ID (e.g. `C0123456`) for per-step failure
   /// notifications. When set + SLACK_BOT_TOKEN is configured, the worker posts
   /// a message on FAILED step records that aren't expected to retry. Null disables.
-  slackNotifyChannel String? @map("slack_notify_channel")
+  slackNotifyChannel  String?      @map("slack_notify_channel")
   /// Phase-8 opt-in for terminal-run notifications. When true and a notify
   /// channel is resolvable (originating channel on the WorkRequest, or
   /// `slackNotifyChannel`), the worker also posts on SUCCESS / final FAILED
   /// from `finalizeWorkflowRun`. Default false so existing teams don't get
   /// a sudden notification firehose.
-  slackNotifySuccess Boolean @default(false) @map("slack_notify_success")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  slackNotifySuccess  Boolean      @default(false) @map("slack_notify_success")
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships            TeamMembership[]
-  repositories           Connection[]
-  workflowTemplates      WorkflowTemplate[]
-  shellAudits            WorkflowShellAudit[]
-  providerCredentials    ProviderCredential[]
-  agents                 Agent[]
+  memberships         TeamMembership[]
+  repositories        Connection[]
+  workflowTemplates   WorkflowTemplate[]
+  shellAudits         WorkflowShellAudit[]
+  providerCredentials ProviderCredential[]
+  agents              Agent[]
 
   @@index([orgId])
   @@map("teams")
@@ -360,22 +375,22 @@ model OrgMonthlyUsage {
 }
 
 model User {
-  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email          String         @unique
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String   @unique
   /// Legacy bcrypt hash. Optional because OAuth-only / magic-link-only
   /// users have no password; better-auth stores its own credential hash
   /// in the `accounts` table.
-  passwordHash   String?        @map("password_hash")
+  passwordHash  String?  @map("password_hash")
   /// Better-auth canonical fields.
-  name           String?
-  emailVerified  Boolean        @default(false) @map("email_verified")
-  image          String?
-  slackId        String?        @unique @map("slack_id")
-  role           Role           @default(ENGINEER)
-  isActive       Boolean        @default(true) @map("is_active")
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  preferences    Json           @default("{}") @map("preferences")
+  name          String?
+  emailVerified Boolean  @default(false) @map("email_verified")
+  image         String?
+  slackId       String?  @unique @map("slack_id")
+  role          Role     @default(ENGINEER)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  preferences   Json     @default("{}") @map("preferences")
 
   memberships           TeamMembership[]
   orgMemberships        OrganizationMembership[]
@@ -394,22 +409,22 @@ model User {
 /// `providerId='credential'` holds the email+password account; OAuth rows
 /// carry the access/refresh/id tokens from the upstream provider.
 model Account {
-  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  accountId              String    @map("account_id")
-  providerId             String    @map("provider_id")
-  userId                 String    @map("user_id") @db.Uuid
-  accessToken            String?   @map("access_token")
-  refreshToken           String?   @map("refresh_token")
-  idToken                String?   @map("id_token")
-  accessTokenExpiresAt   DateTime? @map("access_token_expires_at") @db.Timestamptz
-  refreshTokenExpiresAt  DateTime? @map("refresh_token_expires_at") @db.Timestamptz
-  scope                  String?
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  userId                String    @map("user_id") @db.Uuid
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz
+  scope                 String?
   /// Better-auth's own credential hash (scrypt) for `providerId='credential'`.
-  password               String?
-  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([providerId, accountId])
   @@index([userId])
@@ -428,7 +443,7 @@ model Session {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
@@ -457,36 +472,36 @@ model Verification {
 /// the scalar FK (`workRequestId`) are intentionally kept stable across the
 /// rename so the public API shape doesn't churn.
 model RunInput {
-  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  externalTicketId   String           @map("external_ticket_id")
-  description        String           @default("")
-  requestPayload     String           @map("request_payload")
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  externalTicketId String      @map("external_ticket_id")
+  description      String      @default("")
+  requestPayload   String      @map("request_payload")
   /// Generic run-input payload (P3); validated against the template's
   /// `inputSchema`. Null on rows created before this column existed.
-  payload            Json?
+  payload          Json?
   /// Generic target Connection (P3). Null = not connection-scoped (or legacy
   /// rows where the linkage lives on requestPayload/ActiveWorkflow.repoId).
-  connectionId       String?          @map("connection_id") @db.Uuid
-  connection         Connection?      @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  slackMessageTs     String?          @map("slack_message_ts")
+  connectionId     String?     @map("connection_id") @db.Uuid
+  connection       Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  slackMessageTs   String?     @map("slack_message_ts")
   /// Channel that originated the request (paired with slackMessageTs to thread
   /// per-step failure notifications back to the source conversation). Populated
   /// when the work request was created via the Slack slash command.
-  slackChannelId     String?          @map("slack_channel_id")
-  isCrossRepo        Boolean          @default(false) @map("is_cross_repo")
+  slackChannelId   String?     @map("slack_channel_id")
+  isCrossRepo      Boolean     @default(false) @map("is_cross_repo")
   /// Optional template override; null → use team default. Snapshotted into
   /// WorkflowRun at start so live edits to templates don't affect in-flight runs.
-  templateId         String?          @map("template_id") @db.Uuid
-  templateVersion    Int?             @map("template_version")
+  templateId       String?     @map("template_id") @db.Uuid
+  templateVersion  Int?        @map("template_version")
   /// Who submitted the request (audit). Null for pre-existing rows and
   /// webhook-originated requests without a platform user.
-  requestedById      String?          @map("requested_by_id") @db.Uuid
-  requestedBy        User?            @relation(fields: [requestedById], references: [id], onDelete: SetNull)
-  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  requestedById    String?     @map("requested_by_id") @db.Uuid
+  requestedBy      User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
-  contextSnapshot    ContextSnapshot?
-  activeWorkflows    ActiveWorkflow[]
-  workflowRuns       WorkflowRun[]
+  contextSnapshot       ContextSnapshot?
+  activeWorkflows       ActiveWorkflow[]
+  workflowRuns          WorkflowRun[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
   @@map("run_inputs")
@@ -563,45 +578,189 @@ model WorkflowArtifact {
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
 /// start time, so live edits to the template do not affect this run.
 model WorkflowRun {
-  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workflowId      String             @unique @map("workflow_id")
-  templateId      String             @map("template_id") @db.Uuid
-  template        WorkflowTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  templateVersion Int                @map("template_version")
-  workRequestId   String?            @map("work_request_id") @db.Uuid
-  workRequest     RunInput?          @relation(fields: [workRequestId], references: [id])
-  specSnapshot    Json               @map("spec_snapshot")
-  contextSnapshot Json?              @map("context_snapshot")
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId        String            @unique @map("workflow_id")
+  templateId        String            @map("template_id") @db.Uuid
+  template          WorkflowTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion   Int               @map("template_version")
+  workRequestId     String?           @map("work_request_id") @db.Uuid
+  workRequest       RunInput?         @relation(fields: [workRequestId], references: [id])
+  specSnapshot      Json              @map("spec_snapshot")
+  contextSnapshot   Json?             @map("context_snapshot")
   /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`
   /// map of the active GLOBAL Agent versions when the run began. resolveAgent
   /// pins to these versions for the life of the run, so editing an Agent
   /// (cutting a new version) does not change an in-flight run. Null for runs
   /// created before this column existed (they resolve the latest version).
-  agentVersions   Json?              @map("agent_versions")
-  status          WorkflowRunStatus  @default(RUNNING)
-  startedAt       DateTime           @default(now()) @map("started_at") @db.Timestamptz
-  endedAt         DateTime?          @map("ended_at") @db.Timestamptz
+  agentVersions     Json?             @map("agent_versions")
+  status            WorkflowRunStatus @default(RUNNING)
+  startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
+  endedAt           DateTime?         @map("ended_at") @db.Timestamptz
   /// Phase-8 cost denormalization. Populated by `finalizeWorkflowRun` from
   /// `WorkRequest → ActiveWorkflow.costUsdAccrued` so analytics queries don't
   /// have to re-join through the work-request graph (also keeps numbers stable
   /// if `ActiveWorkflow.costUsdAccrued` is later re-shaped).
-  costUsdAccrued    Float              @default(0) @map("cost_usd_accrued")
+  costUsdAccrued    Float             @default(0) @map("cost_usd_accrued")
   /// Total input tokens consumed across all agent activities in this run.
   /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
-  tokensInputTotal  Int                @default(0) @map("tokens_input_total")
+  tokensInputTotal  Int               @default(0) @map("tokens_input_total")
   /// Total output tokens consumed across all agent activities in this run.
   /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
-  tokensOutputTotal Int                @default(0) @map("tokens_output_total")
+  tokensOutputTotal Int               @default(0) @map("tokens_output_total")
 
-  steps           WorkflowStep[]
-  artifacts       WorkflowArtifact[]
-  traces          AgentTrace[]
-  memoryItems     MemoryItem[]
-  humanSteps      WorkflowHumanStep[]
+  steps       WorkflowStep[]
+  artifacts   WorkflowArtifact[]
+  traces      AgentTrace[]
+  memoryItems MemoryItem[]
+  humanSteps  WorkflowHumanStep[]
+  evalResults EvalResult[]
 
   @@index([templateId])
   @@index([workRequestId])
   @@map("workflow_runs")
+}
+
+/// A single captured quality signal, normalized to a 0..1 score. P0 of the
+/// evals feature records the signals the system already computes — quality-gate
+/// pass/fail (GATE), review-network verdicts (REVIEW), and the human PR
+/// merge/reject (MERGE) — one row per scorer so axes stay decomposable for
+/// trend/regression queries. `caseId`/`judgeModel` are reserved for later
+/// phases (P1 datasets, P2 judge). Persisted best-effort — capture failures are
+/// swallowed so they never break the activity, workflow, or webhook that
+/// produced the signal. See docs/evals-p0.md.
+model EvalResult {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId      String?          @map("run_id") @db.Uuid
+  run        WorkflowRun?     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Temporal activity type / spec node that produced the signal, when known.
+  nodeId     String?          @map("node_id")
+  /// The EvalCase this row scored, for offline harness runs (P1). Null for
+  /// online/production capture rows (P0).
+  caseId     String?          @map("case_id") @db.Uuid
+  case       EvalCase?        @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  /// The harness run that produced this row (P1). Null for online rows.
+  evalRunId  String?          @map("eval_run_id") @db.Uuid
+  evalRun    EvalRun?         @relation(fields: [evalRunId], references: [id], onDelete: Cascade)
+  /// Agent identity that produced the scored output, when applicable.
+  agentKey   String?          @map("agent_key")
+  source     EvalSignalSource
+  /// Scorer identity, e.g. 'gate:runTests', 'review:SECURITY', 'merge'.
+  scorer     String
+  scoreType  EvalScoreType    @map("score_type")
+  /// Normalized score in [0,1] (0/1 for BOOLEAN).
+  value      Float
+  passed     Boolean?
+  rationale  String?
+  /// Reserved for the P2 judge scorer.
+  judgeModel String?          @map("judge_model")
+  costUsd    Float?           @map("cost_usd")
+  metadata   Json?
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId])
+  @@index([caseId])
+  @@index([evalRunId])
+  @@index([scorer, createdAt])
+  @@index([source, createdAt])
+  @@map("eval_results")
+}
+
+/// A frozen benchmark dataset of eval cases (P1). Scoped via the same cascade
+/// as Agent (WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL); resolution is
+/// done in code by scope match. See docs/evals-p1.md.
+model EvalDataset {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String
+  scope       ConfigScope @default(GLOBAL)
+  teamId      String?     @map("team_id") @db.Uuid
+  orgId       String?     @map("org_id") @db.Uuid
+  name        String
+  description String?
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  cases EvalCase[]
+  runs  EvalRun[]
+
+  @@index([scope, teamId])
+  @@index([slug])
+  @@map("eval_datasets")
+}
+
+/// One frozen benchmark case: a pinned fixture repo (`repoUrl` @ `baselineSha`)
+/// plus the in-scope golden test command. Deterministic by construction, so the
+/// "repos move under you" problem cannot arise (RFC §9). `flakeScreened` gates
+/// promotion (the reference must pass k× consistently).
+model EvalCase {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  datasetId     String      @map("dataset_id") @db.Uuid
+  dataset       EvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  /// The work-request / prompt payload the candidate agent runs on.
+  input         Json
+  /// Fixture repo (owned, pinned) and the exact commit to check out.
+  repoUrl       String      @map("repo_url")
+  baselineSha   String      @map("baseline_sha")
+  /// In-scope golden test command/set used as the execution floor.
+  goldenTest    String      @map("golden_test")
+  /// Optional golden diff / expected output.
+  reference     Json?
+  /// Stratification tags, e.g. 'repo:x', 'capability:y' (RFC §9 coverage).
+  tags          String[]    @default([])
+  /// Curation gate: true once the reference passes k× consistently.
+  flakeScreened Boolean     @default(false) @map("flake_screened")
+  flakeRuns     Int         @default(0) @map("flake_runs")
+  /// P3 re-validation: the reference stopped passing against current repo state
+  /// (the case went stale, not the agent's fault) — excluded from the gate.
+  quarantined   Boolean     @default(false)
+  /// Provenance when harvested from a real run (P3 historical tier).
+  sourceRunId   String?     @map("source_run_id") @db.Uuid
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  results EvalResult[]
+
+  @@index([datasetId])
+  @@map("eval_cases")
+}
+
+/// One harness run: a candidate agent/model/prompt scored against a baseline
+/// over a dataset, with the paired-stats verdict in `summary` (P1).
+model EvalRun {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  datasetId    String      @map("dataset_id") @db.Uuid
+  dataset      EvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  /// Agent/model/prompt ref under test, and the baseline it's compared against.
+  candidateRef String      @map("candidate_ref")
+  baselineRef  String      @map("baseline_ref")
+  /// RUNNING | SUCCESS | FAILED | REGRESSION.
+  status       String      @default("RUNNING")
+  /// Paired-stats verdict: { delta, se, ci95, n, byTag, regression }.
+  summary      Json?
+  startedAt    DateTime    @default(now()) @map("started_at") @db.Timestamptz
+  endedAt      DateTime?   @map("ended_at") @db.Timestamptz
+
+  results EvalResult[]
+
+  @@index([datasetId, startedAt])
+  @@map("eval_runs")
+}
+
+/// An admin-extensible judge rubric (P2). Versioned + scoped like ScannerPattern;
+/// the judge scorer binds the most-specific active version. Custom promptText is
+/// scanned for injection/exfiltration like Skill text. See docs/evals-p2.md.
+model EvalRubric {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug       String
+  scope      ConfigScope @default(GLOBAL)
+  teamId     String?     @map("team_id") @db.Uuid
+  orgId      String?     @map("org_id") @db.Uuid
+  version    Int         @default(1)
+  promptText String      @map("prompt_text")
+  /// Score scale descriptor, e.g. '0..1' or '1..5'.
+  scale      String      @default("0..1")
+  isBuiltIn  Boolean     @default(false) @map("is_built_in")
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([scope, slug])
+  @@map("eval_rubrics")
 }
 
 /// One tool call, LLM response, or activity event captured during an agent activity execution.
@@ -649,14 +808,14 @@ model AgentTrace {
 /// One node execution within a run. Recorded incrementally so the UI can show
 /// live progress and post-mortems can trace which nodes ran in what order.
 model WorkflowStep {
-  id        String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId     String              @map("run_id") @db.Uuid
-  run       WorkflowRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
-  nodeId    String              @map("node_id")
-  attempt   Int                 @default(1)
-  status    WorkflowStepStatus  @default(PENDING)
-  startedAt DateTime?           @map("started_at") @db.Timestamptz
-  endedAt   DateTime?           @map("ended_at") @db.Timestamptz
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId     String             @map("run_id") @db.Uuid
+  run       WorkflowRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId    String             @map("node_id")
+  attempt   Int                @default(1)
+  status    WorkflowStepStatus @default(PENDING)
+  startedAt DateTime?          @map("started_at") @db.Timestamptz
+  endedAt   DateTime?          @map("ended_at") @db.Timestamptz
   inputs    Json?
   outputs   Json?
   error     String?
@@ -671,30 +830,30 @@ model WorkflowStep {
 /// The run stays RUNNING (workflow paused at condition()) until a human responds
 /// via POST /api/v1/inbox/:id/respond or the step times out.
 model WorkflowHumanStep {
-  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId        String          @map("run_id") @db.Uuid
-  run          WorkflowRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
-  nodeId       String          @map("node_id")
-  signalName   String          @map("signal_name")
-  kind         HumanStepKind
-  title        String
-  description  String?
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId          String          @map("run_id") @db.Uuid
+  run            WorkflowRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId         String          @map("node_id")
+  signalName     String          @map("signal_name")
+  kind           HumanStepKind
+  title          String
+  description    String?
   /// Snapshot of relevant workflow context (e.g. the code diff, PR description).
-  context      Json?
+  context        Json?
   /// For DECISION: [{ label, value }] options the human can choose from.
-  options      Json?
+  options        Json?
   /// For INPUT: [{ key, label, type, required?, options? }] field definitions.
-  fields       Json?
-  status       HumanStepStatus @default(PENDING)
-  resolvedAt   DateTime?       @map("resolved_at") @db.Timestamptz
-  resolvedBy   String?         @map("resolved_by") @db.Uuid
-  resolvedByUser User?         @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  fields         Json?
+  status         HumanStepStatus @default(PENDING)
+  resolvedAt     DateTime?       @map("resolved_at") @db.Timestamptz
+  resolvedBy     String?         @map("resolved_by") @db.Uuid
+  resolvedByUser User?           @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
   /// The signal payload submitted by the human (action + optional value).
-  payload      Json?
-  requestedAt  DateTime        @default(now()) @map("requested_at") @db.Timestamptz
+  payload        Json?
+  requestedAt    DateTime        @default(now()) @map("requested_at") @db.Timestamptz
   /// Absolute deadline derived from the node's timeout duration. Null for steps
   /// created before this column was added (backwards-compatible).
-  timeoutAt    DateTime?       @map("timeout_at") @db.Timestamptz
+  timeoutAt      DateTime?       @map("timeout_at") @db.Timestamptz
 
   @@index([runId])
   @@index([status])
@@ -705,31 +864,31 @@ model WorkflowHumanStep {
 /// a new WorkflowTemplateVersion. Exactly one version may be marked active per
 /// template (enforced in application code).
 model WorkflowTemplate {
-  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  teamId            String?                   @map("team_id") @db.Uuid
-  team              Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?                @map("team_id") @db.Uuid
+  team              Team?                  @relation(fields: [teamId], references: [id], onDelete: SetNull)
   name              String
-  description       String                    @default("")
+  description       String                 @default("")
   /// P3: declarative input contract for run submission — a JSON-Schema-subset
   /// object (`{ type:'object', properties, required }`) the gateway validates
   /// the run-input payload against. Null = no declared schema (accept any
   /// payload). SWE's default template declares `{ ticketId, connectionId,
   /// description, budget }`.
-  inputSchema       Json?                     @map("input_schema")
+  inputSchema       Json?                  @map("input_schema")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
   origin            String?
-  status            WorkflowTemplateStatus    @default(DRAFT)
-  isDefault         Boolean                   @default(false) @map("is_default")
-  activeVersion     Int?                      @map("active_version")
+  status            WorkflowTemplateStatus @default(DRAFT)
+  isDefault         Boolean                @default(false) @map("is_default")
+  activeVersion     Int?                   @map("active_version")
   /// A/B experiment: percent of incoming work requests routed to `experimentVersion`
   /// instead of `activeVersion`. 0 or NULL disables the experiment.
-  experimentVersion Int?                      @map("experiment_version")
-  experimentSplit   Int?                      @map("experiment_split")
+  experimentVersion Int?                   @map("experiment_version")
+  experimentSplit   Int?                   @map("experiment_split")
   /// Random token used to trigger this template via the public webhook endpoint.
   /// Null = no webhook configured. Treated as a secret — only shown to LEADs/ADMINs.
-  webhookToken      String?                   @unique @map("webhook_token")
-  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  webhookToken      String?                @unique @map("webhook_token")
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   versions              WorkflowTemplateVersion[]
   workflowRuns          WorkflowRun[]
@@ -743,15 +902,15 @@ model WorkflowTemplate {
 /// Immutable snapshot of a template at version N. `spec` is validated against
 /// WorkflowSpecSchema on insert in the gateway.
 model WorkflowTemplateVersion {
-  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateId   String           @map("template_id") @db.Uuid
-  template     WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  version      Int
-  spec         Json
-  createdBy    String?          @map("created_by") @db.Uuid
-  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId String           @map("template_id") @db.Uuid
+  template   WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    Int
+  spec       Json
+  createdBy  String?          @map("created_by") @db.Uuid
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
-  shellAudits  WorkflowShellAudit[]
+  shellAudits WorkflowShellAudit[]
 
   @@unique([templateId, version])
   @@map("workflow_template_versions")
@@ -766,23 +925,23 @@ model WorkflowTemplateVersion {
 /// `lastFour` is the trailing four plaintext chars, stored for UI display
 /// only. `keyVersion` exists for future key-rotation support.
 model ProviderCredential {
-  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider        String
-  scope           ConfigScope
-  teamId          String?           @map("team_id") @db.Uuid
-  team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider         String
+  scope            ConfigScope
+  teamId           String?       @map("team_id") @db.Uuid
+  team             Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
-  orgId           String?           @map("org_id") @db.Uuid
-  organization    Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  apiBase         String?           @map("api_base")
-  apiKeyCiphertext Bytes            @map("api_key_ciphertext")
-  apiKeyNonce     Bytes             @map("api_key_nonce")
-  apiKeyAuthTag   Bytes             @map("api_key_auth_tag")
-  keyVersion      Int               @default(1) @map("key_version")
-  lastFour        String            @map("last_four")
-  createdById     String?           @map("created_by_id") @db.Uuid
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  orgId            String?       @map("org_id") @db.Uuid
+  organization     Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiBase          String?       @map("api_base")
+  apiKeyCiphertext Bytes         @map("api_key_ciphertext")
+  apiKeyNonce      Bytes         @map("api_key_nonce")
+  apiKeyAuthTag    Bytes         @map("api_key_auth_tag")
+  keyVersion       Int           @default(1) @map("key_version")
+  lastFour         String        @map("last_four")
+  createdById      String?       @map("created_by_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   embeddingConfigs EmbeddingConfig[]
   agents           Agent[]
@@ -921,11 +1080,11 @@ model StorageConfig {
   id      String @id @default("default")
   backend String @default("inline") // "inline" | "s3"
 
-  s3Bucket         String?  @map("s3_bucket")
-  s3Region         String?  @map("s3_region")
-  s3Endpoint       String?  @map("s3_endpoint")
-  s3Prefix         String?  @map("s3_prefix")
-  s3ForcePathStyle Boolean  @default(false) @map("s3_force_path_style")
+  s3Bucket         String? @map("s3_bucket")
+  s3Region         String? @map("s3_region")
+  s3Endpoint       String? @map("s3_endpoint")
+  s3Prefix         String? @map("s3_prefix")
+  s3ForcePathStyle Boolean @default(false) @map("s3_force_path_style")
 
   awsAccessKeyId String? @map("aws_access_key_id")
 
@@ -953,10 +1112,19 @@ model WorkflowDefaults {
 
   // Lesson consolidation schedule. The gateway reads these on startup and on
   // every admin save, then syncs the Temporal Schedule accordingly.
-  consolidationEnabled          Boolean @default(true) @map("consolidation_enabled")
-  consolidationCron             String  @default("0 3 * * 0") @map("consolidation_cron")
-  consolidationMinClusterSize   Int     @default(3) @map("consolidation_min_cluster_size")
-  consolidationSimilarityThreshold Float @default(0.85) @map("consolidation_similarity_threshold")
+  consolidationEnabled             Boolean @default(true) @map("consolidation_enabled")
+  consolidationCron                String  @default("0 3 * * 0") @map("consolidation_cron")
+  consolidationMinClusterSize      Int     @default(3) @map("consolidation_min_cluster_size")
+  consolidationSimilarityThreshold Float   @default(0.85) @map("consolidation_similarity_threshold")
+
+  // Nightly eval-regression schedule. Synced to a Temporal Schedule the same way
+  // as consolidation. Disabled by default — it needs a seeded benchmark dataset
+  // and a worker that can reach Docker + the model provider.
+  evalScheduleEnabled     Boolean @default(false) @map("eval_schedule_enabled")
+  evalScheduleCron        String  @default("0 7 * * *") @map("eval_schedule_cron")
+  evalScheduleDatasetSlug String  @default("swe-implementer-golden") @map("eval_schedule_dataset_slug")
+  evalScheduleCandidateRef String @default("main") @map("eval_schedule_candidate_ref")
+  evalScheduleBaselineRef  String @default("last-release") @map("eval_schedule_baseline_ref")
 
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -997,12 +1165,12 @@ model IssueTrackerConfig {
 
   // Reliability
   timeoutMs  Int? @default(5000) @map("timeout_ms")
-  maxRetries Int? @default(3)    @map("max_retries")
+  maxRetries Int? @default(3) @map("max_retries")
 
   // Jira field mapping (enterprise customization)
   storyPointsFieldId String? @default("story_points") @map("story_points_field_id")
-  epicIssueType      String? @default("Epic")         @map("epic_issue_type")
-  storyIssueType     String? @default("Story")        @map("story_issue_type")
+  epicIssueType      String? @default("Epic") @map("epic_issue_type")
+  storyIssueType     String? @default("Story") @map("story_issue_type")
   defaultProjectKey  String? @map("default_project_key")
 
   // Inbound webhooks (secret stored with same AES-256-GCM envelope as other secrets)
@@ -1048,14 +1216,14 @@ model KnowledgeBaseConfig {
 /// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
 /// recorded). Written from the gateway routes that mutate these rows.
 model ConfigAuditLog {
-  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  entityType  String            @map("entity_type")
-  entityId    String            @map("entity_id") @db.Uuid
-  action      ConfigAuditAction
-  actorId     String?           @map("actor_id") @db.Uuid
-  beforeJson  Json?             @map("before_json")
-  afterJson   Json?             @map("after_json")
-  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType String            @map("entity_type")
+  entityId   String            @map("entity_id") @db.Uuid
+  action     ConfigAuditAction
+  actorId    String?           @map("actor_id") @db.Uuid
+  beforeJson Json?             @map("before_json")
+  afterJson  Json?             @map("after_json")
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([entityType, entityId])
   @@index([actorId])
@@ -1067,17 +1235,17 @@ model ConfigAuditLog {
 /// scope via AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
 /// Tool access control is handled separately via AgentToolConfig.
 model Skill {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   description String?
-  promptText  String    @map("prompt_text")
+  promptText  String   @map("prompt_text")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
   origin      String?
-  isBuiltIn   Boolean   @default(false) @map("is_built_in")
-  isVerified  Boolean   @default(false) @map("is_verified")
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  isBuiltIn   Boolean  @default(false) @map("is_built_in")
+  isVerified  Boolean  @default(false) @map("is_verified")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   agentSkillRefs AgentSkillRef[]
 
@@ -1120,41 +1288,41 @@ model ScannerPattern {
 /// bumped on base edits; the active row is the highest `version` with
 /// `isActive` at a scope, and runs snapshot the resolved version (P1 WS3).
 model Agent {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key                String
   scope              ConfigScope
-  teamId             String?             @map("team_id") @db.Uuid
+  teamId             String?     @map("team_id") @db.Uuid
   /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
-  orgId              String?             @map("org_id") @db.Uuid
-  workflowTemplateId String?             @map("workflow_template_id") @db.Uuid
-  version            Int                 @default(1)
+  orgId              String?     @map("org_id") @db.Uuid
+  workflowTemplateId String?     @map("workflow_template_id") @db.Uuid
+  version            Int         @default(1)
   name               String
   description        String?
   // Optional overrides — null means "inherit from the legacy config cascade".
-  modelSpec          String?             @map("model_spec")
-  systemPrompt       String?             @map("system_prompt")
+  modelSpec          String?     @map("model_spec")
+  systemPrompt       String?     @map("system_prompt")
   // When set and `modelSpec` is null, resolve the model from this parent agent
   // key instead of this key's own ModelRoleConfig. Lets sub-reviewer personas
   // (e.g. securityReviewer → reviewer, decomposer → planner) inherit a model
   // without their own ModelRoleConfig row. Replaces the implicit SkillOnlyRole
   // inheritance (P1/WS2).
-  inheritsModelFrom  String?             @map("inherits_model_from")
-  credentialId       String?             @map("credential_id") @db.Uuid
+  inheritsModelFrom  String?     @map("inherits_model_from")
+  credentialId       String?     @map("credential_id") @db.Uuid
   // P2/WS3: when set AND `toolKeys` includes 'mcp', the run binds the tools
   // from this `mcp`-type Connection (config.url) onto the agent. SetNull so
   // deleting the connection degrades the agent to its non-MCP tools.
-  mcpConnectionId    String?             @map("mcp_connection_id") @db.Uuid
+  mcpConnectionId    String?     @map("mcp_connection_id") @db.Uuid
   // Nullable JSON array of tool keys. null = no tool override (all workspace
   // tools); [] = explicitly no tools; [...] = exactly these (may include 'mcp').
-  toolKeys           Json?               @map("tool_keys")
+  toolKeys           Json?       @map("tool_keys")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content.
   origin             String?
-  isBuiltIn          Boolean             @default(false) @map("is_built_in")
-  isVerified         Boolean             @default(false) @map("is_verified")
-  isActive           Boolean             @default(true) @map("is_active")
-  createdById        String?             @map("created_by_id") @db.Uuid
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  isBuiltIn          Boolean     @default(false) @map("is_built_in")
+  isVerified         Boolean     @default(false) @map("is_verified")
+  isActive           Boolean     @default(true) @map("is_active")
+  createdById        String?     @map("created_by_id") @db.Uuid
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
   organization     Organization?       @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -1190,18 +1358,18 @@ model AgentSkillRef {
 /// version. Lets a team admin reconstruct who introduced what command in which
 /// version, and supports the editor's "danger zone" diff preview.
 model WorkflowShellAudit {
-  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateVersionId String                  @map("template_version_id") @db.Uuid
-  templateVersion   WorkflowTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
-  teamId            String?                 @map("team_id") @db.Uuid
-  team              Team?                   @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  nodeId            String                  @map("node_id")
-  image             String
-  command           String
-  network           String                  @default("none")
-  egressAllowlistSnapshot  String[]  @default([]) @map("egress_allowlist_snapshot")
-  authorUserId      String?                 @map("author_user_id") @db.Uuid
-  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateVersionId       String                  @map("template_version_id") @db.Uuid
+  templateVersion         WorkflowTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+  teamId                  String?                 @map("team_id") @db.Uuid
+  team                    Team?                   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  nodeId                  String                  @map("node_id")
+  image                   String
+  command                 String
+  network                 String                  @default("none")
+  egressAllowlistSnapshot String[]                @default([]) @map("egress_allowlist_snapshot")
+  authorUserId            String?                 @map("author_user_id") @db.Uuid
+  createdAt               DateTime                @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([templateVersionId])
   @@index([teamId])

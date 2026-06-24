@@ -34,7 +34,15 @@ export async function createWorkspace(
   authedRepoUrl: string,
   branch: string,
   defaultBranch: string,
-  image: string = 'node:24-alpine'
+  image: string = 'node:24-alpine',
+  /**
+   * Optional commit SHA to pin the workspace to (P1 frozen-benchmark fixtures —
+   * docs/evals-p1.md). When set, the repo is cloned with full history and the
+   * working branch is cut from that exact commit, so a fixture is deterministic
+   * by construction regardless of where `defaultBranch` has moved. When unset,
+   * the cheap shallow clone at `defaultBranch` HEAD is used (the normal path).
+   */
+  checkoutSha?: string
 ): Promise<Workspace> {
   if (!DOCKER_IMAGE_REF_RE.test(image)) {
     throw new Error(`Invalid Docker image name: ${image}`);
@@ -70,11 +78,21 @@ export async function createWorkspace(
     await rootExec("git config --global user.name 'auto-swe'");
     await rootExec("git config --global user.email 'auto-swe@localhost'");
 
-    // Clone repo — shell-quote branch names to prevent injection
-    await rootExec(
-      `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
-    );
-    await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
+    // Clone repo — shell-quote branch names to prevent injection. With a pinned
+    // SHA we need full history (a shallow clone at HEAD may not contain an older
+    // commit), then cut the working branch from that exact commit. Without one,
+    // the cheap shallow clone at defaultBranch HEAD is used.
+    if (checkoutSha) {
+      await rootExec(`git clone ${shellQuote(authedRepoUrl)} /workspace/target-repo`);
+      await rootExec(
+        `cd /workspace/target-repo && git checkout -b ${shellQuote(branch)} ${shellQuote(checkoutSha)}`
+      );
+    } else {
+      await rootExec(
+        `git clone --depth=50 -b ${shellQuote(defaultBranch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
+      );
+      await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
+    }
   } catch (err) {
     try {
       await execShellAsync(`docker rm -f ${containerName}`);

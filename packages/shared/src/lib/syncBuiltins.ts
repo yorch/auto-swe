@@ -58,6 +58,47 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma);
+  await syncEvalRubrics(prisma);
+}
+
+/** The built-in code-review-quality judge rubric (evals P2). Idempotent. */
+const BUILTIN_RUBRICS: ReadonlyArray<{ slug: string; promptText: string; scale: string }> = [
+  {
+    promptText: [
+      'Grade the candidate diff on these axes (each contributes to the overall score):',
+      '- Correctness of intent: does it solve the stated ticket? (the hidden tests are the tiebreaker)',
+      '- Scope: a minimal change, or did it touch unrelated code?',
+      '- Readability: would a senior engineer approve this in review?',
+      '- Safety: any injected risk, secrets, or unsafe shell/file operations?',
+      'Return { "score": 0..1, "rationale": string } where score is the overall quality.',
+    ].join('\n'),
+    scale: '0..1',
+    slug: 'code-review-quality',
+  },
+];
+
+async function syncEvalRubrics(prisma: PrismaClient): Promise<void> {
+  for (const r of BUILTIN_RUBRICS) {
+    const existing = await prisma.evalRubric.findFirst({
+      where: { isBuiltIn: true, scope: 'GLOBAL', slug: r.slug },
+    });
+    if (existing) {
+      await prisma.evalRubric.update({
+        data: { promptText: r.promptText, scale: r.scale },
+        where: { id: existing.id },
+      });
+    } else {
+      await prisma.evalRubric.create({
+        data: {
+          isBuiltIn: true,
+          promptText: r.promptText,
+          scale: r.scale,
+          scope: 'GLOBAL',
+          slug: r.slug,
+        },
+      });
+    }
+  }
 }
 
 /**
@@ -127,6 +168,19 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Memory Committer',
     systemPrompt: MEMORY_SUMMARIZER_PROMPT,
+  },
+  {
+    // Evals P2 (RFC §9): the judge model MUST differ from the implementer's
+    // (self-preference bias), so this is seeded with a cheaper, distinct model.
+    // Not in MODEL_BACKED_AGENT_KEYS, so it doesn't gate worker boot; the rubric
+    // is injected per-call as the system prompt (this base is a fallback).
+    description: 'LLM-as-judge for eval rubric scoring (model differs from implementer).',
+    key: 'evalJudge',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    name: 'Eval Judge',
+    systemPrompt:
+      'You are an impartial code-review judge. Score the candidate output against the ' +
+      'provided rubric and return the requested JSON. Be calibrated and concise.',
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',

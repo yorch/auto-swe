@@ -6,6 +6,7 @@
  * the same list-pagination querystring. Keep the projection here so the
  * wire shape stays in lockstep.
  */
+import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { z } from 'zod';
 
 export const RunListPaginationQuery = z.object({
@@ -40,5 +41,37 @@ export function projectRunSummary(r: RunWithWorkRequest) {
     templateVersion: r.templateVersion,
     workflowId: r.workflowId,
     workRequest: r.workRequest,
+  };
+}
+
+/** Shared projection: a captured eval signal row → its wire DTO. Used by both
+ *  the per-run endpoint (workflowRuns) and the admin results query (evals). */
+export function projectEvalResult(r: {
+  id: string;
+  runId: string | null;
+  nodeId: string | null;
+  agentKey: string | null;
+  source: EvalResultDto['source'];
+  scorer: string;
+  scoreType: EvalResultDto['scoreType'];
+  value: number;
+  passed: boolean | null;
+  rationale: string | null;
+  metadata: unknown;
+  createdAt: Date;
+}): EvalResultDto {
+  return {
+    agentKey: r.agentKey,
+    createdAt: r.createdAt.toISOString(),
+    id: r.id,
+    metadata: r.metadata,
+    nodeId: r.nodeId,
+    passed: r.passed,
+    rationale: r.rationale,
+    runId: r.runId,
+    scorer: r.scorer,
+    scoreType: r.scoreType,
+    source: r.source,
+    value: r.value,
   };
 }

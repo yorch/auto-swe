@@ -3,12 +3,14 @@ import type {
   EpicRequest,
   RepoWorkRequest,
   ScheduledConsolidationInput,
+  ScheduledEvalInput,
 } from '@auto-swe/shared/types/workflow';
 import { Client, Connection, ScheduleClient, ScheduleOverlapPolicy } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 
 export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
+export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -50,6 +52,21 @@ export interface ConsolidationScheduleStatus {
   nextRunAt: string | null;
 }
 
+export interface EvalScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+  datasetSlug: string;
+  candidateRef: string;
+  baselineRef: string;
+}
+
+export interface EvalScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -58,6 +75,15 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      startEvalRunWorkflow: (
+        workflowId: string,
+        input: {
+          evalRunId: string;
+          datasetId: string;
+          candidateRef: string;
+          baselineRef: string;
+        }
+      ) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -67,6 +93,9 @@ declare module 'fastify' {
       syncConsolidationSchedule: (config: ConsolidationScheduleConfig) => Promise<void>;
       getConsolidationScheduleStatus: () => Promise<ConsolidationScheduleStatus>;
       triggerConsolidationNow: () => Promise<void>;
+      syncEvalSchedule: (config: EvalScheduleConfig) => Promise<void>;
+      getEvalScheduleStatus: () => Promise<EvalScheduleStatus>;
+      triggerEvalNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
@@ -88,6 +117,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledConsolidationWorkflow',
+    };
+  }
+
+  // Eval-regression schedule action: starts ScheduledEvalWorkflow, which
+  // resolves the dataset slug and creates a fresh EvalRun row on each fire.
+  function makeEvalScheduleAction(input: ScheduledEvalInput) {
+    return {
+      args: [input],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledEvalWorkflow',
     };
   }
 
@@ -148,6 +188,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    async getEvalScheduleStatus(): Promise<EvalScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        const lastAction = desc.info.recentActions.at(-1);
+        return {
+          exists: true,
+          lastRunAt: lastAction ? lastAction.takenAt.toISOString() : null,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+      }
+    },
+
     async getWorkRequestScheduleStatus(scheduleRowId: string): Promise<WorkRequestScheduleStatus> {
       try {
         const handle = schedules.getHandle(workRequestScheduleId(scheduleRowId));
@@ -195,6 +252,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    async startEvalRunWorkflow(
+      workflowId: string,
+      input: {
+        evalRunId: string;
+        datasetId: string;
+        candidateRef: string;
+        baselineRef: string;
+      }
+    ): Promise<void> {
+      await client.workflow.start('EvalRunWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '5h',
+        workflowId,
+      });
+    },
+
     async startRunnableWorkflow(
       workflowId: string,
       input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -234,6 +308,36 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    // ── Eval regression schedule (one system-wide Temporal Schedule) ──
+
+    async syncEvalSchedule(config: EvalScheduleConfig): Promise<void> {
+      const input: ScheduledEvalInput = {
+        baselineRef: config.baselineRef,
+        candidateRef: config.candidateRef,
+        datasetSlug: config.datasetSlug,
+      };
+      const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+      try {
+        await handle.describe();
+        await handle.update((prev) => ({
+          ...prev,
+          action: makeEvalScheduleAction(input),
+          spec: { cronExpressions: [config.cronExpression] },
+          state: { ...prev.state, paused: !config.enabled },
+        }));
+      } catch {
+        // SKIP overlap: a full benchmark can run for hours, so a fire while the
+        // previous run is still in flight is dropped rather than stacked.
+        await schedules.create({
+          action: makeEvalScheduleAction(input),
+          policies: { overlap: ScheduleOverlapPolicy.SKIP },
+          scheduleId: EVAL_SCHEDULE_ID,
+          spec: { cronExpressions: [config.cronExpression] },
+          state: { paused: !config.enabled },
+        });
+      }
+    },
+
     async syncWorkRequestSchedule(input: WorkRequestScheduleInput): Promise<void> {
       const handle = schedules.getHandle(workRequestScheduleId(input.scheduleRowId));
       try {
@@ -262,6 +366,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     async triggerConsolidationNow(): Promise<void> {
       const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
       await handle.trigger(ScheduleOverlapPolicy.ALLOW_ALL);
+    },
+
+    async triggerEvalNow(): Promise<void> {
+      const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+      await handle.trigger(ScheduleOverlapPolicy.SKIP);
     },
 
     async triggerWorkRequestSchedule(scheduleRowId: string): Promise<void> {

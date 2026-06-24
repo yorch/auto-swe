@@ -75,7 +75,7 @@ packages/
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
 | `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — 52 patterns across `INJECTION` (14), `EXFILTRATION` (11), `SHELL_COMMAND` (11), `CODE_SECURITY` (10), `SENSITIVE_FILE` (6) types; synced as `isBuiltIn: true` by `syncBuiltins()` at gateway startup |
 | `src/lib/skillScanner.ts` | `scanSkillContent(text)` — loads INJECTION/EXFILTRATION patterns from DB (60 s cache), scans LLM output and skill prompt text for injection/exfiltration signatures; returns `{ safe, warnings }` |
-| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/agent/mcp/set/cond/signal/terminate/fanOut/shell/containerStep/human*) |
+| `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — DAG node types (step/agent/mcp/eval/set/cond/signal/terminate/fanOut/shell/containerStep/human*) |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects via `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` node predicates (jsonpath + comparison, no JS sandbox) |
 | `src/workflow/stepRegistry.ts` | Step catalog (metadata, input schemas) — imported by gateway + web without worker dependency |
@@ -335,13 +335,14 @@ flowchart TD
 
 ### Node types in a WorkflowSpec
 
-The spec supports **14 node types**. The ten core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
+The spec supports **15 node types**. The eleven core/structural nodes below are handled by the interpreter or dispatched as activities; the four human-in-the-loop nodes pause the run for a human signal and are documented in detail in [hitl-workflows.md](./hitl-workflows.md).
 
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step` (name), `inputs`, `next`, `onFail`, `config` |
 | `agent` | Run a library Agent by reference (P2) | `agentRef` (`<key>` / `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `next`, `onFail` |
 | `mcp` | Call one tool on an `mcp` Connection (P2) | `connectionRef` (mcp Connection id), `tool`, `inputs` (→ tool args), `next`, `onFail` |
+| `eval` | Score a target value with floor/judge/trajectory scorers, then gate or branch on the verdict (evals P2) | `target` (binding), `scorers[]` (`gate`/`assert`/`judge`/`trajectory`), `judgeAdvisory`, `inputs`, `next`, `onFail` |
 | `set` | Write values into the workflow context | `values` (map of path → binding) |
 | `cond` | Branch on a boolean expression | `expr` (jsonpath), `onTrue`, `onFalse` |
 | `signal` | Await a named Temporal signal with timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |

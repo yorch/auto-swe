@@ -6,7 +6,7 @@
 
 ## 1. Agent Roles
 
-Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The 10 seeded SWE agent keys still fall into two groups by convention.
+Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The 10 seeded SWE agent keys still fall into two groups by convention. (The evals feature seeds one more model-backed agent, `evalJudge` — an LLM-as-judge on a distinct, cheaper model to avoid self-preference bias; it is eval infrastructure, not a SWE workflow role, and is not in `MODEL_BACKED_AGENT_KEYS`, so it does not gate worker boot. See `docs/evals.md`.)
 
 ### Group 1 — model-backed roles (6)
 

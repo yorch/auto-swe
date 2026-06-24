@@ -315,6 +315,35 @@ export async function resolveConsolidationConfig(
   };
 }
 
+// ─── Eval regression schedule ─────────────────────────────────────────────────
+
+export interface ResolvedEvalScheduleConfig {
+  /// Whether the Temporal Schedule should be active (unpaused).
+  enabled: boolean;
+  /// Standard cron expression (5-field) for when to run the benchmark.
+  cronExpression: string;
+  /// Benchmark dataset slug to score on each fire.
+  datasetSlug: string;
+  /// Git ref scored as the candidate (typically the current line, e.g. `main`).
+  candidateRef: string;
+  /// Git ref scored as the baseline to compare against (e.g. `last-release`).
+  baselineRef: string;
+}
+
+export async function resolveEvalScheduleConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedEvalScheduleConfig> {
+  const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
+  return {
+    baselineRef: row?.evalScheduleBaselineRef ?? 'last-release',
+    candidateRef: row?.evalScheduleCandidateRef ?? 'main',
+    cronExpression: row?.evalScheduleCron ?? '0 7 * * *',
+    datasetSlug: row?.evalScheduleDatasetSlug ?? 'swe-implementer-golden',
+    // Off by default — needs a seeded dataset + a worker that can reach Docker.
+    enabled: row?.evalScheduleEnabled ?? false,
+  };
+}
+
 // ─── Issue tracker ────────────────────────────────────────────────────────────
 
 export type TrackerProvider = 'jira' | 'linear' | 'github';

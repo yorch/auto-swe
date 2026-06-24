@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   resolveConsolidationConfig,
+  resolveEvalScheduleConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -23,6 +24,7 @@ import {
   testSlackConnection,
   testStorageConnection,
   updateConsolidationConfig,
+  updateEvalScheduleConfig,
   updateGitHubConfig,
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
@@ -116,6 +118,24 @@ const ConsolidationPutBody = z.object({
   enabled: z.boolean().optional(),
   minClusterSize: z.number().int().min(2).max(20).optional(),
   similarityThreshold: z.number().min(0.5).max(1).optional(),
+});
+
+const EvalSchedulePutBody = z.object({
+  baselineRef: z.string().min(1).max(200).optional(),
+  candidateRef: z.string().min(1).max(200).optional(),
+  cronExpression: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^(\S+\s+){4}\S+$/, 'must be a valid 5-field cron expression (e.g. "0 7 * * *")')
+    .optional(),
+  datasetSlug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9_-]+$/)
+    .optional(),
+  enabled: z.boolean().optional(),
 });
 
 const GoogleOAuthPutBody = z.object({
@@ -416,6 +436,40 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       await fastify.temporal.triggerConsolidationNow();
+      return reply.send({ data: { triggered: true } });
+    }
+  );
+
+  // ── Eval regression schedule ─────────────────────────────────────────────────
+
+  f.get(
+    '/config/eval-schedule',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      const config = await resolveEvalScheduleConfig();
+      const status = await fastify.temporal.getEvalScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.put(
+    '/config/eval-schedule',
+    { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      await updateEvalScheduleConfig(prisma, req.body);
+
+      const config = await resolveEvalScheduleConfig();
+      await fastify.temporal.syncEvalSchedule(config);
+      const status = await fastify.temporal.getEvalScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.post(
+    '/config/eval-schedule/trigger',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      await fastify.temporal.triggerEvalNow();
       return reply.send({ data: { triggered: true } });
     }
   );

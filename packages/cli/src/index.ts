@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
+import { runEvalsCommand } from './commands/evals.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runTokensCommand } from './commands/tokens.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
@@ -38,6 +39,10 @@ COMMANDS
   bundles export <name> <version>      Export GLOBAL content to a bundle file
   bundles install <path>               Install a bundle from a file
   bundles install-from-url <url>       Install a bundle from a URL
+
+  evals list                           List eval datasets (admin token)
+  evals show <id>                      Print a dataset's cases
+  evals results [--source=…] [--run=…] Query captured eval signals
 
   help                                 Show this message
 
@@ -84,6 +89,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'bundles') {
     return await runBundlesCommand(rest, env);
+  }
+  if (cmd === 'evals') {
+    return await runEvalsCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;

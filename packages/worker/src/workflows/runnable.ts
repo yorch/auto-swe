@@ -188,6 +188,19 @@ const agentNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runAgen
   startToCloseTimeout: '10m',
 });
 
+// Evals P2: declarative `eval` node. Runs scorers (assert/trajectory + judge
+// LLM call), so it gets the longer agent-style timeout.
+const evalNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runEvalNode'>>({
+  heartbeatTimeout: '2m',
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '5s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: '10m',
+});
+
 // P2/WS4: declarative mcp node. Single external MCP tool call (network I/O in
 // the activity); heartbeat + retry like the other network activities.
 const mcpNodeActivities = proxyActivities<Pick<typeof activitiesType, 'mcpCallTool'>>({
@@ -458,6 +471,17 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         spanName: config.spanName as string | undefined,
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
+      }),
+  ],
+  [
+    // Evals P2 declarative eval node: score a target value with a list of scorers.
+    'runEvalNode',
+    ({ config }) =>
+      evalNodeActivities.runEvalNode({
+        judgeAdvisory: config.judgeAdvisory as boolean | undefined,
+        scorers: config.scorers as Parameters<typeof evalNodeActivities.runEvalNode>[0]['scorers'],
+        spanName: config.spanName as string | undefined,
+        targetValue: config.targetValue,
       }),
   ],
   [

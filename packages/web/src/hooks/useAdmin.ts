@@ -174,3 +174,34 @@ export function useSecurityEvents(params?: {
     refetchInterval: 30_000,
   });
 }
+
+// ── Evals (P3 drift dashboard) ──
+
+import type { EvalDatasetSummary, EvalResultDto } from '@auto-swe/shared/types/api';
+
+export function useEvalDatasets() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: EvalDatasetSummary[] }>('/api/v1/admin/evals').then((r) => r.data),
+    queryKey: ['eval-datasets'],
+    refetchInterval: 30_000,
+  });
+}
+
+export function useEvalResults(params: { source?: string; limit?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.source) {
+    qs.set('source', params.source);
+  }
+  qs.set('limit', String(params.limit ?? 200));
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: EvalResultDto[]; meta: { total: number } }>(
+          `/api/v1/admin/evals/results?${qs.toString()}`
+        )
+        .then((r) => ({ data: r.data, meta: r.meta })),
+    queryKey: ['eval-results', params],
+    refetchInterval: 30_000,
+  });
+}

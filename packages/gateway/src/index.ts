@@ -4,7 +4,10 @@ import { initTelemetry } from './lib/telemetry.js';
 const otel = initTelemetry('auto-swe-gateway');
 
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
-import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  resolveConsolidationConfig,
+  resolveEvalScheduleConfig,
+} from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -20,6 +23,7 @@ import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { bundleRoutes } from './routes/bundles.js';
 import { epicRoutes } from './routes/epics.js';
+import { evalRoutes } from './routes/evals.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
@@ -85,6 +89,12 @@ async function start() {
   resolveConsolidationConfig()
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
+
+  // Same for the eval-regression Temporal Schedule (the nightly benchmark).
+  // Off by default — needs a seeded dataset + a worker that can reach Docker.
+  resolveEvalScheduleConfig()
+    .then((cfg) => app.temporal.syncEvalSchedule(cfg))
+    .catch((err) => app.log.warn({ err }, 'eval schedule sync failed at startup'));
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so
@@ -232,6 +242,7 @@ async function start() {
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
+  await app.register(evalRoutes, { prefix: '/api/v1/admin' });
   await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamAgentLibraryRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });

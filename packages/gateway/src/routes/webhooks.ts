@@ -259,6 +259,34 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         [true]
       );
 
+      // P0 evals: capture the human merge label as a normalized signal,
+      // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).
+      // Best-effort — wrapped so it can never block the merge signal path. Note:
+      // close-without-merge (the reject label) is not yet captured; the PR event
+      // normalizer maps those to `ignored`. Capturing rejects (to avoid
+      // survivorship bias in calibration) is a follow-up — see docs/evals-p0.md.
+      try {
+        const evalRun = await fastify.prisma.workflowRun.findFirst({
+          select: { id: true },
+          where: { workflowId: pullRequest.workflow.temporalWorkflowId },
+        });
+        if (evalRun) {
+          await fastify.prisma.evalResult.create({
+            data: {
+              metadata: { prNumber },
+              passed: true,
+              runId: evalRun.id,
+              scorer: 'merge',
+              scoreType: 'BOOLEAN',
+              source: 'MERGE',
+              value: 1,
+            },
+          });
+        }
+      } catch {
+        // capture must never break the merge signal path
+      }
+
       // Best-effort Slack "merged" notification back to the originating channel.
       const wr = pullRequest.workflow.workRequest;
       const originChannel = wr?.slackChannelId ?? null;

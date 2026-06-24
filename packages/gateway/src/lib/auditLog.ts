@@ -6,6 +6,8 @@ export type AuditEntityType =
   | 'Bundle'
   | 'Connection'
   | 'EmbeddingConfig'
+  | 'EvalDataset'
+  | 'EvalRubric'
   | 'GitHubConfig'
   | 'GoogleOAuthConfig'
   | 'ProviderCredential'

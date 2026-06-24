@@ -998,6 +998,47 @@ export async function updateConsolidationConfig(
   });
 }
 
+// ─── Eval regression schedule ─────────────────────────────────────────────────
+
+export type EvalScheduleConfigInput = {
+  cronExpression?: string;
+  enabled?: boolean;
+  datasetSlug?: string;
+  candidateRef?: string;
+  baselineRef?: string;
+};
+
+/// Writes the eval-schedule fields onto the WorkflowDefaults singleton.
+export async function updateEvalScheduleConfig(
+  prisma: PrismaClient,
+  body: EvalScheduleConfigInput
+): Promise<void> {
+  const { enabled, cronExpression, datasetSlug, candidateRef, baselineRef } = body;
+
+  const data: Record<string, unknown> = {};
+  if (enabled !== undefined) {
+    data.evalScheduleEnabled = enabled;
+  }
+  if (cronExpression !== undefined) {
+    data.evalScheduleCron = cronExpression;
+  }
+  if (datasetSlug !== undefined) {
+    data.evalScheduleDatasetSlug = datasetSlug;
+  }
+  if (candidateRef !== undefined) {
+    data.evalScheduleCandidateRef = candidateRef;
+  }
+  if (baselineRef !== undefined) {
+    data.evalScheduleBaselineRef = baselineRef;
+  }
+
+  await prisma.workflowDefaults.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+}
+
 // ─── Audit log + decrypt check ────────────────────────────────────────────────
 
 /// Returns recent config audit entries with actor emails resolved in one

@@ -108,6 +108,16 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
       case 'mcp':
         // External MCP tool call — no token-based cost modeled here.
         return walk(node.next);
+      case 'eval': {
+        // Evals node: the judge scorer (if any) makes one LLM call; model it via
+        // the runEvalNode step metadata when present, else just walk onward.
+        const meta = options.stepLookup('runEvalNode');
+        const usd = stepUsd(meta, pricing);
+        if (usd > 0) {
+          perStep.push({ nodeId, step: 'runEvalNode', usd });
+        }
+        return usd + walk(node.next);
+      }
       case 'containerStep':
         // Coded container step — container runtime cost, not token-based.
         return walk(node.next);

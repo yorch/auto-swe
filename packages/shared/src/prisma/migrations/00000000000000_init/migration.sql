@@ -1,11 +1,19 @@
 -- Consolidated initial schema, generated from schema.prisma via
 -- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
--- consolidation). P1/P1.5 retired the role-config tables (Agent is the source
--- of truth); P3 renamed AgentLesson → the generic MemoryItem, Repository → the
--- generic Connection, and WorkRequest → the generic RunInput. P5 added the
--- Organization tenant boundary + ORGANIZATION config scope. Custom DDL Prisma
--- cannot express (partial unique indexes, the pgvector HNSW index, seed inserts)
--- lives in the next migration.
+-- consolidation — nothing has been deployed to any environment, so the whole
+-- Prisma-derivable migration history is collapsed into this single baseline).
+--
+-- Folds in every prior Prisma-generated migration: the original init,
+-- trace_enrichment, webhook_token, issue_tracker_kb (issue-tracker + knowledge
+-- base), p5_org_rbac_billing (Organization RBAC + OrgMonthlyUsage billing), and
+-- the evals feature (eval_results / eval_datasets / eval_cases / eval_runs /
+-- eval_rubrics + the EvalScoreType / EvalSignalSource enums).
+--
+-- Custom DDL that Prisma's schema DSL cannot express — the pgvector HNSW index,
+-- partial unique indexes per config scope (incl. ORGANIZATION), CHECK
+-- constraints, NOT NULL on array columns, and the embedding-config seed — lives
+-- in the next migration, 00000000000001_custom_constraints_and_indexes.
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -14,6 +22,9 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'LEAD', 'ENGINEER');
+
+-- CreateEnum
+CREATE TYPE "OrgRole" AS ENUM ('ORG_ADMIN', 'ORG_MEMBER');
 
 -- CreateEnum
 CREATE TYPE "WorkflowRunStatus" AS ENUM ('RUNNING', 'SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED');
@@ -35,6 +46,12 @@ CREATE TYPE "HumanStepKind" AS ENUM ('APPROVAL', 'DECISION', 'INPUT', 'REVIEW');
 
 -- CreateEnum
 CREATE TYPE "HumanStepStatus" AS ENUM ('PENDING', 'RESOLVED', 'TIMED_OUT', 'CANCELLED');
+
+-- CreateEnum
+CREATE TYPE "EvalScoreType" AS ENUM ('BOOLEAN', 'NUMERIC', 'CATEGORICAL');
+
+-- CreateEnum
+CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY');
 
 -- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE');
@@ -63,6 +80,10 @@ CREATE TABLE "memory_items" (
     "scope" TEXT NOT NULL DEFAULT 'swe-lessons',
     "workflow_id" UUID,
     "repo_id" UUID,
+    "workflow_run_id" UUID,
+    "agent_key" TEXT,
+    "model" TEXT,
+    "cost_usd" DOUBLE PRECISION,
     "rationale" TEXT NOT NULL,
     "lesson_summary" TEXT NOT NULL,
     "embedding" vector(1536),
@@ -80,8 +101,8 @@ CREATE TABLE "memory_items" (
 CREATE TABLE "context_snapshots" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "work_request_id" UUID NOT NULL,
-    "raw_jira_epic" JSONB,
-    "raw_confluence" JSONB,
+    "raw_ticket_data" JSONB,
+    "raw_documentation" JSONB,
     "success_criteria" TEXT[],
     "captured_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -144,6 +165,7 @@ CREATE TABLE "organizations" (
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "monthly_budget_usd_cents" INTEGER,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -177,6 +199,31 @@ CREATE TABLE "team_memberships" (
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "team_memberships_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "organization_memberships" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "role" "OrgRole" NOT NULL DEFAULT 'ORG_MEMBER',
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "organization_memberships_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "org_monthly_usage" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "org_id" UUID NOT NULL,
+    "year_month" TEXT NOT NULL,
+    "cost_usd_accrued" DECIMAL(12,6) NOT NULL DEFAULT 0,
+    "runs_completed" INTEGER NOT NULL DEFAULT 0,
+    "tokens_input" BIGINT NOT NULL DEFAULT 0,
+    "tokens_output" BIGINT NOT NULL DEFAULT 0,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "org_monthly_usage_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -313,8 +360,95 @@ CREATE TABLE "workflow_runs" (
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
     "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "tokens_input_total" INTEGER NOT NULL DEFAULT 0,
+    "tokens_output_total" INTEGER NOT NULL DEFAULT 0,
 
     CONSTRAINT "workflow_runs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "eval_results" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "run_id" UUID,
+    "node_id" TEXT,
+    "case_id" UUID,
+    "eval_run_id" UUID,
+    "agent_key" TEXT,
+    "source" "EvalSignalSource" NOT NULL,
+    "scorer" TEXT NOT NULL,
+    "score_type" "EvalScoreType" NOT NULL,
+    "value" DOUBLE PRECISION NOT NULL,
+    "passed" BOOLEAN,
+    "rationale" TEXT,
+    "judge_model" TEXT,
+    "cost_usd" DOUBLE PRECISION,
+    "metadata" JSONB,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "eval_results_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "eval_datasets" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "slug" TEXT NOT NULL,
+    "scope" "ConfigScope" NOT NULL DEFAULT 'GLOBAL',
+    "team_id" UUID,
+    "org_id" UUID,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "eval_datasets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "eval_cases" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "dataset_id" UUID NOT NULL,
+    "input" JSONB NOT NULL,
+    "repo_url" TEXT NOT NULL,
+    "baseline_sha" TEXT NOT NULL,
+    "golden_test" TEXT NOT NULL,
+    "reference" JSONB,
+    "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "flake_screened" BOOLEAN NOT NULL DEFAULT false,
+    "flake_runs" INTEGER NOT NULL DEFAULT 0,
+    "quarantined" BOOLEAN NOT NULL DEFAULT false,
+    "source_run_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "eval_cases_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "eval_runs" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "dataset_id" UUID NOT NULL,
+    "candidate_ref" TEXT NOT NULL,
+    "baseline_ref" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'RUNNING',
+    "summary" JSONB,
+    "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "ended_at" TIMESTAMPTZ,
+
+    CONSTRAINT "eval_runs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "eval_rubrics" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "slug" TEXT NOT NULL,
+    "scope" "ConfigScope" NOT NULL DEFAULT 'GLOBAL',
+    "team_id" UUID,
+    "org_id" UUID,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "prompt_text" TEXT NOT NULL,
+    "scale" TEXT NOT NULL DEFAULT '0..1',
+    "is_built_in" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "eval_rubrics_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -331,6 +465,12 @@ CREATE TABLE "agent_traces" (
     "output_json" JSONB,
     "duration_ms" INTEGER,
     "error" TEXT,
+    "model" TEXT,
+    "input_tokens" INTEGER,
+    "output_tokens" INTEGER,
+    "cost_usd" DOUBLE PRECISION,
+    "otel_trace_id" TEXT,
+    "otel_span_id" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "agent_traces_pkey" PRIMARY KEY ("id")
@@ -387,6 +527,7 @@ CREATE TABLE "workflow_templates" (
     "active_version" INTEGER,
     "experiment_version" INTEGER,
     "experiment_split" INTEGER,
+    "webhook_token" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -532,6 +673,11 @@ CREATE TABLE "workflow_defaults" (
     "consolidation_cron" TEXT NOT NULL DEFAULT '0 3 * * 0',
     "consolidation_min_cluster_size" INTEGER NOT NULL DEFAULT 3,
     "consolidation_similarity_threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    "eval_schedule_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "eval_schedule_cron" TEXT NOT NULL DEFAULT '0 7 * * *',
+    "eval_schedule_dataset_slug" TEXT NOT NULL DEFAULT 'swe-implementer-golden',
+    "eval_schedule_candidate_ref" TEXT NOT NULL DEFAULT 'main',
+    "eval_schedule_baseline_ref" TEXT NOT NULL DEFAULT 'last-release',
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")
@@ -552,9 +698,10 @@ CREATE TABLE "google_oauth_config" (
 );
 
 -- CreateTable
-CREATE TABLE "tracker_config" (
+CREATE TABLE "issue_tracker_config" (
     "id" TEXT NOT NULL DEFAULT 'default',
     "provider" TEXT,
+    "instance_type" TEXT DEFAULT 'cloud',
     "base_url" TEXT,
     "email" TEXT,
     "api_token_ciphertext" BYTEA,
@@ -562,9 +709,40 @@ CREATE TABLE "tracker_config" (
     "api_token_auth_tag" BYTEA,
     "api_token_key_version" INTEGER,
     "api_token_last_four" TEXT,
+    "timeout_ms" INTEGER DEFAULT 5000,
+    "max_retries" INTEGER DEFAULT 3,
+    "story_points_field_id" TEXT DEFAULT 'story_points',
+    "epic_issue_type" TEXT DEFAULT 'Epic',
+    "story_issue_type" TEXT DEFAULT 'Story',
+    "default_project_key" TEXT,
+    "webhook_secret_ciphertext" BYTEA,
+    "webhook_secret_nonce" BYTEA,
+    "webhook_secret_auth_tag" BYTEA,
+    "webhook_secret_key_version" INTEGER,
+    "webhook_secret_last_four" TEXT,
+    "webhook_trigger_status" TEXT,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "tracker_config_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "issue_tracker_config_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "knowledge_base_config" (
+    "id" TEXT NOT NULL DEFAULT 'default',
+    "provider" TEXT,
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
+    "base_url" TEXT,
+    "api_token_ciphertext" BYTEA,
+    "api_token_nonce" BYTEA,
+    "api_token_auth_tag" BYTEA,
+    "api_token_key_version" INTEGER,
+    "api_token_last_four" TEXT,
+    "email" TEXT,
+    "spaces" TEXT[],
+    "max_pages" INTEGER DEFAULT 5,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "knowledge_base_config_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -739,6 +917,18 @@ CREATE INDEX "team_memberships_team_id_idx" ON "team_memberships"("team_id");
 CREATE UNIQUE INDEX "team_memberships_user_id_team_id_key" ON "team_memberships"("user_id", "team_id");
 
 -- CreateIndex
+CREATE INDEX "organization_memberships_org_id_idx" ON "organization_memberships"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "organization_memberships_user_id_org_id_key" ON "organization_memberships"("user_id", "org_id");
+
+-- CreateIndex
+CREATE INDEX "org_monthly_usage_org_id_idx" ON "org_monthly_usage"("org_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "org_monthly_usage_org_id_year_month_key" ON "org_monthly_usage"("org_id", "year_month");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
 -- CreateIndex
@@ -775,6 +965,36 @@ CREATE INDEX "workflow_runs_template_id_idx" ON "workflow_runs"("template_id");
 CREATE INDEX "workflow_runs_work_request_id_idx" ON "workflow_runs"("work_request_id");
 
 -- CreateIndex
+CREATE INDEX "eval_results_run_id_idx" ON "eval_results"("run_id");
+
+-- CreateIndex
+CREATE INDEX "eval_results_case_id_idx" ON "eval_results"("case_id");
+
+-- CreateIndex
+CREATE INDEX "eval_results_eval_run_id_idx" ON "eval_results"("eval_run_id");
+
+-- CreateIndex
+CREATE INDEX "eval_results_scorer_created_at_idx" ON "eval_results"("scorer", "created_at");
+
+-- CreateIndex
+CREATE INDEX "eval_results_source_created_at_idx" ON "eval_results"("source", "created_at");
+
+-- CreateIndex
+CREATE INDEX "eval_datasets_scope_team_id_idx" ON "eval_datasets"("scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "eval_datasets_slug_idx" ON "eval_datasets"("slug");
+
+-- CreateIndex
+CREATE INDEX "eval_cases_dataset_id_idx" ON "eval_cases"("dataset_id");
+
+-- CreateIndex
+CREATE INDEX "eval_runs_dataset_id_started_at_idx" ON "eval_runs"("dataset_id", "started_at");
+
+-- CreateIndex
+CREATE INDEX "eval_rubrics_scope_slug_idx" ON "eval_rubrics"("scope", "slug");
+
+-- CreateIndex
 CREATE INDEX "agent_traces_run_id_node_id_idx" ON "agent_traces"("run_id", "node_id");
 
 -- CreateIndex
@@ -788,6 +1008,9 @@ CREATE INDEX "workflow_human_steps_run_id_idx" ON "workflow_human_steps"("run_id
 
 -- CreateIndex
 CREATE INDEX "workflow_human_steps_status_idx" ON "workflow_human_steps"("status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "workflow_templates_webhook_token_key" ON "workflow_templates"("webhook_token");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "workflow_templates_team_id_name_key" ON "workflow_templates"("team_id", "name");
@@ -844,6 +1067,9 @@ ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_id_fkey" FOREIG
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_run_id_fkey" FOREIGN KEY ("workflow_run_id") REFERENCES "workflow_runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -866,6 +1092,15 @@ ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_user_id_fkey" FO
 
 -- AddForeignKey
 ALTER TABLE "team_memberships" ADD CONSTRAINT "team_memberships_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "organization_memberships" ADD CONSTRAINT "organization_memberships_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "organization_memberships" ADD CONSTRAINT "organization_memberships_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "org_monthly_usage" ADD CONSTRAINT "org_monthly_usage_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -899,6 +1134,21 @@ ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "eval_results" ADD CONSTRAINT "eval_results_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "eval_results" ADD CONSTRAINT "eval_results_case_id_fkey" FOREIGN KEY ("case_id") REFERENCES "eval_cases"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "eval_results" ADD CONSTRAINT "eval_results_eval_run_id_fkey" FOREIGN KEY ("eval_run_id") REFERENCES "eval_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "eval_cases" ADD CONSTRAINT "eval_cases_dataset_id_fkey" FOREIGN KEY ("dataset_id") REFERENCES "eval_datasets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "eval_runs" ADD CONSTRAINT "eval_runs_dataset_id_fkey" FOREIGN KEY ("dataset_id") REFERENCES "eval_datasets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agent_traces" ADD CONSTRAINT "agent_traces_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
