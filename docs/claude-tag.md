@@ -5,7 +5,8 @@
 A Claude-Tag-style teammate: one shared Claude that lives in a Slack channel,
 that anyone can `@mention` to delegate work, with per-channel scoping of
 tools/agents/memory/budget and (planned) an ambient mode that posts proactively.
-Modeled on Anthropic's Claude Tag; built on the platform's existing agent
+Modeled on Anthropic's Claude Tag (see [`claude-tag-research.md`](./claude-tag-research.md)
+for the source-product research); built on the platform's existing agent
 resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 
 ---
