@@ -40,7 +40,7 @@ jobs:
           echo "name=$(echo "$REPO" | jq -r '.data.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
