@@ -22,6 +22,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { projectEvalResult } from './workflowProjections.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
 
@@ -243,20 +244,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         fastify.prisma.evalResult.count({ where }),
       ]);
-      const data: EvalResultDto[] = rows.map((r) => ({
-        agentKey: r.agentKey,
-        createdAt: r.createdAt.toISOString(),
-        id: r.id,
-        metadata: r.metadata,
-        nodeId: r.nodeId,
-        passed: r.passed,
-        rationale: r.rationale,
-        runId: r.runId,
-        scorer: r.scorer,
-        scoreType: r.scoreType,
-        source: r.source,
-        value: r.value,
-      }));
+      const data: EvalResultDto[] = rows.map(projectEvalResult);
       return { data, meta: { limit, offset, total } };
     }
   );

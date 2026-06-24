@@ -6,7 +6,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+import {
+  projectEvalResult,
+  projectRunSummary,
+  RunListPaginationQuery,
+} from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
 const RunDetailQuery = z.object({
@@ -164,20 +168,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: { createdAt: 'asc' },
         where: { runId: run.id },
       });
-      const data: EvalResultDto[] = rows.map((r) => ({
-        agentKey: r.agentKey,
-        createdAt: r.createdAt.toISOString(),
-        id: r.id,
-        metadata: r.metadata,
-        nodeId: r.nodeId,
-        passed: r.passed,
-        rationale: r.rationale,
-        runId: r.runId,
-        scorer: r.scorer,
-        scoreType: r.scoreType,
-        source: r.source,
-        value: r.value,
-      }));
+      const data: EvalResultDto[] = rows.map(projectEvalResult);
       return { data };
     }
   );
