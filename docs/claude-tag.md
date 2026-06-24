@@ -1,6 +1,6 @@
 # Claude Tag — Slack channel teammate
 
-> Status: **in progress.** Foundation + Phase 0 + Phase 1 shipped; Phases 2–4 planned. Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 shipped.** Living doc — code is authoritative where this diverges.
 
 A Claude-Tag-style teammate: one shared Claude that lives in a Slack channel,
 that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -74,19 +74,69 @@ A user `@mention`s the bot (or DMs it) → reply posted back in-thread.
   `ChannelMonthlyUsage`.
 - **Admin UI**: `/admin/slack-channels` (list + create/edit/delete + budget).
 
-## 5. Planned
+## 5. Phase 2 — channel-scoped team memory (shipped)
 
-- **Phase 2 — team memory**: thread `channelId`/`teamId`/`orgId` through
-  `commitToMemory` + `retrieveSimilarLessons` + consolidation; auto-inject
-  retrieved memory into the channel agent's prompt; admin view/edit per channel.
-- **Phase 3 — ambient mode**: a `slack-ambient` trigger + scheduled digests +
-  forgotten-thread follow-ups, on a long-lived per-channel workflow
-  (signals + continue-as-new), with rate-limiting + per-channel budget guards.
-- **Phase 4 — multiplayer polish**: shared per-channel session state, `chat.update`
-  live progress edits, mid-task hand-off, and injection scanning of ingested
-  channel content.
+The assistant builds context over time (`packages/worker/src/lib/channelMemory.ts`):
 
-## 6. Key files
+- `retrieveChannelMemory` — pgvector cosine similarity over `memory_items` scoped
+  to `channel_id` (same embedding-space filter as `retrieveSimilarLessons`).
+- `writeChannelMemory` — embeds + inserts a channel-scoped row (`repo_id` NULL,
+  `channel_id/team_id/org_id` set, `scope='channel-memory'`).
+- `runChannelAssistantTurn` retrieves the top relevant memories and prepends a
+  compact context block to the user message before the LLM call (when not over
+  budget); after a non-trivial turn it best-effort writes the exchange as memory.
+  Storing the raw exchange is the baseline; a summarizing pass is a future
+  refinement.
+- Admin surface: `GET /api/v1/admin/slack-channels/:id/memory` (team-visible) +
+  `DELETE …/memory/:memoryId` (admin), surfaced in the `/admin/slack-channels`
+  UI. No edit endpoint — editing the text would strand the pgvector embedding
+  (re-embed is a worker concern), so view + delete is the deliberate surface.
+
+## 6. Phase 3 — ambient mode (shipped)
+
+Proactive posting via a per-channel Temporal Schedule:
+
+- When a channel is active with `ambientEnabled` + `ambientCron`, the gateway
+  reconciles a `auto-swe-channel-ambient-<channelId>` Schedule
+  (`syncChannelAmbientSchedule` / `deleteChannelAmbientSchedule` on the temporal
+  decorator) on every channel create/update/delete.
+- The schedule starts `ChannelAmbientWorkflow` → `runChannelAmbientDigest`:
+  no-ops on a disabled/inactive channel, budget-gates, builds context from
+  `recentChannelMemory`, runs the channel agent with an ambient prompt that
+  replies `SKIP` when nothing's worth posting, and posts a top-level (un-threaded)
+  digest only for substantive output; cost is accrued and the digest best-effort
+  stored as memory. It never throws (proactive ⇒ quiet on failure).
+- Scope note: ambient proactivity is delivered via Schedules (reusing the
+  existing schedule machinery), not a long-lived signal-driven workflow — see
+  §8.
+
+## 7. Phase 4 — multiplayer polish (shipped)
+
+- **Live progress (`chat.update`)**: `ChannelAssistantWorkflow` posts a
+  placeholder into the thread, runs the turn, then edits that message in place
+  with the reply (`updateSlackMessage`); falls back to a fresh post when no
+  placeholder ts, and the error path edits the placeholder with the fallback.
+- **Input safety**: `runChannelAssistantTurn` scans the untrusted user text with
+  `scanSkillContent` before the LLM call — advisory (mirrors the LLM-output
+  scanner): on a hit it records a `channel.suspicious_input` event and proceeds,
+  wrapped so a scanner failure never aborts the turn.
+- The shared per-channel agent + channel memory already make the assistant
+  multiplayer (one Claude, shared context); this phase adds the live-edit UX +
+  input safety.
+
+## 8. Future refinements (not built)
+
+- **Long-lived per-channel workflow** (signals + continue-as-new) for true
+  in-flight mid-task hand-off. The current design uses per-mention turns +
+  scheduled ambient, which covers reactive + proactive needs without the
+  rearchitecture.
+- **Full thread-history context** via `conversations.replies` (needs a Slack read
+  scope) so a turn sees the whole thread, not just channel memory.
+- **Summarizing memory pass** instead of storing the raw exchange; **hard**
+  per-channel budget (transactional reserve) instead of the current soft cap;
+  **admin memory edit** with re-embedding.
+
+## 9. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
