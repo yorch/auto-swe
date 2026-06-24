@@ -110,6 +110,36 @@ export async function isChannelOverBudgetNow(
 }
 
 /**
+ * Shared resolve-spec → `runAgent` core for both channel paths (the assistant
+ * turn and the ambient digest). Resolves the channel's configured agent through
+ * the Agent library with the CHANNEL config tier active (`ctx.channelId`, with
+ * team/org cascading after), runs one generation against `userMessage`, and
+ * returns the trimmed reply text plus the authoritative per-turn USD cost.
+ *
+ * Deliberately does NOT accrue channel usage — the two callers accrue at
+ * different points (the assistant accrues after generate + before writing
+ * memory; the ambient accrues before its should-post check), so each caller
+ * owns its `accrueChannelUsage` call to preserve the existing ordering.
+ */
+export async function runChannelAgentTurn(
+  channel: { id: string; agentKey: string; teamId: string; orgId: string },
+  userMessage: string,
+  spanName: string
+): Promise<{ reply: string; costUsd: number }> {
+  const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
+
+  // CHANNEL tier fires because `channelId` is set; team/org tiers cascade after it.
+  const spec = await resolveAgentSpec(
+    { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
+    { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
+  );
+
+  const result = await runAgent(spec, userMessage, { spanName });
+
+  return { costUsd: result.costUsd ?? 0, reply: (result.text ?? '').trim() };
+}
+
+/**
  * Claude Tag (Phase 1). One conversational turn for a channel-resident Slack
  * assistant: load the channel's configured agent key, resolve it through the
  * Agent library with the CHANNEL config tier active (`ctx.channelId`), and
@@ -147,12 +177,6 @@ export async function runChannelAssistantTurn(
     return { reply: BUDGET_EXCEEDED_REPLY };
   }
 
-  // CHANNEL tier fires because `channelId` is set; team/org tiers cascade after it.
-  const spec = await resolveAgentSpec(
-    { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
-    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
-  );
-
   // Phase 2: retrieve channel-scoped memory similar to this message and prepend
   // it as context, so the assistant builds knowledge over time. Best-effort —
   // a retrieval failure (e.g. embedding round-trip) must not block the reply.
@@ -175,7 +199,12 @@ export async function runChannelAssistantTurn(
   // prepended memory context — that originated from prior, already-scanned input.
   await scanChannelInput(input);
 
-  const result = await runAgent(spec, userMessage, { spanName: 'llm.channel_assistant' });
+  // Resolve the channel's agent (CHANNEL tier active) + run one generation.
+  const { reply, costUsd } = await runChannelAgentTurn(
+    { agentKey, id: input.channelId, orgId: input.orgId, teamId: input.teamId },
+    userMessage,
+    'llm.channel_assistant'
+  );
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
   // the reply — the workflow-level ledger (recordLlmUsage inside runAgent) is the
@@ -183,9 +212,7 @@ export async function runChannelAssistantTurn(
   // accrue the authoritative `costUsd` returned by runAgent (priced by the agent
   // KEY's configured model) so the per-channel ledger prices identically to the
   // run-level ledger rather than re-deriving cost from the raw spec string.
-  await accrueChannelUsage(input.channelId, result.costUsd ?? 0);
-
-  const reply = (result.text ?? '').trim();
+  await accrueChannelUsage(input.channelId, costUsd);
 
   // Phase 2: persist this exchange as channel-scoped memory so future turns can
   // retrieve it. Best-effort — a failure here must never break the reply. Only

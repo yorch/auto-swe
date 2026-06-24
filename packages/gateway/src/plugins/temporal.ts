@@ -10,6 +10,7 @@ import {
   Client,
   Connection,
   ScheduleClient,
+  type ScheduleOptionsAction,
   ScheduleOverlapPolicy,
   WorkflowIdReusePolicy,
 } from '@temporalio/client';
@@ -201,6 +202,40 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     };
   }
 
+  /**
+   * Shared describe-or-create reconciliation for a single Temporal Schedule.
+   * If the schedule already exists, its cron + action (and, when `paused` is
+   * provided, its paused state — preserving the rest of `prev.state`) are
+   * updated in place; otherwise it is created with the SKIP overlap policy (a
+   * fire while the previous run is still in flight is dropped, not stacked).
+   * When `paused` is omitted, neither branch touches schedule state.
+   */
+  async function upsertSchedule(
+    scheduleId: string,
+    opts: { action: ScheduleOptionsAction; cronExpression: string; paused?: boolean }
+  ): Promise<void> {
+    const handle = schedules.getHandle(scheduleId);
+    try {
+      await handle.describe();
+      // Schedule exists — update it in place.
+      await handle.update((prev) => ({
+        ...prev,
+        action: opts.action,
+        spec: { cronExpressions: [opts.cronExpression] },
+        ...(opts.paused !== undefined ? { state: { ...prev.state, paused: opts.paused } } : {}),
+      }));
+    } catch {
+      // Schedule doesn't exist yet — create it.
+      await schedules.create({
+        action: opts.action,
+        policies: { overlap: ScheduleOverlapPolicy.SKIP },
+        scheduleId,
+        spec: { cronExpressions: [opts.cronExpression] },
+        ...(opts.paused !== undefined ? { state: { paused: opts.paused } } : {}),
+      });
+    }
+  }
+
   fastify.decorate('temporal', {
     async cancelWorkflow(workflowId: string): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
@@ -373,25 +408,10 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     },
 
     async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
-      const handle = schedules.getHandle(channelAmbientScheduleId(input.channelId));
-      try {
-        await handle.describe();
-        // Schedule exists — update the cron + action in place.
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeChannelAmbientScheduleAction(input),
-          spec: { cronExpressions: [input.cronExpression] },
-        }));
-      } catch {
-        // Schedule doesn't exist yet — create it. SKIP overlap: a fire while
-        // the previous digest is still in flight is dropped rather than stacked.
-        await schedules.create({
-          action: makeChannelAmbientScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: channelAmbientScheduleId(input.channelId),
-          spec: { cronExpressions: [input.cronExpression] },
-        });
-      }
+      await upsertSchedule(channelAmbientScheduleId(input.channelId), {
+        action: makeChannelAmbientScheduleAction(input),
+        cronExpression: input.cronExpression,
+      });
     },
 
     async syncConsolidationSchedule(config: ConsolidationScheduleConfig): Promise<void> {
@@ -399,27 +419,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         minClusterSize: config.minClusterSize,
         similarityThreshold: config.similarityThreshold,
       };
-      const handle = schedules.getHandle(CONSOLIDATION_SCHEDULE_ID);
-
-      try {
-        await handle.describe();
-        // Schedule exists — update it in place.
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeScheduleAction(input),
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { ...prev.state, paused: !config.enabled },
-        }));
-      } catch {
-        // Schedule doesn't exist yet — create it.
-        await schedules.create({
-          action: makeScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: CONSOLIDATION_SCHEDULE_ID,
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { paused: !config.enabled },
-        });
-      }
+      await upsertSchedule(CONSOLIDATION_SCHEDULE_ID, {
+        action: makeScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
     },
 
     // ── Eval regression schedule (one system-wide Temporal Schedule) ──
@@ -430,51 +434,19 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         candidateRef: config.candidateRef,
         datasetSlug: config.datasetSlug,
       };
-      const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
-      try {
-        await handle.describe();
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeEvalScheduleAction(input),
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { ...prev.state, paused: !config.enabled },
-        }));
-      } catch {
-        // SKIP overlap: a full benchmark can run for hours, so a fire while the
-        // previous run is still in flight is dropped rather than stacked.
-        await schedules.create({
-          action: makeEvalScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: EVAL_SCHEDULE_ID,
-          spec: { cronExpressions: [config.cronExpression] },
-          state: { paused: !config.enabled },
-        });
-      }
+      await upsertSchedule(EVAL_SCHEDULE_ID, {
+        action: makeEvalScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
     },
 
     async syncWorkRequestSchedule(input: WorkRequestScheduleInput): Promise<void> {
-      const handle = schedules.getHandle(workRequestScheduleId(input.scheduleRowId));
-      try {
-        await handle.describe();
-        // Schedule exists — update it in place (cron, args, paused state).
-        await handle.update((prev) => ({
-          ...prev,
-          action: makeWorkRequestScheduleAction(input),
-          spec: { cronExpressions: [input.cronExpression] },
-          state: { ...prev.state, paused: input.paused },
-        }));
-      } catch {
-        // Schedule doesn't exist yet — create it. SKIP overlap: if last
-        // week's run is still in flight, this week's fire is dropped rather
-        // than stacked (matches budget-cap intent).
-        await schedules.create({
-          action: makeWorkRequestScheduleAction(input),
-          policies: { overlap: ScheduleOverlapPolicy.SKIP },
-          scheduleId: workRequestScheduleId(input.scheduleRowId),
-          spec: { cronExpressions: [input.cronExpression] },
-          state: { paused: input.paused },
-        });
-      }
+      await upsertSchedule(workRequestScheduleId(input.scheduleRowId), {
+        action: makeWorkRequestScheduleAction(input),
+        cronExpression: input.cronExpression,
+        paused: input.paused,
+      });
     },
 
     async triggerConsolidationNow(): Promise<void> {

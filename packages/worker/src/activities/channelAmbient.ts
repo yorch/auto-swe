@@ -1,10 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
-import { resolveAgentSpec } from '../lib/config/agentSpec.js';
-import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
-import { runAgent } from './runAgent.js';
+import {
+  accrueChannelUsage,
+  isChannelOverBudgetNow,
+  runChannelAgentTurn,
+} from './channelAssistant.js';
 
 /** Input for the ambient digest activity (mirrors the workflow arg). */
 export interface ChannelAmbientInput {
@@ -118,20 +119,16 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
-    const spec = await resolveAgentSpec(
-      { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
-      { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
+    const { reply, costUsd } = await runChannelAgentTurn(
+      { agentKey, id: channel.id, orgId: channel.orgId, teamId: channel.teamId },
+      buildAmbientPrompt(memory),
+      'llm.channel_ambient'
     );
-
-    const result = await runAgent(spec, buildAmbientPrompt(memory), {
-      spanName: 'llm.channel_ambient',
-    });
 
     // Accrue the turn's cost regardless of whether we post (the LLM call happened).
     // Best-effort — accrueChannelUsage swallows its own failures.
-    await accrueChannelUsage(channel.id, result.costUsd ?? 0);
+    await accrueChannelUsage(channel.id, costUsd);
 
-    const reply = (result.text ?? '').trim();
     if (!shouldPostDigest(reply)) {
       return;
     }
