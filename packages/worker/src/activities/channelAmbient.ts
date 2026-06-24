@@ -1,14 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
-import { currentYearMonth } from '@auto-swe/shared/lib/billing';
-import {
-  type RecentChannelMemoryItem,
-  recentChannelMemory,
-  writeChannelMemory,
-} from '../lib/channelMemory.js';
+import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudget } from './channelAssistant.js';
+import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
 import { runAgent } from './runAgent.js';
 
 /** Input for the ambient digest activity (mirrors the workflow arg). */
@@ -22,14 +17,15 @@ const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 /** Cap on how many recent memory items are injected into the digest prompt. */
 const MAX_DIGEST_MEMORY_ITEMS = 15;
 
-/** Sentinel the agent returns when nothing is worth posting (case-insensitive). */
-const SKIP_SENTINEL = 'SKIP';
+/**
+ * Matches a reply that begins with the word `skip` (case-insensitive, after
+ * trimming) — e.g. `SKIP`, `skip`, or a decorated `SKIP - nothing actionable`.
+ * Any such reply is treated as the skip sentinel and is NOT posted.
+ */
+const SKIP_SENTINEL = /^skip\b/i;
 
 /** Below this length a "digest" is a trivial acknowledgement not worth posting. */
 const MIN_DIGEST_LENGTH = 12;
-
-/** Max chars persisted for the digest summary / rationale when remembering it. */
-const MEMORY_SUMMARY_MAX_CHARS = 500;
 
 /**
  * Build the ambient digest prompt from the channel's recent memory. Pure (no
@@ -38,10 +34,9 @@ const MEMORY_SUMMARY_MAX_CHARS = 500;
  * nothing is worth posting.
  */
 export function buildAmbientPrompt(items: RecentChannelMemoryItem[]): string {
-  const bullets = items
-    .slice(0, MAX_DIGEST_MEMORY_ITEMS)
-    .map((item) => `- ${item.lessonSummary}`)
-    .join('\n');
+  // The item cap is enforced authoritatively at the fetch (`recentChannelMemory`
+  // is called with MAX_DIGEST_MEMORY_ITEMS), so no re-slice is needed here.
+  const bullets = items.map((item) => `- ${item.lessonSummary}`).join('\n');
   return [
     "You are this Slack channel's resident teammate posting a proactive, top-level",
     'update (not a reply to anyone). Below is recent context this channel has',
@@ -59,15 +54,16 @@ export function buildAmbientPrompt(items: RecentChannelMemoryItem[]): string {
 
 /**
  * Decide whether a generated digest should be posted. Returns `false` for an
- * empty/whitespace reply, a too-trivial reply, or the `SKIP` sentinel (compared
- * case-insensitively after trimming) — keeping ambient mode noise-averse.
+ * empty/whitespace reply, a too-trivial reply, or any reply whose trimmed text
+ * begins with the `skip` sentinel word (e.g. `SKIP - nothing actionable today.`)
+ * — keeping ambient mode noise-averse.
  */
 export function shouldPostDigest(reply: string): boolean {
   const trimmed = reply.trim();
   if (trimmed.length < MIN_DIGEST_LENGTH) {
     return false;
   }
-  if (trimmed.toLowerCase() === SKIP_SENTINEL.toLowerCase()) {
+  if (SKIP_SENTINEL.test(trimmed)) {
     return false;
   }
   return true;
@@ -109,19 +105,10 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
       return;
     }
 
-    // Budget gate. Only read the accrued row when a cap is set; over budget →
-    // return quietly (no post, no spend). Mirrors the assistant turn's soft cap.
-    if (channel.monthlyBudgetUsdCents != null && channel.monthlyBudgetUsdCents > 0) {
-      const usage = await prisma.channelMonthlyUsage.findUnique({
-        select: { costUsdAccrued: true },
-        where: {
-          channelId_yearMonth: { channelId: channel.id, yearMonth: currentYearMonth() },
-        },
-      });
-      const accruedUsd = usage ? Number(usage.costUsdAccrued) : 0;
-      if (isChannelOverBudget(accruedUsd, channel.monthlyBudgetUsdCents)) {
-        return;
-      }
+    // Budget gate. Over budget → return quietly (no post, no spend). Shares the
+    // same pre-LLM gate as the assistant turn (no cap ⇒ no query, never over).
+    if (await isChannelOverBudgetNow(channel.id, channel.monthlyBudgetUsdCents)) {
+      return;
     }
 
     // Nothing to digest → nothing to say.
@@ -151,21 +138,11 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
 
     await postSlackChannelMessage(channel.slackChannelId, reply);
 
-    // Best-effort: remember the digest so future turns/digests can build on it.
-    try {
-      await writeChannelMemory({
-        channelId: channel.id,
-        orgId: channel.orgId,
-        rationale: 'ambient digest',
-        summary: reply.slice(0, MEMORY_SUMMARY_MAX_CHARS),
-        teamId: channel.teamId,
-      });
-    } catch (err) {
-      console.error(
-        `[channelAmbient] failed to remember digest for ${input.channelId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
+    // NOTE: deliberately do NOT persist the digest to channel memory. The digest
+    // prompt is built from `recentChannelMemory`, so remembering our own
+    // proactive output would feed each scheduled digest its prior digests —
+    // compounding noise + token cost. Channel memory accrues from real
+    // assistant turns only.
   } catch (err) {
     // Ambient must never throw loudly / spam: log and return.
     console.error(

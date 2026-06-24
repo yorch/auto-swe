@@ -83,6 +83,33 @@ export function isChannelOverBudget(
 }
 
 /**
+ * Shared pre-LLM budget gate for both the assistant turn and the ambient digest.
+ * Returns `true` when the channel has a positive `monthlyBudgetUsdCents` cap and
+ * the current month's accrued spend has reached it. When no cap is set, returns
+ * `false` immediately without issuing the usage query (the no-cap fast path).
+ *
+ * Centralises the cap-set → `findUnique(ChannelMonthlyUsage)` → `Number(...)` →
+ * `isChannelOverBudget` sequence so the assistant and ambient paths stay in
+ * lockstep (same query, same predicate).
+ */
+export async function isChannelOverBudgetNow(
+  channelId: string,
+  monthlyBudgetUsdCents: number | null
+): Promise<boolean> {
+  if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
+    return false;
+  }
+  const usage = await prisma.channelMonthlyUsage.findUnique({
+    select: { costUsdAccrued: true },
+    where: {
+      channelId_yearMonth: { channelId, yearMonth: currentYearMonth() },
+    },
+  });
+  const accruedUsd = usage ? Number(usage.costUsdAccrued) : 0;
+  return isChannelOverBudget(accruedUsd, monthlyBudgetUsdCents);
+}
+
+/**
  * Claude Tag (Phase 1). One conversational turn for a channel-resident Slack
  * assistant: load the channel's configured agent key, resolve it through the
  * Agent library with the CHANNEL config tier active (`ctx.channelId`), and
@@ -116,17 +143,8 @@ export async function runChannelAssistantTurn(
   // them records cost — briefly overshooting the cap. This mirrors the org-budget
   // soft-cap at work-request submit; a hard cap would need a transactional
   // reserve (out of scope).
-  if (channel?.monthlyBudgetUsdCents != null && channel.monthlyBudgetUsdCents > 0) {
-    const usage = await prisma.channelMonthlyUsage.findUnique({
-      select: { costUsdAccrued: true },
-      where: {
-        channelId_yearMonth: { channelId: input.channelId, yearMonth: currentYearMonth() },
-      },
-    });
-    const accruedUsd = usage ? Number(usage.costUsdAccrued) : 0;
-    if (isChannelOverBudget(accruedUsd, channel.monthlyBudgetUsdCents)) {
-      return { reply: BUDGET_EXCEEDED_REPLY };
-    }
+  if (await isChannelOverBudgetNow(input.channelId, channel?.monthlyBudgetUsdCents ?? null)) {
+    return { reply: BUDGET_EXCEEDED_REPLY };
   }
 
   // CHANNEL tier fires because `channelId` is set; team/org tiers cascade after it.
@@ -275,12 +293,24 @@ export async function postChannelPlaceholder(args: {
   slackChannelId: string;
   threadTs: string;
 }): Promise<{ ts: string | null }> {
-  const { ts } = await postSlackThreadMessageReturningTs(
-    args.slackChannelId,
-    args.threadTs,
-    CHANNEL_PLACEHOLDER_TEXT
-  );
-  return { ts };
+  // `postSlackThreadMessageReturningTs` throws on a missing token or a missing
+  // ts, so swallow any failure here and return `{ ts: null }` to honour the
+  // documented contract — the workflow then falls back to a fresh reply post
+  // without relying on its outer catch.
+  try {
+    const { ts } = await postSlackThreadMessageReturningTs(
+      args.slackChannelId,
+      args.threadTs,
+      CHANNEL_PLACEHOLDER_TEXT
+    );
+    return { ts };
+  } catch (err) {
+    console.debug(
+      `[channelAssistant] failed to post placeholder for ${args.slackChannelId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return { ts: null };
+  }
 }
 
 /**

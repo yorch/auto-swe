@@ -103,9 +103,12 @@ Proactive posting via a per-channel Temporal Schedule:
 - The schedule starts `ChannelAmbientWorkflow` → `runChannelAmbientDigest`:
   no-ops on a disabled/inactive channel, budget-gates, builds context from
   `recentChannelMemory`, runs the channel agent with an ambient prompt that
-  replies `SKIP` when nothing's worth posting, and posts a top-level (un-threaded)
-  digest only for substantive output; cost is accrued and the digest best-effort
-  stored as memory. It never throws (proactive ⇒ quiet on failure).
+  replies `SKIP` when nothing's worth posting (a reply *starting* with `skip` is
+  suppressed), and posts a top-level (un-threaded) digest only for substantive
+  output; cost is accrued. The digest is **not** written back to channel memory
+  — doing so would feed each scheduled digest its own prior output via
+  `recentChannelMemory` (a compounding loop); channel memory accrues from real
+  assistant turns only. It never throws (proactive ⇒ quiet on failure).
 - Scope note: ambient proactivity is delivered via Schedules (reusing the
   existing schedule machinery), not a long-lived signal-driven workflow — see
   §8.

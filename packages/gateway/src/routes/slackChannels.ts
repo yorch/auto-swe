@@ -288,7 +288,14 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const item = await fastify.prisma.memoryItem.findUnique({
-        select: { channelId: true, id: true },
+        select: {
+          agentKey: true,
+          channelId: true,
+          createdAt: true,
+          id: true,
+          lessonSummary: true,
+          rationale: true,
+        },
         where: { id: request.params.memoryId },
       });
       if (!item || item.channelId !== request.params.id) {
@@ -300,7 +307,16 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'DELETE',
         actor,
-        before: { channelId: request.params.id },
+        // Capture the deleted content — the delete is irreversible (re-embedding
+        // isn't available here), so the audit row is the only record of what was
+        // removed.
+        before: {
+          agentKey: item.agentKey,
+          channelId: item.channelId,
+          createdAt: item.createdAt,
+          lessonSummary: item.lessonSummary,
+          rationale: item.rationale,
+        },
         entityId: item.id,
         entityType: 'MemoryItem',
       });

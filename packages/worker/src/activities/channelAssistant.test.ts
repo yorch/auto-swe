@@ -407,6 +407,16 @@ describe('postChannelPlaceholder / updateChannelReply (Phase 4)', () => {
     );
   });
 
+  it('returns { ts: null } when the placeholder post fails (honest contract)', async () => {
+    postSlackThreadMessageReturningTsMock.mockRejectedValue(
+      new Error('Slack returned no message ts')
+    );
+
+    const result = await postChannelPlaceholder({ slackChannelId: 'C123', threadTs: '111.222' });
+
+    expect(result).toEqual({ ts: null });
+  });
+
   it('edits the placeholder in place via updateSlackMessage', async () => {
     await updateChannelReply({ slackChannelId: 'C123', text: 'the answer', ts: '123.456' });
 

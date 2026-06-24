@@ -257,17 +257,25 @@ export async function updateSlackMessage(
     throw new Error('updateSlackMessage: no Slack bot token configured');
   }
 
-  const res = await fetch(SLACK_UPDATE_URL, {
-    body: JSON.stringify({ channel: slackChannelId, text, ts }),
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json; charset=utf-8',
-    },
-    method: 'POST',
-  });
-  const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
-  if (!data.ok) {
-    throw new Error(`updateSlackMessage: chat.update failed: ${data.error ?? 'unknown'}`);
+  // AbortController guards against a hung Slack connection holding up the activity.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(SLACK_UPDATE_URL, {
+      body: JSON.stringify({ channel: slackChannelId, text, ts }),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      throw new Error(`updateSlackMessage: chat.update failed: ${data.error ?? 'unknown'}`);
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -306,19 +314,27 @@ async function postChannelMessage(
     body.thread_ts = threadTs;
   }
 
-  const res = await fetch(SLACK_POST_URL, {
-    body: JSON.stringify(body),
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json; charset=utf-8',
-    },
-    method: 'POST',
-  });
-  const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
-  if (!data.ok) {
-    throw new Error(`${label}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+  // AbortController guards against a hung Slack connection holding up the activity.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(SLACK_POST_URL, {
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      throw new Error(`${label}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
+    }
+    return { ts: data.ts };
+  } finally {
+    clearTimeout(timer);
   }
-  return { ts: data.ts };
 }
 
 /** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */

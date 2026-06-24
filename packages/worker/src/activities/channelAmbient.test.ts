@@ -94,6 +94,15 @@ describe('shouldPostDigest', () => {
     expect(shouldPostDigest('Skip')).toBe(false);
   });
 
+  it('rejects a decorated SKIP reply (begins with the skip word)', () => {
+    expect(shouldPostDigest('SKIP - nothing actionable today.')).toBe(false);
+    expect(shouldPostDigest('skip: all clear, nothing to surface')).toBe(false);
+  });
+
+  it('still accepts a reply that merely contains "skip" mid-sentence', () => {
+    expect(shouldPostDigest('We should skip the flaky test and revisit the migration.')).toBe(true);
+  });
+
   it('rejects trivially short replies', () => {
     expect(shouldPostDigest('ok')).toBe(false);
   });
@@ -135,11 +144,18 @@ describe('runChannelAmbientDigest', () => {
       create: { costUsdAccrued: number };
     };
     expect(args.create.costUsdAccrued).toBeCloseTo(0.02, 6);
+    // The ambient digest must NOT persist itself to channel memory — otherwise
+    // each scheduled digest would be fed its own prior output (feedback loop).
+    expect(writeChannelMemoryMock).not.toHaveBeenCalled();
   });
 
-  it('does not post when the agent returns SKIP', async () => {
+  it('does not post when the agent returns a decorated SKIP', async () => {
     findChannel.mockResolvedValue(makeChannel() as never);
-    runAgentMock.mockResolvedValue({ costUsd: 0.01, text: 'SKIP', usage: {} });
+    runAgentMock.mockResolvedValue({
+      costUsd: 0.01,
+      text: 'SKIP - nothing actionable today.',
+      usage: {},
+    });
 
     await runChannelAmbientDigest({ channelId: 'chan-1' });
 
