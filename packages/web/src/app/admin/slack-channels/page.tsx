@@ -17,6 +17,7 @@ import {
   useDeleteChannelMemory,
   useDeleteSlackChannel,
   useSlackChannels,
+  useUpdateChannelMemory,
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
@@ -369,11 +370,113 @@ function fmtDate(iso: string): string {
   });
 }
 
+// ── Memory item inline edit form ──────────────────────────────────────────────
+
+interface MemoryEditForm {
+  lessonSummary: string;
+  rationale: string;
+}
+
+function MemoryItemEditForm({
+  channelId,
+  item,
+  onCancel,
+  onSaved,
+}: {
+  channelId: string;
+  item: MemoryItemDto;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const updateMemory = useUpdateChannelMemory();
+  const [form, setForm] = useState<MemoryEditForm>({
+    lessonSummary: item.lessonSummary,
+    rationale: item.rationale,
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  function set<K extends keyof MemoryEditForm>(key: K, val: MemoryEditForm[K]) {
+    setForm((f) => ({ ...f, [key]: val }));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const lessonSummary = form.lessonSummary.trim();
+    const rationale = form.rationale.trim();
+    if (!lessonSummary && !rationale) {
+      setError('At least one field must be non-empty.');
+      return;
+    }
+    try {
+      await updateMemory.mutateAsync({
+        channelId,
+        lessonSummary: lessonSummary || undefined,
+        memoryId: item.id,
+        rationale: rationale || undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update memory item');
+    }
+  }
+
+  return (
+    <form className="mt-2 space-y-2" onSubmit={handleSubmit}>
+      <div className="space-y-1">
+        <label
+          className="block font-mono text-[10px] uppercase tracking-wider text-paper-500"
+          htmlFor="mem-edit-lesson"
+        >
+          Lesson summary
+        </label>
+        <textarea
+          className="w-full rounded border border-ink-500 bg-ink-800 px-2 py-1.5 text-sm text-paper-100 placeholder-paper-600 focus:outline-none focus:ring-1 focus:ring-ember-400"
+          id="mem-edit-lesson"
+          onChange={(e) => set('lessonSummary', e.target.value)}
+          rows={3}
+          value={form.lessonSummary}
+        />
+      </div>
+      <div className="space-y-1">
+        <label
+          className="block font-mono text-[10px] uppercase tracking-wider text-paper-500"
+          htmlFor="mem-edit-rationale"
+        >
+          Rationale
+        </label>
+        <textarea
+          className="w-full rounded border border-ink-500 bg-ink-800 px-2 py-1.5 text-sm text-paper-100 placeholder-paper-600 focus:outline-none focus:ring-1 focus:ring-ember-400"
+          id="mem-edit-rationale"
+          onChange={(e) => set('rationale', e.target.value)}
+          rows={2}
+          value={form.rationale}
+        />
+      </div>
+      <p className="text-[10px] text-paper-600">
+        Re-embedding happens in the background after saving.
+      </p>
+      {error && <p className="text-xs text-brick-400">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <Button onClick={onCancel} size="sm" type="button" variant="ghost">
+          Cancel
+        </Button>
+        <Button disabled={updateMemory.isPending} size="sm" type="submit" variant="primary">
+          {updateMemory.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Memory modal ──────────────────────────────────────────────────────────────
+
 function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
   const { data: items, isLoading } = useChannelMemory(channel?.id ?? null);
   const deleteMemory = useDeleteChannelMemory();
   const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   async function handleDeleteConfirm() {
     if (!confirmItem || !channel) {
@@ -413,29 +516,53 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         ) : (
           <ul className="divide-y divide-ink-600">
             {items.map((item) => (
-              <li className="flex items-start gap-4 py-3" key={item.id}>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
-                  <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
-                  <div className="flex items-center gap-3">
-                    {item.agentKey && (
-                      <span className="font-mono text-[10px] text-paper-600">{item.agentKey}</span>
-                    )}
-                    <span className="font-mono text-[10px] text-paper-600">
-                      {fmtDate(item.createdAt)}
-                    </span>
+              <li className="py-3" key={item.id}>
+                {editingId === item.id ? (
+                  <MemoryItemEditForm
+                    channelId={channel?.id ?? ''}
+                    item={item}
+                    onCancel={() => setEditingId(null)}
+                    onSaved={() => setEditingId(null)}
+                  />
+                ) : (
+                  <div className="flex items-start gap-4">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
+                      <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
+                      <div className="flex items-center gap-3">
+                        {item.agentKey && (
+                          <span className="font-mono text-[10px] text-paper-600">
+                            {item.agentKey}
+                          </span>
+                        )}
+                        <span className="font-mono text-[10px] text-paper-600">
+                          {fmtDate(item.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => {
+                          setEditingId(item.id);
+                        }}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setDeleteError(null);
+                          setConfirmItem(item);
+                        }}
+                        size="sm"
+                        variant="danger"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <Button
-                  onClick={() => {
-                    setDeleteError(null);
-                    setConfirmItem(item);
-                  }}
-                  size="sm"
-                  variant="danger"
-                >
-                  Delete
-                </Button>
+                )}
               </li>
             ))}
           </ul>

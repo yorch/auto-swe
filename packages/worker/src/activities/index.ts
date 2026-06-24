@@ -64,6 +64,9 @@ export {
   runTypecheck,
   runVulnScan,
 } from './qualityGates.js';
+// Claude Tag — admin memory edit-with-reembed
+export type { ReembedMemoryInput } from './reembedMemory.js';
+export { reembedMemoryItemActivity } from './reembedMemory.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';

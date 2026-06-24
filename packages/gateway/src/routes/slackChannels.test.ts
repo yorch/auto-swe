@@ -14,6 +14,7 @@ function newMockPrisma() {
       delete: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     slackChannel: {
       create: vi.fn(),
@@ -34,6 +35,7 @@ function newMockTemporal() {
     getChannelAmbientScheduleStatus: vi
       .fn()
       .mockResolvedValue({ exists: false, nextRunAt: null, paused: false }),
+    startReembedMemory: vi.fn().mockResolvedValue(undefined),
     syncChannelAmbientSchedule: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -564,6 +566,166 @@ describe('slackChannelRoutes', () => {
       headers: AUTH,
       method: 'DELETE',
       url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  const MEMORY = '44444444-4444-4444-8444-444444444444';
+
+  it('patches a memory item: updates text, audits before/after, re-embeds, returns the row', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({
+      channelId: CHANNEL,
+      id: 'mem-1',
+      lessonSummary: 'old summary',
+      rationale: 'old rationale',
+    });
+    mockPrisma.memoryItem.update.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      createdAt: '2026-06-24T00:00:00.000Z',
+      id: 'mem-1',
+      lessonSummary: 'new summary',
+      metadata: { source: 'slack' },
+      rationale: 'new rationale',
+    });
+    const res = await app.inject({
+      body: { lessonSummary: 'new summary', rationale: 'new rationale' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data.id).toBe('mem-1');
+    expect(data.lessonSummary).toBe('new summary');
+    expect(data.rationale).toBe('new rationale');
+    // The text fields are updated synchronously.
+    expect(mockPrisma.memoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { lessonSummary: 'new summary', rationale: 'new rationale' },
+        where: { id: 'mem-1' },
+      })
+    );
+    // Audit captures old → new for both fields.
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: { lessonSummary: 'new summary', rationale: 'new rationale' },
+          beforeJson: { lessonSummary: 'old summary', rationale: 'old rationale' },
+          entityType: 'MemoryItem',
+        }),
+      })
+    );
+    // Re-embed is fired with a unique, per-edit workflowId for this memory row.
+    expect(mockTemporal.startReembedMemory).toHaveBeenCalledTimes(1);
+    const [workflowId, memoryId] = mockTemporal.startReembedMemory.mock.calls[0];
+    expect(workflowId).toMatch(/^reembed-mem-mem-1-\d+$/);
+    expect(memoryId).toBe('mem-1');
+    await app.close();
+  });
+
+  it('patches a single field and still re-embeds', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({
+      channelId: CHANNEL,
+      id: 'mem-1',
+      lessonSummary: 'old summary',
+      rationale: 'old rationale',
+    });
+    mockPrisma.memoryItem.update.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      createdAt: '2026-06-24T00:00:00.000Z',
+      id: 'mem-1',
+      lessonSummary: 'new summary',
+      metadata: null,
+      rationale: 'old rationale',
+    });
+    const res = await app.inject({
+      body: { lessonSummary: 'new summary' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+    });
+    expect(res.statusCode).toBe(200);
+    // Only the provided field is written.
+    expect(mockPrisma.memoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { lessonSummary: 'new summary' } })
+    );
+    expect(mockTemporal.startReembedMemory).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('still returns 200 (and persists the edit) when the re-embed start throws', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({
+      channelId: CHANNEL,
+      id: 'mem-1',
+      lessonSummary: 'old',
+      rationale: 'old',
+    });
+    mockPrisma.memoryItem.update.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      createdAt: '2026-06-24T00:00:00.000Z',
+      id: 'mem-1',
+      lessonSummary: 'new',
+      metadata: null,
+      rationale: 'old',
+    });
+    mockTemporal.startReembedMemory.mockRejectedValue(new Error('temporal down'));
+    const res = await app.inject({
+      body: { lessonSummary: 'new' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.memoryItem.update).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('404s patching a memory item whose channelId does not match the path', async () => {
+    const { app, mockPrisma, mockTemporal } = await buildApp();
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({
+      channelId: 'other-channel',
+      id: 'mem-1',
+      lessonSummary: 'x',
+      rationale: 'y',
+    });
+    const res = await app.inject({
+      body: { lessonSummary: 'new' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(mockPrisma.memoryItem.update).not.toHaveBeenCalled();
+    expect(mockTemporal.startReembedMemory).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('400s a memory patch with neither field provided', async () => {
+    const { app, mockPrisma } = await buildApp();
+    const res = await app.inject({
+      body: {},
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a non-admin memory patch', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      body: { lessonSummary: 'new' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/${MEMORY}`,
     });
     expect(res.statusCode).toBe(403);
     expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();

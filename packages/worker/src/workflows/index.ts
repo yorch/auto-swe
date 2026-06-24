@@ -5,6 +5,7 @@ export { ChannelAssistantWorkflow } from './channelAssistant.js';
 export { ConsolidateLessonsWorkflow } from './consolidateLessons.js';
 export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.js';
 export { EvalRunWorkflow } from './evalRun.js';
+export { ReembedMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';

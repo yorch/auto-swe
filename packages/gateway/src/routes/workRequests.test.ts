@@ -144,6 +144,7 @@ describe('POST /api/v1/work-requests', () => {
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
+      startReembedMemory: async () => {},
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },

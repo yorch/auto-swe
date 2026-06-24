@@ -153,3 +153,47 @@ export async function insertMemoryItem(input: {
 
   return rows[0]?.id ?? '';
 }
+
+/**
+ * Re-embed a single `memory_items` row from its CURRENT `lesson_summary`.
+ *
+ * When an admin edits a channel memory item's text (the gateway updates
+ * `lesson_summary` / `rationale` synchronously), the stored pgvector `embedding`
+ * goes stale — retrieval would still match on the OLD text. This regenerates the
+ * embedding for the row's present summary and records the embedding spec
+ * alongside it (so the EVOL-4 cross-space guard in {@link searchMemoryItemsByVector}
+ * keeps working).
+ *
+ * Reads only scalar columns — NEVER the `embedding` (pgvector `Unsupported`)
+ * column, which Prisma can't project. Returns `false` (no throw) when the row
+ * doesn't exist so callers can treat a deleted row as a no-op.
+ *
+ * Raw SQL is the sanctioned pgvector exception here, same as the rest of this
+ * module.
+ */
+export async function reembedMemoryItem(memoryId: string): Promise<boolean> {
+  const rows = await prisma.$queryRawUnsafe<{ lessonSummary: string }[]>(
+    `SELECT lesson_summary AS "lessonSummary"
+     FROM memory_items
+     WHERE id = $1::uuid`,
+    memoryId
+  );
+
+  const lessonSummary = rows[0]?.lessonSummary;
+  if (lessonSummary === undefined) {
+    return false;
+  }
+
+  const { embedding, spec } = await generateEmbeddingWithSpec(lessonSummary);
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE memory_items
+     SET embedding = $1::vector, embedding_model = $2
+     WHERE id = $3::uuid`,
+    JSON.stringify(embedding),
+    spec,
+    memoryId
+  );
+
+  return true;
+}

@@ -134,3 +134,25 @@ export function useDeleteChannelMemory() {
     },
   });
 }
+
+export interface UpdateChannelMemoryBody {
+  lessonSummary?: string;
+  rationale?: string;
+}
+
+export function useUpdateChannelMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      channelId,
+      memoryId,
+      ...body
+    }: { channelId: string; memoryId: string } & UpdateChannelMemoryBody) =>
+      api
+        .patch<{ data: MemoryItemDto }>(`${BASE}/${channelId}/memory/${memoryId}`, body)
+        .then((r) => r.data),
+    onSuccess: (_data, { channelId }) => {
+      qc.invalidateQueries({ queryKey: ['admin-slack-channel-memory', channelId] });
+    },
+  });
+}

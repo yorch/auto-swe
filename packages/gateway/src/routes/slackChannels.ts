@@ -40,6 +40,17 @@ const CreateChannelSchema = z.object({
   teamId: z.string().uuid(),
 });
 
+/** PATCH /:id/memory/:memoryId body. At least one text field must be present
+ * (a no-field edit is meaningless and would needlessly fire a re-embed). */
+const UpdateMemorySchema = z
+  .object({
+    lessonSummary: z.string().min(1).optional(),
+    rationale: z.string().min(1).optional(),
+  })
+  .refine((b) => b.lessonSummary !== undefined || b.rationale !== undefined, {
+    message: 'Provide at least one of lessonSummary or rationale',
+  });
+
 const UpdateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
@@ -241,10 +252,10 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   //
   // NOTE: we deliberately select scalar fields explicitly and never the
   // `embedding` column — it's a Prisma `Unsupported("vector(1536)")` field that
-  // can't be returned through the client. The Phase-2 surface is view + delete
-  // only: editing `lessonSummary` would leave the pgvector embedding stale, and
-  // re-embedding is a worker/embeddings concern not available in the gateway. An
-  // edit-with-re-embed endpoint is a deliberate follow-up.
+  // can't be returned through the client. Editing `lessonSummary`/`rationale`
+  // is handled by PATCH /:id/memory/:memoryId below, which updates the text and
+  // fires a best-effort `ReembedMemoryWorkflow` so the pgvector embedding (a
+  // worker/embeddings concern) catches up to the new text.
   app.get(
     '/:id/memory',
     { onRequest: authed, schema: { params: IdParams } },
@@ -321,6 +332,66 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'MemoryItem',
       });
       return reply.send({ data: { deleted: true } });
+    }
+  );
+
+  // PATCH /:id/memory/:memoryId — edit a memory item's text (ADMIN only), then
+  // re-embed so the pgvector embedding catches up to the new text. Verify the
+  // row exists AND belongs to this channel before updating (mirrors DELETE).
+  // The text update is synchronous; the re-embed is best-effort (a Temporal
+  // hiccup must not fail the edit — the embedding re-syncs on a later edit or
+  // out-of-band reaper).
+  app.patch(
+    '/:id/memory/:memoryId',
+    { onRequest: adminOnly, schema: { body: UpdateMemorySchema, params: MemoryParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const body = request.body;
+      const item = await fastify.prisma.memoryItem.findUnique({
+        select: { channelId: true, id: true, lessonSummary: true, rationale: true },
+        where: { id: request.params.memoryId },
+      });
+      if (!item || item.channelId !== request.params.id) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Memory item not found' } });
+      }
+
+      const updated = await fastify.prisma.memoryItem.update({
+        data: {
+          ...(body.lessonSummary !== undefined ? { lessonSummary: body.lessonSummary } : {}),
+          ...(body.rationale !== undefined ? { rationale: body.rationale } : {}),
+        },
+        select: {
+          agentKey: true,
+          createdAt: true,
+          id: true,
+          lessonSummary: true,
+          metadata: true,
+          rationale: true,
+        },
+        where: { id: item.id },
+      });
+
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { lessonSummary: updated.lessonSummary, rationale: updated.rationale },
+        before: { lessonSummary: item.lessonSummary, rationale: item.rationale },
+        entityId: item.id,
+        entityType: 'MemoryItem',
+      });
+
+      // Best-effort re-embed. The base row id alone would REJECT_DUPLICATE on a
+      // second edit, so append a per-edit suffix (Date.now() — the gateway is
+      // normal Node) to keep the workflowId unique across successive edits.
+      try {
+        await fastify.temporal.startReembedMemory(`reembed-mem-${item.id}-${Date.now()}`, item.id);
+      } catch (err) {
+        request.log.error({ err, memoryId: item.id }, 'failed to start memory re-embed');
+      }
+
+      return reply.send({ data: updated });
     }
   );
 

@@ -103,6 +103,7 @@ declare module 'fastify' {
         workflowId: string,
         input: ChannelAssistantTurnInput
       ) => Promise<void>;
+      startReembedMemory: (workflowId: string, memoryId: string) => Promise<void>;
       startEvalRunWorkflow: (
         workflowId: string,
         input: {
@@ -392,6 +393,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         args: [input],
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '5h',
+        workflowId,
+      });
+    },
+
+    async startReembedMemory(workflowId: string, memoryId: string): Promise<void> {
+      // Re-embed one MemoryItem so its pgvector embedding catches up to edited
+      // text. Mirrors startChannelAssistant's start-by-name; the caller wraps
+      // this best-effort (a Temporal hiccup must not fail the synchronous edit).
+      await client.workflow.start('ReembedMemoryWorkflow', {
+        args: [{ memoryId }],
+        taskQueue: 'engineering-workflow',
         workflowId,
       });
     },
