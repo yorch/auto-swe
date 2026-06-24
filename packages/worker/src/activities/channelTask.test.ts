@@ -4,6 +4,7 @@ vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn() },
+    connection: { findMany: vi.fn() },
     runInput: { create: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
@@ -15,19 +16,39 @@ vi.mock('@auto-swe/shared/lib/billing', () => ({
   currentYearMonth: vi.fn().mockReturnValue('2026-06'),
 }));
 
+// Phase B: stub the default-SWE-template resolver so the code-task tests don't drag
+// in the templates activity's whole dependency chain (slackNotify, trackerSync, …).
+vi.mock('./templates.js', () => ({
+  resolveTemplateForRepo: vi.fn(),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
-import { createChannelTaskRun, isChannelOverBudgetForTask } from './channelTask.js';
+import {
+  createChannelCodeTaskRun,
+  createChannelTaskRun,
+  isChannelOverBudgetForTask,
+  resolveChannelRepo,
+} from './channelTask.js';
+import { resolveTemplateForRepo } from './templates.js';
 
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const createRunInput = vi.mocked(prisma.runInput.create);
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
 const findUsage = vi.mocked(prisma.channelMonthlyUsage.findUnique);
+const findConnections = vi.mocked(prisma.connection.findMany);
+const resolveTemplate = vi.mocked(resolveTemplateForRepo);
 
 beforeEach(() => {
   vi.clearAllMocks();
   findTemplate.mockResolvedValue({ activeVersion: 1, id: 'tmpl-channel-task' } as never);
   createRunInput.mockResolvedValue({ id: 'runinput-1' } as never);
+  resolveTemplate.mockResolvedValue({ templateId: 'tmpl-swe', templateVersion: 3 });
 });
+
+/** Build a `git_repo` connection row as `prisma.connection.findMany` returns it. */
+function gitRepo(id: string, org: string, repo: string) {
+  return { id, organizationName: org, repoName: repo, type: 'git_repo' };
+}
 
 describe('createChannelTaskRun', () => {
   const INPUT = {
@@ -87,6 +108,137 @@ describe('createChannelTaskRun', () => {
     findTemplate.mockResolvedValue(null);
 
     await expect(createChannelTaskRun(INPUT)).rejects.toThrow(/Channel Task/);
+  });
+});
+
+describe('resolveChannelRepo', () => {
+  beforeEach(() => {
+    findChannel.mockResolvedValue({ teamId: 'team-1' } as never);
+  });
+
+  it('matches a repoHint by bare repoName (case-insensitive)', async () => {
+    findConnections.mockResolvedValue([
+      gitRepo('c-1', 'acme', 'payments-api'),
+      gitRepo('c-2', 'acme', 'web'),
+    ] as never);
+
+    expect(await resolveChannelRepo('chan-1', 'Payments-API')).toEqual({ repoId: 'c-1' });
+  });
+
+  it('matches a repoHint by organizationName/repoName', async () => {
+    findConnections.mockResolvedValue([
+      gitRepo('c-1', 'acme', 'payments-api'),
+      gitRepo('c-2', 'other', 'payments-api'),
+    ] as never);
+
+    expect(await resolveChannelRepo('chan-1', 'other/payments-api')).toEqual({ repoId: 'c-2' });
+  });
+
+  it('auto-resolves the sole repo when the team has exactly one (no/unmatched hint)', async () => {
+    findConnections.mockResolvedValue([gitRepo('c-1', 'acme', 'payments-api')] as never);
+
+    expect(await resolveChannelRepo('chan-1')).toEqual({ repoId: 'c-1' });
+    // An unmatched hint still falls through to the single-repo default.
+    expect(await resolveChannelRepo('chan-1', 'nope')).toEqual({ repoId: 'c-1' });
+  });
+
+  it('returns null when ambiguous: multiple repos and no matching hint', async () => {
+    findConnections.mockResolvedValue([
+      gitRepo('c-1', 'acme', 'payments-api'),
+      gitRepo('c-2', 'acme', 'web'),
+    ] as never);
+
+    expect(await resolveChannelRepo('chan-1')).toBeNull();
+    expect(await resolveChannelRepo('chan-1', 'unknown-repo')).toBeNull();
+  });
+
+  it('returns null when the team has no active git_repo connection', async () => {
+    findConnections.mockResolvedValue([] as never);
+
+    expect(await resolveChannelRepo('chan-1', 'payments-api')).toBeNull();
+  });
+
+  it('ignores git rows missing org/repo identity (guard)', async () => {
+    findConnections.mockResolvedValue([
+      { id: 'c-bad', organizationName: null, repoName: null, type: 'git_repo' },
+      gitRepo('c-1', 'acme', 'payments-api'),
+    ] as never);
+
+    // Only the well-formed row counts → it's the sole repo → auto-resolved.
+    expect(await resolveChannelRepo('chan-1')).toEqual({ repoId: 'c-1' });
+  });
+
+  it('returns null when the channel row is missing', async () => {
+    findChannel.mockResolvedValue(null as never);
+
+    expect(await resolveChannelRepo('chan-1', 'payments-api')).toBeNull();
+  });
+});
+
+describe('createChannelCodeTaskRun', () => {
+  const INPUT = {
+    channelId: 'chan-1',
+    description: 'Add a GET /health endpoint and open a PR.',
+    repoHint: 'payments-api',
+    slackChannelId: 'C123',
+    threadTs: '111.222',
+    title: 'Add health endpoint',
+  };
+
+  beforeEach(() => {
+    findChannel.mockResolvedValue({ teamId: 'team-1' } as never);
+    findConnections.mockResolvedValue([gitRepo('c-1', 'acme', 'payments-api')] as never);
+  });
+
+  it('builds a REAL RepoWorkRequest against the resolved repo + the default SWE template', async () => {
+    const result = await createChannelCodeTaskRun(INPUT);
+
+    expect(result).not.toBeNull();
+    // Default SWE template resolved via resolveTemplateForRepo(resolvedRepoId).
+    expect(resolveTemplate).toHaveBeenCalledWith('c-1');
+    expect(result?.templateId).toBe('tmpl-swe');
+    expect(result?.templateVersion).toBe(3);
+    // Shares the deterministic per-thread workflowId with the general route.
+    expect(result?.workflowId).toBe('chantask-chan-1-111-222');
+    expect(result?.request).toMatchObject({
+      channelId: 'chan-1',
+      description: INPUT.description,
+      externalTicketId: 'slack-C123-111.222',
+      // Real repo (NOT the repo-less sentinel) — the SWE spec needs a workspace.
+      repoId: 'c-1',
+      slackChannel: '111.222',
+      workRequestId: 'runinput-1',
+    });
+  });
+
+  it("stamps payload.kind='channel-task' so finalize accrues to the channel + reports back", async () => {
+    await createChannelCodeTaskRun(INPUT);
+
+    const data = createRunInput.mock.calls[0]?.[0]?.data;
+    expect(data).toMatchObject({
+      slackChannelId: 'C123',
+      slackMessageTs: '111.222',
+      templateId: 'tmpl-swe',
+      templateVersion: 3,
+    });
+    expect(data.payload).toMatchObject({
+      channelId: 'chan-1',
+      kind: 'channel-task',
+      repoId: 'c-1',
+    });
+  });
+
+  it('returns null (fall back to general) when no repo resolves', async () => {
+    findConnections.mockResolvedValue([
+      gitRepo('c-1', 'acme', 'payments-api'),
+      gitRepo('c-2', 'acme', 'web'),
+    ] as never);
+
+    // Ambiguous (two repos) + an unmatched hint → null.
+    expect(await createChannelCodeTaskRun({ ...INPUT, repoHint: 'nope' })).toBeNull();
+    // No template resolution / RunInput insert on the null path.
+    expect(resolveTemplate).not.toHaveBeenCalled();
+    expect(createRunInput).not.toHaveBeenCalled();
   });
 });
 

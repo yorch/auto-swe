@@ -1,6 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
+import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
+import { resolveTemplateForRepo } from './templates.js';
 
 /**
  * Channel assistant (Phase A): launch a durable, thread-bound task run from a
@@ -141,6 +143,165 @@ export async function createChannelTaskRun(
     externalTicketId,
     // Sentinel: the Channel Task spec is repo-less (agent node needs no workspace).
     repoId: '',
+    requestPayload: input.description,
+    slackChannel: input.threadTs,
+    workRequestId: runInput.id,
+  };
+
+  return { request, templateId, templateVersion, workflowId };
+}
+
+/**
+ * Channel assistant (Phase B): resolve which `git_repo` Connection a code task in
+ * this channel should run against.
+ *
+ * Query the channel team's active `git_repo` connections, then:
+ *  (a) if `repoHint` case-insensitively matches a connection's `repoName` or its
+ *      `organizationName/repoName`, use that connection;
+ *  (b) else, if the team has EXACTLY ONE active `git_repo` connection, use it
+ *      (the unambiguous default — most channels map to one repo);
+ *  (c) else return `null` (ambiguous: multiple repos and no/unmatched hint, or
+ *      the team has no repo at all). The caller then falls back to the general
+ *      Channel Task route.
+ *
+ * The `isGitRepoConnection` guard narrows out any `git_repo` row missing
+ * org/repo identity before matching.
+ */
+export async function resolveChannelRepo(
+  channelId: string,
+  repoHint?: string
+): Promise<{ repoId: string } | null> {
+  const channel = await prisma.slackChannel.findUnique({
+    select: { teamId: true },
+    where: { id: channelId },
+  });
+  if (!channel) {
+    return null;
+  }
+
+  const rows = await prisma.connection.findMany({
+    select: { id: true, organizationName: true, repoName: true, type: true },
+    where: { isActive: true, teamId: channel.teamId, type: 'git_repo' },
+  });
+  const repos = rows.filter(isGitRepoConnection);
+  if (repos.length === 0) {
+    return null;
+  }
+
+  // (a) Hint match: accept either the bare `repoName` or `organizationName/repoName`.
+  const hint = repoHint?.trim().toLowerCase();
+  if (hint) {
+    const match = repos.find(
+      (r) =>
+        r.repoName.toLowerCase() === hint ||
+        `${r.organizationName}/${r.repoName}`.toLowerCase() === hint
+    );
+    if (match) {
+      return { repoId: match.id };
+    }
+  }
+
+  // (b) Exactly one repo → unambiguous default.
+  if (repos.length === 1) {
+    return { repoId: repos[0].id };
+  }
+
+  // (c) Ambiguous (multiple repos, no/unmatched hint) → caller falls back.
+  return null;
+}
+
+export interface CreateChannelCodeTaskRunInput {
+  /** SlackChannel.id (our row) — drives the CHANNEL config tier + budget accrual. */
+  channelId: string;
+  /** Slack channel id (`C…`) the result is threaded back into. */
+  slackChannelId: string;
+  /** Thread to report the result in (the originating mention's ts/thread_ts). */
+  threadTs: string;
+  /** Short title for the task (from the delegate intent). */
+  title: string;
+  /** Self-contained task description the run executes. */
+  description: string;
+  /** Optional repo the user named (matched in {@link resolveChannelRepo}). */
+  repoHint?: string;
+}
+
+/**
+ * Channel assistant (Phase B): prepare a CODE task run — launch the team's default
+ * SWE workflow (real implement → review → PR) against the channel's resolved repo,
+ * rather than the repo-less general Channel Task spec.
+ *
+ * Differences from {@link createChannelTaskRun}:
+ *  - Resolves a real `git_repo` Connection via {@link resolveChannelRepo}; returns
+ *    `null` when no repo resolves (the caller then falls back to the general route).
+ *  - Resolves the team's DEFAULT SWE template via {@link resolveTemplateForRepo}
+ *    (team `isDefault` ACTIVE template → GLOBAL `isDefault` fallback) instead of the
+ *    named "Channel Task" template.
+ *  - Builds a REAL {@link RepoWorkRequest} (real `repoId`) so the SWE spec's
+ *    implementer/reviewer/PR nodes have a workspace to operate in.
+ *
+ * Shared with the general route: the deterministic per-thread `workflowId`
+ * (`chantask-<channelId>-<threadTs>` — one task run per thread regardless of
+ * route), the `RunInput` with `slackChannelId`/`slackMessageTs` set (so the run's
+ * terminal Slack notification threads back), and `payload.kind === 'channel-task'`
+ * so {@link finalizeChannelTaskRun} still accrues the run's cost to the channel
+ * budget + posts the result back into the thread.
+ *
+ * ORG vs CHANNEL accrual (no double-count): a code run has a real
+ * connection→team→org path, so `finalizeWorkflowRun` increments `OrgMonthlyUsage`
+ * ONCE via that path (the normal SWE billing). The channel accrual done by
+ * `finalizeChannelTaskRun` reads the run's `AgentTrace` cost into the SEPARATE
+ * `ChannelMonthlyUsage` ledger (the per-channel budget) — a different table, so it
+ * is additive/independent, not a second org increment. We do NOT touch
+ * `OrgMonthlyUsage` here; the standard repo-bound finalize path owns that.
+ */
+export async function createChannelCodeTaskRun(
+  input: CreateChannelCodeTaskRunInput
+): Promise<CreateChannelTaskRunResult | null> {
+  const repo = await resolveChannelRepo(input.channelId, input.repoHint);
+  if (!repo) {
+    // No (unambiguous) repo — signal the caller to fall back to the general route.
+    return null;
+  }
+
+  // Default SWE template: team `isDefault` ACTIVE → GLOBAL `isDefault` fallback.
+  const { templateId, templateVersion } = await resolveTemplateForRepo(repo.repoId);
+
+  const externalTicketId = `slack-${input.slackChannelId}-${input.threadTs}`;
+
+  // Persist a RunInput so the terminal Slack notification threads back. `payload`
+  // carries the channel context (`kind: 'channel-task'`) so `finalizeChannelTaskRun`
+  // accrues to the channel budget + posts the result in-thread, exactly like the
+  // general route.
+  const runInput = await prisma.runInput.create({
+    data: {
+      description: input.description,
+      externalTicketId,
+      payload: {
+        channelId: input.channelId,
+        kind: 'channel-task',
+        repoId: repo.repoId,
+        slackChannelId: input.slackChannelId,
+        threadTs: input.threadTs,
+        title: input.title,
+      },
+      requestPayload: input.description,
+      slackChannelId: input.slackChannelId,
+      slackMessageTs: input.threadTs,
+      templateId,
+      templateVersion,
+    },
+  });
+
+  // Deterministic workflowId: one task run per thread (shared with the general
+  // route so a re-delegate in the same thread is rejected, not clobbered).
+  const workflowId = `chantask-${sanitizeIdPart(input.channelId)}-${sanitizeIdPart(input.threadTs)}`;
+
+  const request: RepoWorkRequest = {
+    channelId: input.channelId,
+    description: input.description,
+    externalTicketId,
+    // Real repo: the SWE spec needs a workspace (implement → review → PR).
+    repoId: repo.repoId,
     requestPayload: input.description,
     slackChannel: input.threadTs,
     workRequestId: runInput.id,

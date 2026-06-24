@@ -47,9 +47,11 @@ const calls: {
   startRuns: StartRunCall[];
   finalizeRuns: FinalizeRunCall[];
   taskRuns: unknown[];
+  codeTaskRuns: unknown[];
   budgetChecks: string[];
 } = {
   budgetChecks: [],
+  codeTaskRuns: [],
   finalizeRuns: [],
   placeholders: [],
   posts: [],
@@ -64,14 +66,41 @@ let placeholderThrows = false;
 let turnThrows = false;
 let turnReply = 'here is the answer';
 // Phase A: optional delegate intent returned by the turn, + the budget verdict.
-let turnDelegate: { route: 'general' | 'code'; title: string; description: string } | undefined;
+let turnDelegate:
+  | { route: 'general' | 'code'; title: string; description: string; repoHint?: string }
+  | undefined;
 let overBudget = false;
+// Phase B: per-test knob — when null, createChannelCodeTaskRun returns null (no
+// repo resolved → the workflow falls back to the general route).
+let codeRepoResolves = true;
 
 const fakeActivities = {
   // Child RunnableWorkflow lifecycle fakes — the launched (abandoned) child needs
   // these to start + finalize cleanly. Returning an error from createWorkflowRun
   // makes the child fail fast (it's abandoned, so the parent is unaffected).
   cancelPendingHumanSteps: async () => {},
+  // Phase B: code-route launch preparation. Returns null when codeRepoResolves is
+  // false (no repo) so the workflow falls back to the general route; otherwise a
+  // collision-free workflowId (the abandoned child's activities are faked).
+  createChannelCodeTaskRun: async (input: { channelId: string; threadTs: string }) => {
+    calls.codeTaskRuns.push(input);
+    if (!codeRepoResolves) {
+      return null;
+    }
+    return {
+      request: {
+        channelId: input.channelId,
+        description: 'code task',
+        externalTicketId: 't',
+        repoId: 'repo-1',
+        requestPayload: 'code task',
+        workRequestId: 'ri-code',
+      },
+      templateId: 'tmpl-swe',
+      templateVersion: 3,
+      workflowId: `chantask-${input.channelId}-${input.threadTs}-${Math.random().toString(36).slice(2)}`,
+    };
+  },
   // Phase A: launch preparation. Returns a workflowId that can never collide with
   // a real run so the abandoned child RunnableWorkflow (started but not awaited)
   // doesn't interfere with other tests. The child's own activities are faked below.
@@ -158,6 +187,7 @@ beforeEach((ctx: TestContext) => {
   calls.startRuns = [];
   calls.finalizeRuns = [];
   calls.taskRuns = [];
+  calls.codeTaskRuns = [];
   calls.budgetChecks = [];
   placeholderTs = '999.000';
   placeholderThrows = false;
@@ -165,6 +195,7 @@ beforeEach((ctx: TestContext) => {
   turnReply = 'here is the answer';
   turnDelegate = undefined;
   overBudget = false;
+  codeRepoResolves = true;
 });
 
 afterAll(async () => {
@@ -316,5 +347,36 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.taskRuns).toHaveLength(0);
     // The user gets the budget notice instead of the agent's ack.
     expect(calls.updates[0]?.text).toContain('monthly assistant budget');
+  }, 60_000);
+
+  // ── Phase B: code-task route via the SWE workflow ───────────────────────────
+
+  it('routes a code delegate to the SWE launch when a repo resolves', async () => {
+    turnDelegate = { description: 'add an endpoint', route: 'code', title: 'Endpoint' };
+    turnReply = 'On it — will open a PR.';
+    codeRepoResolves = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-code-ok'));
+
+    // The code-route preparer ran; the general one did NOT (no fallback).
+    expect(calls.codeTaskRuns).toHaveLength(1);
+    expect(calls.taskRuns).toHaveLength(0);
+    // The ack is posted unprefixed (no fallback note).
+    expect(calls.updates[0]?.text).toBe('On it — will open a PR.');
+  }, 60_000);
+
+  it('falls back to the general route (with a note) when a code delegate resolves no repo', async () => {
+    turnDelegate = { description: 'add an endpoint', route: 'code', title: 'Endpoint' };
+    turnReply = 'On it — will follow up here.';
+    codeRepoResolves = false;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-code-fallback'));
+
+    // Code prep tried (returned null) → fell back to the general prep.
+    expect(calls.codeTaskRuns).toHaveLength(1);
+    expect(calls.taskRuns).toHaveLength(1);
+    // The ack is prefixed with the no-repo note so the fallback isn't silent.
+    expect(calls.updates[0]?.text).toContain("couldn't find a repository");
+    expect(calls.updates[0]?.text).toContain('On it — will follow up here.');
   }, 60_000);
 });

@@ -12,11 +12,18 @@ export {
 export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun } from './channelRun.js';
 // Channel assistant (Phase A) — general agentic task launch from a mention
+// Channel assistant (Phase B) — code-task route via the default SWE workflow
 export type {
+  CreateChannelCodeTaskRunInput,
   CreateChannelTaskRunInput,
   CreateChannelTaskRunResult,
 } from './channelTask.js';
-export { createChannelTaskRun, isChannelOverBudgetForTask } from './channelTask.js';
+export {
+  createChannelCodeTaskRun,
+  createChannelTaskRun,
+  isChannelOverBudgetForTask,
+  resolveChannelRepo,
+} from './channelTask.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,

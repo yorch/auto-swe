@@ -52,11 +52,26 @@ export interface DelegateIntent {
   route: 'general' | 'code';
   title: string;
   description: string;
+  /**
+   * Channel assistant (Phase B): the repository the user named, if any. Only
+   * meaningful for `route: 'code'` — the code-route launch resolves it (by
+   * `repoName` or `organizationName/repoName`) against the channel team's active
+   * `git_repo` connections; an unset/unmatched hint falls back to the team's sole
+   * repo (if exactly one) or the general task route.
+   */
+  repoHint?: string;
 }
 
 /** Schema for the `delegateTask` tool's structured input (validated by Mastra). */
 const DelegateTaskInputSchema = z.object({
   description: z.string().describe('A clear, self-contained description of the task to carry out.'),
+  repoHint: z
+    .string()
+    .optional()
+    .describe(
+      'For a code task: the repository the user named, if any (e.g. "payments-api" ' +
+        'or "acme/payments-api"). Leave unset if no repo was named.'
+    ),
   route: z
     .enum(['general', 'code'])
     .describe(
@@ -86,7 +101,9 @@ const DELEGATE_TOOL_PROMPT_NOTE = [
   'and reports back in this thread — so your own reply should be a brief ',
   'acknowledgement ("On it — I\'ll follow up here."). For quick questions, just ',
   'answer directly and do NOT call the tool. Set route="code" only when the task ',
-  'requires editing a repository / opening a pull request; otherwise route="general".',
+  'requires editing a repository / opening a pull request; otherwise route="general". ',
+  'For a code task, if the user named a specific repository, pass it as `repoHint` ',
+  '(e.g. "payments-api" or "acme/payments-api"); leave it unset if no repo was named.',
 ].join('');
 
 /**
@@ -102,8 +119,8 @@ function buildDelegateTool(onDelegate: (intent: DelegateIntent) => void) {
       'Launch a durable background task that will work on this request and ' +
       'report its result back in this Slack thread. Use for genuine multi-step ' +
       'work, not quick questions.',
-    execute: async ({ description, route, title }) => {
-      onDelegate({ description, route, title });
+    execute: async ({ description, repoHint, route, title }) => {
+      onDelegate({ description, repoHint, route, title });
       return {
         note: 'Task queued — I will follow up in this thread when it is done.',
         queued: true,
