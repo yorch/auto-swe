@@ -4,8 +4,8 @@ import type { runEvalHarnessActivity as runEvalHarnessActivityType } from '../ac
 import type { prepareScheduledEvalRun as prepareScheduledEvalRunType } from '../activities/prepareScheduledEvalRun.js';
 
 /**
- * Scheduled eval-regression workflow (evals P1) — the platform-native
- * replacement for the old `evals-nightly.yml` GitHub Action.
+ * Scheduled eval-regression workflow (evals P1) — the platform-native nightly
+ * benchmark.
  *
  * Fired by a single named Temporal Schedule (see the gateway `temporal` plugin),
  * exactly like `ScheduledConsolidationWorkflow`. On each fire it resolves the

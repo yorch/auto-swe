@@ -14,7 +14,7 @@ data.
 > phases: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
 > SHA-pinned workspace + standalone gate runner + admin API + `auto-swe evals` CLI (incl. `run`) +
 > harness orchestration + **durable `EvalRunWorkflow`** + a **platform-native nightly Temporal
-> Schedule** (`ScheduledEvalWorkflow`, managed at `/admin/workflow` — replaces the old repo GHA);
+> Schedule** (`ScheduledEvalWorkflow`, configured per deployment and managed at `/admin/workflow`);
 > P2 scorer-combination +
 > decision-rule + judge-prompt + implementer/rubric wall + `EvalRubric` schema/API + the **`eval`
 > workflow node** (spec→interpreter→activity→canvas) + **wired LLM judge** (`evalJudge` agent,

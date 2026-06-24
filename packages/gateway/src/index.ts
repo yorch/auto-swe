@@ -90,8 +90,8 @@ async function start() {
     .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
 
-  // Same for the eval-regression Temporal Schedule (the platform-native
-  // replacement for the old evals-nightly GitHub Action). Off by default.
+  // Same for the eval-regression Temporal Schedule (the nightly benchmark).
+  // Off by default — needs a seeded dataset + a worker that can reach Docker.
   resolveEvalScheduleConfig()
     .then((cfg) => app.temporal.syncEvalSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'eval schedule sync failed at startup'));

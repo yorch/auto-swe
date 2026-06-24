@@ -39,7 +39,7 @@ The **replay spike** is *not* a P1 prerequisite — it gates the optional P3 his
 6. **CLI + gateway:** `auto-swe evals run|list <dataset> --candidate <ref> --against <ref>` over
    `/api/v1/admin/evals/*`, plus a **platform-native nightly schedule** (a Temporal Schedule firing
    `ScheduledEvalWorkflow`, configured in the DB and managed at `/admin/workflow` — the same pattern
-   as lesson consolidation, not a repo GitHub Action).
+   as lesson consolidation).
 7. **Online drift:** a thin trend query + extension of P0 capture so per-scorer drift over time is
    computable (dashboard polish itself is P3).
 8. **Tests:** harness scores a 2-case fixture set end-to-end with fakes; paired-stats unit tests;
@@ -195,8 +195,9 @@ LLM cost on the scorer side; the *candidate run* still costs tokens, hence **nig
   is synced to Temporal at gateway boot + on admin save (`syncEvalSchedule`), and is managed at
   `/admin/workflow` via `GET/PUT /api/v1/admin/config/eval-schedule` (+ `/trigger`). **Off by
   default** — needs a seeded dataset and a worker that can reach Docker + the model provider.
-  **Nightly, not per-PR** (cost — RFC §4.3). This replaces the original repo GitHub Action: the
-  benchmark is a per-deployment, DB-configured capability, not a CI artifact.
+  **Nightly, not per-PR** (cost — RFC §4.3). The benchmark is a per-deployment, DB-configured
+  capability rather than CI: it needs a running platform (gateway + worker + Docker + model
+  provider), which a repo CI job doesn't have.
 - **Acceptance:** the schedule syncs at boot and on save; a manual `/trigger` starts a run; a missing
   dataset is a no-op.
 
