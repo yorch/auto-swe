@@ -91,7 +91,7 @@ const ResultsQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   runId: z.string().uuid().optional(),
   scorer: z.string().max(200).optional(),
-  source: z.enum(['GATE', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY']).optional(),
+  source: z.enum(['GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY']).optional(),
 });
 
 function toCaseDto(c: {

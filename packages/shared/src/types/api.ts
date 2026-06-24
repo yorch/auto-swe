@@ -583,7 +583,14 @@ export interface ScheduledWorkRequestSummary {
 
 // ── Evaluations (P0: captured quality signals) ──
 
-export const EVAL_SIGNAL_SOURCES = ['GATE', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY'] as const;
+export const EVAL_SIGNAL_SOURCES = [
+  'GATE',
+  'ASSERT',
+  'REVIEW',
+  'MERGE',
+  'JUDGE',
+  'TRAJECTORY',
+] as const;
 export type EvalSignalSourceValue = (typeof EVAL_SIGNAL_SOURCES)[number];
 
 export const EVAL_SCORE_TYPES = ['BOOLEAN', 'NUMERIC', 'CATEGORICAL'] as const;

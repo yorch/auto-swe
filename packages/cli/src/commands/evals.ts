@@ -6,6 +6,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { parseFlags } from './workflows.js';
 
 const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate (P1)
 
@@ -83,20 +84,9 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
   return 0;
 }
 
-function parseFlags(rest: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const a of rest) {
-    const m = a.match(/^--([a-zA-Z]+)=(.*)$/);
-    if (m) {
-      out[m[1]] = m[2];
-    }
-  }
-  return out;
-}
-
 async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
-  const slug = rest.find((a) => !a.startsWith('--'));
-  const flags = parseFlags(rest);
+  const { flags, positional } = parseFlags(rest);
+  const slug = positional[0];
   if (!slug || !flags.candidate || !flags.against) {
     process.stderr.write('Usage: evals run <dataset-slug> --candidate=<ref> --against=<ref>\n');
     return 1;
@@ -149,7 +139,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function cmdResults(rest: string[], env: CliEnv): Promise<number> {
-  const flags = parseFlags(rest);
+  const { flags } = parseFlags(rest);
   const qs = new URLSearchParams();
   if (flags.run) {
     qs.set('runId', flags.run);

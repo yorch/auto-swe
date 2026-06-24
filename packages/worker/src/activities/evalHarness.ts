@@ -10,14 +10,13 @@
  * The per-case execution (provision a fixture at its pinned SHA, run the
  * candidate/baseline implementer, run the golden test) is the expensive
  * Docker + LLM boundary — it is injected as `deps.runCase` so this orchestration
- * is deterministic and unit-testable. `runCaseDefault` wires the real path on
- * top of `runGateStandalone`.
+ * is deterministic and unit-testable. `runCaseDefault` (the real path) is the
+ * remaining agent-diff seam and currently throws rather than fake a comparison.
  */
 
 import { prisma } from '@auto-swe/shared/db';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
-import { runGateStandalone } from './standaloneGateRunner.js';
 
 export interface EvalCaseRow {
   id: string;
@@ -64,23 +63,19 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
 }
 
 /**
- * The real per-case runner: provision the fixture at its pinned SHA and run the
- * golden test as the execution floor. NOTE: generating the candidate's diff by
- * running the implementer for `ref` is the remaining integration seam — until
- * that is wired, this scores the fixture's current tree, which is sufficient to
- * exercise the floor + determinism. The agent-diff step is tracked in
- * docs/evals-p1.md WS4.
+ * The real per-case runner. NOTE: generating the candidate's diff by running the
+ * implementer for `ref` is the remaining integration seam (docs/evals-p1.md
+ * WS4). It is intentionally NOT faked: scoring the fixture's tree for both arms
+ * would make every delta 0 and report a permanent "no regression" — the §9
+ * false-confidence failure mode. So this throws until the agent-diff step is
+ * wired; the harness activity marks the run FAILED rather than silently passing.
  */
-export async function runCaseDefault(caseRow: EvalCaseRow, _ref: string): Promise<0 | 1> {
-  const result = await runGateStandalone({
-    authedRepoUrl: caseRow.repoUrl,
-    branch: 'eval-candidate',
-    checkoutSha: caseRow.baselineSha,
-    command: caseRow.goldenTest,
-    defaultBranch: 'main',
-    gate: 'runTests',
-  });
-  return result.passed ? 1 : 0;
+export async function runCaseDefault(_caseRow: EvalCaseRow, _ref: string): Promise<0 | 1> {
+  throw new Error(
+    'eval harness: agent-diff generation is not yet wired (docs/evals-p1.md WS4); ' +
+      'a real candidate-vs-baseline run requires running the implementer per case. ' +
+      'Refusing to score the fixture tree for both arms (would report a false "no regression").'
+  );
 }
 
 /**
@@ -130,8 +125,17 @@ export const _defaults = { defaultFinalize, defaultLoadCases };
  * the pinned SHA + golden test) happens here, not in the workflow isolate.
  */
 export async function runEvalHarnessActivity(input: HarnessInput): Promise<void> {
-  await runEvalHarness(input, {
-    loadCases: defaultLoadCases,
-    runCase: runCaseDefault,
-  });
+  try {
+    await runEvalHarness(input, {
+      loadCases: defaultLoadCases,
+      runCase: runCaseDefault,
+    });
+  } catch (err) {
+    // Mark the run FAILED (not stuck RUNNING / not a false SUCCESS) and re-throw
+    // so Temporal records the failure.
+    await defaultFinalize(input.evalRunId, 'FAILED', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }

@@ -14,7 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
-import type { EvalScorer } from '@auto-swe/shared/workflow';
+import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
 import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -22,9 +22,22 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
-import { combineScores, decideGate, type ScoreInput } from '../lib/scorerCombination.js';
+import {
+  combineScores,
+  decideGate,
+  evaluateFloor,
+  type ScoreInput,
+} from '../lib/scorerCombination.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
 import { runAgent } from './runAgent.js';
+
+/** Scorer kind → the EvalResult source it records under. */
+const SCORER_KIND_SOURCE: Record<EvalScorer['kind'], 'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY'> = {
+  assert: 'ASSERT',
+  gate: 'GATE',
+  judge: 'JUDGE',
+  trajectory: 'TRAJECTORY',
+};
 
 export interface RunEvalNodeInput {
   targetValue: unknown;
@@ -75,48 +88,21 @@ async function evaluateScorer(
 }
 
 /**
- * Minimal assert evaluator: supports `$.<path> <op> <number>` and a bare
- * `$.<path>` truthiness check. Enough for the common `linesChanged < 500`
- * guardrails; a richer expression engine can replace this later.
+ * Evaluate an assert expression against the target. Reuses the interpreter's
+ * expression engine (`evalBoolean`, the same grammar `cond` nodes use) rather
+ * than a second hand-rolled evaluator — so `$.linesChanged < 500`, boolean
+ * logic, nested paths, etc. all behave identically. Malformed expressions
+ * evaluate to `false` (a failed assert) rather than throwing.
  */
 export function evalAssert(expr: string, target: unknown): boolean {
-  const cmp = expr.match(/^\$\.([\w.]+)\s*(<=|>=|<|>|==|!=)\s*(-?\d+(?:\.\d+)?)$/);
-  if (cmp) {
-    const [, path, op, rhsRaw] = cmp;
-    const lhs = Number(lookup(target, path));
-    const rhs = Number(rhsRaw);
-    if (Number.isNaN(lhs)) {
-      return false;
-    }
-    switch (op) {
-      case '<':
-        return lhs < rhs;
-      case '<=':
-        return lhs <= rhs;
-      case '>':
-        return lhs > rhs;
-      case '>=':
-        return lhs >= rhs;
-      case '==':
-        return lhs === rhs;
-      case '!=':
-        return lhs !== rhs;
-    }
+  try {
+    // Eval-node asserts use a `$.`-prefixed path convention (e.g.
+    // `$.linesChanged < 500`); the shared engine uses bare dotted paths, so
+    // strip the prefix before delegating.
+    return evalBoolean(expr.replace(/\$\./g, ''), (target ?? {}) as Context);
+  } catch {
+    return false;
   }
-  const bare = expr.match(/^\$\.([\w.]+)$/);
-  if (bare) {
-    return Boolean(lookup(target, bare[1]));
-  }
-  return false;
-}
-
-function lookup(obj: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((acc, k) => {
-    if (acc && typeof acc === 'object' && k in (acc as Record<string, unknown>)) {
-      return (acc as Record<string, unknown>)[k];
-    }
-    return undefined;
-  }, obj);
 }
 
 const JudgeOutput = z.object({
@@ -191,7 +177,7 @@ export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeR
   const baseInputs = await Promise.all(
     nonJudge.map((s) => evaluateScorer(s, input.targetValue, runId))
   );
-  const floorOk = combineScores(baseInputs).floorPassed;
+  const floorOk = evaluateFloor(baseInputs);
   const judgeInputs = floorOk
     ? await Promise.all(judges.map((s) => evaluateScorer(s, input.targetValue, runId)))
     : [];
@@ -207,7 +193,7 @@ export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeR
         runId,
         scorer: s.scorer,
         scoreType: s.kind === 'judge' || s.kind === 'trajectory' ? 'NUMERIC' : 'BOOLEAN',
-        source: s.kind === 'judge' ? 'JUDGE' : s.kind === 'trajectory' ? 'TRAJECTORY' : 'GATE',
+        source: SCORER_KIND_SOURCE[s.kind],
         value: s.value,
       })
     )

@@ -83,6 +83,7 @@ enum EvalScoreType {
 
 enum EvalSignalSource {
   GATE
+  ASSERT
   REVIEW
   MERGE
   JUDGE
