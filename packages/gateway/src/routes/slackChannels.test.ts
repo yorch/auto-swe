@@ -10,6 +10,11 @@ function newMockPrisma() {
       findUnique: vi.fn().mockResolvedValue(null),
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    memoryItem: {
+      delete: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+    },
     slackChannel: {
       create: vi.fn(),
       delete: vi.fn().mockResolvedValue({}),
@@ -299,6 +304,82 @@ describe('slackChannelRoutes', () => {
     const body = JSON.parse(res.payload);
     expect(body.monthlyBudgetUsdCents).toBe(5000);
     expect(body.currentMonthUsage.costUsdAccrued).toBe(2.25);
+    await app.close();
+  });
+
+  it('lists a channel memory items, selecting scalar fields (no embedding)', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, teamId: TEAM });
+    mockPrisma.memoryItem.findMany.mockResolvedValue([
+      {
+        agentKey: 'channelAssistant',
+        createdAt: '2026-06-24T00:00:00.000Z',
+        id: 'mem-1',
+        lessonSummary: 'Prefer feature flags',
+        metadata: { source: 'slack' },
+        rationale: 'Safer rollouts',
+      },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory`,
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data[0].id).toBe('mem-1');
+    expect(data[0].lessonSummary).toBe('Prefer feature flags');
+    // Scoped to this channel's active rows.
+    expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 100,
+        where: { channelId: CHANNEL, consolidatedAt: null },
+      })
+    );
+    // The embedding column must never be selected (Unsupported vector field).
+    const select = mockPrisma.memoryItem.findMany.mock.calls[0][0].select;
+    expect(select.embedding).toBeUndefined();
+    expect(select.id).toBe(true);
+    await app.close();
+  });
+
+  it('deletes one memory item belonging to the channel', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({ channelId: CHANNEL, id: 'mem-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data.deleted).toBe(true);
+    expect(mockPrisma.memoryItem.delete).toHaveBeenCalledWith({ where: { id: 'mem-1' } });
+    await app.close();
+  });
+
+  it('404s deleting a memory item whose channelId does not match the path', async () => {
+    const { app, mockPrisma } = await buildApp();
+    // Row exists but belongs to a different channel.
+    mockPrisma.memoryItem.findUnique.mockResolvedValue({ channelId: 'other-channel', id: 'mem-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(mockPrisma.memoryItem.delete).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a non-admin memory delete', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.memoryItem.findUnique).not.toHaveBeenCalled();
     await app.close();
   });
 

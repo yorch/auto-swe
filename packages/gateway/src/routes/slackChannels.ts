@@ -24,6 +24,11 @@ const CRON_MESSAGE =
 
 const IdParams = z.object({ id: z.string().uuid() });
 
+const MemoryParams = z.object({
+  id: z.string().uuid(),
+  memoryId: z.string().uuid(),
+});
+
 const CreateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
@@ -197,6 +202,80 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         currentMonthUsage: serializeUsage(usage),
         monthlyBudgetUsdCents: row.monthlyBudgetUsdCents,
       };
+    }
+  );
+
+  // GET /:id/memory — list this channel's active (un-consolidated) memory items
+  // (Claude Tag, Phase 2). The worker writes channel-scoped rows
+  // (scope='channel-memory', agentKey='channelAssistant', channelId set); this
+  // surface lets admins/team members audit the channel's accumulated memory.
+  //
+  // NOTE: we deliberately select scalar fields explicitly and never the
+  // `embedding` column — it's a Prisma `Unsupported("vector(1536)")` field that
+  // can't be returned through the client. The Phase-2 surface is view + delete
+  // only: editing `lessonSummary` would leave the pgvector embedding stale, and
+  // re-embedding is a worker/embeddings concern not available in the gateway. An
+  // edit-with-re-embed endpoint is a deliberate follow-up.
+  app.get(
+    '/:id/memory',
+    { onRequest: authed, schema: { params: IdParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const row = await fastify.prisma.slackChannel.findUnique({
+        select: { id: true, teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!row) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
+        return reply;
+      }
+      const items = await fastify.prisma.memoryItem.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          agentKey: true,
+          createdAt: true,
+          id: true,
+          lessonSummary: true,
+          metadata: true,
+          rationale: true,
+        },
+        take: 100,
+        where: { channelId: request.params.id, consolidatedAt: null },
+      });
+      return { data: items };
+    }
+  );
+
+  // DELETE /:id/memory/:memoryId — delete one memory item (ADMIN only). Verify
+  // the row exists AND belongs to this channel before deleting, so an admin
+  // can't remove another channel's row via a mismatched path.
+  app.delete(
+    '/:id/memory/:memoryId',
+    { onRequest: adminOnly, schema: { params: MemoryParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const item = await fastify.prisma.memoryItem.findUnique({
+        select: { channelId: true, id: true },
+        where: { id: request.params.memoryId },
+      });
+      if (!item || item.channelId !== request.params.id) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Memory item not found' } });
+      }
+      await fastify.prisma.memoryItem.delete({ where: { id: item.id } });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor,
+        before: { channelId: request.params.id },
+        entityId: item.id,
+        entityType: 'MemoryItem',
+      });
+      return reply.send({ data: { deleted: true } });
     }
   );
 

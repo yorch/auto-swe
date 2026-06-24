@@ -1,6 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
+import {
+  type ChannelMemoryItem,
+  retrieveChannelMemory,
+  writeChannelMemory,
+} from '../lib/channelMemory.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { postSlackThreadMessage } from '../lib/slackNotify.js';
@@ -13,6 +18,34 @@ const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 /** Friendly reply returned when a channel has hit its monthly assistant budget. */
 const BUDGET_EXCEEDED_REPLY =
   ':moneybag: This channel has reached its monthly assistant budget. An admin can raise it in the dashboard.';
+
+/** Cap on how many retrieved memory items are injected into the prompt. */
+const MAX_MEMORY_CONTEXT_ITEMS = 5;
+
+/** Minimum reply length (chars) worth persisting as channel memory. Below this,
+ *  the reply is likely a trivial acknowledgement not worth remembering. */
+const MIN_MEMORY_REPLY_LENGTH = 40;
+
+/** Max chars persisted for the summary (reply) and rationale (user text). */
+const MEMORY_SUMMARY_MAX_CHARS = 500;
+const MEMORY_RATIONALE_MAX_CHARS = 500;
+
+/**
+ * Claude Tag (Phase 2). Prepend a compact context block built from retrieved
+ * channel memory to the user's message, keeping the original text intact below
+ * it. Pure (no I/O) so it's directly unit-testable. Returns `userText`
+ * unchanged when there are no items.
+ */
+export function formatMemoryContext(items: ChannelMemoryItem[], userText: string): string {
+  if (items.length === 0) {
+    return userText;
+  }
+  const bullets = items
+    .slice(0, MAX_MEMORY_CONTEXT_ITEMS)
+    .map((item) => `- ${item.summary}`)
+    .join('\n');
+  return `Relevant context from this channel's memory:\n${bullets}\n\nUser: ${userText}`;
+}
 
 /**
  * Pure budget predicate (extracted for unit-testing). A channel is over budget
@@ -87,7 +120,21 @@ export async function runChannelAssistantTurn(
     { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
   );
 
-  const result = await runAgent(spec, input.userText, { spanName: 'llm.channel_assistant' });
+  // Phase 2: retrieve channel-scoped memory similar to this message and prepend
+  // it as context, so the assistant builds knowledge over time. Best-effort —
+  // a retrieval failure (e.g. embedding round-trip) must not block the reply.
+  let memory: ChannelMemoryItem[] = [];
+  try {
+    memory = await retrieveChannelMemory(input.userText, { channelId: input.channelId });
+  } catch (err) {
+    console.error(
+      `[channelAssistant] failed to retrieve channel memory for ${input.channelId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+  const userMessage = formatMemoryContext(memory, input.userText);
+
+  const result = await runAgent(spec, userMessage, { spanName: 'llm.channel_assistant' });
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
   // the reply — the workflow-level ledger (recordLlmUsage inside runAgent) is the
@@ -98,6 +145,30 @@ export async function runChannelAssistantTurn(
   await accrueChannelUsage(input.channelId, result.costUsd ?? 0);
 
   const reply = (result.text ?? '').trim();
+
+  // Phase 2: persist this exchange as channel-scoped memory so future turns can
+  // retrieve it. Best-effort — a failure here must never break the reply. Only
+  // write non-trivial replies (skip terse acknowledgements). Storing the raw
+  // exchange (reply as summary, user text as rationale) is the Phase-2 baseline;
+  // a summarizing pass over the exchange is a future refinement.
+  if (reply.length > MIN_MEMORY_REPLY_LENGTH) {
+    try {
+      await writeChannelMemory({
+        channelId: input.channelId,
+        orgId: input.orgId,
+        rationale: input.userText.slice(0, MEMORY_RATIONALE_MAX_CHARS),
+        summary: reply.slice(0, MEMORY_SUMMARY_MAX_CHARS),
+        teamId: input.teamId,
+        userSlackId: input.userSlackId,
+      });
+    } catch (err) {
+      console.error(
+        `[channelAssistant] failed to write channel memory for ${input.channelId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   return { reply: reply || "I wasn't able to come up with a response. Could you rephrase?" };
 }
 
