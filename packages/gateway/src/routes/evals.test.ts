@@ -24,7 +24,7 @@ function newMockPrisma() {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    evalRun: { findUnique: vi.fn() },
+    evalRun: { create: vi.fn(), findUnique: vi.fn() },
   };
 }
 
@@ -143,6 +143,49 @@ describe('evalRoutes', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.slug).toBe('code-review-quality');
     expect(body.scanWarnings).toEqual(['heads up']);
+  });
+
+  it('starts an eval run (202) after checking the dataset exists', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    prisma.evalRun.create.mockResolvedValue({
+      baselineRef: 'last-release',
+      candidateRef: 'main',
+      datasetId: 'd1',
+      endedAt: null,
+      id: 'run-9',
+      startedAt: new Date('2026-06-24T00:00:00Z'),
+      status: 'RUNNING',
+      summary: null,
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'last-release',
+        candidateRef: 'main',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/admin/evals/runs',
+    });
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.payload).data.id).toBe('run-9');
+  });
+
+  it('404s starting a run for a missing dataset', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'b',
+        candidateRef: 'c',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/admin/evals/runs',
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('queries results with pagination meta', async () => {

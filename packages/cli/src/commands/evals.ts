@@ -2,16 +2,19 @@ import type {
   EvalDatasetDetail,
   EvalDatasetSummary,
   EvalResultDto,
+  EvalRunDto,
 } from '@auto-swe/shared/types/api';
 import { apiRequest, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 
-const SUB_HELP = `auto-swe evals — inspect eval datasets and captured signals (P1)
+const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate (P1)
 
   evals list                          List eval datasets
   evals show <id>                     Print a dataset's cases
   evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                       Query captured eval signals
+  evals run <dataset-slug> --candidate=<ref> --against=<ref>
+                                      Start the nightly regression gate; exits 1 on a regression
 `;
 
 export async function runEvalsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -29,6 +32,9 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
     }
     if (sub === 'results') {
       return await cmdResults(rest, env);
+    }
+    if (sub === 'run') {
+      return await cmdRun(rest, env);
     }
   } catch (err) {
     if (err instanceof GatewayError) {
@@ -86,6 +92,60 @@ function parseFlags(rest: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
+  const slug = rest.find((a) => !a.startsWith('--'));
+  const flags = parseFlags(rest);
+  if (!slug || !flags.candidate || !flags.against) {
+    process.stderr.write('Usage: evals run <dataset-slug> --candidate=<ref> --against=<ref>\n');
+    return 1;
+  }
+  // Resolve slug → id.
+  const { data: datasets } = await apiRequest<{ data: EvalDatasetSummary[] }>(
+    env,
+    'GET',
+    '/api/v1/admin/evals'
+  );
+  const ds = datasets.find((d) => d.slug === slug);
+  if (!ds) {
+    process.stderr.write(`No dataset with slug '${slug}'\n`);
+    return 1;
+  }
+  const { data: started } = await apiRequest<{ data: EvalRunDto }>(
+    env,
+    'POST',
+    '/api/v1/admin/evals/runs',
+    { baselineRef: flags.against, candidateRef: flags.candidate, datasetId: ds.id }
+  );
+  process.stdout.write(
+    `Started eval run ${started.id} (${slug}: ${flags.candidate} vs ${flags.against})\n`
+  );
+
+  // Poll for the verdict. The harness is the integration seam; this loop is how
+  // the nightly CI gates on the result.
+  const deadline = Date.now() + 4 * 60 * 60 * 1000; // 4h
+  for (;;) {
+    const { data: run } = await apiRequest<{ data: EvalRunDto }>(
+      env,
+      'GET',
+      `/api/v1/admin/evals/runs/${started.id}`
+    );
+    if (run.status !== 'RUNNING') {
+      const summary = (run.summary ?? {}) as { summary?: string };
+      process.stdout.write(`${summary.summary ?? run.status}\n`);
+      return run.status === 'REGRESSION' ? 1 : 0;
+    }
+    if (Date.now() > deadline) {
+      process.stderr.write('Timed out waiting for the eval run\n');
+      return 2;
+    }
+    await sleep(15_000);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function cmdResults(rest: string[], env: CliEnv): Promise<number> {

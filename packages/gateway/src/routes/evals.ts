@@ -79,6 +79,12 @@ const CreateDatasetBody = z.object({
     .regex(/^[a-z0-9_-]+$/),
 });
 
+const StartRunBody = z.object({
+  baselineRef: z.string().min(1).max(200),
+  candidateRef: z.string().min(1).max(200),
+  datasetId: z.string().uuid(),
+});
+
 const ResultsQuery = z.object({
   evalRunId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -277,6 +283,40 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         summary: run.summary,
       };
       return { data };
+    }
+  );
+
+  // ── Start an offline harness run (P1/WS4) ──
+  // Creates the EvalRun row; the durable harness (a Temporal workflow wrapping
+  // runEvalHarness) is started here — that start is the integration seam
+  // (docs/evals-p1.md WS4). The CLI polls GET /evals/runs/:id for the verdict.
+  app.post(
+    '/evals/runs',
+    { onRequest: adminOnly, schema: { body: StartRunBody } },
+    async (request, reply) => {
+      const { baselineRef, candidateRef, datasetId } = request.body;
+      const ds = await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } });
+      if (!ds) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'DATASET_NOT_FOUND', message: 'Eval dataset not found' } });
+      }
+      const run = await fastify.prisma.evalRun.create({
+        data: { baselineRef, candidateRef, datasetId, status: 'RUNNING' },
+      });
+      // Integration seam: fastify.temporal.startWorkflow('evalRunWorkflow', …)
+      // to drive runEvalHarness durably. Wired where Temporal can run.
+      const data: EvalRunDto = {
+        baselineRef: run.baselineRef,
+        candidateRef: run.candidateRef,
+        datasetId: run.datasetId,
+        endedAt: null,
+        id: run.id,
+        startedAt: run.startedAt.toISOString(),
+        status: run.status,
+        summary: run.summary,
+      };
+      return reply.status(202).send({ data });
     }
   );
 
