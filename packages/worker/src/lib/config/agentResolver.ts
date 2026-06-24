@@ -34,10 +34,11 @@ function parseToolKeys(value: unknown): string[] | null {
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
 
 /**
- * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → TEAM →
+ * Most-specific active Agent row for `key`: WORKFLOW_TEMPLATE → CHANNEL → TEAM →
  * ORGANIZATION → GLOBAL, highest `version` at the first scope that has a row.
- * Returns null when no Agent row exists for the key. The ORGANIZATION tier only
- * fires when `ctx.orgId` is present, so existing TEAM/GLOBAL behavior is intact.
+ * Returns null when no Agent row exists for the key. The CHANNEL tier only fires
+ * when `ctx.channelId` is set, and the ORGANIZATION tier only when `ctx.orgId` is
+ * present, so existing TEAM/GLOBAL behavior is intact.
  *
  * When the run carries a version pin for `key` (`ctx.agentVersions`), the exact
  * pinned version is resolved instead of the latest — freezing an in-flight run

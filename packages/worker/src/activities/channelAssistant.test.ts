@@ -25,8 +25,8 @@ vi.mock('../lib/slackNotify.js', () => ({
   postSlackThreadMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Real cost-tracking math (calculateCostUsd) — no DB or env needed for the
-// table lookup, so we exercise the genuine pricing path.
+// Accrual now consumes the authoritative `costUsd` returned by runAgent (mocked
+// here), so the channel-monthly ledger prices identically to the run-level ledger.
 
 import { prisma } from '@auto-swe/shared/db';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
@@ -56,6 +56,9 @@ beforeEach(() => {
     modelSpec: 'anthropic/claude-opus-4-8',
   });
   runAgentMock.mockResolvedValue({
+    costUsd: 0.0175,
+    inputTokens: 1000,
+    outputTokens: 500,
     text: 'hi there',
     usage: { inputTokens: 1000, outputTokens: 500 },
   });
@@ -112,8 +115,11 @@ describe('runChannelAssistantTurn', () => {
       update: { costUsdAccrued: { increment: number }; runsCompleted: { increment: number } };
       where: { channelId_yearMonth: { channelId: string; yearMonth: string } };
     };
-    // opus-4-8: $5/MTok in, $25/MTok out → 1000*5/1e6 + 500*25/1e6 = 0.005 + 0.0125
+    // Accrual uses the authoritative `costUsd` returned by runAgent (not a
+    // local re-pricing of token usage), keeping the per-channel ledger in lockstep
+    // with the run-level ledger.
     expect(args.create.costUsdAccrued).toBeCloseTo(0.0175, 6);
+    expect(args.update.costUsdAccrued).toEqual({ increment: 0.0175 });
     expect(args.create.runsCompleted).toBe(1);
     expect(args.update.runsCompleted).toEqual({ increment: 1 });
     expect(args.where.channelId_yearMonth.yearMonth).toBe('2026-06');

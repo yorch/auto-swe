@@ -6,7 +6,13 @@ import type {
   ScheduledConsolidationInput,
   ScheduledEvalInput,
 } from '@auto-swe/shared/types/workflow';
-import { Client, Connection, ScheduleClient, ScheduleOverlapPolicy } from '@temporalio/client';
+import {
+  Client,
+  Connection,
+  ScheduleClient,
+  ScheduleOverlapPolicy,
+  WorkflowIdReusePolicy,
+} from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 
@@ -240,10 +246,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       workflowId: string,
       input: ChannelAssistantTurnInput
     ): Promise<void> {
+      // REJECT_DUPLICATE makes the deterministic `chan-<id>-<ts>` workflowId
+      // idempotent: a re-delivered Slack event (same id) after the first run
+      // has closed is rejected with WorkflowExecutionAlreadyStartedError rather
+      // than silently starting a second run (duplicate reply + double cost).
+      // The caller treats that error as a benign no-op.
       await client.workflow.start('ChannelAssistantWorkflow', {
         args: [input],
         taskQueue: 'engineering-workflow',
         workflowId,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
       });
     },
 

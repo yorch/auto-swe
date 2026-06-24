@@ -1,10 +1,10 @@
 import type { Prisma } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
 /**
@@ -50,22 +50,73 @@ const channelInclude = {
 } as const;
 
 type ChannelRow = Prisma.SlackChannelGetPayload<{ include: typeof channelInclude }>;
+type UsageRow = Prisma.ChannelMonthlyUsageGetPayload<true>;
+
+/** Serialize a ChannelMonthlyUsage row (Decimal → number) to the API shape, or null. */
+function serializeUsage(usage: UsageRow | null) {
+  return usage
+    ? {
+        costUsdAccrued: Number(usage.costUsdAccrued),
+        runsCompleted: usage.runsCompleted,
+        yearMonth: usage.yearMonth,
+      }
+    : null;
+}
 
 /** Attach this month's ChannelMonthlyUsage row (or null) to a serialized channel. */
 async function withCurrentUsage(fastify: FastifyInstance, row: ChannelRow) {
   const usage = await fastify.prisma.channelMonthlyUsage.findUnique({
     where: { channelId_yearMonth: { channelId: row.id, yearMonth: currentYearMonth() } },
   });
+  return { ...row, currentMonthUsage: serializeUsage(usage) };
+}
+
+/** Map a create/update body to the SlackChannel writable fields. Each field is
+ * spread only when present so PATCH leaves untouched fields alone; nullable
+ * fields preserve explicit-null clears (`null` is "present"). */
+function channelWritableData(body: {
+  agentKey?: string;
+  ambientCron?: string | null;
+  ambientEnabled?: boolean;
+  isActive?: boolean;
+  monthlyBudgetUsdCents?: number | null;
+  name?: string | null;
+}) {
   return {
-    ...row,
-    currentMonthUsage: usage
-      ? {
-          costUsdAccrued: Number(usage.costUsdAccrued),
-          runsCompleted: usage.runsCompleted,
-          yearMonth: usage.yearMonth,
-        }
-      : null,
+    ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
+    ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
+    ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
+    ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+    ...(body.monthlyBudgetUsdCents !== undefined
+      ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
+      : {}),
+    ...(body.name !== undefined ? { name: body.name } : {}),
   };
+}
+
+/**
+ * Channel-access guard mirroring lib/orgAccess.ts `assertOrgAccess`: platform
+ * ADMINs see all channels; everyone else needs a TeamMembership on the channel's
+ * owning team. Sends a 404 (not 403 — don't leak channel existence) and returns
+ * `false` when the check fails; returns `true` on success.
+ */
+async function assertChannelAccess(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string,
+  reply: FastifyReply
+): Promise<boolean> {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  const member = await fastify.prisma.teamMembership.findUnique({
+    where: { userId_teamId: { teamId, userId: user.sub } },
+  });
+  if (!member) {
+    await reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+    return false;
+  }
+  return true;
 }
 
 export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
@@ -84,7 +135,16 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       orderBy: { createdAt: 'desc' },
       where,
     });
-    const data = await Promise.all(rows.map((row) => withCurrentUsage(fastify, row)));
+    // Batch this month's usage for all listed channels in one query, then map
+    // by channelId — avoids an N+1 (one findUnique per row).
+    const usageRows = await fastify.prisma.channelMonthlyUsage.findMany({
+      where: { channelId: { in: rows.map((r) => r.id) }, yearMonth: currentYearMonth() },
+    });
+    const usageByChannel = new Map(usageRows.map((u) => [u.channelId, u]));
+    const data = rows.map((row) => ({
+      ...row,
+      currentMonthUsage: serializeUsage(usageByChannel.get(row.id) ?? null),
+    }));
     return { data };
   });
 
@@ -98,15 +158,8 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     if (!row) {
       return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
     }
-    if (user.role !== 'ADMIN') {
-      const member = await fastify.prisma.teamMembership.findUnique({
-        where: { userId_teamId: { teamId: row.teamId, userId: user.sub } },
-      });
-      if (!member) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
-      }
+    if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
+      return reply;
     }
     return { data: await withCurrentUsage(fastify, row) };
   });
@@ -117,38 +170,31 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: authed, schema: { params: IdParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const row = await fastify.prisma.slackChannel.findUnique({
-        select: { id: true, monthlyBudgetUsdCents: true, name: true, teamId: true },
-        where: { id: request.params.id },
-      });
+      // The channel + its usage are independent reads — fetch in parallel
+      // (matches orgBudget.ts).
+      const [row, usage] = await Promise.all([
+        fastify.prisma.slackChannel.findUnique({
+          select: { id: true, monthlyBudgetUsdCents: true, name: true, teamId: true },
+          where: { id: request.params.id },
+        }),
+        fastify.prisma.channelMonthlyUsage.findUnique({
+          where: {
+            channelId_yearMonth: { channelId: request.params.id, yearMonth: currentYearMonth() },
+          },
+        }),
+      ]);
       if (!row) {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
       }
-      if (user.role !== 'ADMIN') {
-        const member = await fastify.prisma.teamMembership.findUnique({
-          where: { userId_teamId: { teamId: row.teamId, userId: user.sub } },
-        });
-        if (!member) {
-          return reply
-            .status(404)
-            .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
-        }
+      if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
+        return reply;
       }
-      const usage = await fastify.prisma.channelMonthlyUsage.findUnique({
-        where: { channelId_yearMonth: { channelId: row.id, yearMonth: currentYearMonth() } },
-      });
       return {
         channelId: row.id,
         channelName: row.name,
-        currentMonthUsage: usage
-          ? {
-              costUsdAccrued: Number(usage.costUsdAccrued),
-              runsCompleted: usage.runsCompleted,
-              yearMonth: usage.yearMonth,
-            }
-          : null,
+        currentMonthUsage: serializeUsage(usage),
         monthlyBudgetUsdCents: row.monthlyBudgetUsdCents,
       };
     }
@@ -170,12 +216,25 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
       }
 
-      // Upsert the workspace (org from the team), then create the channel.
+      // Upsert the workspace (org from the team), then create the channel. A
+      // workspace is unique by slackTeamId across the platform; if it already
+      // exists under a different org than the chosen team, the channel's orgId
+      // would diverge from workspace.orgId — breaking org budget + the
+      // ORGANIZATION config tier. Reject that mismatch.
       const workspace = await fastify.prisma.slackWorkspace.upsert({
         create: { orgId: team.orgId, slackTeamId: body.slackTeamId },
         update: {},
         where: { slackTeamId: body.slackTeamId },
       });
+      if (workspace.orgId !== team.orgId) {
+        return reply.status(400).send({
+          error: {
+            code: 'WORKSPACE_ORG_MISMATCH',
+            message:
+              'This Slack workspace already belongs to a different organization than the chosen team. Pick a team in the workspace’s org.',
+          },
+        });
+      }
 
       const existing = await fastify.prisma.slackChannel.findUnique({
         where: {
@@ -193,14 +252,10 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
 
       const row = await fastify.prisma.slackChannel.create({
         data: {
-          ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
-          ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
-          ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
-          ...(body.monthlyBudgetUsdCents !== undefined
-            ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
-            : {}),
-          ...(body.name !== undefined ? { name: body.name } : {}),
-          orgId: team.orgId,
+          ...channelWritableData(body),
+          // Derived from the workspace's org (== team.orgId after the guard
+          // above) so channel.orgId and workspace.orgId never diverge.
+          orgId: workspace.orgId,
           slackChannelId: body.slackChannelId,
           teamId: team.id,
           workspaceId: workspace.id,
@@ -253,14 +308,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
 
       const row = await fastify.prisma.slackChannel.update({
         data: {
-          ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
-          ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
-          ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
-          ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-          ...(body.monthlyBudgetUsdCents !== undefined
-            ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
-            : {}),
-          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...channelWritableData(body),
           ...(body.teamId !== undefined ? { orgId: nextOrgId, teamId: body.teamId } : {}),
         },
         include: channelInclude,

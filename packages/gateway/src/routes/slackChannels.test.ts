@@ -5,7 +5,10 @@ import { slackChannelRoutes } from './slackChannels.js';
 
 function newMockPrisma() {
   return {
-    channelMonthlyUsage: { findUnique: vi.fn().mockResolvedValue(null) },
+    channelMonthlyUsage: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     slackChannel: {
       create: vi.fn(),
@@ -41,16 +44,15 @@ const CHANNEL = '22222222-2222-4222-8222-222222222222';
 beforeEach(() => vi.clearAllMocks());
 
 describe('slackChannelRoutes', () => {
-  it('lists channels with workspace + current-month usage (admin)', async () => {
+  it('lists channels with workspace + current-month usage, batching usage in one query (admin)', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.slackChannel.findMany.mockResolvedValue([
       { id: CHANNEL, name: 'general', teamId: TEAM, workspace: { id: 'ws-1' } },
     ]);
-    mockPrisma.channelMonthlyUsage.findUnique.mockResolvedValue({
-      costUsdAccrued: '1.5',
-      runsCompleted: 3,
-      yearMonth: '2026-06',
-    });
+    // Usage is fetched for all channels in ONE findMany, keyed by channelId.
+    mockPrisma.channelMonthlyUsage.findMany.mockResolvedValue([
+      { channelId: CHANNEL, costUsdAccrued: '1.5', runsCompleted: 3, yearMonth: '2026-06' },
+    ]);
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
@@ -60,6 +62,14 @@ describe('slackChannelRoutes', () => {
     const data = JSON.parse(res.payload).data;
     expect(data[0].id).toBe(CHANNEL);
     expect(data[0].currentMonthUsage.costUsdAccrued).toBe(1.5);
+    // No per-channel findUnique loop — usage comes from a single batched findMany.
+    expect(mockPrisma.channelMonthlyUsage.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.channelMonthlyUsage.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.channelMonthlyUsage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ channelId: { in: [CHANNEL] } }),
+      })
+    );
     await app.close();
   });
 
@@ -149,6 +159,24 @@ describe('slackChannelRoutes', () => {
       url: '/api/v1/admin/slack-channels',
     });
     expect(res.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('400s when the workspace already belongs to a different org than the team', async () => {
+    const { app, mockPrisma } = await buildApp();
+    // Team is in org-2, but the existing workspace (same slackTeamId) is org-1.
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, orgId: 'org-2' });
+    mockPrisma.slackWorkspace.upsert.mockResolvedValue({ id: 'ws-1', orgId: 'org-1' });
+    const res = await app.inject({
+      body: { slackChannelId: 'C123', slackTeamId: 'T123', teamId: TEAM },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/slack-channels',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('WORKSPACE_ORG_MISMATCH');
+    // Never reached the channel-create path.
+    expect(mockPrisma.slackChannel.create).not.toHaveBeenCalled();
     await app.close();
   });
 

@@ -3,7 +3,6 @@ import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
-import { calculateCostUsd } from '../lib/costTracking.js';
 import { postSlackThreadMessage } from '../lib/slackNotify.js';
 import { runAgent } from './runAgent.js';
 
@@ -63,7 +62,12 @@ export async function runChannelAssistantTurn(
   const agentKey = channel?.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
 
   // Pre-turn budget enforcement. Only read the accrued row when a cap is set —
-  // channels without a cap pay no extra query.
+  // channels without a cap pay no extra query. NOTE: this is a SOFT cap. The
+  // pre-turn read here and the post-turn `accrueChannelUsage` increment are not
+  // transactional, so concurrent turns can each pass this check before any of
+  // them records cost — briefly overshooting the cap. This mirrors the org-budget
+  // soft-cap at work-request submit; a hard cap would need a transactional
+  // reserve (out of scope).
   if (channel?.monthlyBudgetUsdCents != null && channel.monthlyBudgetUsdCents > 0) {
     const usage = await prisma.channelMonthlyUsage.findUnique({
       select: { costUsdAccrued: true },
@@ -87,8 +91,11 @@ export async function runChannelAssistantTurn(
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
   // the reply — the workflow-level ledger (recordLlmUsage inside runAgent) is the
-  // source of truth for billing; this row only backs the per-channel cap.
-  await accrueChannelUsage(input.channelId, spec.modelSpec, result.usage);
+  // source of truth for billing; this row only backs the per-channel cap. We
+  // accrue the authoritative `costUsd` returned by runAgent (priced by the agent
+  // KEY's configured model) so the per-channel ledger prices identically to the
+  // run-level ledger rather than re-deriving cost from the raw spec string.
+  await accrueChannelUsage(input.channelId, result.costUsd ?? 0);
 
   const reply = (result.text ?? '').trim();
   return { reply: reply || "I wasn't able to come up with a response. Could you rephrase?" };
@@ -96,24 +103,17 @@ export async function runChannelAssistantTurn(
 
 /**
  * Increment the channel's current-month usage row with one turn's USD cost and a
- * completed-run count. The per-turn cost is derived from the provider-reported
- * token usage and the agent's resolved model spec via {@link calculateCostUsd} —
- * the same price table (`MODEL_PRICES`) that `recordLlmUsage` uses, so the two
- * ledgers price identically.
+ * completed-run count. The `costUsd` is the authoritative per-turn cost returned
+ * by {@link runAgent} (priced by `recordLlmUsage` against the agent KEY's
+ * configured model), so this per-channel ledger prices identically to the
+ * run-level ledger — no re-pricing here.
  *
  * Uses Prisma's `increment` upsert (race-safe across concurrent turns in the
  * same channel), mirroring the `OrgMonthlyUsage` accrual in `finalizeWorkflowRun`.
  * Wrapped in try/catch so a DB error degrades to "reply still sent".
  */
-async function accrueChannelUsage(
-  channelId: string,
-  modelSpec: string,
-  usage: { inputTokens?: number; outputTokens?: number } | undefined
-): Promise<void> {
+async function accrueChannelUsage(channelId: string, costUsd: number): Promise<void> {
   try {
-    const inputTokens = usage?.inputTokens ?? 0;
-    const outputTokens = usage?.outputTokens ?? 0;
-    const costUsd = calculateCostUsd(modelSpec, inputTokens, outputTokens);
     const yearMonth = currentYearMonth();
     await prisma.channelMonthlyUsage.upsert({
       create: { channelId, costUsdAccrued: costUsd, runsCompleted: 1, yearMonth },

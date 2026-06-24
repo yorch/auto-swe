@@ -54,6 +54,8 @@ interface FakeState {
   humanStepUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }>;
   channelAssistantStarts: Array<{ workflowId: string; input: Record<string, unknown> }>;
+  /** When set, `startChannelAssistant` throws this instead of recording a start. */
+  channelAssistantStartError: Error | null;
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -76,6 +78,9 @@ function buildApp(state: FakeState): FastifyInstance {
       state.signalCalls.push({ args, signalName, workflowId });
     },
     startChannelAssistant: async (workflowId: string, input: Record<string, unknown>) => {
+      if (state.channelAssistantStartError) {
+        throw state.channelAssistantStartError;
+      }
       state.channelAssistantStarts.push({ input, workflowId });
     },
     startRunnableWorkflow: async () => undefined,
@@ -162,6 +167,7 @@ beforeEach(async () => {
     await app.close();
   }
   state = {
+    channelAssistantStartError: null,
     channelAssistantStarts: [],
     humanStep: null,
     humanStepUpdateCalls: [],
@@ -518,15 +524,31 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
 });
 
 describe('POST /api/v1/auth/slack/events — Claude Tag teammate', () => {
-  it('echoes the challenge on url_verification (no signature required)', async () => {
+  it('echoes the challenge on url_verification once the signature passes', async () => {
+    const body = JSON.stringify({ challenge: 'abc123', type: 'url_verification' });
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ challenge: 'abc123' });
+  });
+
+  it('rejects an unsigned url_verification handshake (signature verified first)', async () => {
     const res = await app.inject({
       headers: { 'content-type': 'application/json' },
       method: 'POST',
       payload: JSON.stringify({ challenge: 'abc123', type: 'url_verification' }),
       url: '/api/v1/auth/slack/events',
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ challenge: 'abc123' });
+    expect(res.statusCode).toBe(401);
   });
 
   it('rejects an event_callback with a bad signature', async () => {
@@ -613,6 +635,41 @@ describe('POST /api/v1/auth/slack/events — Claude Tag teammate', () => {
     });
     expect(res.statusCode).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('swallows a duplicate workflow start (WorkflowExecutionAlreadyStartedError) as a no-op', async () => {
+    const alreadyStarted = new Error('Workflow execution already started');
+    alreadyStarted.name = 'WorkflowExecutionAlreadyStartedError';
+    state.channelAssistantStartError = alreadyStarted;
+    const body = JSON.stringify({
+      event: {
+        channel: 'C9',
+        team: 'T1',
+        text: '<@UBOT> hello again',
+        ts: '1700000000.000200',
+        type: 'app_mention',
+        user: 'UME',
+      },
+      team_id: 'T1',
+      type: 'event_callback',
+    });
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    // Endpoint still acks 200 (reply was sent before processing); the
+    // already-started rejection must not bubble up as an unhandled rejection.
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The start was attempted but rejected; nothing recorded, no crash.
     expect(state.channelAssistantStarts).toHaveLength(0);
   });
 

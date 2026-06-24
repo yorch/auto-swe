@@ -14,7 +14,7 @@ The `slack-app-manifest.json` next to this file is a [Slack app manifest](https:
    - `oauth_config.redirect_urls[0]` → `/api/v1/auth/slack/callback`
 5. **Create**, then **Install to Workspace** to grant the bot scopes.
 
-> **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step.
+> **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step. Note: the handshake is signature-verified like every other event, so the **signing secret must be saved in the admin UI (`/admin/integrations → Slack`) before** you complete Slack's Events URL verification — otherwise the challenge is rejected with a 401/503.
 
 ## Endpoints the manifest assumes
 

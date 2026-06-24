@@ -5,6 +5,7 @@ import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/wor
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { openSlackView, postSlackMessage, verifySlackSignature } from '../lib/slack.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -428,13 +429,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const body = (request.body ?? {}) as SlackEventCallback;
 
-      // URL-verification handshake (app setup). Slack signs this too, but the
-      // challenge echo must succeed regardless so the endpoint can be verified
-      // before the signing secret is wired up on both ends.
-      if (body.type === 'url_verification') {
-        return reply.send({ challenge: body.challenge ?? '' });
-      }
-
+      // Verify the Slack signature FIRST — including the url_verification
+      // handshake, which Slack signs. Authenticating every request (handshake
+      // included) prevents an unauthenticated caller from echoing challenges or
+      // probing the endpoint. The signing secret must be saved in the admin UI
+      // before completing Slack's Events URL verification.
       const { signingSecret } = await resolveSlackConfig();
       if (!signingSecret) {
         return reply.status(503).send({
@@ -454,6 +453,12 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(401).send({
           error: { code: 'SLACK_AUTH_FAILED', message: 'Invalid Slack signature' },
         });
+      }
+
+      // URL-verification handshake (app setup) — echo the challenge once the
+      // signature has passed.
+      if (body.type === 'url_verification') {
+        return reply.send({ challenge: body.challenge ?? '' });
       }
 
       if (body.type !== 'event_callback') {
@@ -574,7 +579,22 @@ async function processChannelEvent(
     userText,
   };
 
-  await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${eventTs}`, input);
+  try {
+    await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${eventTs}`, input);
+  } catch (err) {
+    // The workflowId is deterministic (`chan-<id>-<ts>`) and started with
+    // REJECT_DUPLICATE, so a Slack redelivery of the same event after the first
+    // run closed is rejected here. That's the desired idempotent behaviour —
+    // swallow it as a no-op rather than surfacing it as an error.
+    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+      fastify.log.info(
+        { channelId: channelRow.id, eventTs },
+        'channel-assistant workflow already started for this event — skipping redelivery'
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -598,22 +618,51 @@ async function provisionChannel(
     return null;
   }
 
-  const workspace = await fastify.prisma.slackWorkspace.upsert({
-    create: { orgId: defaultTeam.orgId, slackTeamId },
-    update: {},
-    where: { slackTeamId },
-  });
+  // Prisma `upsert` is find-then-create (not atomic), so two concurrent
+  // first-mentions can both reach the create branch and one loses the race with
+  // a P2002 on the unique constraint. Catch it and re-fetch the now-existing row
+  // so a redelivered/concurrent first turn isn't dropped.
+  const workspace = await fastify.prisma.slackWorkspace
+    .upsert({
+      create: { orgId: defaultTeam.orgId, slackTeamId },
+      update: {},
+      where: { slackTeamId },
+    })
+    .catch(async (err) => {
+      if (isUniqueConstraintError(err)) {
+        return fastify.prisma.slackWorkspace.findUnique({ where: { slackTeamId } });
+      }
+      throw err;
+    });
+  if (!workspace) {
+    fastify.log.error({ slackTeamId }, 'failed to resolve Slack workspace after race');
+    return null;
+  }
 
-  const channel = await fastify.prisma.slackChannel.upsert({
-    create: {
-      orgId: workspace.orgId,
-      slackChannelId,
-      teamId: defaultTeam.id,
-      workspaceId: workspace.id,
-    },
-    update: {},
-    where: { workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id } },
-  });
+  const channelWhere = {
+    workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id },
+  };
+  const channel = await fastify.prisma.slackChannel
+    .upsert({
+      create: {
+        orgId: workspace.orgId,
+        slackChannelId,
+        teamId: defaultTeam.id,
+        workspaceId: workspace.id,
+      },
+      update: {},
+      where: channelWhere,
+    })
+    .catch(async (err) => {
+      if (isUniqueConstraintError(err)) {
+        return fastify.prisma.slackChannel.findUnique({ where: channelWhere });
+      }
+      throw err;
+    });
+  if (!channel) {
+    fastify.log.error({ slackChannelId }, 'failed to resolve Slack channel after race');
+    return null;
+  }
 
   return { id: channel.id, orgId: channel.orgId, teamId: channel.teamId };
 }
