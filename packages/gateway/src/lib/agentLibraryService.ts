@@ -12,7 +12,7 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 
 export type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
 
-export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+export type AgentScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
 
 /** Identifies one Agent lineage: a key at a scope. Versions live underneath. */
 export interface AgentScopeKey {

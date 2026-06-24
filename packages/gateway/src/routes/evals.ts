@@ -40,7 +40,7 @@ const CreateRubricBody = z.object({
 function toRubricDto(r: {
   id: string;
   slug: string;
-  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
   version: number;
   promptText: string;
   scale: string;

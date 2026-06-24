@@ -19,7 +19,7 @@ export type ProviderCredentialRow = NonNullable<
 export function redactCredential(row: {
   id: string;
   provider: string;
-  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
   teamId: string | null;
   orgId: string | null;
   apiBase: string | null;

@@ -614,8 +614,13 @@ export interface EvalResultDto {
 
 // ── Eval datasets / cases / runs (P1) ──
 
+/// Scopes offered in the generic config-scope pickers (model config, agent
+/// library, evals). The `scope` *column* (Prisma `ConfigScope`) additionally
+/// allows `'CHANNEL'` (Claude Tag) — those rows are created from the Slack
+/// channel admin surface, not these dropdowns, so CHANNEL is part of the type
+/// union below but intentionally absent from this runtime picker list.
 export const CONFIG_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'WORKFLOW_TEMPLATE'] as const;
-export type ConfigScopeValue = (typeof CONFIG_SCOPES)[number];
+export type ConfigScopeValue = (typeof CONFIG_SCOPES)[number] | 'CHANNEL';
 
 export interface EvalCaseDto {
   id: string;

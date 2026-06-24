@@ -47,6 +47,10 @@ enum ConfigScope {
   GLOBAL
   ORGANIZATION
   TEAM
+  // Slack-channel scope (Claude Tag): a SlackChannel-resident assistant can
+  // override agent/skill/tool config more specifically than its owning team.
+  // Inserted between WORKFLOW_TEMPLATE and TEAM in the resolver cascade.
+  CHANNEL
   WORKFLOW_TEMPLATE
 }
 
@@ -132,6 +136,14 @@ model MemoryItem {
   workflow       ActiveWorkflow?              @relation(fields: [workflowId], references: [id])
   repoId         String?                      @map("repo_id") @db.Uuid
   repository     Connection?                  @relation(fields: [repoId], references: [id])
+  /// Claude Tag scoping. A lesson learned in a Slack channel is scoped to that
+  /// channel; `teamId`/`orgId` are denormalized so retrieval can widen to
+  /// team- or workspace-level "team memory" without a Connection join. All
+  /// null on SWE-repo lessons (which scope via `repoId`).
+  channelId      String?                      @map("channel_id") @db.Uuid
+  channel        SlackChannel?                @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  teamId         String?                      @map("team_id") @db.Uuid
+  orgId          String?                      @map("org_id") @db.Uuid
   /// WorkflowRun that produced this lesson. Null on rows written before this
   /// column existed. Enables lineage queries: "which run created this lesson?"
   workflowRunId  String?                      @map("workflow_run_id") @db.Uuid
@@ -159,6 +171,9 @@ model MemoryItem {
 
   @@index([repoId, consolidatedAt])
   @@index([scope, consolidatedAt])
+  @@index([channelId, consolidatedAt])
+  @@index([teamId, consolidatedAt])
+  @@index([orgId, consolidatedAt])
   @@map("memory_items")
 }
 
@@ -279,6 +294,8 @@ model Organization {
   providerCredentials ProviderCredential[]
   memberships         OrganizationMembership[]
   monthlyUsages       OrgMonthlyUsage[]
+  slackWorkspaces     SlackWorkspace[]
+  slackChannels       SlackChannel[]
 
   @@map("organizations")
 }
@@ -317,6 +334,7 @@ model Team {
   shellAudits         WorkflowShellAudit[]
   providerCredentials ProviderCredential[]
   agents              Agent[]
+  slackChannels       SlackChannel[]
 
   @@index([orgId])
   @@map("teams")
@@ -372,6 +390,87 @@ model OrgMonthlyUsage {
   @@unique([orgId, yearMonth])
   @@index([orgId])
   @@map("org_monthly_usage")
+}
+
+/// A connected Slack workspace (Claude Tag). One row per installed Slack team
+/// (`slackTeamId` = Slack's `T0…` id), owned by exactly one Organization so the
+/// channel-level config + memory cascade resolves an `orgId`. Channels hang off
+/// this; workspace-level team memory uses `MemoryItem.orgId`.
+model SlackWorkspace {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Slack workspace/team id (e.g. `T0ABCDEF`). Unique per platform install.
+  slackTeamId  String       @unique @map("slack_team_id")
+  name         String?
+  orgId        String       @map("org_id") @db.Uuid
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  isActive     Boolean      @default(true) @map("is_active")
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  channels SlackChannel[]
+
+  @@index([orgId])
+  @@map("slack_workspaces")
+}
+
+/// A Slack channel where Claude is a resident teammate (Claude Tag). One shared
+/// Claude per channel: `agentKey` selects which Agent drives it, resolved via
+/// the config cascade with a CHANNEL tier (CHANNEL-scoped Agent rows carry this
+/// channel's id). `teamId` governs RBAC + the team tier of the cascade; `orgId`
+/// is denormalized for memory scoping + budget. Ambient mode + per-channel
+/// budget caps live here.
+model SlackChannel {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Slack channel id (e.g. `C0ABCDEF`).
+  slackChannelId   String         @map("slack_channel_id")
+  workspaceId      String         @map("workspace_id") @db.Uuid
+  workspace        SlackWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name             String?
+  /// Team whose config + RBAC govern this channel (team tier of the cascade).
+  teamId           String         @map("team_id") @db.Uuid
+  team             Team           @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  /// Denormalized owning org (== workspace.org) for memory scoping + budget.
+  orgId            String         @map("org_id") @db.Uuid
+  organization     Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  /// Agent key that drives this channel's assistant. Resolved via the cascade
+  /// (CHANNEL → TEAM → ORGANIZATION → GLOBAL).
+  agentKey         String         @default("channelAssistant") @map("agent_key")
+  /// When true, the long-lived channel workflow proactively posts (digests,
+  /// forgotten-thread follow-ups). Default false so channels are reactive only.
+  ambientEnabled   Boolean        @default(false) @map("ambient_enabled")
+  /// 5-field cron for the ambient digest (null = no scheduled digest).
+  ambientCron      String?        @map("ambient_cron")
+  /// Optional per-channel monthly spend cap in USD cents. Null = inherit org cap.
+  monthlyBudgetUsdCents Int?      @map("monthly_budget_usd_cents")
+  isActive         Boolean        @default(true) @map("is_active")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  agents       Agent[]
+  memoryItems  MemoryItem[]
+  monthlyUsage ChannelMonthlyUsage[]
+
+  @@unique([workspaceId, slackChannelId])
+  @@index([teamId])
+  @@index([orgId])
+  @@map("slack_channels")
+}
+
+/// Per-channel monthly cost aggregation (Claude Tag budget). Mirrors
+/// OrgMonthlyUsage: one row per channel per calendar month, upserted by the
+/// worker with `increment` to avoid read-modify-write races.
+model ChannelMonthlyUsage {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId      String       @map("channel_id") @db.Uuid
+  channel        SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  yearMonth      String       @map("year_month")
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
+  runsCompleted  Int          @default(0) @map("runs_completed")
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([channelId, yearMonth])
+  @@index([channelId])
+  @@map("channel_monthly_usage")
 }
 
 model User {
@@ -1294,6 +1393,8 @@ model Agent {
   teamId             String?     @map("team_id") @db.Uuid
   /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
   orgId              String?     @map("org_id") @db.Uuid
+  /// SlackChannel for CHANNEL-scoped rows (null otherwise) (Claude Tag).
+  channelId          String?     @map("channel_id") @db.Uuid
   workflowTemplateId String?     @map("workflow_template_id") @db.Uuid
   version            Int         @default(1)
   name               String
@@ -1326,6 +1427,7 @@ model Agent {
 
   team             Team?               @relation(fields: [teamId], references: [id], onDelete: Cascade)
   organization     Organization?       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  channel          SlackChannel?       @relation(fields: [channelId], references: [id], onDelete: Cascade)
   workflowTemplate WorkflowTemplate?   @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
   credential       ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   mcpConnection    Connection?         @relation("AgentMcpConnection", fields: [mcpConnectionId], references: [id], onDelete: SetNull)
@@ -1333,6 +1435,7 @@ model Agent {
 
   @@index([scope, teamId])
   @@index([scope, orgId])
+  @@index([scope, channelId])
   @@index([scope, workflowTemplateId])
   @@map("agents")
 }

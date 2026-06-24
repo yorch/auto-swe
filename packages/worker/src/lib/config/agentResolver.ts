@@ -71,6 +71,17 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
     }
   }
 
+  if (ctx?.channelId) {
+    const row = await prisma.agent.findFirst({
+      include,
+      orderBy,
+      where: { channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL', ...versionClause },
+    });
+    if (row) {
+      return row;
+    }
+  }
+
   if (ctx?.teamId) {
     const row = await prisma.agent.findFirst({
       include,
@@ -166,7 +177,7 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // Version pin is part of the cache key so two runs pinned to different
   // versions of the same key+scope don't collide within the TTL.
   const pin = ctx?.agentVersions?.[key] ?? '';
-  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pin}`;
+  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pin}`;
   return withCache(cacheKey, configCacheTtlMs(), () => resolveAgentUncached(key, ctx));
 }
 
