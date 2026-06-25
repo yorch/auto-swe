@@ -154,6 +154,23 @@ export interface Dispatcher {
    * Called when the HITL node times out. Optional — test dispatchers may skip it.
    */
   resolveHumanStep?(args: { nodeId: string; status: 'TIMED_OUT' }): Promise<void>;
+
+  /**
+   * Drain any pending out-of-band steering guidance accumulated by the runtime
+   * (e.g. a channel `steer` Temporal signal carrying mid-flight user direction).
+   * Returns the pending messages and clears the buffer — so each `agent` node
+   * consumes only what arrived since the previous one.
+   *
+   * Steering is SOFT: the interpreter calls this just before invoking an `agent`
+   * node and merges whatever it returns into that node's prompt. It does NOT
+   * preempt an already-running agent node, so steering that arrives mid-node is
+   * applied at the NEXT agent node. A single-agent-node run only incorporates
+   * steering that arrived before that node started.
+   *
+   * Optional — dispatchers (and tests) that don't support steering omit it; the
+   * interpreter treats it as "no pending steering".
+   */
+  drainSteering?(): string[];
 }
 
 export interface InterpreterResult {
@@ -409,6 +426,14 @@ async function runAgentNode(
   }
   if (node.systemPrompt !== undefined) {
     config.systemPrompt = node.systemPrompt;
+  }
+  // Soft steering: drain any out-of-band guidance that arrived since the last
+  // agent node and thread it to the activity, which prepends a labeled block to
+  // the user message. This is consumed here (drain), so a subsequent agent node
+  // won't re-see it. No-op when the dispatcher doesn't support steering.
+  const steering = dispatcher.drainSteering?.();
+  if (steering && steering.length > 0) {
+    config.steering = steering;
   }
   return runRetryable({
     ctx,

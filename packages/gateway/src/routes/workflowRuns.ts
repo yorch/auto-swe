@@ -1,4 +1,8 @@
 import type { Prisma } from '@auto-swe/shared';
+import {
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  CHANNEL_TASK_TEMPLATE_NAME,
+} from '@auto-swe/shared/lib/channelTask';
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
@@ -42,14 +46,21 @@ function trimTraceJson(value: unknown): unknown {
   }
   return value;
 }
-/** Name of the GLOBAL template used for channel-assistant turns + ambient digests. */
-const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
+/**
+ * Names of the GLOBAL templates whose runs are conversational/assistant chatter,
+ * not engineering work: the per-mention "Channel Assistant" turn/ambient-digest
+ * template and the general "Channel Task" autonomous-execution template. Both are
+ * hidden from the default `/runs` list. The CODE route of a channel task uses the
+ * team's SWE template (a real implement → review → PR run) and is intentionally
+ * NOT in this set — those runs stay visible like any other engineering run.
+ */
+const CHANNEL_TEMPLATE_NAMES = [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME];
 
 const ListRunsQuery = RunListPaginationQuery.extend({
   /**
-   * Channel-assistant runs (template name "Channel Assistant") are excluded from
-   * the list by default so a busy channel can't bury engineering runs. Opt in
-   * with `?includeChannel=true`.
+   * Channel chatter runs (template names "Channel Assistant" / "Channel Task")
+   * are excluded from the list by default so a busy channel can't bury
+   * engineering runs. Opt in with `?includeChannel=true`.
    */
   includeChannel: z.coerce.boolean().optional().default(false),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
@@ -96,12 +107,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
         ...(workRequestId ? { workRequestId } : {}),
-        // Hide channel-assistant runs unless explicitly opted in. An explicit
+        // Hide channel chatter runs unless explicitly opted in. An explicit
         // templateId filter already narrows to one template, so the exclusion
         // only matters for the unfiltered list.
         ...(includeChannel || templateId
           ? {}
-          : { template: { name: { not: CHANNEL_ASSISTANT_TEMPLATE_NAME } } }),
+          : { template: { name: { notIn: CHANNEL_TEMPLATE_NAMES } } }),
       };
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({

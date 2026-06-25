@@ -3,6 +3,7 @@ import { MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
+import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -11,6 +12,7 @@ import {
   retrieveChannelMemory,
   writeChannelMemory,
 } from '../lib/channelMemory.js';
+import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import {
@@ -37,6 +39,98 @@ export const CHANNEL_PLACEHOLDER_TEXT = ':hourglass_flowing_sand: _Working on it
 /** Friendly text the placeholder is edited to (or posted as) when the turn errors. */
 export const CHANNEL_ERROR_REPLY =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
+
+/**
+ * Channel assistant (Phase A): a captured "launch a durable task" intent. When
+ * the agent decides a mention is a multi-step *task* (not a quick answer) it
+ * calls the `delegateTask` tool; we capture the structured intent here and the
+ * workflow launches a thread-bound `RunnableWorkflow` run from it. `route`
+ * distinguishes a general agentic task from a code/PR task — Phase A only acts
+ * on `'general'` downstream (Phase B wires `'code'`), but both are captured.
+ */
+export interface DelegateIntent {
+  route: 'general' | 'code';
+  title: string;
+  description: string;
+  /**
+   * Channel assistant (Phase B): the repository the user named, if any. Only
+   * meaningful for `route: 'code'` — the code-route launch resolves it (by
+   * `repoName` or `organizationName/repoName`) against the channel team's active
+   * `git_repo` connections; an unset/unmatched hint falls back to the team's sole
+   * repo (if exactly one) or the general task route.
+   */
+  repoHint?: string;
+}
+
+/** Schema for the `delegateTask` tool's structured input (validated by Mastra). */
+const DelegateTaskInputSchema = z.object({
+  description: z.string().describe('A clear, self-contained description of the task to carry out.'),
+  repoHint: z
+    .string()
+    .optional()
+    .describe(
+      'For a code task: the repository the user named, if any (e.g. "payments-api" ' +
+        'or "acme/payments-api"). Leave unset if no repo was named.'
+    ),
+  route: z
+    .enum(['general', 'code'])
+    .describe(
+      "'general' for a multi-step research/ops/writing task; 'code' for a task " +
+        'that requires editing a repository and opening a pull request.'
+    ),
+  title: z.string().describe('A short title for the task (a few words).'),
+});
+
+/** Structured output the agent sees back after delegating. */
+const DelegateTaskOutputSchema = z.object({
+  note: z.string(),
+  queued: z.boolean(),
+});
+
+/**
+ * System-prompt note appended for the assistant turn: tells the agent it can
+ * launch a durable background task via `delegateTask` for genuine multi-step
+ * work, versus answering inline for quick questions.
+ */
+const DELEGATE_TOOL_PROMPT_NOTE = [
+  '',
+  'You have a `delegateTask` tool. Use it ONLY when the user is asking you to ',
+  'carry out a genuine multi-step task (e.g. "investigate X and summarise", ',
+  '"draft the migration plan", "build Y") rather than answer a quick question. ',
+  'When you call it, a durable background run is launched that works the task ',
+  'and reports back in this thread — so your own reply should be a brief ',
+  'acknowledgement ("On it — I\'ll follow up here."). For quick questions, just ',
+  'answer directly and do NOT call the tool. Set route="code" only when the task ',
+  'requires editing a repository / opening a pull request; otherwise route="general". ',
+  'For a code task, if the user named a specific repository, pass it as `repoHint` ',
+  '(e.g. "payments-api" or "acme/payments-api"); leave it unset if no repo was named.',
+].join('');
+
+/**
+ * Build the `delegateTask` Mastra tool. Calling it RECORDS the structured intent
+ * into `onDelegate` (a closure the activity owns) and returns a short
+ * confirmation — the actual run launch happens in the workflow after the turn.
+ * The tool is intentionally side-effect-free here (no DB / no Temporal): the
+ * activity must stay a pure "decide + reply" step; launching is the workflow's job.
+ */
+function buildDelegateTool(onDelegate: (intent: DelegateIntent) => void) {
+  return createTool({
+    description:
+      'Launch a durable background task that will work on this request and ' +
+      'report its result back in this Slack thread. Use for genuine multi-step ' +
+      'work, not quick questions.',
+    execute: async ({ description, repoHint, route, title }) => {
+      onDelegate({ description, repoHint, route, title });
+      return {
+        note: 'Task queued — I will follow up in this thread when it is done.',
+        queued: true,
+      };
+    },
+    id: 'delegateTask',
+    inputSchema: DelegateTaskInputSchema,
+    outputSchema: DelegateTaskOutputSchema,
+  });
+}
 
 /** Cap on how many retrieved memory items are injected into the prompt. */
 const MAX_MEMORY_CONTEXT_ITEMS = 5;
@@ -213,7 +307,13 @@ export async function isChannelOverBudgetNow(
 export async function runChannelAgentTurn(
   channel: { id: string; agentKey: string; teamId: string; orgId: string },
   userMessage: string,
-  spanName: string
+  spanName: string,
+  /**
+   * Phase A: optional extra tools (e.g. `delegateTask`) merged into the resolved
+   * spec, and an optional prompt note describing them. Omitted for the ambient
+   * digest path (it has no delegate affordance).
+   */
+  extras?: { tools?: AgentTools; promptNote?: string }
 ): Promise<{ reply: string; costUsd: number }> {
   const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
 
@@ -222,6 +322,16 @@ export async function runChannelAgentTurn(
     { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
     { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
   );
+
+  // Merge any extra tools (delegateTask) onto the resolved spec, and append the
+  // prompt note so the agent knows the affordance exists. The spec's own tools
+  // win on a key collision (defensive — `delegateTask` is a reserved key here).
+  if (extras?.tools) {
+    spec.tools = { ...extras.tools, ...spec.tools } as AgentTools;
+  }
+  if (extras?.promptNote) {
+    spec.systemPrompt = `${spec.systemPrompt}${extras.promptNote}`;
+  }
 
   const result = await runAgent(spec, userMessage, { spanName });
 
@@ -248,7 +358,7 @@ export async function runChannelAgentTurn(
  */
 export async function runChannelAssistantTurn(
   input: ChannelAssistantTurnInput
-): Promise<{ reply: string }> {
+): Promise<{ reply: string; delegate?: DelegateIntent }> {
   const channel = await prisma.slackChannel.findUnique({
     select: { agentKey: true, monthlyBudgetUsdCents: true },
     where: { id: input.channelId },
@@ -310,11 +420,21 @@ export async function runChannelAssistantTurn(
   // prepended memory context — that originated from prior, already-scanned input.
   await scanChannelInput(input);
 
+  // Phase A: give the agent a `delegateTask` tool so it can launch a durable,
+  // thread-bound task run when the mention is a multi-step task rather than a
+  // quick question. The tool only RECORDS the intent (captured into `delegate`
+  // below); the workflow launches the run after the turn returns.
+  let delegate: DelegateIntent | undefined;
+  const delegateTool = buildDelegateTool((intent) => {
+    delegate = intent;
+  });
+
   // Resolve the channel's agent (CHANNEL tier active) + run one generation.
   const { reply, costUsd } = await runChannelAgentTurn(
     { agentKey, id: input.channelId, orgId: input.orgId, teamId: input.teamId },
     userMessage,
-    'llm.channel_assistant'
+    'llm.channel_assistant',
+    { promptNote: DELEGATE_TOOL_PROMPT_NOTE, tools: { delegateTask: delegateTool } as AgentTools }
   );
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
@@ -334,7 +454,12 @@ export async function runChannelAssistantTurn(
     await summarizeAndStoreChannelMemory(input, reply);
   }
 
-  return { reply: reply || "I wasn't able to come up with a response. Could you rephrase?" };
+  // When the agent delegated, prefer its (brief) ack but always surface a
+  // sensible fallback. The workflow decides whether to launch based on `delegate`.
+  const ackFallback = delegate
+    ? "On it — I'll follow up in this thread when it's done."
+    : "I wasn't able to come up with a response. Could you rephrase?";
+  return { delegate, reply: reply || ackFallback };
 }
 
 /**

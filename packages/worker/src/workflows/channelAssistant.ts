@@ -1,5 +1,13 @@
-import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
-import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
+import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import {
+  log,
+  ParentClosePolicy,
+  proxyActivities,
+  startChild,
+  WorkflowIdReusePolicy,
+  workflowInfo,
+} from '@temporalio/workflow';
+import type { DelegateIntent } from '../activities/channelAssistant.js';
 import type * as activitiesType from '../activities/index.js';
 
 /**
@@ -72,8 +80,49 @@ const { startChannelRun, finalizeChannelRun } = proxyActivities<
   startToCloseTimeout: '30s',
 });
 
+// Phase A: task-launch preparation + budget gate. Quick DB reads/writes — short
+// timeout, a couple retries. `createChannelTaskRun` is NOT idempotent (it INSERTs
+// a RunInput), but it only runs once per turn (guarded by the `delegate` branch),
+// and a duplicate RunInput would be harmless (the reject-duplicate child policy
+// keeps a single task run per thread regardless).
+const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTask } =
+  proxyActivities<
+    Pick<
+      typeof activitiesType,
+      'createChannelTaskRun' | 'createChannelCodeTaskRun' | 'isChannelOverBudgetForTask'
+    >
+  >({
+    retry: {
+      backoffCoefficient: 2,
+      initialInterval: '2s',
+      maximumAttempts: 3,
+      maximumInterval: '30s',
+    },
+    startToCloseTimeout: '30s',
+  });
+
 const CHANNEL_ERROR_TEXT =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
+
+// Phase A: posted instead of launching a task when the channel is over budget.
+const CHANNEL_TASK_BUDGET_TEXT =
+  ':moneybag: This channel has reached its monthly assistant budget, so I can ' +
+  'not start that task right now. An admin can raise the cap in the dashboard.';
+
+// Phase B: prepended to the ack when a `code` task couldn't resolve a repo, so the
+// general (non-code) fallback isn't silent — the user knows no repo was found and
+// is told how to fix it.
+const CHANNEL_CODE_NO_REPO_NOTE =
+  ":information_source: I couldn't find a repository to open a PR against for this " +
+  'channel, so I am working on it as a general task instead. Name the repo (or have ' +
+  'an admin link one to this channel) for a code/PR run.\n\n';
+
+// Posted (instead of the agent's ack) when a task was already launched in this
+// thread — the per-thread task run is single-use (REJECT_DUPLICATE), so a fresh
+// task needs its own thread; an in-flight task is steered by replying in-thread.
+const CHANNEL_TASK_ALREADY_RUNNING_TEXT =
+  ":information_source: I've already taken on a task in this thread. Reply here to " +
+  'steer it while it runs, or start a new thread to kick off a separate task.';
 
 export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput): Promise<void> {
   // 0. Create the run record FIRST (keyed to this Temporal workflowId) so the
@@ -146,8 +195,34 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply } = await runChannelAssistantTurn(input);
-    await deliver(input, placeholderTs, reply);
+    const { reply, delegate } = await runChannelAssistantTurn(input);
+
+    // Phase A: the agent asked to launch a durable task. Gate on the channel
+    // budget, then start a thread-bound RunnableWorkflow that works the task and
+    // reports its result back in this thread. We DO NOT await the child — the
+    // task must outlive this short turn (abandon close policy).
+    let replyPrefix = '';
+    if (delegate) {
+      const overBudget = await isChannelOverBudgetForTask(input.channelId);
+      if (overBudget) {
+        // Over budget: don't launch; tell the user instead of the agent's ack.
+        await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
+        return 'SUCCESS';
+      }
+      const outcome = await launchTask(input, delegate);
+      // A thread already hosts a task (the per-thread workflowId was used). Post an
+      // honest message INSTEAD of the agent's "on it" ack — nothing new launched.
+      if (outcome.alreadyRunning) {
+        await deliver(input, placeholderTs, CHANNEL_TASK_ALREADY_RUNNING_TEXT);
+        return 'SUCCESS';
+      }
+      // Otherwise prepend any routing note (e.g. the code→general no-repo fallback).
+      replyPrefix = outcome.prefix;
+    }
+
+    // Always post the agent's reply (the "on it" ack when it delegated), prefixed
+    // with any routing note (e.g. the code→general no-repo fallback note).
+    await deliver(input, placeholderTs, `${replyPrefix}${reply}`);
     return 'SUCCESS';
   } catch (err) {
     log.error('ChannelAssistantWorkflow failed; posting fallback to thread', {
@@ -181,4 +256,139 @@ async function deliver(
       threadTs: input.threadTs,
     });
   }
+}
+
+/** Prepared child-launch parameters shared by both task routes. */
+interface PreparedTaskRun {
+  workflowId: string;
+  templateId: string;
+  templateVersion: number;
+  request: RepoWorkRequest;
+}
+
+/** Outcome of a task launch attempt (drives what the caller posts to the thread). */
+interface LaunchOutcome {
+  /** Text to PREPEND to the agent's ack — empty, or the code→general fallback note. */
+  prefix: string;
+  /**
+   * True when the per-thread workflowId was already used (`REJECT_DUPLICATE`), so
+   * nothing new launched. The caller posts {@link CHANNEL_TASK_ALREADY_RUNNING_TEXT}
+   * instead of the agent's "on it" ack rather than falsely claiming a launch.
+   */
+  alreadyRunning?: boolean;
+}
+
+/**
+ * Launch a durable, thread-bound task run from a delegate intent.
+ *
+ * Routing (Phase A + Phase B):
+ *  - `route: 'code'` → try the SWE route: resolve the channel's repo + the team's
+ *    default SWE template (`createChannelCodeTaskRun`). If a repo resolves, launch
+ *    the real implement → review → PR workflow against it. If NO repo resolves
+ *    (ambiguous / none), FALL BACK to the general Channel Task route and return a
+ *    note so the ack tells the user it answered generally (not silent).
+ *  - `route: 'general'` (or the code fallback) → launch the repo-less Channel Task
+ *    spec (`createChannelTaskRun`).
+ *
+ * Both routes share {@link startTaskChild} (ABANDON + REJECT_DUPLICATE +
+ * deterministic per-thread workflowId). The per-thread id is single-use: the run
+ * record (`WorkflowRun`) is upserted by workflowId, so a second task reusing it
+ * would silently operate on the first (closed) run's row. REJECT_DUPLICATE prevents
+ * that — a second delegate in a thread surfaces `alreadyRunning` and the caller
+ * tells the user to steer the existing task or open a new thread (rather than a
+ * false "on it"). Other launch errors are swallowed so they never break the ack.
+ */
+async function launchTask(
+  input: ChannelAssistantTurnInput,
+  delegate: DelegateIntent
+): Promise<LaunchOutcome> {
+  try {
+    if (delegate.route === 'code') {
+      // Phase B: try the real SWE workflow against the channel's resolved repo.
+      const prepared = await createChannelCodeTaskRun({
+        channelId: input.channelId,
+        description: delegate.description,
+        repoHint: delegate.repoHint,
+        slackChannelId: input.slackChannelId,
+        threadTs: input.threadTs,
+        title: delegate.title,
+      });
+      if (prepared) {
+        await startTaskChild(prepared);
+        return { prefix: '' };
+      }
+      // No (unambiguous) repo resolved — fall back to the general route and note it.
+      log.info('ChannelAssistantWorkflow: code task fell back to general route (no repo)', {
+        channelId: input.channelId,
+        repoHint: delegate.repoHint,
+        title: delegate.title,
+      });
+      await startTaskChild(await prepareGeneralTaskRun(input, delegate));
+      return { prefix: CHANNEL_CODE_NO_REPO_NOTE };
+    }
+
+    // General route.
+    await startTaskChild(await prepareGeneralTaskRun(input, delegate));
+    return { prefix: '' };
+  } catch (err) {
+    // A second task in a thread reuses the per-thread workflowId → Temporal rejects
+    // it with WorkflowExecutionAlreadyStartedError. Surface that so the caller posts
+    // an honest "already taken on a task here" note instead of a false ack.
+    if (err instanceof Error && err.name === 'WorkflowExecutionAlreadyStartedError') {
+      log.info('ChannelAssistantWorkflow: thread already hosts a task run; not relaunching', {
+        channelId: input.channelId,
+        threadTs: input.threadTs,
+      });
+      return { alreadyRunning: true, prefix: '' };
+    }
+    // Any other launch failure is best-effort: don't break the ack we still post.
+    log.warn('ChannelAssistantWorkflow: task launch failed; ack still delivered', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return { prefix: '' };
+  }
+}
+
+/** Prepare the repo-less general Channel Task run (Phase A spec). */
+async function prepareGeneralTaskRun(
+  input: ChannelAssistantTurnInput,
+  delegate: DelegateIntent
+): Promise<PreparedTaskRun> {
+  return createChannelTaskRun({
+    channelId: input.channelId,
+    description: delegate.description,
+    slackChannelId: input.slackChannelId,
+    threadTs: input.threadTs,
+    title: delegate.title,
+  });
+}
+
+/**
+ * Start the prepared task run as a child `RunnableWorkflow`. Shared by both the
+ * general and code routes.
+ *
+ *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
+ *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
+ *    soon as the ack is posted; the task may run for minutes).
+ *  - `REJECT_DUPLICATE` reuse policy on the deterministic per-thread workflowId.
+ *    The id is single-use: the `WorkflowRun` record is upserted by workflowId
+ *    (`update: {}`), so reusing the id for a second task — even after the first
+ *    CLOSES — would resolve the FIRST run's row and silently misattribute the
+ *    second task's traces/cost/title to the closed run. REJECT_DUPLICATE blocks
+ *    that; `launchTask` turns the rejection into an honest "already a task in this
+ *    thread" message. (A second delegate while the first is still RUNNING never
+ *    reaches here — the gateway steers it instead.)
+ */
+async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
+  const { workflowId, templateId, templateVersion, request } = prepared;
+  await startChild('RunnableWorkflow', {
+    args: [{ request, templateId, templateVersion }],
+    parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
+    taskQueue: 'engineering-workflow',
+    workflowId,
+    // Single-use per-thread id (see above): a re-delegate in the thread is rejected,
+    // surfaced by launchTask as an honest message rather than a silent clobber.
+    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+  });
 }

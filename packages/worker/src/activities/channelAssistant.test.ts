@@ -627,3 +627,89 @@ describe('postChannelPlaceholder / updateChannelReply (Phase 4)', () => {
     expect(updateSlackMessageMock).toHaveBeenCalledWith('C123', '123.456', 'the answer');
   });
 });
+
+/**
+ * Phase A: the `delegateTask` tool is created inside `runChannelAssistantTurn`
+ * and merged onto the resolved spec's tools, then handed to `runAgent`. `runAgent`
+ * is mocked here, so to exercise the delegate-capture closure we make the TURN
+ * branch of the mock locate `spec.tools.delegateTask` and invoke its `execute`
+ * (simulating the model calling the tool) before returning the agent's prose.
+ */
+function setTurnDelegates(
+  args: { route: 'general' | 'code'; title: string; description: string },
+  reply = 'On it.'
+): void {
+  runAgentMock.mockImplementation(
+    async (
+      spec: { tools?: Record<string, { execute: (i: unknown) => unknown }> },
+      _msg,
+      opts: { spanName?: string } = {}
+    ) => {
+      if (opts.spanName === 'llm.channel_memory_summary') {
+        return {
+          costUsd: 0.001,
+          object: { lessonSummary: 'fact', rationale: 'why' },
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+      }
+      // Simulate the model invoking the delegateTask tool.
+      await spec.tools?.delegateTask?.execute(args);
+      return { costUsd: 0.01, text: reply, usage: { inputTokens: 100, outputTokens: 50 } };
+    }
+  );
+}
+
+describe('runChannelAssistantTurn — delegateTask (Phase A)', () => {
+  it('captures a general delegate intent and surfaces it on the result', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnDelegates({
+      description: 'Investigate the flaky test and summarise the root cause.',
+      route: 'general',
+      title: 'Investigate flaky test',
+    });
+
+    const result = await runChannelAssistantTurn(
+      makeInput({ userText: 'look into the flaky test' })
+    );
+
+    expect(result.delegate).toEqual({
+      description: 'Investigate the flaky test and summarise the root cause.',
+      route: 'general',
+      title: 'Investigate flaky test',
+    });
+    // The agent's brief ack is surfaced as the reply.
+    expect(result.reply).toBe('On it.');
+  });
+
+  it('captures a code-route delegate intent unchanged (Phase B wires it)', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnDelegates({
+      description: 'Add a /health endpoint and open a PR.',
+      route: 'code',
+      title: 'Add health endpoint',
+    });
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.delegate?.route).toBe('code');
+  });
+
+  it('leaves delegate undefined for a plain question (no tool call)', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({ text: 'The deploy command is `yarn release`.' });
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(result.delegate).toBeUndefined();
+    expect(result.reply).toBe('The deploy command is `yarn release`.');
+  });
+});

@@ -35,15 +35,15 @@ function lastListWhere(prisma: ReturnType<typeof newMockPrisma>) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('workflowRunRoutes GET / (list)', () => {
-  it('excludes channel-assistant runs by default', async () => {
+  it('excludes channel chatter runs by default', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/workflow-runs' });
     expect(res.statusCode).toBe(200);
     const where = lastListWhere(prisma);
-    expect(where.template).toEqual({ name: { not: 'Channel Assistant' } });
+    expect(where.template).toEqual({ name: { notIn: ['Channel Assistant', 'Channel Task'] } });
   });
 
-  it('includes channel-assistant runs when includeChannel=true', async () => {
+  it('includes channel chatter runs when includeChannel=true', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({
       headers: AUTH,

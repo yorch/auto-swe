@@ -1440,6 +1440,55 @@ describe('agent node (P2)', () => {
     expect(calls[0].config.userMessage).toBe('review this');
   });
 
+  it('does not set config.steering when the dispatcher has no drainSteering hook', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent-no-steer',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'done', type: 'agent', userMessage: 'review this' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runAgentNode: { text: 'looks good' } },
+    });
+    await runSpec(spec, baseCtx(), dispatcher);
+    expect(calls[0].config.steering).toBeUndefined();
+  });
+
+  it('drains steering into the next agent node and clears it for the one after', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent-steer',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'b', type: 'agent', userMessage: 'first' },
+        b: { agentRef: 'reviewer', next: 'done', type: 'agent', userMessage: 'second' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runAgentNode: { text: 'ok' } },
+    });
+    // Two steering messages pending before the run; the first agent node drains
+    // both, the second sees none (drain semantics).
+    const pending = ['use the v2 endpoint', 'keep it backwards compatible'];
+    (dispatcher as Dispatcher & { drainSteering(): string[] }).drainSteering = () =>
+      pending.splice(0);
+
+    await runSpec(spec, baseCtx(), dispatcher);
+
+    expect(calls.map((c) => c.step)).toEqual(['runAgentNode', 'runAgentNode']);
+    expect(calls[0].config.steering).toEqual([
+      'use the v2 endpoint',
+      'keep it backwards compatible',
+    ]);
+    expect(calls[1].config.steering).toBeUndefined();
+  });
+
   it('dispatches an mcp node to the mcpCallTool step with connectionRef + tool', async () => {
     const spec = parseWorkflowSpec({
       entry: 'a',

@@ -24,18 +24,21 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 |---|---|
 | `POST /commands` | `/auto-swe` slash command (HMAC-verified via `SLACK_SIGNING_SECRET`) |
 | `POST /interactive` | Modal submissions (`/auto-swe run` workflow picker) |
-| `POST /events` | Slack Events API — the @mention teammate (HMAC-verified; acks within 3s, then starts the assistant workflow) |
+| `POST /events` | Slack Events API — the @mention teammate + thread-reply task steering (HMAC-verified; acks within 3s, then starts the assistant workflow or signals an in-flight task run) |
 | `GET  /callback` | OAuth redirect target after the user clicks the install URL |
 | `GET  /connect` | Linkage flow surfaced in the unknown-Slack-user ephemeral hint |
 
 ## @mention teammate (channel assistant)
 
-Once Event Subscriptions are enabled with the `app_mention` and `message.im` bot events, the bot becomes a conversational teammate:
+Once Event Subscriptions are enabled with the `app_mention`, `message.channels`, and `message.im` bot events, the bot becomes a conversational teammate:
 
 - **@mention it in a channel** (`@auto-swe how do I …`) → the gateway strips the mention, auto-provisions a `SlackChannel` row for that channel (mapped to the default team + its org), and starts a `ChannelAssistantWorkflow`. The worker generates the answer and posts it back **in-thread**.
 - **DM the bot** → same flow; DMs (`message.im`) are treated like a private thread.
+- **Reply in a thread that has an in-flight task run** → the reply **steers** that run instead of starting a fresh turn. The gateway reconstructs the task run's deterministic Temporal id from the channel + thread root and delivers the new guidance via a `steer` signal (a brief ":writing_hand: noted — steering the task." ack lands in-thread). This works for **plain (non-mention) replies too** — which is why the bot now subscribes to `message.channels`. Steering takes precedence: a thread reply that is *also* an `@mention` still steers an active run rather than launching a new turn.
 
-The gateway acks Slack within the 3-second window and starts the workflow out-of-band, so the HTTP response never waits on the LLM. Redelivered events (`x-slack-retry-num` header) are acked but skipped to avoid duplicate turns. The bot ignores its own messages and Slack system messages (anything with a `bot_id` or `subtype`). Ambient (non-mention) channel chatter is intentionally ignored in this phase.
+The gateway acks Slack within the 3-second window and starts the workflow (or sends the steer signal) out-of-band, so the HTTP response never waits on the LLM. Redelivered events (`x-slack-retry-num` header) are acked but skipped to avoid duplicate turns. The bot ignores its own messages and Slack system messages (anything with a `bot_id` or `subtype`).
+
+> **Why `message.channels` does not make the bot a firehose.** The bot receives every public-channel message via `message.channels`, but it acts on a plain (non-mention) channel message **only** when it is a thread reply *and* an in-flight task run is bound to that thread (a successful `steer` signal). A non-thread message, or a thread reply with no matching active task, is ignored — it never starts a turn or otherwise responds. So ambient channel chatter stays silent; the subscription exists solely to enable steering an active task by replying in its thread.
 
 The first @mention in a channel auto-creates the channel mapping using the default team from `/admin/workflow → Default team slug` (and that team's owning organization). If the default team is missing, the turn is dropped and a warning is logged — run `yarn db:seed` or create the team first.
 

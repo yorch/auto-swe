@@ -83,7 +83,7 @@ export default function WorkflowRunsPage() {
             }}
             type="checkbox"
           />
-          Show channel-assistant runs
+          Show channel runs
         </label>
       </Card>
 
