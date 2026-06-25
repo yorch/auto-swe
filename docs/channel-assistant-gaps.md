@@ -50,7 +50,9 @@ execution machinery. See the design discussion below + the implementation plan.
   full SWE template, which can include `planDecomposition` + `fanOut` nodes), but
   the general route is a single agent node — richer decomposition specs are a
   follow-up, not wired by default.
-- **Future task planning / scheduling** from a mention is still open (deferred).
+- ✅ **Future task planning / scheduling** from a mention shipped in #112 (`runAt`
+  → `ChannelScheduledTaskWorkflow`); autonomous *follow-up detection* (vs. explicit
+  scheduling) remains open — see `channel-assistant-remaining-gaps.md` row C.
 
 ---
 
@@ -106,20 +108,25 @@ from that channel's recent memory.
 
 ---
 
-## Gap #4 — Workspace-level memory + hygiene  ·  Severity: **Medium**
+## Gap #4 — Workspace-level memory + hygiene  ·  Severity: **Medium**  ·  **ADDRESSED**
 
 **Claude Tag:** Memory is kept **per channel *and* per workspace** (cross-channel
 org knowledge); admins view/edit/delete.
 
-**Ours today:** Per-channel memory with retrieve/inject/summarize + admin
-view/edit/delete. The `teamId`/`orgId` columns exist on `MemoryItem` but
-**retrieval is channel-scoped only** — workspace/team-level memory is
-schema-ready but not wired into the turn.
+**Status — addressed (#112):** `retrieveChannelMemory` now also searches sibling
+channels in the same team (Gap E), and `consolidateChannelMemory` runs on every
+ambient fire to cluster/summarize/expire channel memory (Gap F) — closing the
+"memory bloat" failure mode. Admins can inspect consolidated rows via the
+`?includeConsolidated=true` surface + the "Show consolidated" toggle.
 
-**Gaps:**
-- No **cross-channel / workspace-level** memory retrieval.
-- **No consolidation** of channel memory (the existing consolidation is
-  repo-scoped) → risk of the "memory bloat" failure mode Claude Tag itself flags.
+**Originally — Gaps:**
+- ~~No **cross-channel / workspace-level** memory retrieval.~~ → shipped (Gap E).
+- ~~**No consolidation** of channel memory.~~ → shipped (Gap F).
+
+**Still open (small):** the cross-channel read stays within a *team* (not the
+whole org — that proactive-flagging half is tracked as row B in
+`channel-assistant-remaining-gaps.md`); consolidation is not yet per-channel
+configurable.
 
 ---
 
@@ -162,7 +169,7 @@ untested at scale, and CI hasn't validated it end-to-end yet.
 | 1 | Autonomous multi-stage task execution | **Addressed** | High |
 | 2 | Multiplayer mid-task hand-off | **Addressed** | High |
 | 3 | Ambient: reactive + org-wide + task follow-up | **Gap** | Medium |
-| 4 | Workspace-level memory + consolidation | **Gap** | Medium |
+| 4 | Workspace-level memory + consolidation | **Addressed** (#112) | Medium |
 | 5 | Maturity / scale | **Gap** | Medium |
 | — | Per-channel scoping & isolation | Parity | — |
 | — | Budgets (per-channel + per-org) | Parity / soft-cap divergence | — |
@@ -170,9 +177,11 @@ untested at scale, and CI hasn't validated it end-to-end yet.
 | — | Extensibility (self-host, MCP, multi-model) | Ahead | — |
 
 **Addressed:** #1 (route channel tasks into the workflow engine — general + code
-routes) and #2 (the running workflow as shared, resumable task state, steerable
-from thread replies). See [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)
-for the shipped architecture. Remaining open: #3, #4, #5 — now broken into 11
-concrete, independently-shippable capabilities (with severity, effort, and a
+routes), #2 (the running workflow as shared, resumable task state, steerable from
+thread replies), and #4 (cross-channel memory + channel-memory consolidation,
+#112). See [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)
+for the autonomous-execution architecture. **Remaining open: #3 and #5** — broken
+into concrete, independently-shippable capabilities (with severity, effort, and a
 suggested priority order) in
-[`channel-assistant-remaining-gaps.md`](./channel-assistant-remaining-gaps.md).
+[`channel-assistant-remaining-gaps.md`](./channel-assistant-remaining-gaps.md),
+where the #112 deliverables (D/E/F) are also marked shipped.
