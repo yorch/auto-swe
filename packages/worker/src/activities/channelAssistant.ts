@@ -206,7 +206,9 @@ export function formatMemoryContext(items: ChannelMemoryItem[], userText: string
   }
   const bullets = items
     .slice(0, MAX_MEMORY_CONTEXT_ITEMS)
-    .map((item) => (item.crossChannel ? `- [from another channel] ${item.summary}` : `- ${item.summary}`))
+    .map((item) =>
+      item.crossChannel ? `- [from another channel] ${item.summary}` : `- ${item.summary}`
+    )
     .join('\n');
   return `Relevant context from this channel's memory:\n${bullets}\n\nUser: ${userText}`;
 }
@@ -562,24 +564,39 @@ async function summarizeAndStoreChannelMemory(
 }
 
 /**
- * Increment the channel's current-month usage row with one turn's USD cost and a
- * completed-run count. The `costUsd` is the authoritative per-turn cost returned
- * by {@link runAgent} (priced by `recordLlmUsage` against the agent KEY's
- * configured model), so this per-channel ledger prices identically to the
+ * Increment the channel's current-month usage row with one turn's USD cost and
+ * (optionally) a completed-run count. The `costUsd` is the authoritative per-turn
+ * cost returned by {@link runAgent} (priced by `recordLlmUsage` against the agent
+ * KEY's configured model), so this per-channel ledger prices identically to the
  * run-level ledger — no re-pricing here.
+ *
+ * `countRun` (default `true`) controls whether `runsCompleted` is incremented.
+ * User-facing turns count as a run; background maintenance passes (channel-memory
+ * consolidation) accrue their LLM cost to the budget but pass `countRun: false`
+ * so they don't inflate the channel's reported run count.
  *
  * Uses Prisma's `increment` upsert (race-safe across concurrent turns in the
  * same channel), mirroring the `OrgMonthlyUsage` accrual in `finalizeWorkflowRun`.
  * Wrapped in try/catch so a DB error degrades to "reply still sent".
  */
-export async function accrueChannelUsage(channelId: string, costUsd: number): Promise<void> {
+export async function accrueChannelUsage(
+  channelId: string,
+  costUsd: number,
+  opts: { countRun?: boolean } = {}
+): Promise<void> {
+  const countRun = opts.countRun ?? true;
   try {
     const yearMonth = currentYearMonth();
     await prisma.channelMonthlyUsage.upsert({
-      create: { channelId, costUsdAccrued: costUsd, runsCompleted: 1, yearMonth },
+      create: {
+        channelId,
+        costUsdAccrued: costUsd,
+        runsCompleted: countRun ? 1 : 0,
+        yearMonth,
+      },
       update: {
         costUsdAccrued: { increment: costUsd },
-        runsCompleted: { increment: 1 },
+        ...(countRun ? { runsCompleted: { increment: 1 } } : {}),
       },
       where: { channelId_yearMonth: { channelId, yearMonth } },
     });

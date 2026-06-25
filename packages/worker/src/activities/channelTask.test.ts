@@ -109,6 +109,36 @@ describe('createChannelTaskRun', () => {
 
     await expect(createChannelTaskRun(INPUT)).rejects.toThrow(/Channel Task/);
   });
+
+  describe('runAt (Gap D deferral) validation', () => {
+    it('carries runAt when it is a valid FUTURE ISO timestamp', async () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+      const result = await createChannelTaskRun({ ...INPUT, runAt: future });
+
+      expect(result.runAt).toBe(future);
+    });
+
+    it('drops a PAST runAt so the task runs immediately', async () => {
+      const past = new Date(Date.now() - 60 * 1000).toISOString();
+
+      const result = await createChannelTaskRun({ ...INPUT, runAt: past });
+
+      expect(result.runAt).toBeUndefined();
+    });
+
+    it('drops a garbled (non-ISO) runAt rather than mis-scheduling', async () => {
+      const result = await createChannelTaskRun({ ...INPUT, runAt: 'tomorrow at 9am' });
+
+      expect(result.runAt).toBeUndefined();
+    });
+
+    it('leaves runAt unset when none is provided (immediate)', async () => {
+      const result = await createChannelTaskRun(INPUT);
+
+      expect(result.runAt).toBeUndefined();
+    });
+  });
 });
 
 describe('resolveChannelRepo', () => {

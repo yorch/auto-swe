@@ -1,6 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbeddingWithSpec } from './embeddings.js';
-import { insertMemoryItem, searchMemoryItemsByVector } from './memoryStore.js';
+import { insertMemoryItem, type QueryEmbedding, searchMemoryItemsByVector } from './memoryStore.js';
 
 /** One retrieved channel-memory row with its cosine similarity to the query. */
 export interface ChannelMemoryItem {
@@ -39,8 +39,14 @@ export async function retrieveChannelMemory(
   limit = 5,
   similarityThreshold = 0.65
 ): Promise<ChannelMemoryItem[]> {
+  // Embed the query ONCE and reuse the vector for both the channel-scoped and the
+  // cross-channel team search — the text is identical, so a second embedding
+  // round-trip on the reply hot path would be pure waste.
+  const queryEmbedding = await generateEmbeddingWithSpec(queryText);
+
   const channelRows = (await searchMemoryItemsByVector({
     limit,
+    precomputed: queryEmbedding,
     queryText,
     scopeColumn: 'channel_id',
     scopeId: scope.channelId,
@@ -55,22 +61,25 @@ export async function retrieveChannelMemory(
   }));
 
   // Gap E: cross-channel (team-scoped) memory. Only run when teamId is known
-  // and there is still room in the results after the channel query.
+  // and there is still room in the results after the channel query. The channel
+  // query (channel_id = X) and the team query (channel_id != X) read disjoint
+  // rows, so no de-dup is needed — they can never return the same item.
   if (scope.teamId && channelItems.length < limit) {
-    const remaining = limit - channelItems.length;
-    const channelIds = new Set(channelItems.map((i) => i.id));
     try {
       const teamRows = await searchTeamChannelMemory({
         excludeChannelId: scope.channelId,
-        limit: remaining,
-        queryText,
+        limit: limit - channelItems.length,
+        precomputed: queryEmbedding,
         similarityThreshold: Math.max(similarityThreshold, 0.75),
         teamId: scope.teamId,
       });
       for (const r of teamRows) {
-        if (!channelIds.has(r.id)) {
-          channelItems.push({ crossChannel: true, id: r.id, similarity: r.similarity, summary: r.summary });
-        }
+        channelItems.push({
+          crossChannel: true,
+          id: r.id,
+          similarity: r.similarity,
+          summary: r.summary,
+        });
       }
     } catch {
       // Cross-channel search is best-effort: a failure (e.g. no embedding)
@@ -91,18 +100,17 @@ export async function retrieveChannelMemory(
  *
  * Raw SQL is required because pgvector operators aren't parameterisable and
  * `team_id != channel_id` isn't expressible via the single-column
- * `searchMemoryItemsByVector` helper.
+ * `searchMemoryItemsByVector` helper. Takes a pre-computed query embedding so the
+ * caller embeds the query text once across both searches.
  */
 async function searchTeamChannelMemory(opts: {
-  queryText: string;
   teamId: string;
   excludeChannelId: string;
   limit: number;
   similarityThreshold: number;
+  precomputed: QueryEmbedding;
 }): Promise<RetrievedChannelMemoryRow[]> {
-  const { embedding: queryEmbedding, spec: embeddingSpec } = await generateEmbeddingWithSpec(
-    opts.queryText
-  );
+  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
 
   return prisma.$queryRawUnsafe<RetrievedChannelMemoryRow[]>(
     `SELECT

@@ -18,16 +18,6 @@ function sanitizeIdPart(s: string): string {
 export const CHANNEL_TASK_STEER_SIGNAL = 'steer';
 
 /**
- * Gap D: deterministic Temporal workflow id for a SCHEDULED (deferred) channel
- * task. One scheduled slot per Slack thread: `chansched-<channelId>-<threadTs>`.
- * Mirrors `channelTaskWorkflowId` but uses a different prefix so immediate and
- * deferred tasks can coexist in the same thread without id collision.
- */
-export function channelScheduledTaskWorkflowId(channelId: string, threadTs: string): string {
-  return `chansched-${sanitizeIdPart(channelId)}-${sanitizeIdPart(threadTs)}`;
-}
-
-/**
  * Names of the seeded GLOBAL channel templates. Single source of truth (this
  * module is pure + isolate-safe + already aliased for vitest), imported by the
  * seed (`syncBuiltins`), the worker activities that look the rows up by name

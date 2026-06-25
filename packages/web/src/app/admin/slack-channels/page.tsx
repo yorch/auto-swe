@@ -529,7 +529,8 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         ) : (
           <ul className="divide-y divide-ink-600">
             {items.map((item) => {
-              const isConsolidated = !!item.consolidatedAt;
+              const consolidatedAt = item.consolidatedAt;
+              const isConsolidated = !!consolidatedAt;
               return (
                 <li className={`py-3 ${isConsolidated ? 'opacity-50' : ''}`} key={item.id}>
                   {!isConsolidated && editingId === item.id ? (
@@ -545,9 +546,9 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
                         <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
                         <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
                         <div className="flex items-center gap-3">
-                          {isConsolidated && (
+                          {consolidatedAt && (
                             <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
-                              consolidated {fmtDate(item.consolidatedAt!)}
+                              consolidated {fmtDate(consolidatedAt)}
                             </span>
                           )}
                           {item.agentKey && (

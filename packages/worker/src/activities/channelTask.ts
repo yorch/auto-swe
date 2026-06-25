@@ -1,7 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   CHANNEL_TASK_TEMPLATE_NAME,
-  channelScheduledTaskWorkflowId,
   channelTaskWorkflowId,
 } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
@@ -37,10 +36,10 @@ export interface CreateChannelTaskRunInput {
   /** Self-contained task description the run executes. */
   description: string;
   /**
-   * Gap D: ISO 8601 UTC timestamp to defer task execution. When set, the
-   * result includes `scheduledWorkflowId` so the caller starts a
-   * `ChannelScheduledTaskWorkflow` wrapper instead of launching `RunnableWorkflow`
-   * immediately.
+   * Gap D: ISO 8601 UTC timestamp to defer task execution. When it parses to a
+   * valid FUTURE time, the result carries `runAt` and the caller launches a
+   * `ChannelScheduledTaskWorkflow` wrapper; an invalid or past value is ignored
+   * (the task runs immediately).
    */
   runAt?: string;
 }
@@ -53,13 +52,11 @@ export interface CreateChannelTaskRunResult {
   /** The fully-formed run request the child `RunnableWorkflow` consumes. */
   request: RepoWorkRequest;
   /**
-   * Gap D: only set when `runAt` was provided. The workflowId for the
-   * `ChannelScheduledTaskWorkflow` wrapper that sleeps until `runAt`. The caller
-   * starts `ChannelScheduledTaskWorkflow` (not `RunnableWorkflow` directly) when
-   * this field is present.
+   * Gap D: present only when `runAt` parsed to a valid future timestamp. When set,
+   * the caller starts a `ChannelScheduledTaskWorkflow` (which sleeps until `runAt`)
+   * under `workflowId`; otherwise it launches `RunnableWorkflow` immediately under
+   * the same `workflowId`.
    */
-  scheduledWorkflowId?: string;
-  /** ISO 8601 UTC timestamp; only set when `scheduledWorkflowId` is set. */
   runAt?: string;
 }
 
@@ -174,14 +171,23 @@ async function buildChannelTaskRun(
     workRequestId: runInput.id,
   };
 
-  // Gap D: when `runAt` is provided, also compute the ChannelScheduledTaskWorkflow
-  // ID. The caller starts the scheduler (which sleeps until runAt) rather than
-  // starting RunnableWorkflow directly.
-  const scheduledWorkflowId = input.runAt
-    ? channelScheduledTaskWorkflowId(input.channelId, input.threadTs)
-    : undefined;
+  // Gap D: only defer when `runAt` parses to a valid FUTURE timestamp. An invalid
+  // (e.g. non-ISO model output) or past value is dropped so the task runs
+  // immediately rather than silently mis-scheduling.
+  return { request, runAt: validFutureRunAt(input.runAt), templateId, templateVersion, workflowId };
+}
 
-  return { request, runAt: input.runAt, scheduledWorkflowId, templateId, templateVersion, workflowId };
+/**
+ * Return `runAt` only when it parses to a valid timestamp strictly in the future;
+ * otherwise `undefined` (run immediately). Centralised so both task routes treat a
+ * garbled or past `runAt` identically.
+ */
+function validFutureRunAt(runAt: string | undefined): string | undefined {
+  if (!runAt) {
+    return undefined;
+  }
+  const ms = Date.parse(runAt);
+  return Number.isFinite(ms) && ms > Date.now() ? runAt : undefined;
 }
 
 /**

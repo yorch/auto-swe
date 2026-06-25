@@ -5,9 +5,10 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
-import { accrueChannelUsage } from './channelAssistant.js';
+import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ const ConsolidatorOutputSchema = z.object({
   memories: z.array(ConsolidatedMemoryItemSchema).min(1).max(2),
 });
 
-// ── Helpers (shared with consolidateLessons) ─────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 interface RawMemoryItem {
   id: string;
@@ -48,45 +49,12 @@ interface RawMemoryItem {
   orgId: string | null;
 }
 
-function dotProduct(a: number[], b: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) {
-    sum += a[i] * b[i];
-  }
-  return sum;
-}
-
-function clusterByEmbedding(
-  embeddings: (number[] | null)[],
-  norms: number[],
-  threshold: number
-): number[][] {
-  const n = embeddings.length;
-  const assigned = new Uint8Array(n);
-  const clusters: number[][] = [];
-
-  for (let i = 0; i < n; i++) {
-    if (assigned[i] || !embeddings[i]) {
-      continue;
-    }
-    const cluster = [i];
-    assigned[i] = 1;
-    const ei = embeddings[i];
-    for (let j = i + 1; j < n; j++) {
-      const ej = embeddings[j];
-      if (!ej || norms[i] === 0 || norms[j] === 0) {
-        continue;
-      }
-      if (ei && dotProduct(ei, ej) / (norms[i] * norms[j]) >= threshold) {
-        cluster.push(j);
-        assigned[j] = 1;
-      }
-    }
-    clusters.push(cluster);
-  }
-
-  return clusters;
-}
+const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
+  clustersConsolidated: 0,
+  clustersFound: 0,
+  memoriesConsolidated: 0,
+  memoriesCreated: 0,
+};
 
 // ── Prompt ───────────────────────────────────────────────────────────────────
 
@@ -113,22 +81,36 @@ const CHANNEL_MEMORY_CONSOLIDATOR_PROMPT = [
  *
  * Mirrors `consolidateLessons` (repo-scoped) but targets the channel memory
  * scope: fetches all un-consolidated `memory_items` for a channel, clusters
- * them by cosine similarity, synthesises each qualifying cluster into 1–2
- * durable facts via an LLM, and soft-deletes the originals
- * (`consolidated_at = now()`). The synthesised rows carry provenance metadata.
+ * them by cosine similarity (shared {@link clusterByEmbedding}), synthesises each
+ * qualifying cluster into 1–2 durable facts via an LLM, and soft-deletes the
+ * originals (`consolidated_at = now()`). The synthesised rows carry provenance
+ * metadata.
  *
  * Called from `ChannelAmbientWorkflow` on each ambient fire so the channel's
  * memory stays clean over time. Best-effort by the caller (a failure here
  * must not stop the ambient digest).
  *
- * Cost accrual: the LLM synthesis calls accrue to `ChannelMonthlyUsage` (the
- * per-channel budget), not to `OrgMonthlyUsage` — consolidation is a channel
- * operation, not a normal work request.
+ * BUDGET: this pass makes LLM calls, so it honours the channel's monthly budget
+ * cap exactly like the digest — when the channel is over budget it returns early
+ * without spending (same `isChannelOverBudgetNow` gate the digest uses). Its cost
+ * accrues to `ChannelMonthlyUsage` (the per-channel budget) via `accrueChannelUsage`
+ * with `countRun: false` — consolidation is maintenance, not a user-facing run, so
+ * it must not inflate `runsCompleted`.
  */
 export async function consolidateChannelMemory(
   input: ConsolidateChannelMemoryInput
 ): Promise<ConsolidateChannelMemoryResult> {
   const { channelId, minClusterSize = 3, similarityThreshold = 0.85 } = input;
+
+  // Budget gate: skip consolidation entirely when the channel is over its monthly
+  // cap, so an exhausted channel doesn't keep spending on every ambient fire.
+  const channel = await prisma.slackChannel.findUnique({
+    select: { monthlyBudgetUsdCents: true },
+    where: { id: channelId },
+  });
+  if (await isChannelOverBudgetNow(channelId, channel?.monthlyBudgetUsdCents ?? null)) {
+    return EMPTY_RESULT;
+  }
 
   const embeddingSpec = await currentEmbeddingSpec();
 
@@ -152,7 +134,7 @@ export async function consolidateChannelMemory(
   );
 
   if (rows.length < minClusterSize) {
-    return { clustersConsolidated: 0, clustersFound: 0, memoriesConsolidated: 0, memoriesCreated: 0 };
+    return EMPTY_RESULT;
   }
 
   const embeddings: (number[] | null)[] = rows.map((r) => {
@@ -166,31 +148,18 @@ export async function consolidateChannelMemory(
     }
   });
 
-  const norms = embeddings.map((e) => {
-    if (!e) {
-      return 0;
-    }
-    let sum = 0;
-    for (const v of e) {
-      sum += v * v;
-    }
-    return Math.sqrt(sum);
-  });
-
+  const norms = vectorNorms(embeddings);
   const clusters = clusterByEmbedding(embeddings, norms, similarityThreshold);
   const qualifying = clusters.filter((c) => c.length >= minClusterSize);
 
   if (qualifying.length === 0) {
-    return {
-      clustersConsolidated: 0,
-      clustersFound: clusters.length,
-      memoriesConsolidated: 0,
-      memoriesCreated: 0,
-    };
+    return { ...EMPTY_RESULT, clustersFound: clusters.length };
   }
 
-  // Resolve the consolidator agent (inherits model from commitToMemory).
-  const consolidatorSkills = await loadAgentSkills('lessonConsolidator');
+  // Resolve the consolidator agent. Bind AND price against `commitToMemory` (the
+  // same role `consolidateLessons` uses) so the recorded cost matches the model
+  // actually used — a mismatched pricing role can resolve to zero cost.
+  const consolidatorSkills = await loadAgentSkills('commitToMemory');
   const skillSuffix = consolidatorSkills
     .map((s) => s.promptText)
     .filter(Boolean)
@@ -216,10 +185,7 @@ export async function consolidateChannelMemory(
         const sourceIds = clusterItems.map((m) => m.id);
 
         const prompt = clusterItems
-          .map(
-            (m, i) =>
-              `Memory ${i + 1}:\nRationale: ${m.rationale}\nSummary: ${m.lessonSummary}`
-          )
+          .map((m, i) => `Memory ${i + 1}:\nRationale: ${m.rationale}\nSummary: ${m.lessonSummary}`)
           .join('\n\n');
 
         const start = Date.now();
@@ -231,7 +197,7 @@ export async function consolidateChannelMemory(
         if (result.usage) {
           attribution = await recordLlmUsage(
             'consolidateChannelMemory',
-            'lessonConsolidator',
+            'commitToMemory',
             result.usage,
             'llm.consolidate_channel_memory'
           );
@@ -252,7 +218,7 @@ export async function consolidateChannelMemory(
           model: attribution.modelSpec || undefined,
           outputJson: { memoriesOut: memories.length, sourceIds },
           outputTokens: attribution.outputTokens,
-          role: 'lessonConsolidator',
+          role: 'commitToMemory',
         });
 
         // Use the first row's team/org for the new consolidated row.
@@ -270,10 +236,10 @@ export async function consolidateChannelMemory(
             const memory = memories[i];
             await tx.$executeRawUnsafe(
               `INSERT INTO memory_items
-               (id, channel_id, team_id, org_id, rationale, lesson_summary,
+               (id, channel_id, team_id, org_id, agent_key, rationale, lesson_summary,
                 embedding, embedding_model, scope, metadata, created_at)
              VALUES
-               (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
+               (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'channelAssistant', $4, $5,
                 $6::vector, $7, 'channel-memory', $8::jsonb, now())`,
               channelId,
               teamId,
@@ -296,14 +262,11 @@ export async function consolidateChannelMemory(
       })
     );
 
-    const totalConsolidated = clusterOutcomes.reduce((s, o) => s + o.consolidated, 0);
-    const totalCreated = clusterOutcomes.reduce((s, o) => s + o.created, 0);
-
     const finalResult: ConsolidateChannelMemoryResult = {
       clustersConsolidated: qualifying.length,
       clustersFound: clusters.length,
-      memoriesConsolidated: totalConsolidated,
-      memoriesCreated: totalCreated,
+      memoriesConsolidated: clusterOutcomes.reduce((s, o) => s + o.consolidated, 0),
+      memoriesCreated: clusterOutcomes.reduce((s, o) => s + o.created, 0),
     };
 
     tracer.addActivityEvent({ name: 'channel_memory.consolidated', outputJson: finalResult });
@@ -311,9 +274,10 @@ export async function consolidateChannelMemory(
     return finalResult;
   } finally {
     await persistActivityTrace(tracer, 'commitToMemory');
-    // Accrue consolidation cost to the channel's monthly budget.
+    // Accrue consolidation cost to the channel's monthly budget WITHOUT counting
+    // it as a user-facing run (countRun: false).
     if (totalCostUsd > 0) {
-      await accrueChannelUsage(channelId, totalCostUsd);
+      await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
     }
   }
 }
