@@ -230,7 +230,39 @@ Three follow-on capabilities round out memory and task execution:
   helper (`workflows/taskChild.ts`) that owns the ABANDON / task-queue /
   REJECT_DUPLICATE invariants.
 
-## 10. Observability & admin UI
+## 10. Reactive interjection — Gap A (shipped)
+
+Beyond `@mention` (a turn) and the scheduled ambient digest, a channel can opt into
+**reactive interjection**: the assistant watches the live conversation and
+proactively chimes in only when it can clearly help — the difference between "a bot
+you summon" and "a teammate paying attention."
+
+Substrate (buffer + Schedule): rather than a gateway hot-path + per-message buffer
+table, a per-channel **reactive Temporal Schedule** (`reactiveEnabled` +
+`reactiveCron`, opt-in, default off) fires `ChannelReactiveWorkflow` →
+`evaluateReactiveInterjection`, which reads recent channel history via
+`conversations.history` at tick time (reusing the `channels:history` scope). No
+firehose on the event path.
+
+Cost-bounded + noise-averse (the #1 reported risk for proactive agents):
+- **New-message gate** — the LLM fires ONLY when there are human messages newer
+  than the channel's `lastReactiveCheckAt` cursor (advanced every tick). A quiet
+  channel costs one cheap Slack read and zero tokens.
+- **Budget gate** — over the monthly cap ⇒ no LLM, no post (same `isChannelOverBudgetNow`
+  gate as the turn/digest).
+- **Cooldown** — at most one interjection per 10-minute window (`lastReactiveAt`);
+  on cooldown the LLM is skipped entirely.
+- **High-bar SKIP** — the prompt instructs the agent to reply `SKIP` unless it has
+  something genuinely useful (answer an unanswered question, correct a stale fact,
+  surface forgotten context); a `SKIP`/empty/trivial reply is not posted.
+
+Cost accrues to `ChannelMonthlyUsage`; `countRun` is true only when it actually
+posts (a `SKIP` is a no-op evaluation, not a user-facing run). Admins toggle
+reactive mode + cadence at `/admin/slack-channels`. Memory retrieval reuses the
+cross-channel `retrieveChannelMemory` (Gap E). Passive memory ingestion (learning
+from non-mention messages) is the natural next step on this same poll.
+
+## 11. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
@@ -252,13 +284,19 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 11. Future refinements (not built)
+## 12. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
   mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
   thread-bound, and steerable from replies). A single long-lived per-*channel*
   signal workflow (vs. per-mention conversational turns + scheduled ambient) remains
   a possible consolidation, but isn't required for the hand-off use case anymore.
+- **Passive memory ingestion** — reactive mode (§10) reads non-mention messages but
+  only to decide whether to interject; distilling salient facts from the channel
+  stream into memory (the "learns your company one message at a time" behavior)
+  rides on the same poll and is the natural next step.
+- **Reactive interjection in a thread** — §10 posts top-level; targeting the reply
+  into the most-relevant thread (rather than the channel root) is a refinement.
 - **Per-stage progress posts** back into the task thread (the run is already
   observable in `/runs`; richer in-thread "working on X" updates are a polish item).
 - **Richer general-route decomposition** — the general "Channel Task" template is a
@@ -281,22 +319,24 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 12. Key files
+## 13. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
   `packages/worker/src/workflows/channelScheduledTask.ts` (Gap D deferral, §9),
+  `packages/worker/src/workflows/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/workflows/taskChild.ts` (`startThreadTaskChild` launch helper),
   `packages/worker/src/activities/channelAssistant.ts`,
+  `packages/worker/src/activities/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),
   `packages/worker/src/activities/runAgentNode.ts` (`prependSteering`),
-  `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`).
+  `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`, `fetchChannelHistory`).
 - Gateway: `packages/gateway/src/routes/slack.ts` (`/events`, thread-reply steering),
   `packages/gateway/src/routes/slackChannels.ts`,
   `packages/gateway/src/plugins/temporal.ts` (`startChannelAssistant`).
