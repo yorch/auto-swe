@@ -149,13 +149,18 @@ launches a **durable, thread-bound workflow run**.
   when no repo resolves unambiguously.
 - **Thread binding:** the run's workflow id is deterministic —
   `chantask-<channelId>-<threadTs>` (`channelTaskWorkflowId` in
-  `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). One *active*
-  task run per thread (`ALLOW_DUPLICATE` reuse policy): a re-delegate while the run
-  is in-flight is rejected, not clobbered, but a fresh task in the same thread after
-  the prior one closes is allowed.
+  `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). The id is
+  **single-use** (`REJECT_DUPLICATE`): the `WorkflowRun` record is upserted by
+  workflowId, so reusing the id for a second task would silently operate on the
+  first (closed) run's row — instead a re-delegate is rejected and the assistant
+  posts an honest "already taken on a task in this thread — reply to steer it, or
+  start a new thread" note (no false ack). A reply *while* a task runs is steered by
+  the gateway, never reaching a second launch.
   The `RunInput` carries `slackChannelId`/`slackMessageTs` so the run's terminal
-  notification threads the result back into the originating conversation, and
-  `channelId` so the run's agent nodes resolve the CHANNEL config tier and the cost
+  notification threads the result back into the originating conversation,
+  `connectionId` (code route) so the run bills `OrgMonthlyUsage` + honors the org
+  budget cap, and `channelId` so the run's agent nodes resolve the CHANNEL config
+  tier and the cost
   accrues to the channel budget.
 - **Signal-steering (multiplayer #2):** any teammate can reply in the task's thread
   to steer the in-flight run. The gateway's `/events` route detects a thread reply,

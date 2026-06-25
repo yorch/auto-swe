@@ -120,6 +120,11 @@ async function buildChannelTaskRun(
 
   const runInput = await prisma.runInput.create({
     data: {
+      // Code route: link the resolved git_repo Connection so `finalizeWorkflowRun`
+      // can derive the org (connection → team → orgId) and bill `OrgMonthlyUsage` +
+      // enforce the org budget cap, exactly like a normal work request. The general
+      // route is repo-less, so `connectionId` stays null (no org path).
+      ...(repoId ? { connectionId: repoId } : {}),
       description: input.description,
       externalTicketId,
       payload: {
@@ -200,17 +205,18 @@ export async function resolveChannelRepo(
         r.repoName.toLowerCase() === hint ||
         `${r.organizationName}/${r.repoName}`.toLowerCase() === hint
     );
-    if (match) {
-      return { repoId: match.id };
-    }
+    // A hint that matches → use it. A hint that does NOT match → fall back to the
+    // general route (return null) rather than silently opening a PR against an
+    // unrelated repo. Only the no-hint case takes the single-repo default below.
+    return match ? { repoId: match.id } : null;
   }
 
-  // (b) Exactly one repo → unambiguous default.
+  // (b) No hint + exactly one repo → unambiguous default.
   if (repos.length === 1) {
     return { repoId: repos[0].id };
   }
 
-  // (c) Ambiguous (multiple repos, no/unmatched hint) → caller falls back.
+  // (c) No hint + multiple repos → ambiguous; caller falls back to general.
   return null;
 }
 

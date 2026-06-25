@@ -134,12 +134,18 @@ describe('resolveChannelRepo', () => {
     expect(await resolveChannelRepo('chan-1', 'other/payments-api')).toEqual({ repoId: 'c-2' });
   });
 
-  it('auto-resolves the sole repo when the team has exactly one (no/unmatched hint)', async () => {
+  it('auto-resolves the sole repo when the team has exactly one and NO hint was given', async () => {
     findConnections.mockResolvedValue([gitRepo('c-1', 'acme', 'payments-api')] as never);
 
     expect(await resolveChannelRepo('chan-1')).toEqual({ repoId: 'c-1' });
-    // An unmatched hint still falls through to the single-repo default.
-    expect(await resolveChannelRepo('chan-1', 'nope')).toEqual({ repoId: 'c-1' });
+  });
+
+  it('returns null when an explicit hint does NOT match (even with a sole repo)', async () => {
+    findConnections.mockResolvedValue([gitRepo('c-1', 'acme', 'payments-api')] as never);
+
+    // A named-but-unmatched repo must NOT silently open a PR against an unrelated
+    // repo — fall back to the general route instead.
+    expect(await resolveChannelRepo('chan-1', 'nope')).toBeNull();
   });
 
   it('returns null when ambiguous: multiple repos and no matching hint', async () => {
@@ -216,6 +222,9 @@ describe('createChannelCodeTaskRun', () => {
 
     const data = createRunInput.mock.calls[0]?.[0]?.data;
     expect(data).toMatchObject({
+      // Links the resolved git_repo Connection so finalize can derive the org and
+      // bill OrgMonthlyUsage / enforce the org budget cap (like a normal request).
+      connectionId: 'c-1',
       slackChannelId: 'C123',
       slackMessageTs: '111.222',
       templateId: 'tmpl-swe',

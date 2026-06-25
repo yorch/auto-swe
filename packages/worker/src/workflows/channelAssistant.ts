@@ -117,6 +117,13 @@ const CHANNEL_CODE_NO_REPO_NOTE =
   'channel, so I am working on it as a general task instead. Name the repo (or have ' +
   'an admin link one to this channel) for a code/PR run.\n\n';
 
+// Posted (instead of the agent's ack) when a task was already launched in this
+// thread — the per-thread task run is single-use (REJECT_DUPLICATE), so a fresh
+// task needs its own thread; an in-flight task is steered by replying in-thread.
+const CHANNEL_TASK_ALREADY_RUNNING_TEXT =
+  ":information_source: I've already taken on a task in this thread. Reply here to " +
+  'steer it while it runs, or start a new thread to kick off a separate task.';
+
 export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput): Promise<void> {
   // 0. Create the run record FIRST (keyed to this Temporal workflowId) so the
   //    turn's agent traces resolve a runId and persist. Best-effort: a failure
@@ -202,9 +209,15 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
         return 'SUCCESS';
       }
-      // launchTask returns a note to prepend to the ack when a code task fell back
-      // to the general route (no repo resolved), so the fallback isn't silent.
-      replyPrefix = await launchTask(input, delegate);
+      const outcome = await launchTask(input, delegate);
+      // A thread already hosts a task (the per-thread workflowId was used). Post an
+      // honest message INSTEAD of the agent's "on it" ack — nothing new launched.
+      if (outcome.alreadyRunning) {
+        await deliver(input, placeholderTs, CHANNEL_TASK_ALREADY_RUNNING_TEXT);
+        return 'SUCCESS';
+      }
+      // Otherwise prepend any routing note (e.g. the code→general no-repo fallback).
+      replyPrefix = outcome.prefix;
     }
 
     // Always post the agent's reply (the "on it" ack when it delegated), prefixed
@@ -253,6 +266,18 @@ interface PreparedTaskRun {
   request: RepoWorkRequest;
 }
 
+/** Outcome of a task launch attempt (drives what the caller posts to the thread). */
+interface LaunchOutcome {
+  /** Text to PREPEND to the agent's ack — empty, or the code→general fallback note. */
+  prefix: string;
+  /**
+   * True when the per-thread workflowId was already used (`REJECT_DUPLICATE`), so
+   * nothing new launched. The caller posts {@link CHANNEL_TASK_ALREADY_RUNNING_TEXT}
+   * instead of the agent's "on it" ack rather than falsely claiming a launch.
+   */
+  alreadyRunning?: boolean;
+}
+
 /**
  * Launch a durable, thread-bound task run from a delegate intent.
  *
@@ -265,19 +290,18 @@ interface PreparedTaskRun {
  *  - `route: 'general'` (or the code fallback) → launch the repo-less Channel Task
  *    spec (`createChannelTaskRun`).
  *
- * Both routes share {@link startTaskChild} (same ABANDON + REJECT_DUPLICATE +
- * deterministic per-thread workflowId). Returns a string to PREPEND to the ack —
- * empty for the normal case, the no-repo note for the code→general fallback.
- *
- * Key Temporal semantics (see {@link startTaskChild}): the child is ABANDONED (it
- * must outlive this short turn) and uses a REJECT_DUPLICATE reuse policy so a
- * re-delegate in the same thread is rejected rather than clobbering the in-flight
- * task. Any launch error is swallowed so it never breaks the user's ack.
+ * Both routes share {@link startTaskChild} (ABANDON + REJECT_DUPLICATE +
+ * deterministic per-thread workflowId). The per-thread id is single-use: the run
+ * record (`WorkflowRun`) is upserted by workflowId, so a second task reusing it
+ * would silently operate on the first (closed) run's row. REJECT_DUPLICATE prevents
+ * that — a second delegate in a thread surfaces `alreadyRunning` and the caller
+ * tells the user to steer the existing task or open a new thread (rather than a
+ * false "on it"). Other launch errors are swallowed so they never break the ack.
  */
 async function launchTask(
   input: ChannelAssistantTurnInput,
   delegate: DelegateIntent
-): Promise<string> {
+): Promise<LaunchOutcome> {
   try {
     if (delegate.route === 'code') {
       // Phase B: try the real SWE workflow against the channel's resolved repo.
@@ -291,7 +315,7 @@ async function launchTask(
       });
       if (prepared) {
         await startTaskChild(prepared);
-        return '';
+        return { prefix: '' };
       }
       // No (unambiguous) repo resolved — fall back to the general route and note it.
       log.info('ChannelAssistantWorkflow: code task fell back to general route (no repo)', {
@@ -300,20 +324,29 @@ async function launchTask(
         title: delegate.title,
       });
       await startTaskChild(await prepareGeneralTaskRun(input, delegate));
-      return CHANNEL_CODE_NO_REPO_NOTE;
+      return { prefix: CHANNEL_CODE_NO_REPO_NOTE };
     }
 
     // General route.
     await startTaskChild(await prepareGeneralTaskRun(input, delegate));
-    return '';
+    return { prefix: '' };
   } catch (err) {
-    // Best-effort: a launch failure (incl. REJECT_DUPLICATE for an already-running
-    // task in this thread) must not break the ack we still post to the user.
+    // A second task in a thread reuses the per-thread workflowId → Temporal rejects
+    // it with WorkflowExecutionAlreadyStartedError. Surface that so the caller posts
+    // an honest "already taken on a task here" note instead of a false ack.
+    if (err instanceof Error && err.name === 'WorkflowExecutionAlreadyStartedError') {
+      log.info('ChannelAssistantWorkflow: thread already hosts a task run; not relaunching', {
+        channelId: input.channelId,
+        threadTs: input.threadTs,
+      });
+      return { alreadyRunning: true, prefix: '' };
+    }
+    // Any other launch failure is best-effort: don't break the ack we still post.
     log.warn('ChannelAssistantWorkflow: task launch failed; ack still delivered', {
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });
-    return '';
+    return { prefix: '' };
   }
 }
 
@@ -338,15 +371,14 @@ async function prepareGeneralTaskRun(
  *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
  *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
  *    soon as the ack is posted; the task may run for minutes).
- *  - `ALLOW_DUPLICATE` reuse policy on the deterministic per-thread workflowId.
- *    The id is stable across a thread's lifetime (`chantask-<channelId>-<threadTs>`),
- *    so while a task is in-flight a second delegate fails with
- *    WorkflowExecutionAlreadyStartedError (Temporal rejects a duplicate of a
- *    RUNNING id regardless of reuse policy) — preserving "one active task per
- *    thread". But once that task CLOSES, ALLOW_DUPLICATE lets a later, unrelated
- *    delegate in the same thread start a fresh run. REJECT_DUPLICATE would
- *    instead reject that legitimate follow-up forever (and `launchTask` swallows
- *    the error), silently dropping the task while still acking the user.
+ *  - `REJECT_DUPLICATE` reuse policy on the deterministic per-thread workflowId.
+ *    The id is single-use: the `WorkflowRun` record is upserted by workflowId
+ *    (`update: {}`), so reusing the id for a second task — even after the first
+ *    CLOSES — would resolve the FIRST run's row and silently misattribute the
+ *    second task's traces/cost/title to the closed run. REJECT_DUPLICATE blocks
+ *    that; `launchTask` turns the rejection into an honest "already a task in this
+ *    thread" message. (A second delegate while the first is still RUNNING never
+ *    reaches here — the gateway steers it instead.)
  */
 async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
   const { workflowId, templateId, templateVersion, request } = prepared;
@@ -355,8 +387,8 @@ async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
     parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
     taskQueue: 'engineering-workflow',
     workflowId,
-    // One ACTIVE task run per thread (a duplicate of a running id is rejected),
-    // but a new run is allowed once the prior one closes.
-    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+    // Single-use per-thread id (see above): a re-delegate in the thread is rejected,
+    // surfaced by launchTask as an honest message rather than a silent clobber.
+    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
   });
 }
