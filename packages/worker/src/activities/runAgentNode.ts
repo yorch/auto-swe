@@ -12,7 +12,7 @@ import { runAgent } from './runAgent.js';
 export interface RunAgentNodeInput {
   /** Library agent reference: `<key>` (float) or `<key>@<version>` (pin). */
   agentRef: string;
-  /** Literal user message; when omitted, the resolved node inputs are sent as JSON. */
+  /** Literal user message; when omitted, the resolved node inputs become the message (see {@link inputsToMessage}). */
   userMessage?: string;
   /** Resolved node inputs (used as the message payload when userMessage is absent). */
   inputs?: Record<string, unknown>;
@@ -87,7 +87,7 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
   }
 
   try {
-    const baseMessage = input.userMessage ?? JSON.stringify(input.inputs ?? {});
+    const baseMessage = input.userMessage ?? inputsToMessage(input.inputs);
     const userMessage = prependSteering(baseMessage, input.steering);
     const result = await runAgent(spec, userMessage, {
       spanName: input.spanName ?? 'llm.agent_node',
@@ -97,6 +97,25 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
     await closeMcp?.();
     await persistActivityTrace(tracer, key);
   }
+}
+
+/**
+ * Turn the resolved node inputs into the agent's user message when no literal
+ * `userMessage` was set. A SINGLE string input (e.g. the Channel Task spec's
+ * `task` description) is sent as the plain string — sending `{"task":"…"}` as
+ * JSON degrades prompt quality and pollutes any prepended steering block.
+ * Anything else (multiple inputs, non-string values) keeps the structured JSON
+ * payload so multi-input agent nodes still get the full object.
+ */
+function inputsToMessage(inputs: Record<string, unknown> | undefined): string {
+  if (!inputs) {
+    return '{}';
+  }
+  const values = Object.values(inputs);
+  if (values.length === 1 && typeof values[0] === 'string') {
+    return values[0];
+  }
+  return JSON.stringify(inputs);
 }
 
 /**

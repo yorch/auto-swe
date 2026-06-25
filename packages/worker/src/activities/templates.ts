@@ -149,9 +149,24 @@ export async function finalizeWorkflowRun(
     where: { id: runId },
   });
   const workflows = run?.workRequest?.activeWorkflows ?? [];
-  const costUsdAccrued = workflows.reduce((sum, aw) => sum + aw.costUsdAccrued, 0);
-  const tokensInputTotal = workflows.reduce((sum, aw) => sum + aw.tokensInputUsed, 0);
-  const tokensOutputTotal = workflows.reduce((sum, aw) => sum + aw.tokensOutputUsed, 0);
+  let costUsdAccrued = workflows.reduce((sum, aw) => sum + aw.costUsdAccrued, 0);
+  let tokensInputTotal = workflows.reduce((sum, aw) => sum + aw.tokensInputUsed, 0);
+  let tokensOutputTotal = workflows.reduce((sum, aw) => sum + aw.tokensOutputUsed, 0);
+
+  // Repo-less runs (e.g. a general Channel Task) have no ActiveWorkflow ledger
+  // row, so `recordLlmUsage` never accrued run-level cost/tokens there — the only
+  // record of the spend is the run's AgentTrace rows. Fall back to summing those
+  // so `/runs` shows the real cost instead of $0/0 tokens. (SWE runs always have
+  // an ActiveWorkflow, so this branch is skipped for them.)
+  if (workflows.length === 0) {
+    const traceTotals = await prisma.agentTrace.aggregate({
+      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
+      where: { runId },
+    });
+    costUsdAccrued = traceTotals._sum.costUsd ?? 0;
+    tokensInputTotal = traceTotals._sum.inputTokens ?? 0;
+    tokensOutputTotal = traceTotals._sum.outputTokens ?? 0;
+  }
 
   // P5: aggregate cost into OrgMonthlyUsage with Prisma's increment operator
   // (race-safe across concurrent finalizations). The increment is NOT
@@ -217,18 +232,24 @@ export async function finalizeWorkflowRun(
     });
   }
 
-  // Team must have opted in via `Team.slackNotifySuccess`; otherwise no-op.
-  // (For a channel-task run there's no team-via-connection, so this no-ops; the
-  // channel-task path below reports the result unconditionally instead.)
-  await notifySlackRunComplete({ runId, status });
+  // Channel-task runs own their terminal in-thread report (finalizeChannelTaskRun
+  // below — opt-in-independent, exactly one message). Skip the generic
+  // run-complete notification for them: the CODE route resolves a real
+  // team-via-connection, so notifySlackRunComplete would otherwise post a SECOND,
+  // redundant completion message into the SAME thread (double-post). For ordinary
+  // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
+  const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
+  if (!channelTaskPayload) {
+    await notifySlackRunComplete({ runId, status });
+  }
 
   // Channel assistant (Phase A): for a channel-launched task run, (a) accrue its
-  // cost to the channel's monthly budget — `recordLlmUsage` found no
-  // ActiveWorkflow (channel tasks are repo-less) so the spend lives only in the
-  // run's AgentTrace rows, not in OrgMonthlyUsage — and (b) report the result
-  // back into the originating thread REGARDLESS of the team success opt-in (these
-  // runs are user-requested in-thread). Both best-effort.
-  await finalizeChannelTaskRun(runId, status, run?.workRequest);
+  // cost to the channel's monthly budget (from the run's AgentTrace rows; for the
+  // code route that is a SEPARATE ledger from the OrgMonthlyUsage the connection
+  // path already billed — different tables, not a double-count) and (b) report
+  // the result back into the originating thread REGARDLESS of the team success
+  // opt-in (these runs are user-requested in-thread). Both best-effort.
+  await finalizeChannelTaskRun(runId, status, run?.workRequest, channelTaskPayload);
 
   // Best-effort tracker sync on workflow terminal status.
   const externalTicketId = run?.workRequest?.externalTicketId;
@@ -254,6 +275,20 @@ interface ChannelTaskPayload {
   title?: string;
 }
 
+/**
+ * Narrow a RunInput `payload` to a channel-task payload — returns it only when
+ * `kind === 'channel-task'` and a `channelId` is present, else `null`. Shared by
+ * `finalizeWorkflowRun` (to suppress the duplicate run-complete notification) and
+ * `finalizeChannelTaskRun` so the channel-task discriminant is parsed once.
+ */
+function readChannelTaskPayload(payload: unknown): ChannelTaskPayload | null {
+  const p = (payload ?? null) as ChannelTaskPayload | null;
+  if (p?.kind !== 'channel-task' || !p.channelId) {
+    return null;
+  }
+  return p;
+}
+
 /** Max chars of the agent's result text posted back to the thread. */
 const CHANNEL_TASK_RESULT_MAX = 3500;
 
@@ -276,15 +311,16 @@ async function finalizeChannelTaskRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   workRequest:
     | {
-        payload: unknown;
         slackChannelId: string | null;
         slackMessageTs: string | null;
       }
     | null
-    | undefined
+    | undefined,
+  payload: ChannelTaskPayload | null
 ): Promise<void> {
-  const payload = (workRequest?.payload ?? null) as ChannelTaskPayload | null;
-  if (payload?.kind !== 'channel-task' || !payload.channelId) {
+  // `payload` is the already-narrowed channel-task discriminant from
+  // `finalizeWorkflowRun` (`readChannelTaskPayload`). Null → not a channel task.
+  if (!payload?.channelId) {
     return;
   }
   const channelId = payload.channelId;
@@ -337,14 +373,14 @@ async function buildChannelTaskResultText(
     return `:rotating_light: Task${titleLine} finished with status *${status}*.`;
   }
 
-  // The `agent` node records its output at `nodes.<id>.output` in the run
-  // context, which `finalizeWorkflowRun` persists (summarized) as
+  // The general-route `agent` node records its output at `nodes.<id>.output` in
+  // the run context, which `finalizeWorkflowRun` persists (summarized) as
   // `contextSnapshot`. The Channel Task spec's agent node id is `task`, so read
-  // its text back for the report; fall back to a generic success line if absent.
-  // (We read from the context rather than the terminate `result` because finalize
-  // is handed the final context, not the workflow's return value.)
+  // its text back for the report. (We read from the context rather than the
+  // terminate `result` because finalize is handed the final context, not the
+  // workflow's return value.)
   const run = await prisma.workflowRun.findUnique({
-    select: { contextSnapshot: true },
+    select: { contextSnapshot: true, workflowId: true },
     where: { id: runId },
   });
   const snapshot = (run?.contextSnapshot ?? null) as {
@@ -354,6 +390,19 @@ async function buildChannelTaskResultText(
   const resultText = typeof out === 'string' ? out.trim() : '';
 
   if (!resultText) {
+    // No agent text — this is the CODE route (a SWE run, whose node ids aren't
+    // `task`). Surface the PR it opened if there is one, so the completion
+    // message references the work instead of a bare "is done".
+    const pr = run?.workflowId
+      ? await prisma.pullRequest.findFirst({
+          orderBy: { prNumber: 'desc' },
+          select: { prNumber: true },
+          where: { prNumber: { not: null }, workflow: { temporalWorkflowId: run.workflowId } },
+        })
+      : null;
+    if (pr?.prNumber) {
+      return `:white_check_mark: Task${titleLine} is done — opened PR #${pr.prNumber}.`;
+    }
     return `:white_check_mark: Task${titleLine} is done.`;
   }
   const body =

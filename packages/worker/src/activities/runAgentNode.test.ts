@@ -62,11 +62,20 @@ describe('runAgentNode', () => {
     );
   });
 
-  it('falls back to JSON of inputs when no userMessage is given', async () => {
-    await runAgentNode({ agentRef: 'reviewer', inputs: { foo: 'bar' } });
+  it('sends a single string input as the plain message (not JSON) when no userMessage', async () => {
+    // The Channel Task spec's agent node has one `task` input bound to the task
+    // description — it must reach the agent as prose, not `{"task":"…"}`.
+    await runAgentNode({ agentRef: 'reviewer', inputs: { task: 'add a health endpoint' } });
+    expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'add a health endpoint', {
+      spanName: 'llm.agent_node',
+    });
+  });
+
+  it('falls back to JSON of inputs for multi-key (or non-string) inputs', async () => {
+    await runAgentNode({ agentRef: 'reviewer', inputs: { bar: 2, foo: 'a' } });
     expect(mockedRunAgent).toHaveBeenCalledWith(
       { agentKey: 'reviewer' },
-      JSON.stringify({ foo: 'bar' }),
+      JSON.stringify({ bar: 2, foo: 'a' }),
       { spanName: 'llm.agent_node' }
     );
   });

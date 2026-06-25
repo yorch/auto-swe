@@ -338,9 +338,15 @@ async function prepareGeneralTaskRun(
  *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
  *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
  *    soon as the ack is posted; the task may run for minutes).
- *  - `REJECT_DUPLICATE` reuse policy on the deterministic per-thread workflowId
- *    means a second delegate in the same thread is rejected rather than
- *    clobbering the in-flight task.
+ *  - `ALLOW_DUPLICATE` reuse policy on the deterministic per-thread workflowId.
+ *    The id is stable across a thread's lifetime (`chantask-<channelId>-<threadTs>`),
+ *    so while a task is in-flight a second delegate fails with
+ *    WorkflowExecutionAlreadyStartedError (Temporal rejects a duplicate of a
+ *    RUNNING id regardless of reuse policy) — preserving "one active task per
+ *    thread". But once that task CLOSES, ALLOW_DUPLICATE lets a later, unrelated
+ *    delegate in the same thread start a fresh run. REJECT_DUPLICATE would
+ *    instead reject that legitimate follow-up forever (and `launchTask` swallows
+ *    the error), silently dropping the task while still acking the user.
  */
 async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
   const { workflowId, templateId, templateVersion, request } = prepared;
@@ -349,8 +355,8 @@ async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
     parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
     taskQueue: 'engineering-workflow',
     workflowId,
-    // One task run per thread — a re-delegate in the same thread is rejected
-    // rather than starting a second competing run.
-    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+    // One ACTIVE task run per thread (a duplicate of a running id is rejected),
+    // but a new run is allowed once the prior one closes.
+    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
   });
 }

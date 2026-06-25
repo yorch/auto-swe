@@ -317,6 +317,13 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // (mirrors `epicOrchestrator`'s `cancelled` flag). The signal name is the
   // shared `CHANNEL_TASK_STEER_SIGNAL` const — `@auto-swe/shared/lib/channelTask`
   // is pure (no Node deps), so the value import is isolate-safe.
+  //
+  // Scope: steering reaches `agent` nodes only. The GENERAL Channel Task route is
+  // a single agent node, so it picks up steering that arrives before it runs. The
+  // CODE route runs the SWE template (implement/review via `step` nodes, not
+  // `agent` nodes), so steering buffered for a code task is NOT consumed — wiring
+  // mid-flight steering into the implementer/reviewer step executors is a future
+  // refinement (see docs/channel-assistant.md §8).
   const steerBuffer: string[] = [];
   setHandler(defineSignal<[string]>(CHANNEL_TASK_STEER_SIGNAL), (msg: string) => {
     steerBuffer.push(msg);

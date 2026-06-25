@@ -25,11 +25,17 @@ vi.mock('@auto-swe/shared/db', () => ({
     agent: {
       findMany: vi.fn(),
     },
+    agentTrace: {
+      aggregate: vi.fn(),
+    },
     connection: {
       findUniqueOrThrow: vi.fn(),
     },
     orgMonthlyUsage: {
       upsert: vi.fn(),
+    },
+    pullRequest: {
+      findFirst: vi.fn(),
     },
     team: { findUnique: vi.fn() },
     workflowRun: {
@@ -64,6 +70,16 @@ const createStep = vi.mocked(prisma.workflowStep.create);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
+const aggregateTraces = vi.mocked(prisma.agentTrace.aggregate);
+
+// Default: repo-less finalize paths (no activeWorkflows) fall back to summing the
+// run's AgentTrace cost/tokens. Most finalize tests don't exercise that ledger, so
+// a zero-sum default keeps their cost assertions intact.
+beforeEach(() => {
+  aggregateTraces.mockResolvedValue({
+    _sum: { costUsd: null, inputTokens: null, outputTokens: null },
+  } as never);
+});
 
 const validSpec = {
   description: '',
@@ -81,6 +97,7 @@ afterEach(() => {
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
+  aggregateTraces.mockReset();
 });
 
 describe('createWorkflowRun', () => {
