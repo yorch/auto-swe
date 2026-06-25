@@ -29,6 +29,12 @@ export {
   executeReviewFixImplementation,
   fetchCILogs,
 } from './ciFixLoop.js';
+// Channel assistant (Gap F) — channel memory consolidation (de-dup / summarize / expire)
+export type {
+  ConsolidateChannelMemoryInput,
+  ConsolidateChannelMemoryResult,
+} from './consolidateChannelMemory.js';
+export { consolidateChannelMemory } from './consolidateChannelMemory.js';
 export { commitToMemory } from './commitToMemory.js';
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult } from './consolidateLessons.js';
 export { consolidateLessons } from './consolidateLessons.js';

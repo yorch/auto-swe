@@ -2,19 +2,21 @@ import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 
 /**
- * ChannelAmbientWorkflow — channel assistant (Phase 3, ambient mode).
+ * ChannelAmbientWorkflow — channel assistant (Phase 3 + Gap F).
  *
  * Started BY NAME by the gateway's per-channel Temporal Schedule, which fires on
  * the channel's `ambientCron`. Name MUST be `'ChannelAmbientWorkflow'`, task
  * queue `'engineering-workflow'`, single arg `{ channelId: string }`.
  *
- * It runs one activity that proactively posts a short digest to the channel
- * (surfacing recent / forgotten memory items), budget-gated and noise-averse.
- * The activity itself never throws (logs + returns); this workflow additionally
- * swallows any error so a scheduled run can't loop loudly or spam the channel.
+ * Two activities run on each fire:
+ *  1. `runChannelAmbientDigest` — proactively posts a short digest to the
+ *     channel, surfacing recent/forgotten memory items (budget-gated, noise-averse).
+ *  2. `consolidateChannelMemory` (Gap F) — clusters similar channel-memory items,
+ *     synthesises each qualifying cluster into 1–2 durable facts, and soft-deletes
+ *     the source rows. Best-effort: a consolidation failure never blocks the digest.
  *
  * V8-isolate rule: only `import type` from external packages / `@auto-swe/shared`;
- * runtime imports come from `@temporalio/workflow` and the activity proxy below.
+ * runtime imports come from `@temporalio/workflow` and the activity proxies below.
  */
 
 const { runChannelAmbientDigest } = proxyActivities<
@@ -27,6 +29,19 @@ const { runChannelAmbientDigest } = proxyActivities<
     maximumInterval: '1m',
   },
   startToCloseTimeout: '5m',
+});
+
+// Gap F: channel memory consolidation — heavier than the digest (LLM synthesis
+// per cluster), so give it a longer timeout and only one retry.
+const { consolidateChannelMemory } = proxyActivities<
+  Pick<typeof activitiesType, 'consolidateChannelMemory'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 1,
+  },
+  startToCloseTimeout: '10m',
 });
 
 // Run-record lifecycle (observability): a lightweight WorkflowRun keyed to this
@@ -72,14 +87,25 @@ export async function ChannelAmbientWorkflow(input: { channelId: string }): Prom
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });
-  } finally {
-    try {
-      await finalizeChannelRun({ status: runStatus, workflowId });
-    } catch (err) {
-      log.warn('ChannelAmbientWorkflow: finalizeChannelRun failed', {
-        channelId: input.channelId,
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
+  }
+
+  // Gap F: consolidate channel memory on the same ambient schedule. Best-effort —
+  // a consolidation failure must not flip the run status or resurface as an error.
+  try {
+    await consolidateChannelMemory({ channelId: input.channelId });
+  } catch (err) {
+    log.warn('ChannelAmbientWorkflow: consolidateChannelMemory failed (best-effort)', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    await finalizeChannelRun({ status: runStatus, workflowId });
+  } catch (err) {
+    log.warn('ChannelAmbientWorkflow: finalizeChannelRun failed', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 }

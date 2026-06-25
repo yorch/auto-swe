@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { generateEmbeddingWithSpec } from './embeddings.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from './memoryStore.js';
 
 /** One retrieved channel-memory row with its cosine similarity to the query. */
@@ -6,6 +7,8 @@ export interface ChannelMemoryItem {
   id: string;
   summary: string;
   similarity: number;
+  /** True when this item came from another channel in the same team (cross-channel). */
+  crossChannel?: boolean;
 }
 
 interface RetrievedChannelMemoryRow {
@@ -15,26 +18,28 @@ interface RetrievedChannelMemoryRow {
 }
 
 /**
- * Channel assistant (Phase 2). Retrieve channel-scoped memory rows that are
- * semantically similar to the current message, so the assistant can build
+ * Channel assistant (Phase 2 + Gap E). Retrieve channel-scoped memory rows that
+ * are semantically similar to the current message, so the assistant can build
  * context over time. Mirrors `retrieveSimilarLessons` (repo-scoped) but scopes
  * to a single `channel_id` instead of a `repo_id`.
  *
- * Uses pgvector cosine distance (`<=>`) for ranking — lower distance = higher
- * similarity. The `embedding_model` filter excludes rows produced with a
- * different embedding spec, so vectors are never compared across embedding
- * spaces after a model switch (EVOL-4).
+ * When `scope.teamId` is provided (Gap E — workspace-level memory), ALSO
+ * queries memory from OTHER channels in the same team (cross-channel context)
+ * at a slightly higher similarity threshold so only strong matches from other
+ * channels bleed in. Channel-specific items are listed first; cross-channel
+ * items are appended after, labelled with `crossChannel: true`.
  *
- * Raw SQL is used here because Prisma doesn't support pgvector operators — the
- * one sanctioned exception to the "no raw SQL" rule.
+ * Uses pgvector cosine distance (`<=>`) for ranking. Raw SQL is the one
+ * sanctioned exception to the "no raw SQL" rule (Prisma doesn't support the
+ * pgvector `<=>` operator).
  */
 export async function retrieveChannelMemory(
   queryText: string,
-  scope: { channelId: string },
+  scope: { channelId: string; teamId?: string },
   limit = 5,
   similarityThreshold = 0.65
 ): Promise<ChannelMemoryItem[]> {
-  const rows = (await searchMemoryItemsByVector({
+  const channelRows = (await searchMemoryItemsByVector({
     limit,
     queryText,
     scopeColumn: 'channel_id',
@@ -43,7 +48,84 @@ export async function retrieveChannelMemory(
     similarityThreshold,
   })) as unknown as RetrievedChannelMemoryRow[];
 
-  return rows.map((r) => ({ id: r.id, similarity: r.similarity, summary: r.summary }));
+  const channelItems: ChannelMemoryItem[] = channelRows.map((r) => ({
+    id: r.id,
+    similarity: r.similarity,
+    summary: r.summary,
+  }));
+
+  // Gap E: cross-channel (team-scoped) memory. Only run when teamId is known
+  // and there is still room in the results after the channel query.
+  if (scope.teamId && channelItems.length < limit) {
+    const remaining = limit - channelItems.length;
+    const channelIds = new Set(channelItems.map((i) => i.id));
+    try {
+      const teamRows = await searchTeamChannelMemory({
+        excludeChannelId: scope.channelId,
+        limit: remaining,
+        queryText,
+        similarityThreshold: Math.max(similarityThreshold, 0.75),
+        teamId: scope.teamId,
+      });
+      for (const r of teamRows) {
+        if (!channelIds.has(r.id)) {
+          channelItems.push({ crossChannel: true, id: r.id, similarity: r.similarity, summary: r.summary });
+        }
+      }
+    } catch {
+      // Cross-channel search is best-effort: a failure (e.g. no embedding)
+      // should never block the channel-scoped reply.
+    }
+  }
+
+  return channelItems;
+}
+
+/**
+ * Gap E: cross-channel memory search. Queries memory items belonging to OTHER
+ * channels in the same team (same `team_id`, different `channel_id`) so the
+ * assistant can surface relevant knowledge from sibling channels in the org.
+ *
+ * Uses a slightly higher threshold than the channel-scoped search to ensure
+ * only strongly-matching cross-channel items appear (reducing noise).
+ *
+ * Raw SQL is required because pgvector operators aren't parameterisable and
+ * `team_id != channel_id` isn't expressible via the single-column
+ * `searchMemoryItemsByVector` helper.
+ */
+async function searchTeamChannelMemory(opts: {
+  queryText: string;
+  teamId: string;
+  excludeChannelId: string;
+  limit: number;
+  similarityThreshold: number;
+}): Promise<RetrievedChannelMemoryRow[]> {
+  const { embedding: queryEmbedding, spec: embeddingSpec } = await generateEmbeddingWithSpec(
+    opts.queryText
+  );
+
+  return prisma.$queryRawUnsafe<RetrievedChannelMemoryRow[]>(
+    `SELECT
+       id,
+       lesson_summary AS "summary",
+       1 - (embedding <=> $1::vector) AS similarity
+     FROM memory_items
+     WHERE team_id = $2::uuid
+       AND channel_id IS NOT NULL
+       AND channel_id != $3::uuid
+       AND embedding IS NOT NULL
+       AND consolidated_at IS NULL
+       AND (embedding_model IS NULL OR embedding_model = $6)
+       AND 1 - (embedding <=> $1::vector) >= $4
+     ORDER BY embedding <=> $1::vector ASC
+     LIMIT $5`,
+    JSON.stringify(queryEmbedding),
+    opts.teamId,
+    opts.excludeChannelId,
+    opts.similarityThreshold,
+    opts.limit,
+    embeddingSpec
+  );
 }
 
 /** One recent (un-consolidated) channel-memory row, for ambient digest context. */
