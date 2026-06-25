@@ -83,6 +83,7 @@ The assistant builds context over time (`packages/worker/src/lib/channelMemory.t
 
 - `retrieveChannelMemory` — pgvector cosine similarity over `memory_items` scoped
   to `channel_id` (same embedding-space filter as `retrieveSimilarLessons`).
+  Optionally also searches sibling channels in the same team (Gap E, §9).
 - `writeChannelMemory` — embeds + inserts a channel-scoped row (`repo_id` NULL,
   `channel_id/team_id/org_id` set, `scope='channel-memory'`).
 - `runChannelAssistantTurn` retrieves the top relevant memories and prepends a
@@ -112,6 +113,8 @@ Proactive posting via a per-channel Temporal Schedule:
   — doing so would feed each scheduled digest its own prior output via
   `recentChannelMemory` (a compounding loop); channel memory accrues from real
   assistant turns only. It never throws (proactive ⇒ quiet on failure).
+- After the digest, the same ambient fire runs `consolidateChannelMemory` (Gap F,
+  §9) best-effort to compact accumulated channel memory.
 - Scope note: ambient proactivity is delivered via Schedules (reusing the
   existing schedule machinery), not a long-lived signal-driven workflow — see
   §8.
@@ -182,7 +185,52 @@ launch) + `runnable.ts` (`steer` handler), `packages/shared/src/workflow/interpr
 `packages/gateway/src/routes/slack.ts` (thread-reply → `signalWorkflow`),
 `packages/shared/src/lib/channelTask.ts` + `syncBuiltins.ts` (Channel Task template).
 
-## 9. Observability & admin UI
+## 9. Memory & scheduling depth — Gaps D/E/F (shipped)
+
+Three follow-on capabilities round out memory and task execution:
+
+- **Gap E — workspace-level (cross-channel) memory.** `retrieveChannelMemory`
+  takes an optional `teamId`; when present and the channel-scoped results leave
+  room under `limit`, it runs a second pgvector search over OTHER channels in the
+  same team (`team_id = X AND channel_id != currentChannel`) at a higher
+  similarity threshold (0.75 vs 0.65) so only strong sibling-channel matches bleed
+  in. The query text is embedded ONCE (`generateEmbeddingWithSpec` →
+  `QueryEmbedding`, passed as `precomputed` to both searches) — no double
+  round-trip on the reply hot path. Cross-channel rows are labelled
+  `crossChannel: true` and rendered `[from another channel]` in the context block.
+  The two searches read disjoint rows, so no de-dup is needed.
+
+- **Gap F — channel-memory consolidation.** `consolidateChannelMemory`
+  (`packages/worker/src/activities/consolidateChannelMemory.ts`) mirrors the
+  repo-scoped `consolidateLessons`: it clusters un-consolidated channel memories by
+  cosine similarity (shared `clusterByEmbedding`/`vectorNorms` in
+  `lib/embeddingClustering.ts`), synthesises each qualifying cluster (≥
+  `minClusterSize`, default 3) into 1–2 durable facts via the `commitToMemory`
+  model, and soft-deletes the sources (`consolidated_at = now()`). It honours the
+  **channel budget** (same `isChannelOverBudgetNow` gate the digest uses — an
+  over-budget channel skips it) and accrues its LLM cost to `ChannelMonthlyUsage`
+  with `accrueChannelUsage(…, { countRun: false })` so a maintenance pass never
+  inflates `runsCompleted`. It runs best-effort after the digest on every ambient
+  fire (`ChannelAmbientWorkflow`); a failure never blocks the digest. Admins can
+  inspect consolidated rows via `GET …/memory?includeConsolidated=true` and the
+  "Show consolidated (archived) items" toggle in `/admin/slack-channels`.
+
+- **Gap D — deferred (scheduled) task execution.** The `delegateTask` tool gains
+  an optional `runAt` (ISO 8601). `createChannelTaskRun` validates it — only a
+  parseable, strictly-future timestamp is kept (`validFutureRunAt`); a garbled or
+  past value is dropped so the task runs immediately rather than mis-scheduling.
+  When deferred, `ChannelAssistantWorkflow` starts a `ChannelScheduledTaskWorkflow`
+  wrapper under the SAME per-thread id (`chantask-<channelId>-<threadTs>`) with
+  REJECT_DUPLICATE, so an immediate and a deferred task in one thread are mutually
+  exclusive (no silent loss). The wrapper `sleep()`s until `runAt`, folds any
+  mid-wait `steer` replies into the task description, then starts the real
+  `RunnableWorkflow` under a private `<id>-run` child id. (Temporal SDK 1.17.2 has
+  no `startDelay` for child workflows, so the sleep-wrapper is the mechanism.) The
+  three child-launch call sites share one isolate-safe `startThreadTaskChild`
+  helper (`workflows/taskChild.ts`) that owns the ABANDON / task-queue /
+  REJECT_DUPLICATE invariants.
+
+## 10. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
@@ -204,7 +252,7 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 10. Future refinements (not built)
+## 11. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
   mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
@@ -219,6 +267,12 @@ memory) from `/admin/slack-channels`.
 - **A true hard budget cap** (pre-flight cost reservation) — not achievable for
   post-hoc LLM cost; the current gate is a Serializable-transaction read whose
   guarantee is "at most one in-flight turn can overshoot."
+- **Per-channel consolidation config** — Gap F (§9) consolidates on every ambient
+  fire with built-in `minClusterSize`/`similarityThreshold` defaults and no
+  per-channel opt-out. The repo-scoped sibling exposes both an admin cron
+  (`resolveConsolidationConfig`) and a per-connection enable flag; a CHANNEL-scoped
+  override + enable boolean would bring channel consolidation to parity. The
+  current coupling is safe (budget-gated, `countRun: false`) but not yet tunable.
 
 > **Thread-history context** via `conversations.replies` is now implemented
 > (previously listed here as a future refinement). Each assistant turn fetches
@@ -227,14 +281,19 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 11. Key files
+## 12. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
+  `packages/worker/src/workflows/channelScheduledTask.ts` (Gap D deferral, §9),
+  `packages/worker/src/workflows/taskChild.ts` (`startThreadTaskChild` launch helper),
   `packages/worker/src/activities/channelAssistant.ts`,
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
+  `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
+  `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),
   `packages/worker/src/activities/runAgentNode.ts` (`prependSteering`),
   `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`).
