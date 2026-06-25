@@ -172,4 +172,7 @@ untested at scale, and CI hasn't validated it end-to-end yet.
 **Addressed:** #1 (route channel tasks into the workflow engine — general + code
 routes) and #2 (the running workflow as shared, resumable task state, steerable
 from thread replies). See [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)
-for the shipped architecture. Remaining open: #3, #4, #5.
+for the shipped architecture. Remaining open: #3, #4, #5 — now broken into 11
+concrete, independently-shippable capabilities (with severity, effort, and a
+suggested priority order) in
+[`channel-assistant-remaining-gaps.md`](./channel-assistant-remaining-gaps.md).
