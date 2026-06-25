@@ -1,5 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
-import { channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
+import {
+  CHANNEL_TASK_TEMPLATE_NAME,
+  channelTaskWorkflowId,
+} from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
@@ -16,13 +19,10 @@ import { resolveTemplateForRepo } from './templates.js';
  * config tables, which must stay outside the V8 workflow isolate. The workflow
  * is left with only the deterministic `startChild` call.
  *
- * MUST match `CHANNEL_TASK_TEMPLATE_NAME` in
- * `packages/shared/src/lib/syncBuiltins.ts` (where the template + its v1 spec are
- * seeded). Redeclared here rather than imported because the shared
- * `./lib/syncBuiltins` subpath isn't aliased for vitest; the name is the stable
- * lookup key (`findFirst({ name, teamId: null })`).
+ * The template name (the stable `findFirst({ name, teamId: null })` lookup key)
+ * comes from the shared, vitest-aliased `@auto-swe/shared/lib/channelTask` so it
+ * can't drift from the seed in `syncBuiltins`.
  */
-const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';
 
 export interface CreateChannelTaskRunInput {
   /** SlackChannel.id (our row) — drives the CHANNEL config tier + budget accrual. */
@@ -97,13 +97,27 @@ export async function createChannelTaskRun(
   input: CreateChannelTaskRunInput
 ): Promise<CreateChannelTaskRunResult> {
   const { templateId, templateVersion } = await resolveChannelTaskTemplate();
+  // Sentinel `repoId: ''` — the Channel Task spec is repo-less (its agent node
+  // needs no workspace).
+  return buildChannelTaskRun(input, { repoId: '', templateId, templateVersion });
+}
 
+/**
+ * Shared builder for both task routes: persist the channel-task `RunInput` (the
+ * typed `slackChannelId`/`slackMessageTs` columns thread the terminal Slack
+ * notification back to source; `payload.kind === 'channel-task'` routes finalize
+ * to the channel budget + in-thread report) and assemble the `RepoWorkRequest`
+ * the child `RunnableWorkflow` consumes. `repoId` is `''` for the repo-less
+ * general route or a real connection id for the code route (also stamped onto the
+ * payload for observability).
+ */
+async function buildChannelTaskRun(
+  input: CreateChannelTaskRunInput,
+  resolved: { templateId: string; templateVersion: number; repoId: string }
+): Promise<CreateChannelTaskRunResult> {
+  const { templateId, templateVersion, repoId } = resolved;
   const externalTicketId = `slack-${input.slackChannelId}-${input.threadTs}`;
 
-  // Persist a RunInput so notifications can thread back to Slack. `payload`
-  // carries the channel context for observability/forward use; the typed
-  // columns (`slackChannelId`/`slackMessageTs`) are what `resolveSlackChannel`
-  // reads to thread the terminal notification.
   const runInput = await prisma.runInput.create({
     data: {
       description: input.description,
@@ -111,6 +125,7 @@ export async function createChannelTaskRun(
       payload: {
         channelId: input.channelId,
         kind: 'channel-task',
+        ...(repoId ? { repoId } : {}),
         slackChannelId: input.slackChannelId,
         threadTs: input.threadTs,
         title: input.title,
@@ -123,17 +138,15 @@ export async function createChannelTaskRun(
     },
   });
 
-  // Deterministic workflowId: one task run per thread. A reject-duplicate reuse
-  // policy on `startChild` then makes a second delegate in the same thread a
-  // no-op rather than a clobber.
+  // Deterministic workflowId: one task run per thread (regardless of route), so a
+  // re-delegate in the same thread reuses (not clobbers) the in-flight run.
   const workflowId = channelTaskWorkflowId(input.channelId, input.threadTs);
 
   const request: RepoWorkRequest = {
     channelId: input.channelId,
     description: input.description,
     externalTicketId,
-    // Sentinel: the Channel Task spec is repo-less (agent node needs no workspace).
-    repoId: '',
+    repoId,
     requestPayload: input.description,
     slackChannel: input.threadTs,
     workRequestId: runInput.id,
@@ -256,47 +269,6 @@ export async function createChannelCodeTaskRun(
 
   // Default SWE template: team `isDefault` ACTIVE → GLOBAL `isDefault` fallback.
   const { templateId, templateVersion } = await resolveTemplateForRepo(repo.repoId);
-
-  const externalTicketId = `slack-${input.slackChannelId}-${input.threadTs}`;
-
-  // Persist a RunInput so the terminal Slack notification threads back. `payload`
-  // carries the channel context (`kind: 'channel-task'`) so `finalizeChannelTaskRun`
-  // accrues to the channel budget + posts the result in-thread, exactly like the
-  // general route.
-  const runInput = await prisma.runInput.create({
-    data: {
-      description: input.description,
-      externalTicketId,
-      payload: {
-        channelId: input.channelId,
-        kind: 'channel-task',
-        repoId: repo.repoId,
-        slackChannelId: input.slackChannelId,
-        threadTs: input.threadTs,
-        title: input.title,
-      },
-      requestPayload: input.description,
-      slackChannelId: input.slackChannelId,
-      slackMessageTs: input.threadTs,
-      templateId,
-      templateVersion,
-    },
-  });
-
-  // Deterministic workflowId: one task run per thread (shared with the general
-  // route so a re-delegate in the same thread is rejected, not clobbered).
-  const workflowId = channelTaskWorkflowId(input.channelId, input.threadTs);
-
-  const request: RepoWorkRequest = {
-    channelId: input.channelId,
-    description: input.description,
-    externalTicketId,
-    // Real repo: the SWE spec needs a workspace (implement → review → PR).
-    repoId: repo.repoId,
-    requestPayload: input.description,
-    slackChannel: input.threadTs,
-    workRequestId: runInput.id,
-  };
-
-  return { request, templateId, templateVersion, workflowId };
+  // Real `repoId` so the SWE spec's implement → review → PR nodes have a workspace.
+  return buildChannelTaskRun(input, { repoId: repo.repoId, templateId, templateVersion });
 }

@@ -1,15 +1,13 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
+import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
 
 /**
- * Name of the GLOBAL workflow template that backs channel-run observability.
- * MUST match `CHANNEL_ASSISTANT_TEMPLATE_NAME` in
- * `packages/shared/src/lib/syncBuiltins.ts` (where the template + its v1 spec are
- * seeded). It's redeclared here rather than imported because the shared
- * `./lib/syncBuiltins` subpath isn't aliased for vitest; the name is the stable
- * lookup key (`findFirst({ name, teamId: null })`).
+ * Name of the GLOBAL workflow template that backs channel-run observability —
+ * the stable `findFirst({ name, teamId: null })` lookup key. Imported from the
+ * shared, vitest-aliased `@auto-swe/shared/lib/channelTask` so it can't drift
+ * from the seed in `syncBuiltins`.
  */
-const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
 
 /**
  * The minimal spec we stamp onto each channel run's `specSnapshot` (the seeded

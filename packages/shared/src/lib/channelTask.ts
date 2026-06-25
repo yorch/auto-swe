@@ -16,3 +16,13 @@ function sanitizeIdPart(s: string): string {
 
 /** The Temporal signal name a channel task run accepts for mid-flight steering. */
 export const CHANNEL_TASK_STEER_SIGNAL = 'steer';
+
+/**
+ * Names of the seeded GLOBAL channel templates. Single source of truth (this
+ * module is pure + isolate-safe + already aliased for vitest), imported by the
+ * seed (`syncBuiltins`), the worker activities that look the rows up by name
+ * (`channelTask`, `channelRun`), and the gateway `/runs` exclusion — so the seed
+ * name and every lookup/filter can't drift apart.
+ */
+export const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
+export const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';

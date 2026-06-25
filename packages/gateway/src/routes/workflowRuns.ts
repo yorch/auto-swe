@@ -1,4 +1,8 @@
 import type { Prisma } from '@auto-swe/shared';
+import {
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  CHANNEL_TASK_TEMPLATE_NAME,
+} from '@auto-swe/shared/lib/channelTask';
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
@@ -50,8 +54,6 @@ function trimTraceJson(value: unknown): unknown {
  * team's SWE template (a real implement → review → PR run) and is intentionally
  * NOT in this set — those runs stay visible like any other engineering run.
  */
-const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
-const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';
 const CHANNEL_TEMPLATE_NAMES = [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME];
 
 const ListRunsQuery = RunListPaginationQuery.extend({

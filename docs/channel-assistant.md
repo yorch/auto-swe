@@ -149,8 +149,10 @@ launches a **durable, thread-bound workflow run**.
   when no repo resolves unambiguously.
 - **Thread binding:** the run's workflow id is deterministic —
   `chantask-<channelId>-<threadTs>` (`channelTaskWorkflowId` in
-  `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). One task run per
-  thread; a re-delegate in the same thread is rejected (reuse policy), not clobbered.
+  `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). One *active*
+  task run per thread (`ALLOW_DUPLICATE` reuse policy): a re-delegate while the run
+  is in-flight is rejected, not clobbered, but a fresh task in the same thread after
+  the prior one closes is allowed.
   The `RunInput` carries `slackChannelId`/`slackMessageTs` so the run's terminal
   notification threads the result back into the originating conversation, and
   `channelId` so the run's agent nodes resolve the CHANNEL config tier and the cost
