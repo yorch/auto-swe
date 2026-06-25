@@ -2,6 +2,7 @@
 // The worker's workflowsPath points here so Temporal can bundle them all.
 export { ChannelAmbientWorkflow } from './channelAmbient.js';
 export { ChannelAssistantWorkflow } from './channelAssistant.js';
+export { ChannelReactiveWorkflow } from './channelReactive.js';
 export { ChannelScheduledTaskWorkflow } from './channelScheduledTask.js';
 export { ConsolidateLessonsWorkflow } from './consolidateLessons.js';
 export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.js';

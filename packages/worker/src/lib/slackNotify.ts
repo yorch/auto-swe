@@ -26,6 +26,7 @@ const SLACK_POST_TIMEOUT_MS = 2_000;
 const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
 const SLACK_UPDATE_URL = 'https://slack.com/api/chat.update';
 const SLACK_REPLIES_URL = 'https://slack.com/api/conversations.replies';
+const SLACK_HISTORY_URL = 'https://slack.com/api/conversations.history';
 
 interface SlackChatPostMessageResponse {
   ok: boolean;
@@ -343,6 +344,93 @@ export async function fetchThreadReplies(
     return data.messages.map((m) => ({ text: m.text ?? '', user: m.user ?? m.bot_id }));
   } catch {
     // Hung connection / abort / network error — degrade to no thread context.
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One message returned by {@link fetchChannelHistory} (oldest→newest). */
+export interface SlackChannelMessage {
+  /** Slack user id (`U…`) or bot id who posted, when present. */
+  user?: string;
+  /** True when the post was authored by a bot/app (so callers can drop the bot's
+   *  own messages from the reactive transcript). */
+  isBot: boolean;
+  /** The message text (may be empty for non-text messages). */
+  text: string;
+  /** This message's Slack timestamp (`"1700000000.123456"`) — used as the cursor. */
+  ts: string;
+}
+
+interface SlackConversationsHistoryResponse {
+  ok: boolean;
+  error?: string;
+  messages?: Array<{ user?: string; bot_id?: string; text?: string; ts?: string }>;
+}
+
+/**
+ * Reactive interjection (Gap A): fetch recent top-level channel messages via
+ * `conversations.history`, returned oldest→newest. The reactive poll uses this to
+ * read what's been said since its cursor and decide whether to chime in.
+ *
+ * `oldestTs` (a Slack ts string, exclusive via `oldest` + `inclusive=false`)
+ * bounds the window so each tick only sees genuinely new messages. Resolves the
+ * bot token via {@link resolveSlackConfig} (never `process.env`).
+ *
+ * BEST-EFFORT by design (mirrors {@link fetchThreadReplies}): returns `[]` on a
+ * missing token, a hung/aborted fetch, or any `{ok:false}` response (including
+ * `missing_scope` when `channels:history`/`groups:history` isn't granted). It
+ * NEVER throws — the caller degrades to "no new messages → no-op".
+ */
+export async function fetchChannelHistory(
+  channelId: string,
+  opts: { oldestTs?: string; limit?: number } = {}
+): Promise<SlackChannelMessage[]> {
+  let token: string | null;
+  try {
+    ({ botToken: token } = await resolveSlackConfig());
+  } catch {
+    return [];
+  }
+  if (!token) {
+    return [];
+  }
+
+  const params = new URLSearchParams({
+    channel: channelId,
+    limit: String(opts.limit ?? 30),
+  });
+  if (opts.oldestTs) {
+    // Exclusive lower bound so a message we've already evaluated isn't re-read.
+    params.set('oldest', opts.oldestTs);
+    params.set('inclusive', 'false');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${SLACK_HISTORY_URL}?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as SlackConversationsHistoryResponse;
+    if (!data.ok || !Array.isArray(data.messages)) {
+      // eslint-disable-next-line no-console
+      console.warn(`fetchChannelHistory: conversations.history failed: ${data.error ?? 'unknown'}`);
+      return [];
+    }
+    // `conversations.history` returns newest→oldest; reverse to oldest→newest.
+    return data.messages
+      .map((m) => ({
+        isBot: !!m.bot_id,
+        text: m.text ?? '',
+        ts: m.ts ?? '',
+        user: m.user ?? m.bot_id,
+      }))
+      .reverse();
+  } catch {
     return [];
   } finally {
     clearTimeout(timer);

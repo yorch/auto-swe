@@ -51,7 +51,7 @@ export interface StartChannelRunInput {
   teamId?: string;
   /** Owning org — optional; resolved from the channel row when omitted (ambient path). */
   orgId?: string;
-  kind: 'mention' | 'ambient';
+  kind: 'mention' | 'ambient' | 'reactive';
   /** Short human label for the run (e.g. the Slack channel id or a thread ref). */
   label: string;
 }

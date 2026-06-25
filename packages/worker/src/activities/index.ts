@@ -8,6 +8,9 @@ export {
   runChannelAssistantTurn,
   updateChannelReply,
 } from './channelAssistant.js';
+// Channel assistant (Gap A) — reactive interjection (proactive responding)
+export type { ChannelReactiveInput, ChannelReactiveResult } from './channelReactive.js';
+export { evaluateReactiveInterjection } from './channelReactive.js';
 // Channel assistant — lightweight WorkflowRun records for observability
 export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun } from './channelRun.js';

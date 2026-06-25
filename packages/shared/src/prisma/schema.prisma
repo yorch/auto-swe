@@ -440,6 +440,18 @@ model SlackChannel {
   ambientEnabled   Boolean        @default(false) @map("ambient_enabled")
   /// 5-field cron for the ambient digest (null = no scheduled digest).
   ambientCron      String?        @map("ambient_cron")
+  /// Reactive interjection (Gap A): when true, a per-channel Schedule polls recent
+  /// channel history and the assistant may proactively chime in (opt-in, default
+  /// off so the bot is never a firehose responder).
+  reactiveEnabled  Boolean        @default(false) @map("reactive_enabled")
+  /// 5-field cron for the reactive poll cadence (null = no reactive poll).
+  reactiveCron     String?        @map("reactive_cron")
+  /// Cursor: the newest message timestamp the reactive pass has already evaluated.
+  /// Advanced every tick so the LLM only fires on genuinely new conversation.
+  lastReactiveCheckAt DateTime?   @map("last_reactive_check_at") @db.Timestamptz
+  /// Cooldown anchor: when the reactive pass last actually posted an interjection.
+  /// Rate-limits proactive posts (at most one per cooldown window).
+  lastReactiveAt   DateTime?      @map("last_reactive_at") @db.Timestamptz
   /// Optional per-channel monthly spend cap in USD cents. Null = inherit org cap.
   monthlyBudgetUsdCents Int?      @map("monthly_budget_usd_cents")
   isActive         Boolean        @default(true) @map("is_active")
