@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   CHANNEL_TASK_TEMPLATE_NAME,
+  channelScheduledTaskWorkflowId,
   channelTaskWorkflowId,
 } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
@@ -35,6 +36,13 @@ export interface CreateChannelTaskRunInput {
   title: string;
   /** Self-contained task description the run executes. */
   description: string;
+  /**
+   * Gap D: ISO 8601 UTC timestamp to defer task execution. When set, the
+   * result includes `scheduledWorkflowId` so the caller starts a
+   * `ChannelScheduledTaskWorkflow` wrapper instead of launching `RunnableWorkflow`
+   * immediately.
+   */
+  runAt?: string;
 }
 
 export interface CreateChannelTaskRunResult {
@@ -44,6 +52,15 @@ export interface CreateChannelTaskRunResult {
   templateVersion: number;
   /** The fully-formed run request the child `RunnableWorkflow` consumes. */
   request: RepoWorkRequest;
+  /**
+   * Gap D: only set when `runAt` was provided. The workflowId for the
+   * `ChannelScheduledTaskWorkflow` wrapper that sleeps until `runAt`. The caller
+   * starts `ChannelScheduledTaskWorkflow` (not `RunnableWorkflow` directly) when
+   * this field is present.
+   */
+  scheduledWorkflowId?: string;
+  /** ISO 8601 UTC timestamp; only set when `scheduledWorkflowId` is set. */
+  runAt?: string;
 }
 
 /**
@@ -157,7 +174,14 @@ async function buildChannelTaskRun(
     workRequestId: runInput.id,
   };
 
-  return { request, templateId, templateVersion, workflowId };
+  // Gap D: when `runAt` is provided, also compute the ChannelScheduledTaskWorkflow
+  // ID. The caller starts the scheduler (which sleeps until runAt) rather than
+  // starting RunnableWorkflow directly.
+  const scheduledWorkflowId = input.runAt
+    ? channelScheduledTaskWorkflowId(input.channelId, input.threadTs)
+    : undefined;
+
+  return { request, runAt: input.runAt, scheduledWorkflowId, templateId, templateVersion, workflowId };
 }
 
 /**
@@ -233,6 +257,8 @@ export interface CreateChannelCodeTaskRunInput {
   description: string;
   /** Optional repo the user named (matched in {@link resolveChannelRepo}). */
   repoHint?: string;
+  /** Gap D: ISO 8601 UTC timestamp to defer execution. Propagated to `buildChannelTaskRun`. */
+  runAt?: string;
 }
 
 /**

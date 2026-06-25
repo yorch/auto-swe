@@ -264,6 +264,10 @@ interface PreparedTaskRun {
   templateId: string;
   templateVersion: number;
   request: RepoWorkRequest;
+  /** Gap D: only set when the task is deferred; the ChannelScheduledTaskWorkflow ID. */
+  scheduledWorkflowId?: string;
+  /** Gap D: ISO 8601 timestamp; only set when scheduledWorkflowId is set. */
+  runAt?: string;
 }
 
 /** Outcome of a task launch attempt (drives what the caller posts to the thread). */
@@ -309,12 +313,13 @@ async function launchTask(
         channelId: input.channelId,
         description: delegate.description,
         repoHint: delegate.repoHint,
+        runAt: delegate.runAt,
         slackChannelId: input.slackChannelId,
         threadTs: input.threadTs,
         title: delegate.title,
       });
       if (prepared) {
-        await startTaskChild(prepared);
+        await startOrScheduleTaskChild(prepared);
         return { prefix: '' };
       }
       // No (unambiguous) repo resolved — fall back to the general route and note it.
@@ -323,12 +328,12 @@ async function launchTask(
         repoHint: delegate.repoHint,
         title: delegate.title,
       });
-      await startTaskChild(await prepareGeneralTaskRun(input, delegate));
+      await startOrScheduleTaskChild(await prepareGeneralTaskRun(input, delegate));
       return { prefix: CHANNEL_CODE_NO_REPO_NOTE };
     }
 
     // General route.
-    await startTaskChild(await prepareGeneralTaskRun(input, delegate));
+    await startOrScheduleTaskChild(await prepareGeneralTaskRun(input, delegate));
     return { prefix: '' };
   } catch (err) {
     // A second task in a thread reuses the per-thread workflowId → Temporal rejects
@@ -358,6 +363,7 @@ async function prepareGeneralTaskRun(
   return createChannelTaskRun({
     channelId: input.channelId,
     description: delegate.description,
+    runAt: delegate.runAt,
     slackChannelId: input.slackChannelId,
     threadTs: input.threadTs,
     title: delegate.title,
@@ -366,7 +372,7 @@ async function prepareGeneralTaskRun(
 
 /**
  * Start the prepared task run as a child `RunnableWorkflow`. Shared by both the
- * general and code routes.
+ * general and code routes (immediate execution path).
  *
  *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
  *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
@@ -391,4 +397,32 @@ async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
     // surfaced by launchTask as an honest message rather than a silent clobber.
     workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
   });
+}
+
+/**
+ * Gap D: start a `ChannelScheduledTaskWorkflow` that sleeps until `runAt` and
+ * then launches the prepared task as a child `RunnableWorkflow`. Same
+ * REJECT_DUPLICATE + ABANDON semantics as the immediate path — one scheduled
+ * slot per thread (keyed to `scheduledWorkflowId = chansched-<channelId>-<threadTs>`).
+ */
+async function startScheduledTaskChild(prepared: PreparedTaskRun): Promise<void> {
+  const { scheduledWorkflowId, runAt, workflowId, templateId, templateVersion, request } = prepared;
+  await startChild('ChannelScheduledTaskWorkflow', {
+    args: [{ request, runAt: runAt!, taskWorkflowId: workflowId, templateId, templateVersion }],
+    parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
+    taskQueue: 'engineering-workflow',
+    workflowId: scheduledWorkflowId!,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+  });
+}
+
+/**
+ * Route to the immediate or scheduled launch path based on whether `runAt` is set.
+ */
+async function startOrScheduleTaskChild(prepared: PreparedTaskRun): Promise<void> {
+  if (prepared.scheduledWorkflowId && prepared.runAt) {
+    await startScheduledTaskChild(prepared);
+  } else {
+    await startTaskChild(prepared);
+  }
 }
