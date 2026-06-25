@@ -29,6 +29,10 @@ const MemoryParams = z.object({
   memoryId: z.string().uuid(),
 });
 
+const MemoryQuery = z.object({
+  includeConsolidated: z.enum(['true', 'false']).optional(),
+});
+
 const CreateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
@@ -245,10 +249,10 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // GET /:id/memory — list this channel's active (un-consolidated) memory items
-  // (channel assistant, Phase 2). The worker writes channel-scoped rows
-  // (scope='channel-memory', agentKey='channelAssistant', channelId set); this
-  // surface lets admins/team members audit the channel's accumulated memory.
+  // GET /:id/memory — list this channel's memory items (channel assistant, Phase 2).
+  // By default returns only active (un-consolidated) items. Pass
+  // `?includeConsolidated=true` to include soft-deleted (consolidated) rows so
+  // admins can inspect what the ambient consolidation pass merged together.
   //
   // NOTE: we deliberately select scalar fields explicitly and never the
   // `embedding` column — it's a Prisma `Unsupported("vector(1536)")` field that
@@ -258,7 +262,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   // worker/embeddings concern) catches up to the new text.
   app.get(
     '/:id/memory',
-    { onRequest: authed, schema: { params: IdParams } },
+    { onRequest: authed, schema: { params: IdParams, querystring: MemoryQuery } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await fastify.prisma.slackChannel.findUnique({
@@ -273,18 +277,23 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
         return reply;
       }
+      const showConsolidated = request.query.includeConsolidated === 'true';
       const items = await fastify.prisma.memoryItem.findMany({
         orderBy: { createdAt: 'desc' },
         select: {
           agentKey: true,
+          consolidatedAt: true,
           createdAt: true,
           id: true,
           lessonSummary: true,
           metadata: true,
           rationale: true,
         },
-        take: 100,
-        where: { channelId: request.params.id, consolidatedAt: null },
+        take: 200,
+        where: {
+          channelId: request.params.id,
+          ...(showConsolidated ? {} : { consolidatedAt: null }),
+        },
       });
       return { data: items };
     }

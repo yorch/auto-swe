@@ -1,14 +1,8 @@
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import {
-  log,
-  ParentClosePolicy,
-  proxyActivities,
-  startChild,
-  WorkflowIdReusePolicy,
-  workflowInfo,
-} from '@temporalio/workflow';
+import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type { DelegateIntent } from '../activities/channelAssistant.js';
 import type * as activitiesType from '../activities/index.js';
+import { startThreadTaskChild } from './taskChild.js';
 
 /**
  * ChannelAssistantWorkflow — channel assistant (Phase 0 + Phase 4 live-progress).
@@ -264,6 +258,8 @@ interface PreparedTaskRun {
   templateId: string;
   templateVersion: number;
   request: RepoWorkRequest;
+  /** Gap D: present only when the task is deferred to a valid future time. */
+  runAt?: string;
 }
 
 /** Outcome of a task launch attempt (drives what the caller posts to the thread). */
@@ -309,6 +305,7 @@ async function launchTask(
         channelId: input.channelId,
         description: delegate.description,
         repoHint: delegate.repoHint,
+        runAt: delegate.runAt,
         slackChannelId: input.slackChannelId,
         threadTs: input.threadTs,
         title: delegate.title,
@@ -358,6 +355,7 @@ async function prepareGeneralTaskRun(
   return createChannelTaskRun({
     channelId: input.channelId,
     description: delegate.description,
+    runAt: delegate.runAt,
     slackChannelId: input.slackChannelId,
     threadTs: input.threadTs,
     title: delegate.title,
@@ -365,12 +363,13 @@ async function prepareGeneralTaskRun(
 }
 
 /**
- * Start the prepared task run as a child `RunnableWorkflow`. Shared by both the
- * general and code routes.
+ * Start the prepared task run, immediately or deferred. Shared by both the general
+ * and code routes.
  *
  *  - `PARENT_CLOSE_POLICY_ABANDON` + NO `await handle.result()` — the task run
  *    must OUTLIVE this short ChannelAssistantWorkflow turn (the turn finishes as
- *    soon as the ack is posted; the task may run for minutes).
+ *    soon as the ack is posted; the task may run for minutes — or hours, when
+ *    deferred).
  *  - `REJECT_DUPLICATE` reuse policy on the deterministic per-thread workflowId.
  *    The id is single-use: the `WorkflowRun` record is upserted by workflowId
  *    (`update: {}`), so reusing the id for a second task — even after the first
@@ -379,16 +378,31 @@ async function prepareGeneralTaskRun(
  *    that; `launchTask` turns the rejection into an honest "already a task in this
  *    thread" message. (A second delegate while the first is still RUNNING never
  *    reaches here — the gateway steers it instead.)
+ *
+ * Gap D (deferred): when `prepared.runAt` is set, the SAME per-thread workflowId
+ * hosts a `ChannelScheduledTaskWorkflow` wrapper that sleeps until `runAt` and then
+ * starts the `RunnableWorkflow`. Because it shares the per-thread id under
+ * REJECT_DUPLICATE, an immediate and a deferred task in one thread are mutually
+ * exclusive — exactly like two immediate tasks — so neither can be silently lost.
  */
 async function startTaskChild(prepared: PreparedTaskRun): Promise<void> {
-  const { workflowId, templateId, templateVersion, request } = prepared;
-  await startChild('RunnableWorkflow', {
-    args: [{ request, templateId, templateVersion }],
-    parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
-    taskQueue: 'engineering-workflow',
-    workflowId,
-    // Single-use per-thread id (see above): a re-delegate in the thread is rejected,
-    // surfaced by launchTask as an honest message rather than a silent clobber.
-    workflowIdReusePolicy: WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-  });
+  const { workflowId, templateId, templateVersion, request, runAt } = prepared;
+  // Deferred: a ChannelScheduledTaskWorkflow wrapper holds the per-thread id and
+  // sleeps until runAt. Immediate: RunnableWorkflow runs under it directly. Both
+  // share the per-thread id under REJECT_DUPLICATE, so the two are mutually
+  // exclusive — `launchTask` turns a rejection into an honest "already a task
+  // here" message rather than a silent clobber.
+  if (runAt) {
+    await startThreadTaskChild(
+      'ChannelScheduledTaskWorkflow',
+      [{ request, runAt, templateId, templateVersion }],
+      workflowId
+    );
+    return;
+  }
+  await startThreadTaskChild(
+    'RunnableWorkflow',
+    [{ request, templateId, templateVersion }],
+    workflowId
+  );
 }

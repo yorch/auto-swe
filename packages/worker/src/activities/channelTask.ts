@@ -35,6 +35,13 @@ export interface CreateChannelTaskRunInput {
   title: string;
   /** Self-contained task description the run executes. */
   description: string;
+  /**
+   * Gap D: ISO 8601 UTC timestamp to defer task execution. When it parses to a
+   * valid FUTURE time, the result carries `runAt` and the caller launches a
+   * `ChannelScheduledTaskWorkflow` wrapper; an invalid or past value is ignored
+   * (the task runs immediately).
+   */
+  runAt?: string;
 }
 
 export interface CreateChannelTaskRunResult {
@@ -44,6 +51,13 @@ export interface CreateChannelTaskRunResult {
   templateVersion: number;
   /** The fully-formed run request the child `RunnableWorkflow` consumes. */
   request: RepoWorkRequest;
+  /**
+   * Gap D: present only when `runAt` parsed to a valid future timestamp. When set,
+   * the caller starts a `ChannelScheduledTaskWorkflow` (which sleeps until `runAt`)
+   * under `workflowId`; otherwise it launches `RunnableWorkflow` immediately under
+   * the same `workflowId`.
+   */
+  runAt?: string;
 }
 
 /**
@@ -157,7 +171,23 @@ async function buildChannelTaskRun(
     workRequestId: runInput.id,
   };
 
-  return { request, templateId, templateVersion, workflowId };
+  // Gap D: only defer when `runAt` parses to a valid FUTURE timestamp. An invalid
+  // (e.g. non-ISO model output) or past value is dropped so the task runs
+  // immediately rather than silently mis-scheduling.
+  return { request, runAt: validFutureRunAt(input.runAt), templateId, templateVersion, workflowId };
+}
+
+/**
+ * Return `runAt` only when it parses to a valid timestamp strictly in the future;
+ * otherwise `undefined` (run immediately). Centralised so both task routes treat a
+ * garbled or past `runAt` identically.
+ */
+function validFutureRunAt(runAt: string | undefined): string | undefined {
+  if (!runAt) {
+    return undefined;
+  }
+  const ms = Date.parse(runAt);
+  return Number.isFinite(ms) && ms > Date.now() ? runAt : undefined;
 }
 
 /**
@@ -233,6 +263,8 @@ export interface CreateChannelCodeTaskRunInput {
   description: string;
   /** Optional repo the user named (matched in {@link resolveChannelRepo}). */
   repoHint?: string;
+  /** Gap D: ISO 8601 UTC timestamp to defer execution. Propagated to `buildChannelTaskRun`. */
+  runAt?: string;
 }
 
 /**

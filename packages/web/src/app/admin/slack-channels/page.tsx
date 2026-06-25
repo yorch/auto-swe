@@ -472,7 +472,8 @@ function MemoryItemEditForm({
 // ── Memory modal ──────────────────────────────────────────────────────────────
 
 function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
-  const { data: items, isLoading } = useChannelMemory(channel?.id ?? null);
+  const [showConsolidated, setShowConsolidated] = useState(false);
+  const { data: items, isLoading } = useChannelMemory(channel?.id ?? null, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
   const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -507,6 +508,18 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         }
         title={channel ? `Memory — ${channel.name ?? channel.slackChannelId}` : 'Channel Memory'}
       >
+        <div className="mb-3 flex items-center gap-2">
+          <input
+            checked={showConsolidated}
+            className="h-4 w-4 rounded border-ink-600 bg-ink-800 text-brand-500"
+            id="show-consolidated"
+            onChange={(e) => setShowConsolidated(e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-xs text-paper-400 cursor-pointer" htmlFor="show-consolidated">
+            Show consolidated (archived) items
+          </label>
+        </div>
         {isLoading ? (
           <div className="py-6 text-center text-sm text-paper-400">Loading…</div>
         ) : !items || items.length === 0 ? (
@@ -515,56 +528,67 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
           </div>
         ) : (
           <ul className="divide-y divide-ink-600">
-            {items.map((item) => (
-              <li className="py-3" key={item.id}>
-                {editingId === item.id ? (
-                  <MemoryItemEditForm
-                    channelId={channel?.id ?? ''}
-                    item={item}
-                    onCancel={() => setEditingId(null)}
-                    onSaved={() => setEditingId(null)}
-                  />
-                ) : (
-                  <div className="flex items-start gap-4">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
-                      <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
-                      <div className="flex items-center gap-3">
-                        {item.agentKey && (
+            {items.map((item) => {
+              const consolidatedAt = item.consolidatedAt;
+              const isConsolidated = !!consolidatedAt;
+              return (
+                <li className={`py-3 ${isConsolidated ? 'opacity-50' : ''}`} key={item.id}>
+                  {!isConsolidated && editingId === item.id ? (
+                    <MemoryItemEditForm
+                      channelId={channel?.id ?? ''}
+                      item={item}
+                      onCancel={() => setEditingId(null)}
+                      onSaved={() => setEditingId(null)}
+                    />
+                  ) : (
+                    <div className="flex items-start gap-4">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="text-sm text-paper-100 leading-snug">{item.lessonSummary}</p>
+                        <p className="text-xs text-paper-500 leading-snug">{item.rationale}</p>
+                        <div className="flex items-center gap-3">
+                          {consolidatedAt && (
+                            <span className="rounded bg-ink-700 px-1.5 py-0.5 text-[10px] text-paper-500">
+                              consolidated {fmtDate(consolidatedAt)}
+                            </span>
+                          )}
+                          {item.agentKey && (
+                            <span className="font-mono text-[10px] text-paper-600">
+                              {item.agentKey}
+                            </span>
+                          )}
                           <span className="font-mono text-[10px] text-paper-600">
-                            {item.agentKey}
+                            {fmtDate(item.createdAt)}
                           </span>
-                        )}
-                        <span className="font-mono text-[10px] text-paper-600">
-                          {fmtDate(item.createdAt)}
-                        </span>
+                        </div>
                       </div>
+                      {!isConsolidated && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            onClick={() => {
+                              setEditingId(item.id);
+                            }}
+                            size="sm"
+                            variant="secondary"
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              setDeleteError(null);
+                              setConfirmItem(item);
+                            }}
+                            size="sm"
+                            variant="danger"
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        onClick={() => {
-                          setEditingId(item.id);
-                        }}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          setDeleteError(null);
-                          setConfirmItem(item);
-                        }}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </li>
-            ))}
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         <div className="flex justify-end pt-2">

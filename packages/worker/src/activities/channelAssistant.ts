@@ -60,6 +60,12 @@ export interface DelegateIntent {
    * repo (if exactly one) or the general task route.
    */
   repoHint?: string;
+  /**
+   * Gap D: ISO 8601 timestamp at which to run the task. When set, the workflow
+   * starts a `ChannelScheduledTaskWorkflow` that sleeps until this time before
+   * launching the actual `RunnableWorkflow`. Leave unset for immediate execution.
+   */
+  runAt?: string;
 }
 
 /** Schema for the `delegateTask` tool's structured input (validated by Mastra). */
@@ -77,6 +83,14 @@ const DelegateTaskInputSchema = z.object({
     .describe(
       "'general' for a multi-step research/ops/writing task; 'code' for a task " +
         'that requires editing a repository and opening a pull request.'
+    ),
+  runAt: z
+    .string()
+    .optional()
+    .describe(
+      'ISO 8601 UTC timestamp (e.g. "2026-06-26T09:00:00Z") at which the task should ' +
+        'run. Only set this when the user explicitly asks to defer the task to a specific ' +
+        'future time. Leave unset for immediate execution.'
     ),
   title: z.string().describe('A short title for the task (a few words).'),
 });
@@ -103,7 +117,10 @@ const DELEGATE_TOOL_PROMPT_NOTE = [
   'answer directly and do NOT call the tool. Set route="code" only when the task ',
   'requires editing a repository / opening a pull request; otherwise route="general". ',
   'For a code task, if the user named a specific repository, pass it as `repoHint` ',
-  '(e.g. "payments-api" or "acme/payments-api"); leave it unset if no repo was named.',
+  '(e.g. "payments-api" or "acme/payments-api"); leave it unset if no repo was named. ',
+  'If the user explicitly asks to defer the task to a specific future time (e.g. ',
+  '"tomorrow at 9am", "next Monday", "in 2 hours"), pass an ISO 8601 UTC timestamp as ',
+  '`runAt` (e.g. "2026-06-26T09:00:00Z"). Leave `runAt` unset for immediate execution.',
 ].join('');
 
 /**
@@ -119,8 +136,8 @@ function buildDelegateTool(onDelegate: (intent: DelegateIntent) => void) {
       'Launch a durable background task that will work on this request and ' +
       'report its result back in this Slack thread. Use for genuine multi-step ' +
       'work, not quick questions.',
-    execute: async ({ description, repoHint, route, title }) => {
-      onDelegate({ description, repoHint, route, title });
+    execute: async ({ description, repoHint, route, runAt, title }) => {
+      onDelegate({ description, repoHint, route, runAt, title });
       return {
         note: 'Task queued — I will follow up in this thread when it is done.',
         queued: true,
@@ -189,7 +206,9 @@ export function formatMemoryContext(items: ChannelMemoryItem[], userText: string
   }
   const bullets = items
     .slice(0, MAX_MEMORY_CONTEXT_ITEMS)
-    .map((item) => `- ${item.summary}`)
+    .map((item) =>
+      item.crossChannel ? `- [from another channel] ${item.summary}` : `- ${item.summary}`
+    )
     .join('\n');
   return `Relevant context from this channel's memory:\n${bullets}\n\nUser: ${userText}`;
 }
@@ -381,7 +400,10 @@ export async function runChannelAssistantTurn(
   // a retrieval failure (e.g. embedding round-trip) must not block the reply.
   let memory: ChannelMemoryItem[] = [];
   try {
-    memory = await retrieveChannelMemory(input.userText, { channelId: input.channelId });
+    memory = await retrieveChannelMemory(input.userText, {
+      channelId: input.channelId,
+      teamId: input.teamId,
+    });
   } catch (err) {
     console.error(
       `[channelAssistant] failed to retrieve channel memory for ${input.channelId}:`,
@@ -542,24 +564,39 @@ async function summarizeAndStoreChannelMemory(
 }
 
 /**
- * Increment the channel's current-month usage row with one turn's USD cost and a
- * completed-run count. The `costUsd` is the authoritative per-turn cost returned
- * by {@link runAgent} (priced by `recordLlmUsage` against the agent KEY's
- * configured model), so this per-channel ledger prices identically to the
+ * Increment the channel's current-month usage row with one turn's USD cost and
+ * (optionally) a completed-run count. The `costUsd` is the authoritative per-turn
+ * cost returned by {@link runAgent} (priced by `recordLlmUsage` against the agent
+ * KEY's configured model), so this per-channel ledger prices identically to the
  * run-level ledger — no re-pricing here.
+ *
+ * `countRun` (default `true`) controls whether `runsCompleted` is incremented.
+ * User-facing turns count as a run; background maintenance passes (channel-memory
+ * consolidation) accrue their LLM cost to the budget but pass `countRun: false`
+ * so they don't inflate the channel's reported run count.
  *
  * Uses Prisma's `increment` upsert (race-safe across concurrent turns in the
  * same channel), mirroring the `OrgMonthlyUsage` accrual in `finalizeWorkflowRun`.
  * Wrapped in try/catch so a DB error degrades to "reply still sent".
  */
-export async function accrueChannelUsage(channelId: string, costUsd: number): Promise<void> {
+export async function accrueChannelUsage(
+  channelId: string,
+  costUsd: number,
+  opts: { countRun?: boolean } = {}
+): Promise<void> {
+  const countRun = opts.countRun ?? true;
   try {
     const yearMonth = currentYearMonth();
     await prisma.channelMonthlyUsage.upsert({
-      create: { channelId, costUsdAccrued: costUsd, runsCompleted: 1, yearMonth },
+      create: {
+        channelId,
+        costUsdAccrued: costUsd,
+        runsCompleted: countRun ? 1 : 0,
+        yearMonth,
+      },
       update: {
         costUsdAccrued: { increment: costUsd },
-        runsCompleted: { increment: 1 },
+        ...(countRun ? { runsCompleted: { increment: 1 } } : {}),
       },
       where: { channelId_yearMonth: { channelId, yearMonth } },
     });

@@ -26,6 +26,18 @@ import { generateEmbeddingWithSpec } from './embeddings.js';
 const ALLOWED_SCOPE_COLUMNS = ['repo_id', 'channel_id'] as const;
 type ScopeColumn = (typeof ALLOWED_SCOPE_COLUMNS)[number];
 
+/**
+ * A pre-computed query embedding plus the spec it was produced under. Produced by
+ * {@link generateEmbeddingWithSpec} and passed as `precomputed` to
+ * {@link searchMemoryItemsByVector} (and `searchTeamChannelMemory`) so a caller
+ * that fans the SAME query text across multiple vector searches (e.g. channel +
+ * cross-channel team memory) embeds it once, not once per search.
+ */
+export interface QueryEmbedding {
+  embedding: number[];
+  spec: string;
+}
+
 function assertScopeColumn(column: string): asserts column is ScopeColumn {
   if (!(ALLOWED_SCOPE_COLUMNS as readonly string[]).includes(column)) {
     throw new Error(
@@ -62,12 +74,16 @@ export async function searchMemoryItemsByVector(opts: {
   selectColumns: string[];
   limit: number;
   similarityThreshold: number;
+  /** Optional pre-computed query embedding. When a caller runs several searches
+   *  for the SAME `queryText` (e.g. channel + cross-channel team memory), it can
+   *  embed once via {@link embedQuery} and pass the result here to avoid a
+   *  redundant embedding round-trip per search. */
+  precomputed?: QueryEmbedding;
 }): Promise<Record<string, unknown>[]> {
   assertScopeColumn(opts.scopeColumn);
 
-  const { embedding: queryEmbedding, spec: embeddingSpec } = await generateEmbeddingWithSpec(
-    opts.queryText
-  );
+  const { embedding: queryEmbedding, spec: embeddingSpec } =
+    opts.precomputed ?? (await generateEmbeddingWithSpec(opts.queryText));
 
   const projection = [...opts.selectColumns, '1 - (embedding <=> $1::vector) AS similarity'].join(
     ',\n      '

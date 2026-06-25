@@ -518,10 +518,10 @@ describe('slackChannelRoutes', () => {
     const data = JSON.parse(res.payload).data;
     expect(data[0].id).toBe('mem-1');
     expect(data[0].lessonSummary).toBe('Prefer feature flags');
-    // Scoped to this channel's active rows.
+    // Scoped to this channel's active rows (no includeConsolidated param).
     expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        take: 100,
+        take: 200,
         where: { channelId: CHANNEL, consolidatedAt: null },
       })
     );
@@ -529,6 +529,7 @@ describe('slackChannelRoutes', () => {
     const select = mockPrisma.memoryItem.findMany.mock.calls[0][0].select;
     expect(select.embedding).toBeUndefined();
     expect(select.id).toBe(true);
+    expect(select.consolidatedAt).toBe(true);
     await app.close();
   });
 

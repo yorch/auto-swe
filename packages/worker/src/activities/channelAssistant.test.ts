@@ -336,6 +336,7 @@ describe('runChannelAssistantTurn', () => {
 
     expect(retrieveChannelMemoryMock).toHaveBeenCalledWith('how do I deploy?', {
       channelId: 'chan-1',
+      teamId: 'team-1',
     });
     const passedMessage = runAgentMock.mock.calls[0]?.[1] as string;
     expect(passedMessage).toContain("Relevant context from this channel's memory:");

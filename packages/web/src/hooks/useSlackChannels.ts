@@ -113,14 +113,20 @@ export interface MemoryItemDto {
   agentKey: string | null;
   metadata: unknown;
   createdAt: string;
+  /** Gap F: non-null when this item was merged into a consolidated successor. */
+  consolidatedAt: string | null;
 }
 
-export function useChannelMemory(channelId: string | null) {
+export function useChannelMemory(channelId: string | null, includeConsolidated = false) {
   return useQuery({
     enabled: !!channelId,
-    queryFn: () =>
-      api.get<{ data: MemoryItemDto[] }>(`${BASE}/${channelId}/memory`).then((r) => r.data),
-    queryKey: ['admin-slack-channel-memory', channelId],
+    queryFn: () => {
+      const qs = includeConsolidated ? '?includeConsolidated=true' : '';
+      return api
+        .get<{ data: MemoryItemDto[] }>(`${BASE}/${channelId}/memory${qs}`)
+        .then((r) => r.data);
+    },
+    queryKey: ['admin-slack-channel-memory', channelId, includeConsolidated],
   });
 }
 

@@ -10,6 +10,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 
@@ -33,50 +34,6 @@ interface RawLesson {
   failureType: string | null;
   rationale: string;
   embeddingJson: string | null;
-}
-
-function dotProduct(a: number[], b: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) {
-    sum += a[i] * b[i];
-  }
-  return sum;
-}
-
-/**
- * Greedy single-linkage clustering using pre-computed norms.
- * Returns a list of clusters, each as a list of lesson indices.
- */
-function clusterByEmbedding(
-  embeddings: (number[] | null)[],
-  norms: number[],
-  threshold: number
-): number[][] {
-  const n = embeddings.length;
-  const assigned = new Uint8Array(n);
-  const clusters: number[][] = [];
-
-  for (let i = 0; i < n; i++) {
-    if (assigned[i] || !embeddings[i]) {
-      continue;
-    }
-    const cluster = [i];
-    assigned[i] = 1;
-    const ei = embeddings[i];
-    for (let j = i + 1; j < n; j++) {
-      const ej = embeddings[j];
-      if (!ej || norms[i] === 0 || norms[j] === 0) {
-        continue;
-      }
-      if (ei && dotProduct(ei, ej) / (norms[i] * norms[j]) >= threshold) {
-        cluster.push(j);
-        assigned[j] = 1;
-      }
-    }
-    clusters.push(cluster);
-  }
-
-  return clusters;
 }
 
 /**
@@ -131,16 +88,7 @@ export async function consolidateLessons(
   });
 
   // Pre-compute norms once so the O(N²) inner loop only does dot products.
-  const norms = embeddings.map((e) => {
-    if (!e) {
-      return 0;
-    }
-    let sum = 0;
-    for (const v of e) {
-      sum += v * v;
-    }
-    return Math.sqrt(sum);
-  });
+  const norms = vectorNorms(embeddings);
 
   const clusters = clusterByEmbedding(embeddings, norms, similarityThreshold);
   const qualifying = clusters.filter((c) => c.length >= minClusterSize);
