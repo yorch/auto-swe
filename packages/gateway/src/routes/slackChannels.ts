@@ -39,6 +39,8 @@ const CreateChannelSchema = z.object({
   ambientEnabled: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
+  reactiveEnabled: z.boolean().optional(),
   slackChannelId: z.string().min(1).max(50),
   slackTeamId: z.string().min(1).max(50),
   teamId: z.string().uuid(),
@@ -62,6 +64,8 @@ const UpdateChannelSchema = z.object({
   isActive: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
+  reactiveEnabled: z.boolean().optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -98,6 +102,8 @@ function channelWritableData(body: {
   agentKey?: string;
   ambientCron?: string | null;
   ambientEnabled?: boolean;
+  reactiveCron?: string | null;
+  reactiveEnabled?: boolean;
   isActive?: boolean;
   monthlyBudgetUsdCents?: number | null;
   name?: string | null;
@@ -106,6 +112,8 @@ function channelWritableData(body: {
     ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
     ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
     ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
+    ...(body.reactiveCron !== undefined ? { reactiveCron: body.reactiveCron } : {}),
+    ...(body.reactiveEnabled !== undefined ? { reactiveEnabled: body.reactiveEnabled } : {}),
     ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
     ...(body.monthlyBudgetUsdCents !== undefined
       ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
@@ -139,6 +147,34 @@ async function reconcileAmbientSchedule(
     request.log.error(
       { channelId: channel.id, err },
       'failed to reconcile channel ambient schedule'
+    );
+  }
+}
+
+/**
+ * Reconcile the channel's reactive-interjection Temporal Schedule (Gap A) with its
+ * current row state — mirrors {@link reconcileAmbientSchedule}. A schedule should
+ * exist iff the channel is active, reactive mode is on, and a cron is set.
+ * Best-effort: a Temporal hiccup is logged and swallowed (re-syncs on next save).
+ */
+async function reconcileReactiveSchedule(
+  fastify: FastifyInstance,
+  request: { log: FastifyInstance['log'] },
+  channel: { id: string; isActive: boolean; reactiveEnabled: boolean; reactiveCron: string | null }
+): Promise<void> {
+  try {
+    if (channel.isActive && channel.reactiveEnabled && channel.reactiveCron) {
+      await fastify.temporal.syncChannelReactiveSchedule({
+        channelId: channel.id,
+        cronExpression: channel.reactiveCron,
+      });
+    } else {
+      await fastify.temporal.deleteChannelReactiveSchedule(channel.id);
+    }
+  } catch (err) {
+    request.log.error(
+      { channelId: channel.id, err },
+      'failed to reconcile channel reactive schedule'
     );
   }
 }
@@ -476,6 +512,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       await reconcileAmbientSchedule(fastify, request, row);
+      await reconcileReactiveSchedule(fastify, request, row);
 
       return reply.status(201).send({ data: await withCurrentUsage(fastify, row) });
     }
@@ -531,6 +568,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       await reconcileAmbientSchedule(fastify, request, row);
+      await reconcileReactiveSchedule(fastify, request, row);
 
       return reply.send({ data: await withCurrentUsage(fastify, row) });
     }
@@ -556,10 +594,11 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       // channel and can be reaped out of band.
       try {
         await fastify.temporal.deleteChannelAmbientSchedule(current.id);
+        await fastify.temporal.deleteChannelReactiveSchedule(current.id);
       } catch (err) {
         request.log.error(
           { channelId: current.id, err },
-          'failed to delete channel ambient schedule'
+          'failed to delete channel ambient/reactive schedule'
         );
       }
       await writeAuditLog(fastify, {

@@ -62,6 +62,8 @@ interface CreateForm {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string;
+  reactiveEnabled: boolean;
+  reactiveCron: string;
   budgetDollars: string;
 }
 
@@ -71,6 +73,8 @@ const EMPTY_CREATE: CreateForm = {
   ambientEnabled: false,
   budgetDollars: '',
   name: '',
+  reactiveCron: '',
+  reactiveEnabled: false,
   slackChannelId: '',
   slackTeamId: '',
   teamId: '',
@@ -101,6 +105,8 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         ambientEnabled: form.ambientEnabled,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        reactiveCron: form.reactiveCron || null,
+        reactiveEnabled: form.reactiveEnabled,
         slackChannelId: form.slackChannelId,
         slackTeamId: form.slackTeamId,
         teamId: form.teamId,
@@ -180,6 +186,27 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             value={form.ambientCron}
           />
         )}
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.reactiveEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-reactive"
+            onChange={(e) => set('reactiveEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-reactive">
+            Reactive interjection enabled
+          </label>
+        </div>
+        {form.reactiveEnabled && (
+          <Input
+            hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
+            label="Reactive cron"
+            onChange={(e) => set('reactiveCron', e.target.value)}
+            placeholder="*/5 * * * *"
+            value={form.reactiveCron}
+          />
+        )}
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -211,6 +238,8 @@ interface EditForm {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string;
+  reactiveEnabled: boolean;
+  reactiveCron: string;
   budgetDollars: string;
   teamId: string;
 }
@@ -222,6 +251,8 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
     name: ch.name ?? '',
+    reactiveCron: ch.reactiveCron ?? '',
+    reactiveEnabled: ch.reactiveEnabled,
     teamId: ch.teamId,
   };
 }
@@ -251,6 +282,8 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       ambientEnabled: form.ambientEnabled,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      reactiveCron: form.reactiveCron || null,
+      reactiveEnabled: form.reactiveEnabled,
       teamId: form.teamId || undefined,
     };
     try {
@@ -310,6 +343,27 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           onChange={(e) => set('ambientCron', e.target.value)}
           placeholder="0 9 * * 1-5"
           value={form.ambientCron}
+        />
+      )}
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.reactiveEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-reactive"
+          onChange={(e) => set('reactiveEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-reactive">
+          Reactive interjection enabled
+        </label>
+      </div>
+      {form.reactiveEnabled && (
+        <Input
+          hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
+          label="Reactive cron"
+          onChange={(e) => set('reactiveCron', e.target.value)}
+          placeholder="*/5 * * * *"
+          value={form.reactiveCron}
         />
       )}
       <Input
@@ -654,17 +708,30 @@ function ChannelRow({
       </td>
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-300">{channel.agentKey}</td>
       <td className="py-3 pr-4 text-center">
-        {channel.ambientEnabled ? (
-          <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            on
-            {channel.ambientCron && (
-              <span className="text-paper-600"> · {channel.ambientCron}</span>
-            )}
-          </span>
-        ) : (
-          <span className="font-mono text-[10px] text-paper-600">off</span>
-        )}
+        <div className="flex flex-col items-center gap-0.5">
+          {channel.ambientEnabled ? (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              ambient
+              {channel.ambientCron && (
+                <span className="text-paper-600"> · {channel.ambientCron}</span>
+              )}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-paper-600">ambient off</span>
+          )}
+          {channel.reactiveEnabled ? (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+              reactive
+              {channel.reactiveCron && (
+                <span className="text-paper-600"> · {channel.reactiveCron}</span>
+              )}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-paper-600">reactive off</span>
+          )}
+        </div>
       </td>
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</td>
       <td className="py-3 pr-4 text-center">

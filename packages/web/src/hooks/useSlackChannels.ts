@@ -26,6 +26,8 @@ export interface SlackChannel {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string | null;
+  reactiveEnabled: boolean;
+  reactiveCron: string | null;
   monthlyBudgetUsdCents: number | null;
   isActive: boolean;
   createdAt: string;
@@ -49,6 +51,8 @@ export interface CreateSlackChannelBody {
   agentKey?: string;
   ambientEnabled?: boolean;
   ambientCron?: string | null;
+  reactiveEnabled?: boolean;
+  reactiveCron?: string | null;
   monthlyBudgetUsdCents?: number | null;
 }
 
@@ -57,6 +61,8 @@ export interface UpdateSlackChannelBody {
   agentKey?: string;
   ambientEnabled?: boolean;
   ambientCron?: string | null;
+  reactiveEnabled?: boolean;
+  reactiveCron?: string | null;
   monthlyBudgetUsdCents?: number | null;
   isActive?: boolean;
   teamId?: string;

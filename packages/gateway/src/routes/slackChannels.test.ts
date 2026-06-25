@@ -32,11 +32,13 @@ function newMockPrisma() {
 function newMockTemporal() {
   return {
     deleteChannelAmbientSchedule: vi.fn().mockResolvedValue(undefined),
+    deleteChannelReactiveSchedule: vi.fn().mockResolvedValue(undefined),
     getChannelAmbientScheduleStatus: vi
       .fn()
       .mockResolvedValue({ exists: false, nextRunAt: null, paused: false }),
     startReembedMemory: vi.fn().mockResolvedValue(undefined),
     syncChannelAmbientSchedule: vi.fn().mockResolvedValue(undefined),
+    syncChannelReactiveSchedule: vi.fn().mockResolvedValue(undefined),
   };
 }
 

@@ -30,6 +30,11 @@ export function channelAmbientScheduleId(channelId: string): string {
   return `auto-swe-channel-ambient-${channelId}`;
 }
 
+/** Temporal Schedule ID for a SlackChannel's reactive-interjection poll (Gap A). */
+export function channelReactiveScheduleId(channelId: string): string {
+  return `auto-swe-channel-reactive-${channelId}`;
+}
+
 /**
  * Everything the recurring-work-request Schedule needs to start
  * RunnableWorkflow. Args are STATIC per Temporal's schedule model — template
@@ -61,6 +66,11 @@ export interface ChannelAmbientScheduleStatus {
   exists: boolean;
   paused: boolean;
   nextRunAt: string | null;
+}
+
+export interface ChannelReactiveScheduleInput {
+  channelId: string;
+  cronExpression: string;
 }
 
 export interface ConsolidationScheduleConfig {
@@ -132,6 +142,8 @@ declare module 'fastify' {
       syncChannelAmbientSchedule: (input: ChannelAmbientScheduleInput) => Promise<void>;
       deleteChannelAmbientSchedule: (channelId: string) => Promise<void>;
       getChannelAmbientScheduleStatus: (channelId: string) => Promise<ChannelAmbientScheduleStatus>;
+      syncChannelReactiveSchedule: (input: ChannelReactiveScheduleInput) => Promise<void>;
+      deleteChannelReactiveSchedule: (channelId: string) => Promise<void>;
     };
   }
 }
@@ -204,6 +216,21 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   }
 
   /**
+   * Schedule action for a channel's reactive-interjection poll (Gap A): starts the
+   * worker's ChannelReactiveWorkflow (by name) on each fire. The base `workflowId`
+   * is `channel-reactive-<channelId>`; Temporal appends the per-fire timestamp.
+   */
+  function makeChannelReactiveScheduleAction(input: ChannelReactiveScheduleInput) {
+    return {
+      args: [{ channelId: input.channelId }],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowId: `channel-reactive-${input.channelId}`,
+      workflowType: 'ChannelReactiveWorkflow',
+    };
+  }
+
+  /**
    * Shared describe-or-create reconciliation for a single Temporal Schedule.
    * If the schedule already exists, its cron + action (and, when `paused` is
    * provided, its paused state — preserving the rest of `prev.state`) are
@@ -248,6 +275,15 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async deleteChannelAmbientSchedule(channelId: string): Promise<void> {
       const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+      try {
+        await handle.delete();
+      } catch {
+        // Already gone (or never created) — deletion is idempotent.
+      }
+    },
+
+    async deleteChannelReactiveSchedule(channelId: string): Promise<void> {
+      const handle = schedules.getHandle(channelReactiveScheduleId(channelId));
       try {
         await handle.delete();
       } catch {
@@ -422,6 +458,13 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
       await upsertSchedule(channelAmbientScheduleId(input.channelId), {
         action: makeChannelAmbientScheduleAction(input),
+        cronExpression: input.cronExpression,
+      });
+    },
+
+    async syncChannelReactiveSchedule(input: ChannelReactiveScheduleInput): Promise<void> {
+      await upsertSchedule(channelReactiveScheduleId(input.channelId), {
+        action: makeChannelReactiveScheduleAction(input),
         cronExpression: input.cronExpression,
       });
     },
