@@ -461,11 +461,45 @@ model SlackChannel {
   agents       Agent[]
   memoryItems  MemoryItem[]
   monthlyUsage ChannelMonthlyUsage[]
+  openItems    ChannelOpenItem[]
 
   @@unique([workspaceId, slackChannelId])
   @@index([teamId])
   @@index([orgId])
   @@map("slack_channels")
+}
+
+/// Status of a channel open item (Gap C: follow-up tracking).
+enum ChannelOpenItemStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+
+  @@map("channel_open_item_status")
+}
+
+/// A tracked open action-item, question, or task detected by the channel
+/// assistant in the conversation. Populated by the ambient sweep (Gap C) and
+/// cleared when the assistant observes a resolution or the admin dismisses it.
+model ChannelOpenItem {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId   String                @map("channel_id") @db.Uuid
+  channel     SlackChannel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  /// Human-readable description of the open item (question, task, decision).
+  description String
+  /// Slack user ID of the person who owns / was assigned the item, if known.
+  ownerUserId String?               @map("owner_user_id")
+  status      ChannelOpenItemStatus @default(OPEN)
+  /// Slack message timestamp that originated this item (used as a dedup anchor
+  /// so the sweep never creates the same item twice).
+  sourceTs    String?               @map("source_ts")
+  /// When the assistant last posted a follow-up nudge for this item.
+  lastNudgedAt DateTime?            @map("last_nudged_at") @db.Timestamptz
+  createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([channelId, status])
+  @@map("channel_open_items")
 }
 
 /// Per-channel monthly cost aggregation (channel assistant budget). Mirrors

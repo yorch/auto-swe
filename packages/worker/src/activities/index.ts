@@ -8,6 +8,12 @@ export {
   runChannelAssistantTurn,
   updateChannelReply,
 } from './channelAssistant.js';
+// Channel assistant (Gap C) — open-item tracking + follow-up
+export type {
+  SweepChannelOpenItemsInput,
+  SweepChannelOpenItemsResult,
+} from './channelOpenItems.js';
+export { sweepChannelOpenItems } from './channelOpenItems.js';
 // Channel assistant (Gap A) — reactive interjection (proactive responding)
 export type { ChannelReactiveInput, ChannelReactiveResult } from './channelReactive.js';
 export { evaluateReactiveInterjection } from './channelReactive.js';

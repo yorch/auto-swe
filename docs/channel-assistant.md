@@ -262,7 +262,46 @@ reactive mode + cadence at `/admin/slack-channels`. Memory retrieval reuses the
 cross-channel `retrieveChannelMemory` (Gap E). Passive memory ingestion (learning
 from non-mention messages) is the natural next step on this same poll.
 
-## 11. Observability & admin UI
+## 11. Open-item tracking — Gap C (shipped)
+
+The channel assistant tracks **open items** — unanswered questions, unresolved tasks,
+pending decisions — and nudges the channel when things go stale.
+
+**How it works (rides the ambient schedule):** `ChannelAmbientWorkflow` calls
+`sweepChannelOpenItems` as a best-effort third activity on every ambient fire (after the
+digest and after `consolidateChannelMemory`). Three things happen per sweep:
+
+1. **Detect** — the LLM reads the last 4 hours of channel messages and produces two
+   lists: new `ChannelOpenItem` rows (description, optional `ownerUserId`, optional
+   `sourceTs`) and `resolvedIds` (existing OPEN items that appear resolved in the
+   recent thread).
+2. **Persist** — new items are inserted; resolved IDs are `updateMany`-ed to `RESOLVED`.
+   `sourceTs` (Slack message timestamp) is used as a **dedup anchor** so the same
+   message never spawns two items across consecutive ambient fires.
+3. **Nudge** — any OPEN item older than 24 hours and not nudged in the last 12 hours
+   receives a polite top-level channel message: `<@USER> Just checking in — any update
+   on: _description_?`. `lastNudgedAt` is advanced after each nudge; the cooldown
+   prevents spam.
+
+**Budget-gated:** same `isChannelOverBudgetNow` gate as the digest/reactive paths.
+Never throws — a flaky sweep cannot crash the ambient schedule.
+
+**Data model:** `ChannelOpenItem` (schema: `packages/shared/src/prisma/schema.prisma`),
+`ChannelOpenItemStatus` enum (`OPEN` / `RESOLVED` / `DISMISSED`), composite index on
+`(channel_id, status)`, `sourceTs` for dedup, `lastNudgedAt` for nudge cooldown.
+Migration: `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
+
+**Admin API + UI:**
+- `GET  /api/v1/admin/slack-channels/:id/open-items?status=OPEN|RESOLVED|DISMISSED|all`
+  — ENGINEER+ authed, team-scoped, optional status filter.
+- `PATCH /api/v1/admin/slack-channels/:id/open-items/:itemId` — admin-only, updates
+  `status` (Resolve / Dismiss from the UI).
+- `/admin/slack-channels` page gains an **"Open Items"** button per channel row →
+  modal with status-filter tabs (OPEN / RESOLVED / DISMISSED / all), item list with
+  description, age, owner mention, last-nudge time, and Resolve + Dismiss actions for
+  OPEN items.
+
+## 12. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
@@ -284,7 +323,7 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 12. Future refinements (not built)
+## 13. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
   mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
@@ -319,10 +358,12 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 13. Key files
+## 14. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
-  `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
+  `SlackChannel`, `ChannelMonthlyUsage`, `ChannelOpenItem`, `ChannelOpenItemStatus`,
+  `ConfigScope.CHANNEL`); migration:
+  `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
   `packages/worker/src/workflows/channelScheduledTask.ts` (Gap D deferral, §9),
@@ -331,6 +372,7 @@ memory) from `/admin/slack-channels`.
   `packages/worker/src/activities/channelAssistant.ts`,
   `packages/worker/src/activities/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),

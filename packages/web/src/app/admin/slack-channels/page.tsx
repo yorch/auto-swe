@@ -9,15 +9,19 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
+  type ChannelOpenItemDto,
+  type ChannelOpenItemStatus,
   type MemoryItemDto,
   type SlackChannel,
   type UpdateSlackChannelBody,
   useChannelMemory,
+  useChannelOpenItems,
   useCreateSlackChannel,
   useDeleteChannelMemory,
   useDeleteSlackChannel,
   useSlackChannels,
   useUpdateChannelMemory,
+  useUpdateChannelOpenItem,
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
@@ -671,6 +675,150 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
   );
 }
 
+// ── Open items modal (Gap C) ──────────────────────────────────────────────────
+
+const STATUS_LABELS: Record<ChannelOpenItemStatus, string> = {
+  DISMISSED: 'dismissed',
+  OPEN: 'open',
+  RESOLVED: 'resolved',
+};
+
+const STATUS_COLORS: Record<ChannelOpenItemStatus, string> = {
+  DISMISSED: 'text-paper-600',
+  OPEN: 'text-amber-400',
+  RESOLVED: 'text-emerald-400',
+};
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) {
+    return 'less than an hour ago';
+  }
+  if (h < 24) {
+    return `${h}h ago`;
+  }
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function OpenItemsModal({
+  channel,
+  onClose,
+}: {
+  channel: SlackChannel | null;
+  onClose: () => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<ChannelOpenItemStatus | 'all'>('OPEN');
+  const { data: items, isLoading } = useChannelOpenItems(channel?.id ?? null, statusFilter);
+  const updateItem = useUpdateChannelOpenItem();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function handleStatus(item: ChannelOpenItemDto, status: ChannelOpenItemStatus) {
+    if (!channel) {
+      return;
+    }
+    setActionError(null);
+    try {
+      await updateItem.mutateAsync({ channelId: channel.id, itemId: item.id, status });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to update item');
+    }
+  }
+
+  return (
+    <Modal
+      eyebrow="Admin / Slack"
+      onClose={onClose}
+      open={channel !== null}
+      title={channel ? `Open Items — ${channel.name ?? channel.slackChannelId}` : 'Open Items'}
+    >
+      <div className="space-y-4">
+        <div className="flex gap-2">
+          {(['OPEN', 'RESOLVED', 'DISMISSED', 'all'] as const).map((s) => (
+            <button
+              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                statusFilter === s
+                  ? 'bg-ink-600 text-paper-100'
+                  : 'text-paper-500 hover:text-paper-300'
+              }`}
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              type="button"
+            >
+              {s === 'all' ? 'all' : STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+
+        {actionError && (
+          <div className="rounded bg-red-900/30 px-3 py-2 font-mono text-xs text-red-400">
+            {actionError}
+          </div>
+        )}
+
+        {isLoading ? (
+          <LoadingState />
+        ) : !items || items.length === 0 ? (
+          <p className="py-4 text-center text-sm text-paper-500">
+            No {statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {items.map((item) => (
+              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={item.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-paper-100">{item.description}</p>
+                    <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
+                      <span className={STATUS_COLORS[item.status]}>
+                        {STATUS_LABELS[item.status]}
+                      </span>
+                      <span>·</span>
+                      <span>{relativeTime(item.createdAt)}</span>
+                      {item.ownerUserId && (
+                        <>
+                          <span>·</span>
+                          <span>owner: {item.ownerUserId}</span>
+                        </>
+                      )}
+                      {item.lastNudgedAt && (
+                        <>
+                          <span>·</span>
+                          <span>nudged {relativeTime(item.lastNudgedAt)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {item.status === 'OPEN' && (
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        disabled={updateItem.isPending}
+                        onClick={() => handleStatus(item, 'RESOLVED')}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Resolve
+                      </Button>
+                      <Button
+                        disabled={updateItem.isPending}
+                        onClick={() => handleStatus(item, 'DISMISSED')}
+                        size="sm"
+                        variant="danger"
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function ChannelRow({
@@ -678,11 +826,13 @@ function ChannelRow({
   onDelete,
   onEdit,
   onMemory,
+  onOpenItems,
 }: {
   channel: SlackChannel;
   onDelete: (ch: SlackChannel) => void;
   onEdit: (ch: SlackChannel) => void;
   onMemory: (ch: SlackChannel) => void;
+  onOpenItems: (ch: SlackChannel) => void;
 }) {
   const update = useUpdateSlackChannel();
 
@@ -750,6 +900,9 @@ function ChannelRow({
       </td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-2">
+          <Button onClick={() => onOpenItems(channel)} size="sm" variant="secondary">
+            Open Items
+          </Button>
           <Button onClick={() => onMemory(channel)} size="sm" variant="secondary">
             Memory
           </Button>
@@ -774,6 +927,7 @@ export default function AdminSlackChannelsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SlackChannel | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<SlackChannel | null>(null);
+  const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -852,6 +1006,7 @@ export default function AdminSlackChannelsPage() {
                     onDelete={setDeleteTarget}
                     onEdit={setEditTarget}
                     onMemory={setMemoryTarget}
+                    onOpenItems={setOpenItemsTarget}
                   />
                 ))}
               </tbody>
@@ -865,6 +1020,8 @@ export default function AdminSlackChannelsPage() {
       <EditChannelModal channel={editTarget} onClose={() => setEditTarget(null)} />
 
       <MemoryModal channel={memoryTarget} onClose={() => setMemoryTarget(null)} />
+
+      <OpenItemsModal channel={openItemsTarget} onClose={() => setOpenItemsTarget(null)} />
 
       <ConfirmModal
         confirmLabel="Delete"

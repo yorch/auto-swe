@@ -574,6 +574,65 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Open items (Gap C) ───────────────────────────────────────────────────
+
+  const OpenItemParams = z.object({ id: z.string().uuid(), itemId: z.string().uuid() });
+  const OpenItemStatusSchema = z.object({
+    status: z.enum(['OPEN', 'RESOLVED', 'DISMISSED']),
+  });
+  const OpenItemsQuery = z.object({
+    status: z.enum(['OPEN', 'RESOLVED', 'DISMISSED', 'all']).optional(),
+  });
+
+  // GET /:id/open-items — list open items for a channel.
+  app.get(
+    '/:id/open-items',
+    { onRequest: authed, schema: { params: IdParams, querystring: OpenItemsQuery } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const channel = await fastify.prisma.slackChannel.findUnique({
+        select: { teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!channel) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+        return reply;
+      }
+      const statusFilter = request.query.status;
+      const items = await fastify.prisma.channelOpenItem.findMany({
+        orderBy: { createdAt: 'desc' },
+        where: {
+          channelId: request.params.id,
+          ...(statusFilter && statusFilter !== 'all' ? { status: statusFilter } : {}),
+        },
+      });
+      return { data: items };
+    }
+  );
+
+  // PATCH /:id/open-items/:itemId — update status (dismiss/resolve). ADMIN only.
+  app.patch(
+    '/:id/open-items/:itemId',
+    { onRequest: adminOnly, schema: { body: OpenItemStatusSchema, params: OpenItemParams } },
+    async (request, reply) => {
+      const item = await fastify.prisma.channelOpenItem.findUnique({
+        where: { id: request.params.itemId },
+      });
+      if (!item || item.channelId !== request.params.id) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Item not found' } });
+      }
+      const updated = await fastify.prisma.channelOpenItem.update({
+        data: { status: request.body.status },
+        where: { id: item.id },
+      });
+      return { data: updated };
+    }
+  );
+
   // DELETE /:id — remove the channel row (ADMIN only).
   app.delete(
     '/:id',
