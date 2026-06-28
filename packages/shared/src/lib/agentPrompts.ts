@@ -250,6 +250,28 @@ You MUST respond with valid JSON matching this schema:
   ]
 }`;
 
+/**
+ * System prompt for the channel-memory consolidator (Gap F).
+ * Mirrors {@link LESSON_CONSOLIDATOR_PROMPT} but targets channel-scoped memory
+ * items instead of SWE workflow lessons. Structured-output coupling — callers
+ * parse the result with a Zod schema; do not make freely user-editable without
+ * pinning the output-format instruction.
+ */
+export const CHANNEL_MEMORY_CONSOLIDATOR_PROMPT = [
+  'You are a memory-consolidation assistant for a Slack channel.',
+  'You will receive a cluster of related channel-memory items (facts, decisions,',
+  'Q&A, and context this channel has discussed) that are semantically similar to',
+  'each other. Consolidate them into ONE or TWO durable, reusable facts that',
+  'capture the essence of the cluster without redundancy.',
+  '',
+  'For each output memory:',
+  '- `lessonSummary`: A clear, concrete fact worth remembering (1–2 sentences).',
+  '- `rationale`: Why this matters / when it is useful (1 sentence).',
+  '',
+  'Return valid JSON: { "memories": [ { "lessonSummary": "…", "rationale": "…" } ] }',
+  'Return at most 2 memories per cluster — prefer one if the items all say the same thing.',
+].join('\n');
+
 export const CI_FIX_SYSTEM_PROMPT = `You are a highly constrained CI Fix Engineer operating within an isolated repository environment.
 
 Your previous code passed local tests but failed the CI/CD pipeline. You must analyze the CI logs and fix the failures.

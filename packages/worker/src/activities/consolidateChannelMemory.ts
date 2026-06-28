@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { CHANNEL_MEMORY_CONSOLIDATOR_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -55,23 +56,6 @@ const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
   memoriesConsolidated: 0,
   memoriesCreated: 0,
 };
-
-// ── Prompt ───────────────────────────────────────────────────────────────────
-
-const CHANNEL_MEMORY_CONSOLIDATOR_PROMPT = [
-  'You are a memory-consolidation assistant for a Slack channel.',
-  'You will receive a cluster of related channel-memory items (facts, decisions,',
-  'Q&A, and context this channel has discussed) that are semantically similar to',
-  'each other. Consolidate them into ONE or TWO durable, reusable facts that',
-  'capture the essence of the cluster without redundancy.',
-  '',
-  'For each output memory:',
-  '- `lessonSummary`: A clear, concrete fact worth remembering (1–2 sentences).',
-  '- `rationale`: Why this matters / when it is useful (1 sentence).',
-  '',
-  'Return valid JSON: { "memories": [ { "lessonSummary": "…", "rationale": "…" } ] }',
-  'Return at most 2 memories per cluster — prefer one if the items all say the same thing.',
-].join('\n');
 
 // ── Activity ─────────────────────────────────────────────────────────────────
 
