@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { CHANNEL_OPEN_ITEM_SWEEPER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -53,23 +54,6 @@ const NUDGE_COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours
 const MAX_MESSAGE_CHARS = 400;
 
 // ── Prompt ───────────────────────────────────────────────────────────────────
-
-const SYSTEM_PROMPT = [
-  'You are an open-item tracker for a Slack channel. Your job:',
-  '',
-  '1. Detect NEW open items (unanswered questions, unresolved tasks, pending decisions)',
-  '   in the recent conversation that are not already tracked.',
-  '2. Identify which EXISTING tracked items have been resolved in the recent conversation.',
-  '',
-  'Rules for new items:',
-  '- Only track items that are clearly actionable and unresolved.',
-  '- Do NOT create items for casual chat, already-answered questions, or trivial remarks.',
-  '- Keep descriptions concise (1–2 sentences).',
-  '- Set ownerUserId to the Slack user ID (e.g. "U0ABC") of the person responsible, if clear.',
-  '- Set sourceTs to the Slack message ts of the message that created the item, if you can.',
-  '',
-  'Return valid JSON matching the requested schema.',
-].join('\n');
 
 function buildSweepPrompt(
   transcript: string,
@@ -188,7 +172,7 @@ export async function sweepChannelOpenItems(
     // LLM call with structured output.
     const agent = new Agent({
       id: 'channel-open-item-sweeper',
-      instructions: SYSTEM_PROMPT,
+      instructions: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT,
       model: await getModel('commitToMemory'),
       name: 'channel-open-item-sweeper',
     });
@@ -218,7 +202,7 @@ export async function sweepChannelOpenItems(
         tracer.addLlmResponse({
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
-          inputJson: { systemPrompt: SYSTEM_PROMPT, userMessage: prompt },
+          inputJson: { systemPrompt: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT, userMessage: prompt },
           inputTokens: attribution.inputTokens,
           model: attribution.modelSpec || undefined,
           outputJson: result.object ?? null,

@@ -13,6 +13,7 @@ vi.mock('@auto-swe/shared/db', () => {
 });
 
 vi.mock('@auto-swe/shared/lib/agentPrompts', () => ({
+  CHANNEL_MEMORY_SUMMARIZER_PROMPT: 'channel memory summarizer prompt',
   MEMORY_SUMMARIZER_PROMPT: 'memory summarizer prompt',
 }));
 

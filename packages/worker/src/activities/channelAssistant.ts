@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
+import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
@@ -177,23 +177,6 @@ const ChannelMemorySummarySchema = z.object({
   lessonSummary: z.string(),
   rationale: z.string(),
 });
-
-/**
- * System prompt for the channel-memory summarizer. Reuses the same framing as
- * the SWE {@link MEMORY_SUMMARIZER_PROMPT} (distill into a reusable lesson) but
- * targets a single conversational exchange instead of a whole workflow.
- */
-const CHANNEL_MEMORY_SUMMARIZER_PROMPT = `${MEMORY_SUMMARIZER_PROMPT}
-
-You are summarizing a single Slack conversational exchange (a user's question and
-the assistant's answer) into ONE durable, reusable fact for this channel's memory.
-Capture the concrete knowledge worth remembering — not the pleasantries.
-
-Respond with valid JSON matching this schema:
-{
-  "lessonSummary": "The durable fact worth remembering (1-2 sentences, specific and concrete)",
-  "rationale": "Why this matters / when it's useful (1 sentence)"
-}`;
 
 /**
  * Channel assistant (Phase 2). Prepend a compact context block built from retrieved

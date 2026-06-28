@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { CHANNEL_PASSIVE_INGEST_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -38,36 +39,6 @@ const PassiveIngestOutputSchema = z.object({
 
 const PASSIVE_INGEST_LIMIT = 50;
 const DEDUP_THRESHOLD = 0.85;
-
-// ── Prompt ───────────────────────────────────────────────────────────────────
-
-const PASSIVE_INGEST_PROMPT = [
-  'You are a silent fact-extractor for a Slack channel.',
-  'You will receive a transcript of recent channel messages (human messages only).',
-  'Your job is to silently extract at most 5 salient, durable facts worth',
-  'remembering about this team, project, or domain — without generating any reply.',
-  '',
-  'A "salient fact" is something a future channel assistant would find useful when',
-  'answering questions or providing context. Examples:',
-  '  - "The team deploys every Monday at 9 AM UTC"',
-  '  - "The codebase uses Prisma 7 with pgvector for semantic search"',
-  '  - "Alice owns the billing module; Bob owns the auth module"',
-  '  - "The v2 API migration is blocked on security review"',
-  '',
-  'Do NOT extract:',
-  '  - Casual chit-chat, greetings, or reactions',
-  '  - Facts already obvious from the topic/channel name',
-  '  - Opinions or speculation without clear team consensus',
-  '  - Anything that would be stale within hours',
-  '',
-  'If there are no salient facts in the transcript, return { "facts": [] }.',
-  '',
-  'For each fact:',
-  '  - `summary`: A clear, concrete sentence (team-agnostic, reusable in future context).',
-  '  - `rationale`: Why a future assistant would benefit from knowing this (1 sentence).',
-  '',
-  'Return valid JSON: { "facts": [ { "summary": "…", "rationale": "…" } ] }',
-].join('\n');
 
 // ── Activity ─────────────────────────────────────────────────────────────────
 
@@ -161,8 +132,8 @@ export async function passiveIngestChannelMemory(
       .filter(Boolean)
       .join('\n\n');
     const instructions = skillSuffix
-      ? `${PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
-      : PASSIVE_INGEST_PROMPT;
+      ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
+      : CHANNEL_PASSIVE_INGEST_PROMPT;
 
     const agent = new Agent({
       id: 'channel-passive-ingestor',
