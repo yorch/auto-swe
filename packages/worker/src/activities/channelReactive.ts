@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { type ChannelMemoryItem, retrieveChannelMemory } from '../lib/channelMemory.js';
+import { resolvePersonaPrompt } from '../lib/channelPersona.js';
 import {
   fetchChannelHistory,
   postSlackChannelMessage,
@@ -20,7 +21,7 @@ export interface ChannelReactiveInput {
 export interface ChannelReactiveResult {
   posted: boolean;
   /** Why the tick did (or didn't) post — drives the run record + debugging. */
-  reason: 'disabled' | 'no-new-messages' | 'over-budget' | 'cooldown' | 'skip' | 'posted';
+  reason: 'disabled' | 'no-new-messages' | 'over-budget' | 'cooldown' | 'skip' | 'posted' | 'error';
 }
 
 /** Fallback agent key when a channel row somehow lacks one (column has a default). */
@@ -144,6 +145,7 @@ export async function evaluateReactiveInterjection(
         lastReactiveCheckAt: true,
         monthlyBudgetUsdCents: true,
         orgId: true,
+        personaPrompt: true,
         reactiveEnabled: true,
         slackChannelId: true,
         teamId: true,
@@ -179,8 +181,12 @@ export async function evaluateReactiveInterjection(
       });
 
     // New-message gate: nothing new from a human → no LLM spend.
+    // Only advance the cursor when Slack actually returned messages (even bot-only);
+    // an empty fetch may indicate a timeout — don't skip past unseen messages.
     if (humanMessages.length === 0) {
-      await advanceCursor();
+      if (messages.length > 0) {
+        await advanceCursor();
+      }
       return { posted: false, reason: 'no-new-messages' };
     }
 
@@ -220,8 +226,9 @@ export async function evaluateReactiveInterjection(
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
+    const personaPrompt = await resolvePersonaPrompt(channel.personaPrompt, channel.orgId);
     const { reply, costUsd } = await runChannelAgentTurn(
-      { agentKey, id: channel.id, orgId: channel.orgId, teamId: channel.teamId },
+      { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
       buildReactivePrompt(messages, memory),
       'llm.channel_reactive'
     );
@@ -232,12 +239,10 @@ export async function evaluateReactiveInterjection(
     // a SKIP is a no-op evaluation, not a user-facing turn.
     await accrueChannelUsage(channel.id, costUsd, { countRun: posted });
 
-    if (posted) {
-      await postSlackChannelMessage(channel.slackChannelId, reply);
-    }
-
-    // One write for both timestamps: advance the cursor, and stamp the cooldown
-    // anchor only when we posted.
+    // Write cursor + cooldown anchor BEFORE the Slack call (at-most-once semantics):
+    // a transient Slack failure after this write can't cause a duplicate post on
+    // the next tick. Trade-off: if the Slack call fails we stamp the cooldown for
+    // a post that never landed; that's acceptable for a proactive interjection.
     await prisma.slackChannel.update({
       data: {
         lastReactiveCheckAt: now,
@@ -246,6 +251,10 @@ export async function evaluateReactiveInterjection(
       where: { id: channel.id },
     });
 
+    if (posted) {
+      await postSlackChannelMessage(channel.slackChannelId, reply);
+    }
+
     return { posted, reason: posted ? 'posted' : 'skip' };
   } catch (err) {
     // Reactive must never throw loudly / spam: log and report a no-op.
@@ -253,6 +262,6 @@ export async function evaluateReactiveInterjection(
       `[channelReactive] tick failed for ${input.channelId}:`,
       err instanceof Error ? err.message : err
     );
-    return { posted: false, reason: 'disabled' };
+    return { posted: false, reason: 'error' };
   }
 }

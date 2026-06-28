@@ -231,25 +231,32 @@ export async function sweepChannelOpenItems(
         return emptyResult;
       }
 
-      const { newItems, resolvedIds } = OpenItemSweepOutputSchema.parse(result.object);
+      const { newItems, resolvedIds } = result.object;
 
-      // Deduplicate new items by sourceTs against already-tracked ones.
-      const freshItems = newItems.filter((it) => !it.sourceTs || !trackedTsSet.has(it.sourceTs));
+      // Deduplicate new items: by sourceTs when available, otherwise by
+      // description against current OPEN items (items without a unique ts anchor
+      // are deduped by content so the same task isn't re-created every sweep).
+      const trackedDescriptionSet = new Set(existingOpen.map((it) => it.description));
+      const freshItems = newItems.filter((it) => {
+        if (it.sourceTs) {
+          return !trackedTsSet.has(it.sourceTs);
+        }
+        return !trackedDescriptionSet.has(it.description);
+      });
 
-      // 1. Create new items.
-      let itemsCreated = 0;
-      for (const it of freshItems) {
-        await prisma.channelOpenItem.create({
-          data: {
+      // 1. Create new items in one batch.
+      if (freshItems.length > 0) {
+        await prisma.channelOpenItem.createMany({
+          data: freshItems.map((it) => ({
             channelId: channel.id,
             description: it.description,
             ownerUserId: it.ownerUserId ?? null,
             sourceTs: it.sourceTs ?? null,
-            status: 'OPEN',
-          },
+            status: 'OPEN' as const,
+          })),
         });
-        itemsCreated++;
       }
+      const itemsCreated = freshItems.length;
 
       // 2. Mark resolved items.
       let itemsResolved = 0;
@@ -286,11 +293,13 @@ export async function sweepChannelOpenItems(
         const mention = item.ownerUserId ? `<@${item.ownerUserId}> ` : '';
         const nudge = `${mention}Just checking in — any update on: _${item.description}_?`;
         try {
-          await postSlackChannelMessage(channel.slackChannelId, nudge);
+          // Write the cooldown timestamp BEFORE posting (at-most-once): a
+          // transient Slack failure after this write can't cause a duplicate nudge.
           await prisma.channelOpenItem.update({
             data: { lastNudgedAt: now },
             where: { id: item.id },
           });
+          await postSlackChannelMessage(channel.slackChannelId, nudge);
           nudgesSent++;
         } catch (err) {
           console.error(

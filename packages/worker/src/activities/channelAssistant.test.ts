@@ -68,6 +68,10 @@ vi.mock('../lib/channelMemory.js', () => ({
   writeChannelMemory: (...args: unknown[]) => writeChannelMemoryMock(...args),
 }));
 
+vi.mock('../lib/channelPersona.js', () => ({
+  resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
+}));
+
 // Accrual now consumes the authoritative `costUsd` returned by runAgent (mocked
 // here), so the channel-monthly ledger prices identically to the run-level ledger.
 

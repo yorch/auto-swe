@@ -23,6 +23,9 @@ import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
 // because the caller awaits us; we'd rather miss a notification than slow
 // every workflow during a Slack outage.
 const SLACK_POST_TIMEOUT_MS = 2_000;
+// Read/history calls go over paginated Slack APIs that can be slower than a
+// fire-and-forget postMessage — give them a larger budget before aborting.
+const SLACK_HISTORY_TIMEOUT_MS = 8_000;
 const SLACK_POST_URL = 'https://slack.com/api/chat.postMessage';
 const SLACK_UPDATE_URL = 'https://slack.com/api/chat.update';
 const SLACK_REPLIES_URL = 'https://slack.com/api/conversations.replies';
@@ -327,7 +330,7 @@ export async function fetchThreadReplies(
   const url = `${SLACK_REPLIES_URL}?channel=${encodeURIComponent(channelId)}&ts=${encodeURIComponent(threadTs)}&limit=${limit}`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), SLACK_HISTORY_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
@@ -408,7 +411,7 @@ export async function fetchChannelHistory(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), SLACK_HISTORY_TIMEOUT_MS);
   try {
     const res = await fetch(`${SLACK_HISTORY_URL}?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },

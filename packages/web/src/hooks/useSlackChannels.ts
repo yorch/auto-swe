@@ -29,6 +29,7 @@ export interface SlackChannel {
   reactiveEnabled: boolean;
   reactiveCron: string | null;
   monthlyBudgetUsdCents: number | null;
+  personaPrompt: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -54,6 +55,7 @@ export interface CreateSlackChannelBody {
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
   monthlyBudgetUsdCents?: number | null;
+  personaPrompt?: string | null;
 }
 
 export interface UpdateSlackChannelBody {
@@ -64,6 +66,7 @@ export interface UpdateSlackChannelBody {
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
   monthlyBudgetUsdCents?: number | null;
+  personaPrompt?: string | null;
   isActive?: boolean;
   teamId?: string;
 }

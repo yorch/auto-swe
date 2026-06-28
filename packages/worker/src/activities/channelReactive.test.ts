@@ -37,6 +37,11 @@ vi.mock('../lib/channelMemory.js', () => ({
   retrieveChannelMemory: (...args: unknown[]) => retrieveChannelMemoryMock(...args),
 }));
 
+const resolvePersonaPromptMock = vi.fn().mockResolvedValue(null);
+vi.mock('../lib/channelPersona.js', () => ({
+  resolvePersonaPrompt: (...args: unknown[]) => resolvePersonaPromptMock(...args),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
 import {
   buildReactivePrompt,

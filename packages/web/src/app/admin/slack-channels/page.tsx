@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import {
   type ChannelOpenItemDto,
   type ChannelOpenItemStatus,
@@ -69,6 +70,7 @@ interface CreateForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   budgetDollars: string;
+  personaPrompt: string;
 }
 
 const EMPTY_CREATE: CreateForm = {
@@ -77,6 +79,7 @@ const EMPTY_CREATE: CreateForm = {
   ambientEnabled: false,
   budgetDollars: '',
   name: '',
+  personaPrompt: '',
   reactiveCron: '',
   reactiveEnabled: false,
   slackChannelId: '',
@@ -109,6 +112,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         ambientEnabled: form.ambientEnabled,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        personaPrompt: form.personaPrompt.trim() || null,
         reactiveCron: form.reactiveCron || null,
         reactiveEnabled: form.reactiveEnabled,
         slackChannelId: form.slackChannelId,
@@ -221,6 +225,13 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           type="number"
           value={form.budgetDollars}
         />
+        <Textarea
+          hint="Persona injected at the top of every system prompt for this channel. Leave blank to inherit the org default."
+          label="Persona (optional)"
+          onChange={(e) => set('personaPrompt', e.target.value)}
+          placeholder="You are Aria, the platform team's expert. Be concise and technical."
+          value={form.personaPrompt}
+        />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -245,6 +256,7 @@ interface EditForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   budgetDollars: string;
+  personaPrompt: string;
   teamId: string;
 }
 
@@ -255,6 +267,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
     name: ch.name ?? '',
+    personaPrompt: ch.personaPrompt ?? '',
     reactiveCron: ch.reactiveCron ?? '',
     reactiveEnabled: ch.reactiveEnabled,
     teamId: ch.teamId,
@@ -286,6 +299,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       ambientEnabled: form.ambientEnabled,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      personaPrompt: form.personaPrompt.trim() || null,
       reactiveCron: form.reactiveCron || null,
       reactiveEnabled: form.reactiveEnabled,
       teamId: form.teamId || undefined,
@@ -379,6 +393,13 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         step="0.01"
         type="number"
         value={form.budgetDollars}
+      />
+      <Textarea
+        hint="Persona injected at the top of every system prompt for this channel. Leave blank to inherit the org default."
+        label="Persona (optional)"
+        onChange={(e) => set('personaPrompt', e.target.value)}
+        placeholder="You are Aria, the platform team's expert. Be concise and technical."
+        value={form.personaPrompt}
       />
       {error && <p className="text-xs text-brick-400">{error}</p>}
       <div className="flex justify-end gap-2">

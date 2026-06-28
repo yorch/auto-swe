@@ -90,3 +90,30 @@ export function usePatchOrgBudget(orgId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-budget', orgId] }),
   });
 }
+
+// ── Org Persona ──
+
+export interface OrgPersonaRow {
+  orgId: string;
+  orgName: string;
+  defaultPersonaPrompt: string | null;
+}
+
+export function useOrgPersona(orgId: string) {
+  return useQuery({
+    enabled: !!orgId,
+    queryFn: () => api.get<OrgPersonaRow>(`/api/v1/admin/organizations/${orgId}/persona`),
+    queryKey: ['org-persona', orgId],
+  });
+}
+
+export function usePatchOrgPersona(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (defaultPersonaPrompt: string | null) =>
+      api.patch<OrgPersonaRow>(`/api/v1/admin/organizations/${orgId}/persona`, {
+        defaultPersonaPrompt,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-persona', orgId] }),
+  });
+}

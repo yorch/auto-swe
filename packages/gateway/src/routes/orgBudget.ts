@@ -16,6 +16,11 @@ const PatchBudgetSchema = z.object({
   monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
 });
 
+const PatchPersonaSchema = z.object({
+  /** Default persona prompt for all channels in this org. Null removes it. */
+  defaultPersonaPrompt: z.string().max(2000).nullable(),
+});
+
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -79,6 +84,50 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
       const updated = await fastify.prisma.organization.update({
         data: { monthlyBudgetUsdCents },
         select: { id: true, monthlyBudgetUsdCents: true, name: true },
+        where: { id: orgId },
+      });
+      return updated;
+    }
+  );
+
+  // GET /api/v1/admin/organizations/:orgId/persona — any org member may read.
+  f.get(
+    '/:orgId/persona',
+    { onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }) },
+    async (request, reply) => {
+      const { orgId } = OrgParamsSchema.parse(request.params);
+      const org = await fastify.prisma.organization.findUnique({
+        select: { defaultPersonaPrompt: true, id: true, name: true },
+        where: { id: orgId },
+      });
+      if (!org) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+      }
+      return { defaultPersonaPrompt: org.defaultPersonaPrompt, orgId: org.id, orgName: org.name };
+    }
+  );
+
+  // PATCH /api/v1/admin/organizations/:orgId/persona — ORG_ADMIN only.
+  f.patch(
+    '/:orgId/persona',
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      schema: { body: PatchPersonaSchema, params: OrgParamsSchema },
+    },
+    async (request, reply) => {
+      const { orgId } = OrgParamsSchema.parse(request.params);
+      const { defaultPersonaPrompt } = PatchPersonaSchema.parse(request.body);
+      const org = await fastify.prisma.organization.findUnique({ where: { id: orgId } });
+      if (!org) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+      }
+      const updated = await fastify.prisma.organization.update({
+        data: { defaultPersonaPrompt },
+        select: { defaultPersonaPrompt: true, id: true, name: true },
         where: { id: orgId },
       });
       return updated;

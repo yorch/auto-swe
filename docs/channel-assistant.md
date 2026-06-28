@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend. Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt. Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -301,7 +301,42 @@ Migration: `packages/shared/src/prisma/migrations/00000000000003_channel_open_it
   description, age, owner mention, last-nudge time, and Resolve + Dismiss actions for
   OPEN items.
 
-## 12. Observability & admin UI
+## 12. Per-channel personas (shipped)
+
+Admins can give the channel assistant a **persona** — a free-form prompt fragment
+(up to 2 000 chars) prepended to the top of every system prompt before any tool
+hints or task-specific notes, letting different channels carry distinct voices,
+domain focus, or behavioural rules.
+
+**Resolution cascade** (`packages/worker/src/lib/channelPersona.ts`):
+
+1. `SlackChannel.personaPrompt` — channel-specific override (highest priority).
+2. `Organization.defaultPersonaPrompt` — org-wide default for all channels that
+   don't set their own.
+3. `null` — no persona, system prompt is unchanged.
+
+`resolvePersonaPrompt(channelPersonaPrompt, orgId)` fetches the org row only
+when the channel level is blank; `applyPersona(systemPrompt, persona)` prepends
+the persona with a blank separator (`"${persona}\n\n${systemPrompt}"`).
+
+**Injection point:** `runChannelAgentTurn` (shared core for assistant, ambient,
+and reactive paths) applies the persona to `spec.systemPrompt` immediately after
+`resolveAgentSpec` and before any `promptNote` or tool hints, so tool-calling
+instructions stay closest to the model's attention boundary.
+
+**Admin surfaces:**
+- `SlackChannel` create/patch: `personaPrompt` field (nullable string). Surfaced
+  in the `/admin/slack-channels` modal (Textarea below the budget field) for both
+  create and edit.
+- `Organization` default: `GET /api/v1/admin/organizations/:orgId/persona`
+  (ORG_MEMBER) and `PATCH /api/v1/admin/organizations/:orgId/persona` (ORG_ADMIN).
+  Surfaced in the `/admin/organizations/[orgId]` page as a "Default Persona" card.
+
+**Scope:** persona is resolved at turn time (same activity call as model
+selection), so changing it takes effect on the next LLM call without a workflow
+restart.
+
+## 13. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
@@ -323,7 +358,7 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 13. Future refinements (not built)
+## 14. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
   mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
@@ -358,7 +393,7 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 14. Key files
+## 15. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ChannelOpenItem`, `ChannelOpenItemStatus`,
@@ -383,7 +418,9 @@ memory) from `/admin/slack-channels`.
   `packages/gateway/src/routes/slackChannels.ts`,
   `packages/gateway/src/plugins/temporal.ts` (`startChannelAssistant`).
 - Web: `packages/web/src/app/admin/slack-channels/`,
-  `packages/web/src/hooks/useSlackChannels.ts`.
+  `packages/web/src/app/admin/organizations/[orgId]/page.tsx`,
+  `packages/web/src/hooks/useSlackChannels.ts`,
+  `packages/web/src/hooks/useOrg.ts` (`useOrgPersona`, `usePatchOrgPersona`).
 - Shared: `packages/shared/src/lib/channelTask.ts` (`channelTaskWorkflowId`,
   `CHANNEL_TASK_STEER_SIGNAL`), `packages/shared/src/workflow/interpreter.ts`
   (`drainSteering`).

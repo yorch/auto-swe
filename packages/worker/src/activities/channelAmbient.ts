@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
+import { resolvePersonaPrompt } from '../lib/channelPersona.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   accrueChannelUsage,
@@ -95,6 +96,7 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
         isActive: true,
         monthlyBudgetUsdCents: true,
         orgId: true,
+        personaPrompt: true,
         slackChannelId: true,
         teamId: true,
       },
@@ -119,8 +121,9 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
+    const personaPrompt = await resolvePersonaPrompt(channel.personaPrompt, channel.orgId);
     const { reply, costUsd } = await runChannelAgentTurn(
-      { agentKey, id: channel.id, orgId: channel.orgId, teamId: channel.teamId },
+      { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
       buildAmbientPrompt(memory),
       'llm.channel_ambient'
     );

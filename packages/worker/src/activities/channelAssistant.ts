@@ -12,6 +12,7 @@ import {
   retrieveChannelMemory,
   writeChannelMemory,
 } from '../lib/channelMemory.js';
+import { applyPersona, resolvePersonaPrompt } from '../lib/channelPersona.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -324,7 +325,13 @@ export async function isChannelOverBudgetNow(
  * owns its `accrueChannelUsage` call to preserve the existing ordering.
  */
 export async function runChannelAgentTurn(
-  channel: { id: string; agentKey: string; teamId: string; orgId: string },
+  channel: {
+    id: string;
+    agentKey: string;
+    teamId: string;
+    orgId: string;
+    personaPrompt?: string | null;
+  },
   userMessage: string,
   spanName: string,
   /**
@@ -341,6 +348,12 @@ export async function runChannelAgentTurn(
     { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
     { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
   );
+
+  // Persona: prepend before any other additions so callers' promptNote and tool
+  // hints land at the END of the system prompt where the model weighs them highest.
+  if (channel.personaPrompt) {
+    spec.systemPrompt = applyPersona(spec.systemPrompt, channel.personaPrompt);
+  }
 
   // Merge any extra tools (delegateTask) onto the resolved spec, and append the
   // prompt note so the agent knows the affordance exists. The spec's own tools
@@ -379,7 +392,7 @@ export async function runChannelAssistantTurn(
   input: ChannelAssistantTurnInput
 ): Promise<{ reply: string; delegate?: DelegateIntent }> {
   const channel = await prisma.slackChannel.findUnique({
-    select: { agentKey: true, monthlyBudgetUsdCents: true },
+    select: { agentKey: true, monthlyBudgetUsdCents: true, personaPrompt: true },
     where: { id: input.channelId },
   });
   const agentKey = channel?.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
@@ -451,9 +464,13 @@ export async function runChannelAssistantTurn(
     delegate = intent;
   });
 
+  // Resolve the effective persona (channel overrides org default) and pass it
+  // into runChannelAgentTurn so it's prepended to the system prompt.
+  const personaPrompt = await resolvePersonaPrompt(channel?.personaPrompt, input.orgId);
+
   // Resolve the channel's agent (CHANNEL tier active) + run one generation.
   const { reply, costUsd } = await runChannelAgentTurn(
-    { agentKey, id: input.channelId, orgId: input.orgId, teamId: input.teamId },
+    { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
     userMessage,
     'llm.channel_assistant',
     { promptNote: DELEGATE_TOOL_PROMPT_NOTE, tools: { delegateTask: delegateTool } as AgentTools }

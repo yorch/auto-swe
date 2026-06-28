@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/db', () => {
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
     channelOpenItem: {
       create: vi.fn(),
+      createMany: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
@@ -66,7 +67,7 @@ import { sweepChannelOpenItems } from './channelOpenItems.js';
 
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
 const findOpenItems = vi.mocked(prisma.channelOpenItem.findMany);
-const createOpenItem = vi.mocked(prisma.channelOpenItem.create);
+const createManyOpenItems = vi.mocked(prisma.channelOpenItem.createMany);
 const updateManyItems = vi.mocked(prisma.channelOpenItem.updateMany);
 const updateItem = vi.mocked(prisma.channelOpenItem.update);
 
@@ -105,7 +106,7 @@ beforeEach(() => {
   });
   postSlackChannelMessageMock.mockResolvedValue(undefined);
   updateItem.mockResolvedValue({} as never);
-  createOpenItem.mockResolvedValue({} as never);
+  createManyOpenItems.mockResolvedValue({ count: 0 } as never);
   updateManyItems.mockResolvedValue({ count: 0 } as never);
   // Default: no existing open items, no tracked source ts
   findOpenItems.mockResolvedValue([] as never);
@@ -164,13 +165,15 @@ describe('sweepChannelOpenItems', () => {
     const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
     expect(result.itemsCreated).toBe(1);
     expect(result.itemsResolved).toBe(0);
-    expect(createOpenItem).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        channelId: 'chan-1',
-        description: 'Who owns the deploy?',
-        ownerUserId: 'U001',
-        sourceTs: '1700000001.000000',
-      }),
+    expect(createManyOpenItems).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          channelId: 'chan-1',
+          description: 'Who owns the deploy?',
+          ownerUserId: 'U001',
+          sourceTs: '1700000001.000000',
+        }),
+      ],
     });
   });
 
@@ -265,7 +268,33 @@ describe('sweepChannelOpenItems', () => {
 
     const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
     expect(result.itemsCreated).toBe(0);
-    expect(createOpenItem).not.toHaveBeenCalled();
+    expect(createManyOpenItems).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates items without sourceTs by description against existing open items', async () => {
+    const existingOpen = {
+      createdAt: new Date(Date.now() - 2 * 3_600_000),
+      description: 'Decide on DB migration strategy',
+      id: 'item-existing',
+      lastNudgedAt: null,
+      ownerUserId: null,
+    };
+    findChannel.mockResolvedValue(makeChannel() as never);
+    fetchChannelHistoryMock.mockResolvedValue(makeMessages(2));
+    findOpenItems
+      .mockResolvedValueOnce([existingOpen] as never) // existing OPEN
+      .mockResolvedValueOnce([] as never); // tracked sourceTs (none)
+    agentGenerateMock.mockResolvedValue({
+      object: {
+        newItems: [{ description: 'Decide on DB migration strategy' }], // no sourceTs, same description
+        resolvedIds: [],
+      },
+      usage: { completionTokens: 20, promptTokens: 60 },
+    });
+
+    const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
+    expect(result.itemsCreated).toBe(0);
+    expect(createManyOpenItems).not.toHaveBeenCalled();
   });
 
   it('returns empty on unexpected error without throwing', async () => {

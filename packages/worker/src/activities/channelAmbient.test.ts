@@ -37,6 +37,10 @@ vi.mock('../lib/channelMemory.js', () => ({
   writeChannelMemory: (...args: unknown[]) => writeChannelMemoryMock(...args),
 }));
 
+vi.mock('../lib/channelPersona.js', () => ({
+  resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
+}));
+
 // accrueChannelUsage is the real implementation (it calls prisma.channelMonthlyUsage.upsert,
 // which is mocked above); isChannelOverBudget is the real pure predicate.
 
