@@ -165,6 +165,7 @@ CREATE TABLE "organizations" (
     "slug" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "monthly_budget_usd_cents" INTEGER,
+    "default_persona_prompt" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -254,6 +255,7 @@ CREATE TABLE "slack_channels" (
     "last_reactive_check_at" TIMESTAMPTZ,
     "last_reactive_at" TIMESTAMPTZ,
     "monthly_budget_usd_cents" INTEGER,
+    "persona_prompt" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
