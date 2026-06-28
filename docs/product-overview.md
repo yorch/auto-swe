@@ -48,7 +48,7 @@ flowchart TB
         WR[Work requests\nWeb / CLI / REST / Slack]
         SCHED[Scheduled work requests\nTemporal Schedules]
         EPIC[Multi-repo epics\ndependency-graph fan-out]
-        WF[Configurable workflow engine\n14 node types, versioned, A/B]
+        WF[Configurable workflow engine\n15 node types, versioned, A/B]
     end
 
     subgraph Agents["Agent Execution"]
@@ -80,10 +80,10 @@ flowchart TB
 
 | Domain | Capabilities |
 |---|---|
-| **Agent system** | 10 roles (6 model-backed + 4 skill-only sub-personas); multi-agent review network; TDD implementation loop. See [agents.md](./agents.md). |
+| **Agent system** | 11 roles (7 model-backed + 4 skill-only sub-personas); multi-agent review network; TDD implementation loop; channel-resident `channelAssistant` role with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
 | **Skills** | 27 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
-| **Workflow engine** | 14 node types (incl. the declarative `agent` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
+| **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 52 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
@@ -177,7 +177,7 @@ By its own 9-phase build history, auto-swe is **feature-complete rather than asp
 
 - **Shipped-vs-planned matrix:** [STATUS.md](../STATUS.md)
 - **Design rationale (39 architecture decisions):** [configurable-workflows.md](./configurable-workflows.md)
-- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only. (MCP tool integration is now end-to-end — see [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in) — though the `mcp` workflow node (P2/WS4) and canvas authoring (WS5) are still pending.)
+- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only. MCP tool integration is end-to-end — `mcp` Connection, binding in all implementer activities + generic agent node (P2/WS3), `mcp` workflow node (P2/WS4), and canvas authoring (P2/WS5) are all shipped. See [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in).
 
 ---
 

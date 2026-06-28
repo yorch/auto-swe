@@ -60,7 +60,8 @@ packages/
 ├── gateway/     Fastify 5 HTTP API — auth, RBAC, routing, webhooks, admin
 ├── worker/      Temporal worker — Mastra agents, activities, workflow runners
 ├── web/         Next.js 16 dashboard — App Router, TanStack Query, Zustand, React Flow
-└── cli/         auto-swe binary — thin REST client over gateway
+├── cli/         auto-swe binary — thin REST client over gateway
+└── sdk/         @auto-swe/sdk — bundle authoring SDK (defineAgent/defineSkill/defineTemplate/defineBundle, signBundle, validateBundle)
 ```
 
 ### 2.1 `packages/shared`
@@ -69,7 +70,7 @@ packages/
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/index.ts` | Re-exports types and enums from `@auto-swe/shared` |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 40 models (see §6; the `Agent` + `AgentSkillRef` entities replaced `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` in P1/P1.5) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 49 models (see §6; the `Agent` + `AgentSkillRef` entities replaced `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` in P1/P1.5) |
 | `src/prisma/seed.ts` | Seeds admin user, default team, sample `git_repo` connection, default workflow template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Squashed init migration + HNSW-index migration |
 | `src/skills/index.ts` | Barrel — `BUILTIN_SKILLS` array + `BuiltinSkillDef` interface; one file per skill in this directory |
@@ -153,8 +154,8 @@ packages/
 | `src/lib/shellCommandScanner.ts` | `scanShellCommand(cmd)` — checks bash tool calls against active `SHELL_COMMAND` patterns; soft-block returns error string to agent for self-correction |
 | `src/lib/sensitiveFileScanner.ts` | `checkSensitiveFilePath(path)` — hard-blocks writes to paths matching DB-backed `SENSITIVE_FILE` patterns (6 built-ins: `.env`, PEM/key files, SSH private keys, credential JSON; admin-extensible at `/admin/scanner`) via `makePatternLoader` |
 | `src/lib/codeSecurityScanner.ts` | `scanDiffForCodeIssues(diff)` — advisory scan of git diff added-lines against `CODE_SECURITY` patterns; `formatCodeSecurityFindings(findings)` — formats for security reviewer prompt |
-| `src/lib/models.ts` | `getModel(role, ctx)` — 4-level scope cascade (template → team → org → global) |
-| `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` + `loadAgentToolConfig(role, ctx)` + `skillsToPromptSuffix(skills)` — skill and tool config loading at WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL scope |
+| `src/lib/models.ts` | `getModel(role, ctx)` — 5-level scope cascade (template → channel → team → org → global) |
+| `src/lib/config/agentSkills.ts` | `loadAgentSkills(role, ctx)` + `loadAgentToolConfig(role, ctx)` + `skillsToPromptSuffix(skills)` — skill and tool config loading at WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL scope |
 | `src/lib/config/resolver.ts` | `resolveProviderCredential(provider, ctx)` + `resolveEmbeddingConfig()` — credential + embedding cascade (per-agent model resolution lives in `agentResolver.ts` → `resolveAgent`); `ConfigMissingError` |
 | `src/lib/config/agentResolver.ts` | `resolveAgent(key, ctx)` — **sole** model/skill/tool resolver (P1.5); most-specific active Agent version with run-start pin (`WorkflowRun.agentVersions`); model via `modelSpec`/`inheritsModelFrom`, skills via `skillRefs`, tools via `toolKeys` |
 | `src/lib/config/agentSpec.ts` | `resolveAgentSpec(input, ctx)` — composes the resolved Agent into an `AgentSpec` (model + prompt + skills + tools); used by `runAgent` |
@@ -372,24 +373,26 @@ interface Dispatcher {
 
 `RunnableWorkflow` implements this by wrapping each activity proxy call. Set, cond, signal, terminate, fan-out, and the four HITL nodes are handled internally by the interpreter — only `step` and `shell` cross the dispatcher's activity boundary. `dispatchShell` is optional (dispatchers that omit it throw on shell nodes); `notifyHumanStep` / `resolveHumanStep` are optional and only exercised by HITL nodes. The interpreter has no Temporal imports and runs in tests with a mock dispatcher.
 
-### 4-level scope cascade
+### 5-level scope cascade
 
-All per-role configuration (model selection, skills, tool access) follows the same cascade at activity-call time. P5 inserted the `ORGANIZATION` tier between `TEAM` and `GLOBAL`; it fires only when the run's team belongs to an org (`ctx.orgId` is derived transitively from `Team.orgId`), so org-free deployments behave exactly as the prior 3-level cascade:
+All per-role configuration (model selection, skills, tool access) follows the same cascade at activity-call time. The channel assistant added the `CHANNEL` tier; P5 inserted the `ORGANIZATION` tier between `TEAM` and `GLOBAL`. Both fire conditionally: CHANNEL only when `ctx.channelId` is set, ORGANIZATION only when the run's team belongs to an org (`ctx.orgId` derived from `Team.orgId`), so non-Slack, org-free deployments behave exactly as the prior 3-level cascade:
 
 ```
 For each LLM call / activity invocation:
-  resolve(role, { teamId, orgId, workflowTemplateId })
+  resolve(role, { teamId, orgId, channelId, workflowTemplateId })
       ↓
   1. WORKFLOW_TEMPLATE row (if templateId set)
   ↓ (fall through if missing)
-  2. TEAM row (if teamId set)
+  2. CHANNEL row (if channelId set — channel-resident runs only)
   ↓ (fall through if missing)
-  3. ORGANIZATION row (if orgId set; P5)
+  3. TEAM row (if teamId set)
   ↓ (fall through if missing)
-  4. GLOBAL row
+  4. ORGANIZATION row (if orgId set; P5)
+  ↓ (fall through if missing)
+  5. GLOBAL row
 
 Agent (P1.5)  → resolveAgent()        in packages/worker/src/lib/config/agentResolver.ts (THE resolver; run-start version pin)
-Model         → getModel()            in packages/worker/src/lib/models.ts            (shim over resolveAgent — 6 model-backed roles)
+Model         → getModel()            in packages/worker/src/lib/models.ts            (shim over resolveAgent — 7 model-backed roles)
 Skills        → loadAgentSkills()     in packages/worker/src/lib/config/agentSkills.ts (shim over resolveAgent — Agent skillRefs)
 Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/agentSkills.ts (shim over resolveAgent — Agent toolKeys; null = all)
 ```
@@ -398,10 +401,10 @@ Tool access   → loadAgentToolConfig() in packages/worker/src/lib/config/agentS
 
 Agent identity is a **free-form string** (`AnySkillRole = string`); the legacy `AgentRole` enum and the `SkillOnlyRole` union were removed in the platform pivot (P0/P1). Two groups of seeded SWE keys remain by convention:
 
-- **Model-backed roles (6):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory` — each has a GLOBAL `Agent` with a `modelSpec` (validated at worker boot by `assertConfigReady`). Note: `securityReview` is a legacy role name preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all three sub-agents. Do not route new code through `securityReview`.
+- **Model-backed roles (7):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant` — each has a GLOBAL `Agent` with a `modelSpec` (validated at worker boot by `assertConfigReady`). Note: `securityReview` is a legacy role name preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all three sub-agents. Do not route new code through `securityReview`. `channelAssistant` drives all channel-resident LLM paths (mention turns, ambient digest, reactive interjection) and can have `CHANNEL`-scoped overrides per channel.
 - **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — used within a parent activity. Their `Agent` has **no** `modelSpec`; it carries `inheritsModelFrom` (→ `reviewer` for the three reviewers, → `planner` for `decomposer`) so `resolveAgent` binds the parent's model.
 
-**First-class `Agent` entity (P1, sole source since P1.5):** the `Agent` table is the versioned, governed, **single source of truth** for per-role model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`, run-start version pinned via the `WorkflowRun.agentVersions` snapshot): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it. `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the result into an `AgentSpec`; the generic `runAgent` activity executes it. Seeded built-in agents live at GLOBAL scope tagged `origin='swe-starter'` (with default model specs, so the worker boots from the seed — no "Seed defaults" step). Managed at `/admin/agents/library` via `/api/v1/admin/agent-library`.
+**First-class `Agent` entity (P1, sole source since P1.5):** the `Agent` table is the versioned, governed, **single source of truth** for per-role model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL`, run-start version pinned via the `WorkflowRun.agentVersions` snapshot): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it. `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the result into an `AgentSpec`; the generic `runAgent` activity executes it. Seeded built-in agents live at GLOBAL scope tagged `origin='swe-starter'` (with default model specs, so the worker boots from the seed — no "Seed defaults" step). Managed at `/admin/agents/library` via `/api/v1/admin/agent-library`.
 
 Sub-role usage:
 - `securityReviewer`, `domainLogicReviewer`, `performanceReviewer` — loaded by `runReviewNetwork`; each reviewer agent gets its own skill suffix appended to its system prompt. All three inherit the `reviewer` model.
@@ -417,7 +420,7 @@ Sub-role usage:
 
 **Agent observability — `AgentTracer`:** Every LLM-calling activity must create an `AgentTracer`, call `addToolCall` / `addLlmResponse` / `addActivityEvent` as operations run, and then call `persistActivityTrace(tracer, role)` at exit (best-effort; failures are swallowed). These records land in the `agent_traces` table and power the `/runs/[id]` viewer. See [docs/agents.md §8](./agents.md#8-agent-observability-agenttracer) for the full pattern and table schema.
 
-**Full agent, tool, and skill reference:** [docs/agents.md](./agents.md) covers all 10 roles, all 27 built-in skills, the implementer's 5 tools, the review network model resolution, the `AgentTracer` pattern, and the complete skill + tool assignment API endpoint reference.
+**Full agent, tool, and skill reference:** [docs/agents.md](./agents.md) covers all 11 roles, all 27 built-in skills, the implementer's 5 tools, the review network model resolution, the `AgentTracer` pattern, and the complete skill + tool assignment API endpoint reference.
 
 Files: `packages/worker/src/lib/models.ts`, `packages/worker/src/lib/config/agentSkills.ts`, `packages/worker/src/lib/config/types.ts`, `packages/worker/src/lib/config/resolver.ts`, `packages/worker/src/lib/agentTracer.ts`, `packages/worker/src/lib/activityContext.ts`, `packages/shared/src/lib/skillScanner.ts`, `packages/gateway/src/routes/scannerPatterns.ts`, `packages/gateway/src/routes/skills.ts`, `packages/shared/src/prisma/schema.prisma` (`Agent`, `AgentSkillRef`, `Skill`, `MemoryItem`, `ScannerPattern`, `AgentTrace`).
 
@@ -515,8 +518,8 @@ erDiagram
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows — full agent observability |
 | Memory | `MemoryItem` | Generic pgvector semantic memory (1536-dim HNSW index); `scope` partitions domains (SWE lessons use `'swe-lessons'`) |
 | Model config | `Agent`, `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | DB-backed LLM routing (AES-256-GCM encrypted keys); the first-class `Agent` is the sole source of model/skill/tool config (P1.5 retired `ModelRoleConfig`) |
-| System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `TrackerConfig` | Singleton (`id='default'`) integration config — encrypted secrets, env-var fallback; `TrackerConfig` drives the submit-time ticket fetch into `ContextSnapshot.rawTicketData` |
-| Agent config | `Agent`, `AgentSkillRef`, `Skill` | First-class versioned agents (model/skill/tool overrides, scoped GLOBAL / ORGANIZATION / TEAM / WORKFLOW_TEMPLATE) + skills (prompt fragments) joined via `AgentSkillRef` |
+| System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `IssueTrackerConfig`, `KnowledgeBaseConfig` | Singleton (`id='default'`) integration config — encrypted secrets, env-var fallback; `IssueTrackerConfig` drives the submit-time ticket fetch into `ContextSnapshot.rawTicketData`; `KnowledgeBaseConfig` drives knowledge-base context injection (Confluence / Notion) |
+| Agent config | `Agent`, `AgentSkillRef`, `Skill` | First-class versioned agents (model/skill/tool overrides, scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE) + skills (prompt fragments) joined via `AgentSkillRef` |
 | Infrastructure | `Organization`, `Team`, `Connection` | Tenancy + connection registry. `Organization` (P5) is the top-level tenant boundary — every `Team` nests under one org, and the config cascade gains an `ORGANIZATION` tier between TEAM and GLOBAL (billing/RBAC/row-level isolation still deferred). `Connection.type` (`'git_repo'` for SWE; `'mcp'` for an MCP server, URL in `config.url`, referenced by `Agent.mcpConnectionId`) + generic `config` Json; git-identity columns are nullable for non-git types, git uniqueness is a partial unique index scoped to `type='git_repo'` |
 
 ---

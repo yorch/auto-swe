@@ -91,6 +91,10 @@ NEXT_PUBLIC_APP_VERSION=<git sha / release>
 CORS_ORIGIN=https://app.example.com,https://admin.example.com  # first entry = better-auth client origin
 PUBLIC_URL=https://api.example.com                              # used for Slack OAuth callback
 
+# Config encryption — REQUIRED for gateway and worker to start
+# Encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 credentials, OAuth secrets)
+CONFIG_ENCRYPTION_KEY=<openssl rand -base64 32>  # base64-encoded 32 bytes
+
 # Seed (only needed for first boot — the admin user)
 SEED_ADMIN_PASSWORD=<openssl rand -base64 24>
 SEED_ADMIN_EMAIL=admin@example.com   # optional, defaults to admin@auto-swe.local
@@ -178,7 +182,7 @@ The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 36 tables, enums, FKs, Prisma-expressible indexes) |
+| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 49 tables, enums, FKs, Prisma-expressible indexes) |
 | `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
 
 New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.

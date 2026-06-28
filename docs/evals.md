@@ -165,8 +165,8 @@ These mirror the platform-pivot principles so evals stay coherent with the rest 
    admin UI, consistent with the project's "everything in Prisma, no external SaaS as system of
    record" philosophy (model config, scanners, connections all follow this). External tools
    (Promptfoo/Langfuse) are *optional exporters*, never the source of truth.
-2. **Evals are content, the harness is engine.** The mechanism (an `eval` node, an
-   `evaluateOutput` activity, an `EvalResult` table) is generic; SWE ships seed datasets +
+2. **Evals are content, the harness is engine.** The mechanism (an `eval` node, a
+   `runEvalNode` activity, an `EvalResult` table) is generic; SWE ships seed datasets +
    scorers as content, with no privileged runtime status — same split as Agents/Templates/Skills.
 3. **Reuse existing seams.** Score the signals that already exist (gates, review verdicts,
    traces) before inventing new ones. The cheapest, highest-value work is *recording* what the
@@ -224,7 +224,7 @@ Scorer `kind`s map to the four machine-scored families in §2 (`gate`/`assert` =
 the judge when the floor fails (per the combination model above), so a broken diff never costs a
 judge call.
 
-The node dispatches to a new `evaluateOutput` activity (an LLM activity when a `judge` scorer is
+The node dispatches to the `runEvalNode` activity (an LLM activity when a `judge` scorer is
 present — wrapped in `AgentTracer` + `persistActivityTrace` like every other LLM activity). It
 writes one `EvalResult` row per scorer, and exposes an aggregate score at
 `nodes.<id>.output.score` for downstream `cond` branching.

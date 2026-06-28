@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + Gaps A/C/D/E/F/G shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -92,9 +92,9 @@ The assistant builds context over time (`packages/worker/src/lib/channelMemory.t
   Storing the raw exchange is the baseline; a summarizing pass is a future
   refinement.
 - Admin surface: `GET /api/v1/admin/slack-channels/:id/memory` (team-visible) +
-  `DELETE …/memory/:memoryId` (admin), surfaced in the `/admin/slack-channels`
-  UI. No edit endpoint — editing the text would strand the pgvector embedding
-  (re-embed is a worker concern), so view + delete is the deliberate surface.
+  `DELETE …/memory/:memoryId` (admin) + `PATCH …/memory/:memoryId` (admin —
+  updates text and best-effort triggers `ReembedMemoryWorkflow` to refresh the
+  pgvector embedding), surfaced in the `/admin/slack-channels` UI.
 
 ## 6. Phase 3 — ambient mode (shipped)
 
@@ -113,8 +113,11 @@ Proactive posting via a per-channel Temporal Schedule:
   — doing so would feed each scheduled digest its own prior output via
   `recentChannelMemory` (a compounding loop); channel memory accrues from real
   assistant turns only. It never throws (proactive ⇒ quiet on failure).
-- After the digest, the same ambient fire runs `consolidateChannelMemory` (Gap F,
-  §9) best-effort to compact accumulated channel memory.
+- After the digest, the same ambient fire runs three best-effort activities in
+  order: `consolidateChannelMemory` (Gap F, §9) to compact accumulated channel
+  memory; `sweepChannelOpenItems` (Gap C, §11) to track and nudge open items;
+  and `passiveIngestChannelMemory` (Gap G, §9) to silently extract new facts
+  from human messages.
 - Scope note: ambient proactivity is delivered via Schedules (reusing the
   existing schedule machinery), not a long-lived signal-driven workflow — see
   §8.
@@ -292,7 +295,9 @@ digest and after `consolidateChannelMemory`). Three things happen per sweep:
    recent thread).
 2. **Persist** — new items are inserted; resolved IDs are `updateMany`-ed to `RESOLVED`.
    `sourceTs` (Slack message timestamp) is used as a **dedup anchor** so the same
-   message never spawns two items across consecutive ambient fires.
+   message never spawns two items across consecutive ambient fires. When `sourceTs`
+   is absent (the LLM omitted it), a description-similarity check against existing
+   `OPEN` items prevents near-duplicate entries.
 3. **Nudge** — any OPEN item older than 24 hours and not nudged in the last 12 hours
    receives a polite top-level channel message: `<@USER> Just checking in — any update
    on: _description_?`. `lastNudgedAt` is advanced after each nudge; the cooldown
@@ -304,7 +309,7 @@ Never throws — a flaky sweep cannot crash the ambient schedule.
 **Data model:** `ChannelOpenItem` (schema: `packages/shared/src/prisma/schema.prisma`),
 `ChannelOpenItemStatus` enum (`OPEN` / `RESOLVED` / `DISMISSED`), composite index on
 `(channel_id, status)`, `sourceTs` for dedup, `lastNudgedAt` for nudge cooldown.
-Migration: `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
+Model columns folded into `packages/shared/src/prisma/migrations/00000000000000_init/migration.sql`.
 
 **Admin API + UI:**
 - `GET  /api/v1/admin/slack-channels/:id/open-items?status=OPEN|RESOLVED|DISMISSED|all`
@@ -331,7 +336,7 @@ domain focus, or behavioural rules.
 3. `null` — no persona, system prompt is unchanged.
 
 `resolvePersonaPrompt(channelPersonaPrompt, teamDefaultPersonaPrompt)` is a pure
-async function — callers include `team: { select: { defaultPersonaPrompt: true } }`
+synchronous function — callers include `team: { select: { defaultPersonaPrompt: true } }`
 in their channel query and pass it directly, eliminating the extra DB round-trip.
 `applyPersona(systemPrompt, persona)` prepends with a blank separator
 (`"${persona}\n\n${systemPrompt}"`).
@@ -370,7 +375,7 @@ engineering run. `finalizeChannelRun` writes only the run's own denormalized cos
 `OrgMonthlyUsage`).
 
 The advisory injection scan surfaces as a `CHANNEL_SUSPICIOUS` security event
-(`activity_event` `toolName='channel.suspicious_input'`) in `/admin/security`.
+(`activity_event` with `name='channel.suspicious_input'`) in `/admin/security`.
 Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
@@ -410,8 +415,8 @@ memory) from `/admin/slack-channels`.
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
   `SlackChannel`, `ChannelMonthlyUsage`, `ChannelOpenItem`, `ChannelOpenItemStatus`,
-  `ConfigScope.CHANNEL`); migration:
-  `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
+  `ConfigScope.CHANNEL`); all columns folded into
+  `packages/shared/src/prisma/migrations/00000000000000_init/migration.sql`.
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
   `packages/worker/src/workflows/channelScheduledTask.ts` (Gap D deferral, §9),
