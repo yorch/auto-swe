@@ -10,18 +10,20 @@ The DB is the sole source of truth for LLM config — no env vars for models or 
 
 ### Scopes
 
-Per-role model + system-prompt config lives on the first-class `Agent` table (the `ModelRoleConfig` table was removed in P1.5). Every `Agent` row lives at one of three scopes:
+Per-role model + system-prompt config lives on the first-class `Agent` table (the `ModelRoleConfig` table was removed in P1.5). Every `Agent` row lives at one of five scopes:
 
 | Scope | Discriminator | Purpose |
 | ----- | ------------- | ------- |
 | `GLOBAL` | none | System-wide default. Exactly one row per role. |
-| `TEAM` | `teamId` | Overrides GLOBAL for runs owned by one team. |
-| `WORKFLOW_TEMPLATE` | `workflowTemplateId` | Overrides TEAM + GLOBAL for runs of one template. |
+| `ORGANIZATION` | `orgId` | Overrides GLOBAL for runs owned by teams in one org (P5). |
+| `TEAM` | `teamId` | Overrides ORGANIZATION + GLOBAL for runs owned by one team. |
+| `CHANNEL` | `channelId` | Overrides TEAM for channel-resident runs only (Slack channel assistant). |
+| `WORKFLOW_TEMPLATE` | `workflowTemplateId` | Overrides all lower scopes for runs of one template. |
 
 Per-role model selection lives on `Agent.modelSpec` (`<provider>/<model>`); sub-roles can carry `Agent.inheritsModelFrom` instead to bind a parent role's model, and `Agent.credentialId` pins a specific credential. The resolver picks the most specific scope row that exists for a given call:
 
 ```
-WORKFLOW_TEMPLATE → TEAM → GLOBAL → ConfigMissingError
+WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → ConfigMissingError
 ```
 
 A missing GLOBAL row is a startup error, not a runtime condition — `assertConfigReady()` at worker boot catches it before any activity runs.
@@ -36,7 +38,7 @@ A missing GLOBAL row is a startup error, not a runtime condition — `assertConf
 WORKFLOW_TEMPLATE → TEAM → GLOBAL → (use agent's built-in prompt)
 ```
 
-The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
+The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
 
 Common uses:
 
@@ -63,7 +65,7 @@ The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderC
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created the 6 model-backed GLOBAL `Agent` rows (with default model specs) + the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/admin/model-config` → Credentials.
+3. The DB seed already created 8 model-backed GLOBAL `Agent` rows (the 6 SWE roles + `channelAssistant` + `evalJudge`, all with default model specs) + the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/admin/model-config` → Credentials.
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 
@@ -71,8 +73,9 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 
 | Role / Slot | Default |
 | ----------- | ------- |
-| `IMPLEMENTER` / `REVIEWER` / `COMMIT_TO_MEMORY` | `anthropic/claude-opus-4-8` |
-| `PLANNER` / `SECURITY_REVIEW` / `VALIDATE_CONTEXT` | `anthropic/claude-sonnet-4-6` |
+| `implementer` / `reviewer` / `commitToMemory` / `channelAssistant` | `anthropic/claude-opus-4-8` |
+| `planner` / `securityReview` / `validateContext` | `anthropic/claude-sonnet-4-6` |
+| `evalJudge` | `anthropic/claude-haiku-4-5-20251001` (distinct model to avoid self-preference bias) |
 | Embeddings | `openai/text-embedding-3-large` |
 
 ---

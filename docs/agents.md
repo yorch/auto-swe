@@ -6,11 +6,11 @@
 
 ## 1. Agent Roles
 
-Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The 10 seeded SWE agent keys still fall into two groups by convention. (The evals feature seeds one more model-backed agent, `evalJudge` — an LLM-as-judge on a distinct, cheaper model to avoid self-preference bias; it is eval infrastructure, not a SWE workflow role, and is not in `MODEL_BACKED_AGENT_KEYS`, so it does not gate worker boot. See `docs/evals.md`.)
+Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The seeded SWE agent keys fall into two groups by convention. (The channel assistant adds one model-backed key, `channelAssistant` — see Group 1. The evals feature seeds one more model-backed agent, `evalJudge` — an LLM-as-judge on a distinct, cheaper model to avoid self-preference bias; it is eval infrastructure, not a SWE workflow role, and is not in `MODEL_BACKED_AGENT_KEYS`, so it does not gate worker boot. See `docs/evals.md`.)
 
-### Group 1 — model-backed roles (6)
+### Group 1 — model-backed roles (7)
 
-These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the seed with the defaults below). The worker refuses to start (`assertConfigReady()`) until all six resolve a model + credential. Model, prompt, skills, and tools are edited — and overridden at TEAM / WORKFLOW_TEMPLATE scope — via the Agent library (`/admin/agents/library`).
+These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the seed with the defaults below). The worker refuses to start (`assertConfigReady()`) until all seven SWE + channel roles resolve a model + credential. Model, prompt, skills, and tools are edited — and overridden at CHANNEL / TEAM / WORKFLOW_TEMPLATE scope — via the Agent library (`/admin/agents/library`).
 
 | Role | Key | Activity | Default model |
 |---|---|---|---|
@@ -20,6 +20,7 @@ These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the
 | Security Review | `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
 | Validate Context | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
 | Commit to Memory | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
+| Channel Assistant | `channelAssistant` | `runChannelAgentTurn` (mention/ambient/reactive) | `anthropic/claude-opus-4-8` |
 
 > **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` GLOBAL `Agent` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
 
@@ -34,11 +35,11 @@ These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the
 | Performance Reviewer | `performanceReviewer` | `reviewer` | `runReviewNetwork` |
 | Decomposer | `decomposer` | `planner` | `planDecomposition` |
 
-**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` (the 6-key model-backed set) from `@auto-swe/shared/agentKeys`, shared with the web dashboard).
+**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` (the 7-key model-backed set including `channelAssistant`) from `@auto-swe/shared/agentKeys`, shared with the web dashboard).
 
 ### First-class `Agent` entity (P1) + `agent` node (P2)
 
-The **`Agent`** table is the versioned, governed, **single source of truth** for an agent's model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → TEAM → ORGANIZATION → GLOBAL`; the ORGANIZATION tier — P5 — fires only when the run's team has an org; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it.
+The **`Agent`** table is the versioned, governed, **single source of truth** for an agent's model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL`; the CHANNEL tier fires only when `ctx.channelId` is set; the ORGANIZATION tier — P5 — fires only when the run's team has an org; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it.
 
 - **Resolution → execution:** `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the resolved model + skills + tools + prompt into an `AgentSpec`; the generic `runAgent` activity (`activities/runAgent.ts`) runs it.
 - **Governance:** editing an Agent's system prompt runs the injection/exfil scan and resets `isVerified`; versions are immutable (a base edit cuts a new version); RBAC GLOBAL=ADMIN, TEAM=team OWNER. Seeded built-ins are `origin='swe-starter'`.
@@ -49,12 +50,14 @@ The **`Agent`** table is the versioned, governed, **single source of truth** for
 
 ## 2. Model Configuration & Resolution
 
-Model config is **fully DB-driven** — no model-related env vars. At activity-call time, `resolveAgent(key, ctx)` cascades through three scopes:
+Model config is **fully DB-driven** — no model-related env vars. At activity-call time, `resolveAgent(key, ctx)` cascades through five scopes:
 
 ```
 WORKFLOW_TEMPLATE scope  →  (if templateId set and row exists)
+CHANNEL scope            →  (if channelId set — channel-resident runs only)
 TEAM scope               →  (if teamId set and row exists)
-GLOBAL scope             →  (required — 6 model-backed agent keys only)
+ORGANIZATION scope       →  (if team belongs to an org — P5)
+GLOBAL scope             →  (required — 7 model-backed agent keys)
 ```
 
 **`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
@@ -265,7 +268,9 @@ Skill assignments live on the resolved `Agent` as `skillRefs` → `AgentSkillRef
 
 ```
 WORKFLOW_TEMPLATE  →  (if templateId set and an Agent override exists for the key)
+CHANNEL            →  (if channelId set — channel-resident runs only)
 TEAM               →  (if teamId set and an Agent override exists for the key)
+ORGANIZATION       →  (if team belongs to an org — P5)
 GLOBAL             →  (always falls back to this; may carry no skill refs)
 ```
 
@@ -302,7 +307,7 @@ The scan runs:
 | `toolKeys` | nullable Json `string[]` of allowed tool IDs (`null` = all four enabled) |
 | `teamId` / `workflowTemplateId` | Scope keys (partial unique index) |
 
-**Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → TEAM → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
+**Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
 **`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it (P2/WS2). A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
 
