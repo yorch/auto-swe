@@ -28,6 +28,7 @@ export interface SlackChannel {
   ambientCron: string | null;
   reactiveEnabled: boolean;
   reactiveCron: string | null;
+  passiveIngestEnabled: boolean;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
   isActive: boolean;
@@ -54,6 +55,7 @@ export interface CreateSlackChannelBody {
   ambientCron?: string | null;
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
+  passiveIngestEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
 }
@@ -65,6 +67,7 @@ export interface UpdateSlackChannelBody {
   ambientCron?: string | null;
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
+  passiveIngestEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
   isActive?: boolean;

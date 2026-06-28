@@ -69,6 +69,7 @@ interface CreateForm {
   ambientCron: string;
   reactiveEnabled: boolean;
   reactiveCron: string;
+  passiveIngestEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -79,6 +80,7 @@ const EMPTY_CREATE: CreateForm = {
   ambientEnabled: false,
   budgetDollars: '',
   name: '',
+  passiveIngestEnabled: false,
   personaPrompt: '',
   reactiveCron: '',
   reactiveEnabled: false,
@@ -112,6 +114,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         ambientEnabled: form.ambientEnabled,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        passiveIngestEnabled: form.passiveIngestEnabled,
         personaPrompt: form.personaPrompt.trim() || null,
         reactiveCron: form.reactiveCron || null,
         reactiveEnabled: form.reactiveEnabled,
@@ -215,6 +218,18 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             value={form.reactiveCron}
           />
         )}
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.passiveIngestEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-passive-ingest"
+            onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-passive-ingest">
+            Passive memory ingestion (silent fact extraction on ambient fire)
+          </label>
+        </div>
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -255,6 +270,7 @@ interface EditForm {
   ambientCron: string;
   reactiveEnabled: boolean;
   reactiveCron: string;
+  passiveIngestEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -267,6 +283,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
     name: ch.name ?? '',
+    passiveIngestEnabled: ch.passiveIngestEnabled,
     personaPrompt: ch.personaPrompt ?? '',
     reactiveCron: ch.reactiveCron ?? '',
     reactiveEnabled: ch.reactiveEnabled,
@@ -299,6 +316,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       ambientEnabled: form.ambientEnabled,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      passiveIngestEnabled: form.passiveIngestEnabled,
       personaPrompt: form.personaPrompt.trim() || null,
       reactiveCron: form.reactiveCron || null,
       reactiveEnabled: form.reactiveEnabled,
@@ -384,6 +402,18 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           value={form.reactiveCron}
         />
       )}
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.passiveIngestEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-passive-ingest"
+          onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-passive-ingest">
+          Passive memory ingestion (silent fact extraction on ambient fire)
+        </label>
+      </div>
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"

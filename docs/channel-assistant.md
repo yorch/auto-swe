@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt. Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -215,6 +215,21 @@ Three follow-on capabilities round out memory and task execution:
   inspect consolidated rows via `GET …/memory?includeConsolidated=true` and the
   "Show consolidated (archived) items" toggle in `/admin/slack-channels`.
 
+- **Gap G — passive memory ingestion.** `passiveIngestChannelMemory`
+  (`packages/worker/src/activities/passiveIngestChannelMemory.ts`) runs as the 4th
+  best-effort activity in `ChannelAmbientWorkflow` on every ambient fire. When
+  `passiveIngestEnabled` is true it silently extracts at most 5 salient facts from
+  recent human messages (no `@mention` required) using the `commitToMemory` model.
+  Cursor: `passiveIngestCursor` is a raw Slack `ts` string (float-format, avoids
+  DateTime precision loss) — advanced to the newest message ts seen each tick so
+  no window is re-read. Bot messages and empty texts are filtered before the LLM
+  call. De-dup: each candidate fact is embedded and checked against existing channel
+  memories at threshold 0.85; near-duplicates are skipped (the `consolidateChannelMemory`
+  pass handles the rest). Budget-gated (`isChannelOverBudgetNow`) and accrued with
+  `countRun: false`. Opt-in per channel; default `false`. Admin UI checkbox at
+  `/admin/slack-channels`. Migration:
+  `packages/shared/src/prisma/migrations/00000000000002_channel_passive_ingest/`.
+
 - **Gap D — deferred (scheduled) task execution.** The `delegateTask` tool gains
   an optional `runAt` (ISO 8601). `createChannelTaskRun` validates it — only a
   parseable, strictly-future timestamp is kept (`validFutureRunAt`); a garbled or
@@ -365,10 +380,6 @@ memory) from `/admin/slack-channels`.
   thread-bound, and steerable from replies). A single long-lived per-*channel*
   signal workflow (vs. per-mention conversational turns + scheduled ambient) remains
   a possible consolidation, but isn't required for the hand-off use case anymore.
-- **Passive memory ingestion** — reactive mode (§10) reads non-mention messages but
-  only to decide whether to interject; distilling salient facts from the channel
-  stream into memory (the "learns your company one message at a time" behavior)
-  rides on the same poll and is the natural next step.
 - **Reactive interjection in a thread** — §10 posts top-level; targeting the reply
   into the most-relevant thread (rather than the channel root) is a refinement.
 - **Per-stage progress posts** back into the task thread (the run is already
@@ -409,6 +420,7 @@ memory) from `/admin/slack-channels`.
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
   `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
+  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (Gap G, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),

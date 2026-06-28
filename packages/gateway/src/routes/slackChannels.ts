@@ -39,6 +39,7 @@ const CreateChannelSchema = z.object({
   ambientEnabled: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   reactiveEnabled: z.boolean().optional(),
@@ -65,6 +66,7 @@ const UpdateChannelSchema = z.object({
   isActive: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   reactiveEnabled: z.boolean().optional(),
@@ -107,6 +109,7 @@ function channelWritableData(body: {
   isActive?: boolean;
   monthlyBudgetUsdCents?: number | null;
   name?: string | null;
+  passiveIngestEnabled?: boolean;
   personaPrompt?: string | null;
   reactiveCron?: string | null;
   reactiveEnabled?: boolean;
@@ -120,6 +123,9 @@ function channelWritableData(body: {
       ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
       : {}),
     ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.passiveIngestEnabled !== undefined
+      ? { passiveIngestEnabled: body.passiveIngestEnabled }
+      : {}),
     ...(body.personaPrompt !== undefined ? { personaPrompt: body.personaPrompt } : {}),
     ...(body.reactiveCron !== undefined ? { reactiveCron: body.reactiveCron } : {}),
     ...(body.reactiveEnabled !== undefined ? { reactiveEnabled: body.reactiveEnabled } : {}),

@@ -461,6 +461,14 @@ model SlackChannel {
   /// this channel's assistant turns, reactive interjections, and ambient digests.
   /// Overrides the team-level defaultPersonaPrompt when set.
   personaPrompt    String?        @map("persona_prompt")
+  /// Passive memory ingestion (Gap G): when true, the ambient workflow silently
+  /// extracts salient facts from human messages and writes them to channel memory
+  /// without requiring an @mention. Default false (opt-in, noise-averse).
+  passiveIngestEnabled Boolean    @default(false) @map("passive_ingest_enabled")
+  /// Cursor for passive ingest: the Slack `ts` string of the newest message
+  /// already processed. Stored raw (no DateTime conversion) to avoid float
+  /// precision loss. Null means "start from the beginning of time" (no cursor).
+  passiveIngestCursor String?     @map("passive_ingest_cursor")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

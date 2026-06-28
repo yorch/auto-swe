@@ -8,7 +8,7 @@ import type * as activitiesType from '../activities/index.js';
  * the channel's `ambientCron`. Name MUST be `'ChannelAmbientWorkflow'`, task
  * queue `'engineering-workflow'`, single arg `{ channelId: string }`.
  *
- * Three activities run on each fire:
+ * Four activities run on each fire:
  *  1. `runChannelAmbientDigest` — proactively posts a short digest to the
  *     channel, surfacing recent/forgotten memory items (budget-gated, noise-averse).
  *  2. `consolidateChannelMemory` (Gap F) — clusters similar channel-memory items,
@@ -17,6 +17,9 @@ import type * as activitiesType from '../activities/index.js';
  *  3. `sweepChannelOpenItems` (Gap C) — detects new open action items / questions
  *     in recent channel history, tracks them, marks resolved ones, and nudges stale
  *     items that haven't had a follow-up. Best-effort: runs after consolidation.
+ *  4. `passiveIngestChannelMemory` (Gap G) — silently extracts salient facts from
+ *     recent human messages and writes them to channel memory. Opt-in per channel
+ *     (`passiveIngestEnabled`). Best-effort: a failure here never affects the rest.
  *
  * V8-isolate rule: only `import type` from external packages / `@auto-swe/shared`;
  * runtime imports come from `@temporalio/workflow` and the activity proxies below.
@@ -51,6 +54,19 @@ const { consolidateChannelMemory } = proxyActivities<
 // stale ones. Same single-retry, longer timeout as consolidation.
 const { sweepChannelOpenItems } = proxyActivities<
   Pick<typeof activitiesType, 'sweepChannelOpenItems'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 1,
+  },
+  startToCloseTimeout: '5m',
+});
+
+// Gap G: passive memory ingestion — silently extract salient facts from human
+// messages. Single attempt, 5 min timeout (LLM + per-fact embedding writes).
+const { passiveIngestChannelMemory } = proxyActivities<
+  Pick<typeof activitiesType, 'passiveIngestChannelMemory'>
 >({
   retry: {
     backoffCoefficient: 2,
@@ -122,6 +138,17 @@ export async function ChannelAmbientWorkflow(input: { channelId: string }): Prom
     await sweepChannelOpenItems({ channelId: input.channelId });
   } catch (err) {
     log.warn('ChannelAmbientWorkflow: sweepChannelOpenItems failed (best-effort)', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Gap G: passive memory ingestion — silently extract facts from recent human
+  // messages. Best-effort: a failure here must not affect the other activities.
+  try {
+    await passiveIngestChannelMemory({ channelId: input.channelId });
+  } catch (err) {
+    log.warn('ChannelAmbientWorkflow: passiveIngestChannelMemory failed (best-effort)', {
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });
