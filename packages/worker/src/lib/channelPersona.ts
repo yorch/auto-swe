@@ -1,28 +1,21 @@
-import { prisma } from '@auto-swe/shared/db';
-
 /**
  * Resolve the effective persona prompt for a channel turn.
  *
  * Resolution cascade (most-specific wins):
  *   1. `channelPersonaPrompt` — set directly on the SlackChannel row
- *   2. `Team.defaultPersonaPrompt` — team-wide default
+ *   2. `teamDefaultPersonaPrompt` — team-wide default (caller pre-fetches via relation)
  *   3. `null` — no persona; system prompt is unchanged
  *
  * The returned string is ready to prepend to any system prompt.
+ * Callers must include `team: { select: { defaultPersonaPrompt: true } }` in
+ * their channel query and pass `channel.team?.defaultPersonaPrompt` as the
+ * second argument — this eliminates the extra DB round-trip.
  */
 export async function resolvePersonaPrompt(
   channelPersonaPrompt: string | null | undefined,
-  teamId: string
+  teamDefaultPersonaPrompt: string | null | undefined
 ): Promise<string | null> {
-  const channelLevel = channelPersonaPrompt?.trim() || null;
-  if (channelLevel) {
-    return channelLevel;
-  }
-  const team = await prisma.team.findUnique({
-    select: { defaultPersonaPrompt: true },
-    where: { id: teamId },
-  });
-  return team?.defaultPersonaPrompt?.trim() || null;
+  return channelPersonaPrompt?.trim() || teamDefaultPersonaPrompt?.trim() || null;
 }
 
 /**

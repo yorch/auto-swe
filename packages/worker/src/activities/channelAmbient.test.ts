@@ -38,6 +38,8 @@ vi.mock('../lib/channelMemory.js', () => ({
 }));
 
 vi.mock('../lib/channelPersona.js', () => ({
+  applyPersona: (systemPrompt: string, persona: string | null) =>
+    persona ? `${persona}\n\n${systemPrompt}` : systemPrompt,
   resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
 }));
 

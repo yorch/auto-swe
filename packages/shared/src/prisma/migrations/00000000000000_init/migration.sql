@@ -1,13 +1,3 @@
--- Consolidated initial schema, generated from schema.prisma via
--- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
--- consolidation — nothing has been deployed to any environment, so the whole
--- Prisma-derivable migration history is collapsed into this single baseline).
---
--- Custom DDL that Prisma cannot express (pgvector HNSW index, partial unique
--- indexes, CHECK constraints, singleton seeds) lives in the adjacent
--- `00000000000001_custom_constraints_and_indexes` migration.
-
--- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateExtension
@@ -256,6 +246,8 @@ CREATE TABLE "slack_channels" (
     "last_reactive_at" TIMESTAMPTZ,
     "monthly_budget_usd_cents" INTEGER,
     "persona_prompt" TEXT,
+    "passive_ingest_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "passive_ingest_cursor" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

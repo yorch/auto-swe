@@ -103,156 +103,160 @@ export async function passiveIngestChannelMemory(
     messagesRead: 0,
   };
 
-  const channel = await prisma.slackChannel.findUnique({
-    select: {
-      monthlyBudgetUsdCents: true,
-      orgId: true,
-      passiveIngestCursor: true,
-      passiveIngestEnabled: true,
-      slackChannelId: true,
-      teamId: true,
-    },
-    where: { id: channelId },
-  });
-
-  if (!channel || !channel.passiveIngestEnabled) {
-    return EMPTY;
-  }
-
-  if (await isChannelOverBudgetNow(channelId, channel.monthlyBudgetUsdCents ?? null)) {
-    return EMPTY;
-  }
-
-  // Fetch messages since cursor (exclusive). Returns [] on any Slack API error.
-  const messages = await fetchChannelHistory(channel.slackChannelId, {
-    limit: PASSIVE_INGEST_LIMIT,
-    oldestTs: channel.passiveIngestCursor ?? undefined,
-  });
-
-  // Only process human top-level messages with non-empty text.
-  const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
-
-  // Advance cursor to newest ts seen (even if there are no human messages, we
-  // still move past bot-only traffic so we don't re-read it next time).
-  if (messages.length > 0) {
-    const newestTs = messages[messages.length - 1]?.ts ?? null;
-    if (newestTs) {
-      await prisma.slackChannel.update({
-        data: { passiveIngestCursor: newestTs },
-        where: { id: channelId },
-      });
-    }
-  }
-
-  if (humanMessages.length === 0) {
-    return EMPTY;
-  }
-
-  // Build transcript for the LLM (oldest → newest, human only).
-  const transcript = humanMessages
-    .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
-    .join('\n');
-
-  // Resolve skills + build agent.
-  const skills = await loadAgentSkills('commitToMemory');
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
-  const instructions = skillSuffix
-    ? `${PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
-    : PASSIVE_INGEST_PROMPT;
-
-  const agent = new Agent({
-    id: 'channel-passive-ingestor',
-    instructions,
-    model: await getModel('commitToMemory'),
-    name: 'channel-passive-ingestor',
-  });
-
-  const tracer = new AgentTracer();
-  let totalCostUsd = 0;
-  let factsExtracted = 0;
-  let factsWritten = 0;
-
   try {
-    const start = Date.now();
-    const result = await agent.generate([{ content: transcript, role: 'user' }], {
-      structuredOutput: { schema: PassiveIngestOutputSchema },
+    const channel = await prisma.slackChannel.findUnique({
+      select: {
+        monthlyBudgetUsdCents: true,
+        orgId: true,
+        passiveIngestCursor: true,
+        passiveIngestEnabled: true,
+        slackChannelId: true,
+        teamId: true,
+      },
+      where: { id: channelId },
     });
 
-    let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
-    if (result.usage) {
-      attribution = await recordLlmUsage(
-        'passiveIngestChannelMemory',
-        'commitToMemory',
-        result.usage,
-        'llm.passive_ingest'
-      );
-    }
-    totalCostUsd += attribution.costUsd;
-
-    if (!result.object) {
-      return { ...EMPTY, messagesRead: humanMessages.length };
+    if (!channel?.passiveIngestEnabled) {
+      return EMPTY;
     }
 
-    const { facts } = PassiveIngestOutputSchema.parse(result.object);
-    factsExtracted = facts.length;
+    if (await isChannelOverBudgetNow(channelId, channel.monthlyBudgetUsdCents ?? null)) {
+      return EMPTY;
+    }
 
-    tracer.addLlmResponse({
-      costUsd: attribution.costUsd,
-      durationMs: Date.now() - start,
-      inputJson: { systemPrompt: instructions, userMessage: transcript },
-      inputTokens: attribution.inputTokens,
-      model: attribution.modelSpec || undefined,
-      outputJson: { factsExtracted: facts.length },
-      outputTokens: attribution.outputTokens,
-      role: 'commitToMemory',
+    // Fetch messages since cursor (exclusive). Returns [] on any Slack API error.
+    const messages = await fetchChannelHistory(channel.slackChannelId, {
+      limit: PASSIVE_INGEST_LIMIT,
+      oldestTs: channel.passiveIngestCursor ?? undefined,
     });
 
-    // Write each fact, skipping near-duplicates.
-    for (const fact of facts) {
-      try {
-        const { embedding, spec } = await generateEmbeddingWithSpec(fact.summary);
-        const similar = await searchMemoryItemsByVector({
-          limit: 1,
-          precomputed: { embedding, spec },
-          queryText: fact.summary,
-          scopeColumn: 'channel_id',
-          scopeId: channelId,
-          selectColumns: ['id'],
-          similarityThreshold: DEDUP_THRESHOLD,
+    // Only process human top-level messages with non-empty text.
+    const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
+
+    // Advance cursor to newest ts seen (even if there are no human messages, we
+    // still move past bot-only traffic so we don't re-read it next time).
+    if (messages.length > 0) {
+      const newestTs = messages[messages.length - 1]?.ts ?? null;
+      if (newestTs) {
+        await prisma.slackChannel.update({
+          data: { passiveIngestCursor: newestTs },
+          where: { id: channelId },
         });
-        if (similar.length > 0) {
-          continue;
-        }
-        await insertMemoryItem({
-          agentKey: 'channelAssistant',
-          channelId,
-          lessonSummary: fact.summary,
-          metadata: { source: 'passive-ingest' },
-          orgId: channel.orgId,
-          rationale: fact.rationale,
-          scope: 'channel-memory',
-          teamId: channel.teamId,
-        });
-        factsWritten++;
-      } catch {
-        // Best-effort per-fact: a failed embedding or DB insert skips this fact
-        // but doesn't abort the rest.
       }
     }
 
-    tracer.addActivityEvent({
-      name: 'channel_memory.passive_ingest',
-      outputJson: { factsExtracted, factsWritten, messagesRead: humanMessages.length },
+    if (humanMessages.length === 0) {
+      return EMPTY;
+    }
+
+    // Build transcript for the LLM (oldest → newest, human only).
+    const transcript = humanMessages
+      .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
+      .join('\n');
+
+    // Resolve skills + build agent.
+    const skills = await loadAgentSkills('commitToMemory');
+    const skillSuffix = skills
+      .map((s) => s.promptText)
+      .filter(Boolean)
+      .join('\n\n');
+    const instructions = skillSuffix
+      ? `${PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
+      : PASSIVE_INGEST_PROMPT;
+
+    const agent = new Agent({
+      id: 'channel-passive-ingestor',
+      instructions,
+      model: await getModel('commitToMemory'),
+      name: 'channel-passive-ingestor',
     });
 
-    return { factsExtracted, factsWritten, messagesRead: humanMessages.length };
-  } finally {
-    await persistActivityTrace(tracer, 'commitToMemory');
-    if (totalCostUsd > 0) {
-      await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
+    const tracer = new AgentTracer();
+    let totalCostUsd = 0;
+    let factsExtracted = 0;
+    let factsWritten = 0;
+
+    try {
+      const start = Date.now();
+      const result = await agent.generate([{ content: transcript, role: 'user' }], {
+        structuredOutput: { schema: PassiveIngestOutputSchema },
+      });
+
+      let attribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+      if (result.usage) {
+        attribution = await recordLlmUsage(
+          'passiveIngestChannelMemory',
+          'commitToMemory',
+          result.usage,
+          'llm.passive_ingest'
+        );
+      }
+      totalCostUsd += attribution.costUsd;
+
+      if (!result.object) {
+        return { ...EMPTY, messagesRead: humanMessages.length };
+      }
+
+      const { facts } = PassiveIngestOutputSchema.parse(result.object);
+      factsExtracted = facts.length;
+
+      tracer.addLlmResponse({
+        costUsd: attribution.costUsd,
+        durationMs: Date.now() - start,
+        inputJson: { systemPrompt: instructions, userMessage: transcript },
+        inputTokens: attribution.inputTokens,
+        model: attribution.modelSpec || undefined,
+        outputJson: { factsExtracted: facts.length },
+        outputTokens: attribution.outputTokens,
+        role: 'commitToMemory',
+      });
+
+      // Write each fact, skipping near-duplicates.
+      for (const fact of facts) {
+        try {
+          const { embedding, spec } = await generateEmbeddingWithSpec(fact.summary);
+          const similar = await searchMemoryItemsByVector({
+            limit: 1,
+            precomputed: { embedding, spec },
+            queryText: fact.summary,
+            scopeColumn: 'channel_id',
+            scopeId: channelId,
+            selectColumns: ['id'],
+            similarityThreshold: DEDUP_THRESHOLD,
+          });
+          if (similar.length > 0) {
+            continue;
+          }
+          await insertMemoryItem({
+            agentKey: 'channelAssistant',
+            channelId,
+            lessonSummary: fact.summary,
+            metadata: { source: 'passive-ingest' },
+            orgId: channel.orgId,
+            rationale: fact.rationale,
+            scope: 'channel-memory',
+            teamId: channel.teamId,
+          });
+          factsWritten++;
+        } catch {
+          // Best-effort per-fact: a failed embedding or DB insert skips this fact
+          // but doesn't abort the rest.
+        }
+      }
+
+      tracer.addActivityEvent({
+        name: 'channel_memory.passive_ingest',
+        outputJson: { factsExtracted, factsWritten, messagesRead: humanMessages.length },
+      });
+
+      return { factsExtracted, factsWritten, messagesRead: humanMessages.length };
+    } finally {
+      await persistActivityTrace(tracer, 'commitToMemory');
+      if (totalCostUsd > 0) {
+        await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
+      }
     }
+  } catch {
+    return EMPTY;
   }
 }

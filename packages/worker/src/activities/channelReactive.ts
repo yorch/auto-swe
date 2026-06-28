@@ -148,6 +148,7 @@ export async function evaluateReactiveInterjection(
         personaPrompt: true,
         reactiveEnabled: true,
         slackChannelId: true,
+        team: { select: { defaultPersonaPrompt: true } },
         teamId: true,
       },
       where: { id: input.channelId },
@@ -173,10 +174,15 @@ export async function evaluateReactiveInterjection(
     });
     const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
 
-    // Advance the cursor every tick so we never re-evaluate the same window.
+    // Advance the cursor to the newest *fetched* message ts, not `now`. Using
+    // `now` would silently drop any messages that arrived between the last
+    // fetched ts and the activity-start instant when a gate (budget/cooldown)
+    // fires — they would never be re-evaluated on the next tick.
+    const newestMsgDate =
+      messages.length > 0 ? new Date(parseFloat(messages[messages.length - 1].ts) * 1000) : now;
     const advanceCursor = () =>
       prisma.slackChannel.update({
-        data: { lastReactiveCheckAt: now },
+        data: { lastReactiveCheckAt: newestMsgDate },
         where: { id: channel.id },
       });
 
@@ -226,7 +232,10 @@ export async function evaluateReactiveInterjection(
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
-    const personaPrompt = await resolvePersonaPrompt(channel.personaPrompt, channel.teamId);
+    const personaPrompt = await resolvePersonaPrompt(
+      channel.personaPrompt,
+      channel.team?.defaultPersonaPrompt
+    );
     const { reply, costUsd } = await runChannelAgentTurn(
       { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
       buildReactivePrompt(messages, memory),
@@ -245,7 +254,7 @@ export async function evaluateReactiveInterjection(
     // a post that never landed; that's acceptable for a proactive interjection.
     await prisma.slackChannel.update({
       data: {
-        lastReactiveCheckAt: now,
+        lastReactiveCheckAt: newestMsgDate,
         ...(posted ? { lastReactiveAt: now } : {}),
       },
       where: { id: channel.id },

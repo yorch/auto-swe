@@ -231,7 +231,7 @@ export async function sweepChannelOpenItems(
         return emptyResult;
       }
 
-      const { newItems, resolvedIds } = result.object;
+      const { newItems, resolvedIds } = OpenItemSweepOutputSchema.parse(result.object);
 
       // Deduplicate new items: by sourceTs when available, otherwise by
       // description against current OPEN items (items without a unique ts anchor

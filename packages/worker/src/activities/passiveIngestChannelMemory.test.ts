@@ -224,11 +224,12 @@ describe('passiveIngestChannelMemory', () => {
     expect(accrueChannelUsageMock).toHaveBeenCalledWith(CHANNEL_ID, 0.005, { countRun: false });
   });
 
-  it('always persists activity trace even on error', async () => {
+  it('persists activity trace and returns empty on LLM error', async () => {
     fetchChannelHistoryMock.mockResolvedValue([makeMsg('hello', '1700000001.000')]);
     agentGenerateMock.mockRejectedValue(new Error('LLM down'));
 
-    await expect(passiveIngestChannelMemory({ channelId: CHANNEL_ID })).rejects.toThrow('LLM down');
+    const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+    expect(result).toEqual({ factsExtracted: 0, factsWritten: 0, messagesRead: 0 });
     expect(persistActivityTraceMock).toHaveBeenCalledTimes(1);
   });
 

@@ -228,7 +228,7 @@ Three follow-on capabilities round out memory and task execution:
   pass handles the rest). Budget-gated (`isChannelOverBudgetNow`) and accrued with
   `countRun: false`. Opt-in per channel; default `false`. Admin UI checkbox at
   `/admin/slack-channels`. Migration:
-  `packages/shared/src/prisma/migrations/00000000000002_channel_passive_ingest/`.
+  Columns folded into `packages/shared/src/prisma/migrations/00000000000000_init/migration.sql`.
 
 - **Gap D — deferred (scheduled) task execution.** The `delegateTask` tool gains
   an optional `runAt` (ISO 8601). `createChannelTaskRun` validates it — only a
@@ -330,9 +330,11 @@ domain focus, or behavioural rules.
    that team that don't set their own.
 3. `null` — no persona, system prompt is unchanged.
 
-`resolvePersonaPrompt(channelPersonaPrompt, teamId)` fetches the team row only
-when the channel level is blank; `applyPersona(systemPrompt, persona)` prepends
-the persona with a blank separator (`"${persona}\n\n${systemPrompt}"`).
+`resolvePersonaPrompt(channelPersonaPrompt, teamDefaultPersonaPrompt)` is a pure
+async function — callers include `team: { select: { defaultPersonaPrompt: true } }`
+in their channel query and pass it directly, eliminating the extra DB round-trip.
+`applyPersona(systemPrompt, persona)` prepends with a blank separator
+(`"${persona}\n\n${systemPrompt}"`).
 
 **Injection point:** `runChannelAgentTurn` (shared core for assistant, ambient,
 and reactive paths) applies the persona to `spec.systemPrompt` immediately after
