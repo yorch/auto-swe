@@ -152,23 +152,23 @@ export async function sweepChannelOpenItems(
       oldestTs: (lookbackFloor.getTime() / 1000).toFixed(6),
     });
 
-    // Fetch existing OPEN items for this channel.
-    const existingOpen = await prisma.channelOpenItem.findMany({
-      select: {
-        createdAt: true,
-        description: true,
-        id: true,
-        lastNudgedAt: true,
-        ownerUserId: true,
-      },
-      where: { channelId: channel.id, status: 'OPEN' },
-    });
-
-    // Already-tracked source timestamps — used to skip re-creating items.
-    const trackedSourceTs = await prisma.channelOpenItem.findMany({
-      select: { sourceTs: true },
-      where: { channelId: channel.id, sourceTs: { not: null } },
-    });
+    // Fetch existing OPEN items and tracked source timestamps in parallel.
+    const [existingOpen, trackedSourceTs] = await Promise.all([
+      prisma.channelOpenItem.findMany({
+        select: {
+          createdAt: true,
+          description: true,
+          id: true,
+          lastNudgedAt: true,
+          ownerUserId: true,
+        },
+        where: { channelId: channel.id, status: 'OPEN' },
+      }),
+      prisma.channelOpenItem.findMany({
+        select: { sourceTs: true },
+        where: { channelId: channel.id, sourceTs: { not: null } },
+      }),
+    ]);
     const trackedTsSet = new Set(trackedSourceTs.map((r) => r.sourceTs).filter(Boolean));
 
     // If no messages and no existing open items, nothing to do.
@@ -261,8 +261,8 @@ export async function sweepChannelOpenItems(
       // 2. Mark resolved items.
       let itemsResolved = 0;
       if (resolvedIds.length > 0) {
-        const validIds = existingOpen.map((it) => it.id);
-        const toResolve = resolvedIds.filter((id) => validIds.includes(id));
+        const validIdSet = new Set(existingOpen.map((it) => it.id));
+        const toResolve = resolvedIds.filter((id) => validIdSet.has(id));
         if (toResolve.length > 0) {
           await prisma.channelOpenItem.updateMany({
             data: { status: 'RESOLVED' as const },

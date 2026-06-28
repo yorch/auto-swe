@@ -27,7 +27,7 @@ import { runAgent } from './runAgent.js';
 
 /** Fallback when a channel row has no explicit agent key (should never happen — the
  *  column defaults to this value — but be defensive). */
-const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
+export const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 
 /** Friendly reply returned when a channel has hit its monthly assistant budget. */
 const BUDGET_EXCEEDED_REPLY =

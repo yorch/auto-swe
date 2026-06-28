@@ -498,24 +498,26 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'SlackChannel',
       });
 
-      await reconcileSchedule(
-        fastify,
-        request,
-        row.id,
-        row.isActive,
-        row.ambientEnabled,
-        row.ambientCron,
-        'ambient'
-      );
-      await reconcileSchedule(
-        fastify,
-        request,
-        row.id,
-        row.isActive,
-        row.reactiveEnabled,
-        row.reactiveCron,
-        'reactive'
-      );
+      await Promise.all([
+        reconcileSchedule(
+          fastify,
+          request,
+          row.id,
+          row.isActive,
+          row.ambientEnabled,
+          row.ambientCron,
+          'ambient'
+        ),
+        reconcileSchedule(
+          fastify,
+          request,
+          row.id,
+          row.isActive,
+          row.reactiveEnabled,
+          row.reactiveCron,
+          'reactive'
+        ),
+      ]);
 
       return reply.status(201).send({ data: await withCurrentUsage(fastify, row) });
     }
@@ -570,24 +572,26 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'SlackChannel',
       });
 
-      await reconcileSchedule(
-        fastify,
-        request,
-        row.id,
-        row.isActive,
-        row.ambientEnabled,
-        row.ambientCron,
-        'ambient'
-      );
-      await reconcileSchedule(
-        fastify,
-        request,
-        row.id,
-        row.isActive,
-        row.reactiveEnabled,
-        row.reactiveCron,
-        'reactive'
-      );
+      await Promise.all([
+        reconcileSchedule(
+          fastify,
+          request,
+          row.id,
+          row.isActive,
+          row.ambientEnabled,
+          row.ambientCron,
+          'ambient'
+        ),
+        reconcileSchedule(
+          fastify,
+          request,
+          row.id,
+          row.isActive,
+          row.reactiveEnabled,
+          row.reactiveCron,
+          'reactive'
+        ),
+      ]);
 
       return reply.send({ data: await withCurrentUsage(fastify, row) });
     }
@@ -671,8 +675,10 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       // hiccup; an orphaned schedule fires a workflow that no-ops on a missing
       // channel and can be reaped out of band.
       try {
-        await fastify.temporal.deleteChannelAmbientSchedule(current.id);
-        await fastify.temporal.deleteChannelReactiveSchedule(current.id);
+        await Promise.all([
+          fastify.temporal.deleteChannelAmbientSchedule(current.id),
+          fastify.temporal.deleteChannelReactiveSchedule(current.id),
+        ]);
       } catch (err) {
         request.log.error(
           { channelId: current.id, err },

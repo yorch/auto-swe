@@ -200,33 +200,22 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   }
 
   /**
-   * Schedule action for a channel's ambient digest: starts the worker's
-   * ChannelAmbientWorkflow (by name) on each fire. The base `workflowId` is
-   * `channel-ambient-<channelId>`; Temporal appends the per-fire scheduled
-   * timestamp for uniqueness, so each fire gets its own WorkflowRun.
+   * Build a schedule action that starts a per-channel workflow on each fire.
+   * The base `workflowId` is `<workflowIdPrefix>-<channelId>`; Temporal appends
+   * the per-fire scheduled timestamp for uniqueness, so each fire gets its own
+   * WorkflowRun.
    */
-  function makeChannelAmbientScheduleAction(input: ChannelAmbientScheduleInput) {
+  function makeChannelScheduleAction(
+    channelId: string,
+    workflowIdPrefix: string,
+    workflowType: string
+  ) {
     return {
-      args: [{ channelId: input.channelId }],
+      args: [{ channelId }],
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
-      workflowId: `channel-ambient-${input.channelId}`,
-      workflowType: 'ChannelAmbientWorkflow',
-    };
-  }
-
-  /**
-   * Schedule action for a channel's reactive-interjection poll (Gap A): starts the
-   * worker's ChannelReactiveWorkflow (by name) on each fire. The base `workflowId`
-   * is `channel-reactive-<channelId>`; Temporal appends the per-fire timestamp.
-   */
-  function makeChannelReactiveScheduleAction(input: ChannelReactiveScheduleInput) {
-    return {
-      args: [{ channelId: input.channelId }],
-      taskQueue: 'engineering-workflow',
-      type: 'startWorkflow' as const,
-      workflowId: `channel-reactive-${input.channelId}`,
-      workflowType: 'ChannelReactiveWorkflow',
+      workflowId: `${workflowIdPrefix}-${channelId}`,
+      workflowType,
     };
   }
 
@@ -457,14 +446,22 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
       await upsertSchedule(channelAmbientScheduleId(input.channelId), {
-        action: makeChannelAmbientScheduleAction(input),
+        action: makeChannelScheduleAction(
+          input.channelId,
+          'channel-ambient',
+          'ChannelAmbientWorkflow'
+        ),
         cronExpression: input.cronExpression,
       });
     },
 
     async syncChannelReactiveSchedule(input: ChannelReactiveScheduleInput): Promise<void> {
       await upsertSchedule(channelReactiveScheduleId(input.channelId), {
-        action: makeChannelReactiveScheduleAction(input),
+        action: makeChannelScheduleAction(
+          input.channelId,
+          'channel-reactive',
+          'ChannelReactiveWorkflow'
+        ),
         cronExpression: input.cronExpression,
       });
     },

@@ -11,10 +11,10 @@
  * their channel query and pass `channel.team?.defaultPersonaPrompt` as the
  * second argument — this eliminates the extra DB round-trip.
  */
-export async function resolvePersonaPrompt(
+export function resolvePersonaPrompt(
   channelPersonaPrompt: string | null | undefined,
   teamDefaultPersonaPrompt: string | null | undefined
-): Promise<string | null> {
+): string | null {
   return channelPersonaPrompt?.trim() || teamDefaultPersonaPrompt?.trim() || null;
 }
 

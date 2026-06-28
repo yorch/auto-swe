@@ -4,6 +4,7 @@ import { resolvePersonaPrompt } from '../lib/channelPersona.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   accrueChannelUsage,
+  DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
@@ -12,9 +13,6 @@ import {
 export interface ChannelAmbientInput {
   channelId: string;
 }
-
-/** Fallback agent key when a channel row somehow lacks one (column has a default). */
-const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 
 /** Cap on how many recent memory items are injected into the digest prompt. */
 const MAX_DIGEST_MEMORY_ITEMS = 15;

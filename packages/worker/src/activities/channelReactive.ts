@@ -8,6 +8,7 @@ import {
 } from '../lib/slackNotify.js';
 import {
   accrueChannelUsage,
+  DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
@@ -23,9 +24,6 @@ export interface ChannelReactiveResult {
   /** Why the tick did (or didn't) post — drives the run record + debugging. */
   reason: 'disabled' | 'no-new-messages' | 'over-budget' | 'cooldown' | 'skip' | 'posted' | 'error';
 }
-
-/** Fallback agent key when a channel row somehow lacks one (column has a default). */
-const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 
 /** Cap on how many recent channel messages are read + injected per tick. */
 const MAX_HISTORY_MESSAGES = 30;
