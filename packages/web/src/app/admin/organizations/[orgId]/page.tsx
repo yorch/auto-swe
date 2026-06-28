@@ -9,15 +9,12 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
 import {
   type OrgRole,
   useOrgBudget,
   useOrgMembers,
-  useOrgPersona,
   usePatchOrgBudget,
   usePatchOrgMember,
-  usePatchOrgPersona,
   useRemoveOrgMember,
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
@@ -28,20 +25,16 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
   const { data: members, isLoading: membersLoading } = useOrgMembers(orgId);
   const { data: budget, isLoading: budgetLoading } = useOrgBudget(orgId);
-  const { data: persona, isLoading: personaLoading } = useOrgPersona(orgId);
   const upsertMember = useUpsertOrgMember(orgId);
   const patchMember = usePatchOrgMember(orgId);
   const removeMember = useRemoveOrgMember(orgId);
   const patchBudget = usePatchOrgBudget(orgId);
-  const patchPersona = usePatchOrgPersona(orgId);
 
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
   const [budgetInput, setBudgetInput] = useState('');
-  const [personaInput, setPersonaInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
-  const [personaError, setPersonaError] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<{ userId: string; email: string } | null>(
     null
   );
@@ -102,16 +95,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       setBudgetInput('');
     } catch (e) {
       setBudgetError(e instanceof Error ? e.message : 'Failed to update budget');
-    }
-  }
-
-  async function handleSavePersona() {
-    setPersonaError(null);
-    try {
-      await patchPersona.mutateAsync(personaInput.trim() || null);
-      setPersonaInput('');
-    } catch (e) {
-      setPersonaError(e instanceof Error ? e.message : 'Failed to update persona');
     }
   }
 
@@ -256,60 +239,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 Save
               </Button>
             </div>
-          </div>
-        )}
-      </Card>
-
-      {/* ── Default Persona ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Channel Assistant">Default Persona</CardTitle>
-        </CardHeader>
-        {personaLoading ? (
-          <LoadingState />
-        ) : (
-          <div className="space-y-4">
-            {personaError ? <Alert variant="error">{personaError}</Alert> : null}
-            <div>
-              <p className="text-sm text-paper-500">Current default persona</p>
-              {persona?.defaultPersonaPrompt ? (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-paper-100">
-                  {persona.defaultPersonaPrompt}
-                </p>
-              ) : (
-                <p className="mt-1 text-sm text-paper-500 italic">None set</p>
-              )}
-            </div>
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <Textarea
-                  hint="Org-wide default persona for all channel assistants. Channels can override this individually. Leave blank to clear."
-                  label="New persona"
-                  onChange={(e) => setPersonaInput(e.target.value)}
-                  placeholder="You are a helpful assistant for this organization…"
-                  value={personaInput}
-                />
-              </div>
-              <Button
-                disabled={patchPersona.isPending}
-                onClick={handleSavePersona}
-                variant="primary"
-              >
-                {persona?.defaultPersonaPrompt ? 'Update' : 'Set'}
-              </Button>
-            </div>
-            {persona?.defaultPersonaPrompt && (
-              <Button
-                disabled={patchPersona.isPending}
-                onClick={() => {
-                  setPersonaInput('');
-                  patchPersona.mutate(null);
-                }}
-                variant="ghost"
-              >
-                Clear persona
-              </Button>
-            )}
           </div>
         )}
       </Card>

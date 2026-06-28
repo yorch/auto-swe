@@ -165,7 +165,6 @@ CREATE TABLE "organizations" (
     "slug" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "monthly_budget_usd_cents" INTEGER,
-    "default_persona_prompt" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -184,6 +183,7 @@ CREATE TABLE "teams" (
     "egress_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "slack_notify_channel" TEXT,
     "slack_notify_success" BOOLEAN NOT NULL DEFAULT false,
+    "default_persona_prompt" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

@@ -311,11 +311,11 @@ domain focus, or behavioural rules.
 **Resolution cascade** (`packages/worker/src/lib/channelPersona.ts`):
 
 1. `SlackChannel.personaPrompt` — channel-specific override (highest priority).
-2. `Organization.defaultPersonaPrompt` — org-wide default for all channels that
-   don't set their own.
+2. `Team.defaultPersonaPrompt` — team-wide default for all channels belonging to
+   that team that don't set their own.
 3. `null` — no persona, system prompt is unchanged.
 
-`resolvePersonaPrompt(channelPersonaPrompt, orgId)` fetches the org row only
+`resolvePersonaPrompt(channelPersonaPrompt, teamId)` fetches the team row only
 when the channel level is blank; `applyPersona(systemPrompt, persona)` prepends
 the persona with a blank separator (`"${persona}\n\n${systemPrompt}"`).
 
@@ -328,9 +328,9 @@ instructions stay closest to the model's attention boundary.
 - `SlackChannel` create/patch: `personaPrompt` field (nullable string). Surfaced
   in the `/admin/slack-channels` modal (Textarea below the budget field) for both
   create and edit.
-- `Organization` default: `GET /api/v1/admin/organizations/:orgId/persona`
-  (ORG_MEMBER) and `PATCH /api/v1/admin/organizations/:orgId/persona` (ORG_ADMIN).
-  Surfaced in the `/admin/organizations/[orgId]` page as a "Default Persona" card.
+- `Team` default: `PATCH /api/v1/teams/:id` with `{ defaultPersonaPrompt }` (team
+  LEAD or platform ADMIN). Surfaced in the `/teams/[id]` page as a "Default
+  Persona" card (visible to team ADMINs and platform ADMINs).
 
 **Scope:** persona is resolved at turn time (same activity call as model
 selection), so changing it takes effect on the next LLM call without a workflow
@@ -418,9 +418,9 @@ memory) from `/admin/slack-channels`.
   `packages/gateway/src/routes/slackChannels.ts`,
   `packages/gateway/src/plugins/temporal.ts` (`startChannelAssistant`).
 - Web: `packages/web/src/app/admin/slack-channels/`,
-  `packages/web/src/app/admin/organizations/[orgId]/page.tsx`,
+  `packages/web/src/app/teams/[id]/page.tsx` (persona card),
   `packages/web/src/hooks/useSlackChannels.ts`,
-  `packages/web/src/hooks/useOrg.ts` (`useOrgPersona`, `usePatchOrgPersona`).
+  `packages/web/src/hooks/useTeams.ts` (`useUpdateTeam` with `defaultPersonaPrompt`).
 - Shared: `packages/shared/src/lib/channelTask.ts` (`channelTaskWorkflowId`,
   `CHANNEL_TASK_STEER_SIGNAL`), `packages/shared/src/workflow/interpreter.ts`
   (`drainSteering`).

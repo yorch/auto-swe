@@ -286,9 +286,6 @@ model Organization {
   isActive               Boolean  @default(true) @map("is_active")
   /// Optional monthly spend cap in USD cents. Null = no cap enforced.
   monthlyBudgetUsdCents  Int?     @map("monthly_budget_usd_cents")
-  /// Default persona prompt for all channel assistants in this org. Channel-level
-  /// personaPrompt overrides this. Null = no org-wide persona.
-  defaultPersonaPrompt   String?  @map("default_persona_prompt")
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -328,6 +325,9 @@ model Team {
   /// from `finalizeWorkflowRun`. Default false so existing teams don't get
   /// a sudden notification firehose.
   slackNotifySuccess  Boolean      @default(false) @map("slack_notify_success")
+  /// Default persona prompt for all channel assistants belonging to this team.
+  /// Channel-level personaPrompt overrides this. Null = no team-wide persona.
+  defaultPersonaPrompt String?     @map("default_persona_prompt")
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -459,7 +459,7 @@ model SlackChannel {
   monthlyBudgetUsdCents Int?      @map("monthly_budget_usd_cents")
   /// Per-channel persona prompt injected at the top of every system prompt for
   /// this channel's assistant turns, reactive interjections, and ambient digests.
-  /// Overrides the org-level defaultPersonaPrompt when set.
+  /// Overrides the team-level defaultPersonaPrompt when set.
   personaPrompt    String?        @map("persona_prompt")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz

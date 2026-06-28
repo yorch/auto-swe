@@ -5,24 +5,24 @@ import { prisma } from '@auto-swe/shared/db';
  *
  * Resolution cascade (most-specific wins):
  *   1. `channelPersonaPrompt` — set directly on the SlackChannel row
- *   2. `Organization.defaultPersonaPrompt` — org-wide default
+ *   2. `Team.defaultPersonaPrompt` — team-wide default
  *   3. `null` — no persona; system prompt is unchanged
  *
  * The returned string is ready to prepend to any system prompt.
  */
 export async function resolvePersonaPrompt(
   channelPersonaPrompt: string | null | undefined,
-  orgId: string
+  teamId: string
 ): Promise<string | null> {
   const channelLevel = channelPersonaPrompt?.trim() || null;
   if (channelLevel) {
     return channelLevel;
   }
-  const org = await prisma.organization.findUnique({
+  const team = await prisma.team.findUnique({
     select: { defaultPersonaPrompt: true },
-    where: { id: orgId },
+    where: { id: teamId },
   });
-  return org?.defaultPersonaPrompt?.trim() || null;
+  return team?.defaultPersonaPrompt?.trim() || null;
 }
 
 /**

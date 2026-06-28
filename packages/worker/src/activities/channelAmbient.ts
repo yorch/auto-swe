@@ -121,7 +121,7 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
-    const personaPrompt = await resolvePersonaPrompt(channel.personaPrompt, channel.orgId);
+    const personaPrompt = await resolvePersonaPrompt(channel.personaPrompt, channel.teamId);
     const { reply, costUsd } = await runChannelAgentTurn(
       { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
       buildAmbientPrompt(memory),

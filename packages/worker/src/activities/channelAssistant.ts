@@ -464,9 +464,9 @@ export async function runChannelAssistantTurn(
     delegate = intent;
   });
 
-  // Resolve the effective persona (channel overrides org default) and pass it
+  // Resolve the effective persona (channel overrides team default) and pass it
   // into runChannelAgentTurn so it's prepended to the system prompt.
-  const personaPrompt = await resolvePersonaPrompt(channel?.personaPrompt, input.orgId);
+  const personaPrompt = await resolvePersonaPrompt(channel?.personaPrompt, input.teamId);
 
   // Resolve the channel's agent (CHANNEL tier active) + run one generation.
   const { reply, costUsd } = await runChannelAgentTurn(
