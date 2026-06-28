@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
+import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
@@ -12,6 +12,7 @@ import {
   retrieveChannelMemory,
   writeChannelMemory,
 } from '../lib/channelMemory.js';
+import { applyPersona, resolvePersonaPrompt } from '../lib/channelPersona.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -26,7 +27,7 @@ import { runAgent } from './runAgent.js';
 
 /** Fallback when a channel row has no explicit agent key (should never happen — the
  *  column defaults to this value — but be defensive). */
-const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
+export const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 
 /** Friendly reply returned when a channel has hit its monthly assistant budget. */
 const BUDGET_EXCEEDED_REPLY =
@@ -178,23 +179,6 @@ const ChannelMemorySummarySchema = z.object({
 });
 
 /**
- * System prompt for the channel-memory summarizer. Reuses the same framing as
- * the SWE {@link MEMORY_SUMMARIZER_PROMPT} (distill into a reusable lesson) but
- * targets a single conversational exchange instead of a whole workflow.
- */
-const CHANNEL_MEMORY_SUMMARIZER_PROMPT = `${MEMORY_SUMMARIZER_PROMPT}
-
-You are summarizing a single Slack conversational exchange (a user's question and
-the assistant's answer) into ONE durable, reusable fact for this channel's memory.
-Capture the concrete knowledge worth remembering — not the pleasantries.
-
-Respond with valid JSON matching this schema:
-{
-  "lessonSummary": "The durable fact worth remembering (1-2 sentences, specific and concrete)",
-  "rationale": "Why this matters / when it's useful (1 sentence)"
-}`;
-
-/**
  * Channel assistant (Phase 2). Prepend a compact context block built from retrieved
  * channel memory to the user's message, keeping the original text intact below
  * it. Pure (no I/O) so it's directly unit-testable. Returns `userText`
@@ -324,7 +308,13 @@ export async function isChannelOverBudgetNow(
  * owns its `accrueChannelUsage` call to preserve the existing ordering.
  */
 export async function runChannelAgentTurn(
-  channel: { id: string; agentKey: string; teamId: string; orgId: string },
+  channel: {
+    id: string;
+    agentKey: string;
+    teamId: string;
+    orgId: string;
+    personaPrompt?: string | null;
+  },
   userMessage: string,
   spanName: string,
   /**
@@ -341,6 +331,10 @@ export async function runChannelAgentTurn(
     { agentKey: agentKey as ModelBackedAgentKey, basePrompt: '' },
     { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
   );
+
+  // Persona: prepend before any other additions so callers' promptNote and tool
+  // hints land at the END of the system prompt where the model weighs them highest.
+  spec.systemPrompt = applyPersona(spec.systemPrompt, channel.personaPrompt ?? null);
 
   // Merge any extra tools (delegateTask) onto the resolved spec, and append the
   // prompt note so the agent knows the affordance exists. The spec's own tools
@@ -379,7 +373,12 @@ export async function runChannelAssistantTurn(
   input: ChannelAssistantTurnInput
 ): Promise<{ reply: string; delegate?: DelegateIntent }> {
   const channel = await prisma.slackChannel.findUnique({
-    select: { agentKey: true, monthlyBudgetUsdCents: true },
+    select: {
+      agentKey: true,
+      monthlyBudgetUsdCents: true,
+      personaPrompt: true,
+      team: { select: { defaultPersonaPrompt: true } },
+    },
     where: { id: input.channelId },
   });
   const agentKey = channel?.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
@@ -451,9 +450,16 @@ export async function runChannelAssistantTurn(
     delegate = intent;
   });
 
+  // Resolve the effective persona (channel overrides team default) and pass it
+  // into runChannelAgentTurn so it's prepended to the system prompt.
+  const personaPrompt = await resolvePersonaPrompt(
+    channel?.personaPrompt,
+    channel?.team?.defaultPersonaPrompt
+  );
+
   // Resolve the channel's agent (CHANNEL tier active) + run one generation.
   const { reply, costUsd } = await runChannelAgentTurn(
-    { agentKey, id: input.channelId, orgId: input.orgId, teamId: input.teamId },
+    { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
     userMessage,
     'llm.channel_assistant',
     { promptNote: DELEGATE_TOOL_PROMPT_NOTE, tools: { delegateTask: delegateTool } as AgentTools }

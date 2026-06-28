@@ -30,6 +30,11 @@ export function channelAmbientScheduleId(channelId: string): string {
   return `auto-swe-channel-ambient-${channelId}`;
 }
 
+/** Temporal Schedule ID for a SlackChannel's reactive-interjection poll (Gap A). */
+export function channelReactiveScheduleId(channelId: string): string {
+  return `auto-swe-channel-reactive-${channelId}`;
+}
+
 /**
  * Everything the recurring-work-request Schedule needs to start
  * RunnableWorkflow. Args are STATIC per Temporal's schedule model — template
@@ -61,6 +66,11 @@ export interface ChannelAmbientScheduleStatus {
   exists: boolean;
   paused: boolean;
   nextRunAt: string | null;
+}
+
+export interface ChannelReactiveScheduleInput {
+  channelId: string;
+  cronExpression: string;
 }
 
 export interface ConsolidationScheduleConfig {
@@ -132,6 +142,8 @@ declare module 'fastify' {
       syncChannelAmbientSchedule: (input: ChannelAmbientScheduleInput) => Promise<void>;
       deleteChannelAmbientSchedule: (channelId: string) => Promise<void>;
       getChannelAmbientScheduleStatus: (channelId: string) => Promise<ChannelAmbientScheduleStatus>;
+      syncChannelReactiveSchedule: (input: ChannelReactiveScheduleInput) => Promise<void>;
+      deleteChannelReactiveSchedule: (channelId: string) => Promise<void>;
     };
   }
 }
@@ -188,18 +200,22 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   }
 
   /**
-   * Schedule action for a channel's ambient digest: starts the worker's
-   * ChannelAmbientWorkflow (by name) on each fire. The base `workflowId` is
-   * `channel-ambient-<channelId>`; Temporal appends the per-fire scheduled
-   * timestamp for uniqueness, so each fire gets its own WorkflowRun.
+   * Build a schedule action that starts a per-channel workflow on each fire.
+   * The base `workflowId` is `<workflowIdPrefix>-<channelId>`; Temporal appends
+   * the per-fire scheduled timestamp for uniqueness, so each fire gets its own
+   * WorkflowRun.
    */
-  function makeChannelAmbientScheduleAction(input: ChannelAmbientScheduleInput) {
+  function makeChannelScheduleAction(
+    channelId: string,
+    workflowIdPrefix: string,
+    workflowType: string
+  ) {
     return {
-      args: [{ channelId: input.channelId }],
+      args: [{ channelId }],
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
-      workflowId: `channel-ambient-${input.channelId}`,
-      workflowType: 'ChannelAmbientWorkflow',
+      workflowId: `${workflowIdPrefix}-${channelId}`,
+      workflowType,
     };
   }
 
@@ -248,6 +264,15 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async deleteChannelAmbientSchedule(channelId: string): Promise<void> {
       const handle = schedules.getHandle(channelAmbientScheduleId(channelId));
+      try {
+        await handle.delete();
+      } catch {
+        // Already gone (or never created) — deletion is idempotent.
+      }
+    },
+
+    async deleteChannelReactiveSchedule(channelId: string): Promise<void> {
+      const handle = schedules.getHandle(channelReactiveScheduleId(channelId));
       try {
         await handle.delete();
       } catch {
@@ -421,7 +446,22 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async syncChannelAmbientSchedule(input: ChannelAmbientScheduleInput): Promise<void> {
       await upsertSchedule(channelAmbientScheduleId(input.channelId), {
-        action: makeChannelAmbientScheduleAction(input),
+        action: makeChannelScheduleAction(
+          input.channelId,
+          'channel-ambient',
+          'ChannelAmbientWorkflow'
+        ),
+        cronExpression: input.cronExpression,
+      });
+    },
+
+    async syncChannelReactiveSchedule(input: ChannelReactiveScheduleInput): Promise<void> {
+      await upsertSchedule(channelReactiveScheduleId(input.channelId), {
+        action: makeChannelScheduleAction(
+          input.channelId,
+          'channel-reactive',
+          'ChannelReactiveWorkflow'
+        ),
         cronExpression: input.cronExpression,
       });
     },

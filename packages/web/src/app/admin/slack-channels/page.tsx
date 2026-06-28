@@ -8,16 +8,21 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import {
+  type ChannelOpenItemDto,
+  type ChannelOpenItemStatus,
   type MemoryItemDto,
   type SlackChannel,
   type UpdateSlackChannelBody,
   useChannelMemory,
+  useChannelOpenItems,
   useCreateSlackChannel,
   useDeleteChannelMemory,
   useDeleteSlackChannel,
   useSlackChannels,
   useUpdateChannelMemory,
+  useUpdateChannelOpenItem,
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
@@ -62,7 +67,11 @@ interface CreateForm {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string;
+  reactiveEnabled: boolean;
+  reactiveCron: string;
+  passiveIngestEnabled: boolean;
   budgetDollars: string;
+  personaPrompt: string;
 }
 
 const EMPTY_CREATE: CreateForm = {
@@ -71,6 +80,10 @@ const EMPTY_CREATE: CreateForm = {
   ambientEnabled: false,
   budgetDollars: '',
   name: '',
+  passiveIngestEnabled: false,
+  personaPrompt: '',
+  reactiveCron: '',
+  reactiveEnabled: false,
   slackChannelId: '',
   slackTeamId: '',
   teamId: '',
@@ -101,6 +114,10 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         ambientEnabled: form.ambientEnabled,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        passiveIngestEnabled: form.passiveIngestEnabled,
+        personaPrompt: form.personaPrompt.trim() || null,
+        reactiveCron: form.reactiveCron || null,
+        reactiveEnabled: form.reactiveEnabled,
         slackChannelId: form.slackChannelId,
         slackTeamId: form.slackTeamId,
         teamId: form.teamId,
@@ -180,6 +197,39 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             value={form.ambientCron}
           />
         )}
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.reactiveEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-reactive"
+            onChange={(e) => set('reactiveEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-reactive">
+            Reactive interjection enabled
+          </label>
+        </div>
+        {form.reactiveEnabled && (
+          <Input
+            hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
+            label="Reactive cron"
+            onChange={(e) => set('reactiveCron', e.target.value)}
+            placeholder="*/5 * * * *"
+            value={form.reactiveCron}
+          />
+        )}
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.passiveIngestEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-passive-ingest"
+            onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-passive-ingest">
+            Passive memory ingestion (silent fact extraction on ambient fire)
+          </label>
+        </div>
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -189,6 +239,13 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           step="0.01"
           type="number"
           value={form.budgetDollars}
+        />
+        <Textarea
+          hint="Persona injected at the top of every system prompt for this channel. Leave blank to inherit the org default."
+          label="Persona (optional)"
+          onChange={(e) => set('personaPrompt', e.target.value)}
+          placeholder="You are Aria, the platform team's expert. Be concise and technical."
+          value={form.personaPrompt}
         />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -211,7 +268,11 @@ interface EditForm {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string;
+  reactiveEnabled: boolean;
+  reactiveCron: string;
+  passiveIngestEnabled: boolean;
   budgetDollars: string;
+  personaPrompt: string;
   teamId: string;
 }
 
@@ -222,6 +283,10 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
     name: ch.name ?? '',
+    passiveIngestEnabled: ch.passiveIngestEnabled,
+    personaPrompt: ch.personaPrompt ?? '',
+    reactiveCron: ch.reactiveCron ?? '',
+    reactiveEnabled: ch.reactiveEnabled,
     teamId: ch.teamId,
   };
 }
@@ -251,6 +316,10 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       ambientEnabled: form.ambientEnabled,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      passiveIngestEnabled: form.passiveIngestEnabled,
+      personaPrompt: form.personaPrompt.trim() || null,
+      reactiveCron: form.reactiveCron || null,
+      reactiveEnabled: form.reactiveEnabled,
       teamId: form.teamId || undefined,
     };
     try {
@@ -312,6 +381,39 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           value={form.ambientCron}
         />
       )}
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.reactiveEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-reactive"
+          onChange={(e) => set('reactiveEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-reactive">
+          Reactive interjection enabled
+        </label>
+      </div>
+      {form.reactiveEnabled && (
+        <Input
+          hint="Cron poll cadence for reactive interjection (e.g. */5 * * * *)"
+          label="Reactive cron"
+          onChange={(e) => set('reactiveCron', e.target.value)}
+          placeholder="*/5 * * * *"
+          value={form.reactiveCron}
+        />
+      )}
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.passiveIngestEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-passive-ingest"
+          onChange={(e) => set('passiveIngestEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-passive-ingest">
+          Passive memory ingestion (silent fact extraction on ambient fire)
+        </label>
+      </div>
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"
@@ -321,6 +423,13 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         step="0.01"
         type="number"
         value={form.budgetDollars}
+      />
+      <Textarea
+        hint="Persona injected at the top of every system prompt for this channel. Leave blank to inherit the org default."
+        label="Persona (optional)"
+        onChange={(e) => set('personaPrompt', e.target.value)}
+        placeholder="You are Aria, the platform team's expert. Be concise and technical."
+        value={form.personaPrompt}
       />
       {error && <p className="text-xs text-brick-400">{error}</p>}
       <div className="flex justify-end gap-2">
@@ -617,6 +726,150 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
   );
 }
 
+// ── Open items modal (Gap C) ──────────────────────────────────────────────────
+
+const STATUS_LABELS: Record<ChannelOpenItemStatus, string> = {
+  DISMISSED: 'dismissed',
+  OPEN: 'open',
+  RESOLVED: 'resolved',
+};
+
+const STATUS_COLORS: Record<ChannelOpenItemStatus, string> = {
+  DISMISSED: 'text-paper-600',
+  OPEN: 'text-amber-400',
+  RESOLVED: 'text-emerald-400',
+};
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) {
+    return 'less than an hour ago';
+  }
+  if (h < 24) {
+    return `${h}h ago`;
+  }
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function OpenItemsModal({
+  channel,
+  onClose,
+}: {
+  channel: SlackChannel | null;
+  onClose: () => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<ChannelOpenItemStatus | 'all'>('OPEN');
+  const { data: items, isLoading } = useChannelOpenItems(channel?.id ?? null, statusFilter);
+  const updateItem = useUpdateChannelOpenItem();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function handleStatus(item: ChannelOpenItemDto, status: ChannelOpenItemStatus) {
+    if (!channel) {
+      return;
+    }
+    setActionError(null);
+    try {
+      await updateItem.mutateAsync({ channelId: channel.id, itemId: item.id, status });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to update item');
+    }
+  }
+
+  return (
+    <Modal
+      eyebrow="Admin / Slack"
+      onClose={onClose}
+      open={channel !== null}
+      title={channel ? `Open Items — ${channel.name ?? channel.slackChannelId}` : 'Open Items'}
+    >
+      <div className="space-y-4">
+        <div className="flex gap-2">
+          {(['OPEN', 'RESOLVED', 'DISMISSED', 'all'] as const).map((s) => (
+            <button
+              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                statusFilter === s
+                  ? 'bg-ink-600 text-paper-100'
+                  : 'text-paper-500 hover:text-paper-300'
+              }`}
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              type="button"
+            >
+              {s === 'all' ? 'all' : STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+
+        {actionError && (
+          <div className="rounded bg-red-900/30 px-3 py-2 font-mono text-xs text-red-400">
+            {actionError}
+          </div>
+        )}
+
+        {isLoading ? (
+          <LoadingState />
+        ) : !items || items.length === 0 ? (
+          <p className="py-4 text-center text-sm text-paper-500">
+            No {statusFilter !== 'all' ? statusFilter.toLowerCase() : ''} items for this channel.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {items.map((item) => (
+              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={item.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-paper-100">{item.description}</p>
+                    <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
+                      <span className={STATUS_COLORS[item.status]}>
+                        {STATUS_LABELS[item.status]}
+                      </span>
+                      <span>·</span>
+                      <span>{relativeTime(item.createdAt)}</span>
+                      {item.ownerUserId && (
+                        <>
+                          <span>·</span>
+                          <span>owner: {item.ownerUserId}</span>
+                        </>
+                      )}
+                      {item.lastNudgedAt && (
+                        <>
+                          <span>·</span>
+                          <span>nudged {relativeTime(item.lastNudgedAt)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {item.status === 'OPEN' && (
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        disabled={updateItem.isPending}
+                        onClick={() => handleStatus(item, 'RESOLVED')}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Resolve
+                      </Button>
+                      <Button
+                        disabled={updateItem.isPending}
+                        onClick={() => handleStatus(item, 'DISMISSED')}
+                        size="sm"
+                        variant="danger"
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function ChannelRow({
@@ -624,11 +877,13 @@ function ChannelRow({
   onDelete,
   onEdit,
   onMemory,
+  onOpenItems,
 }: {
   channel: SlackChannel;
   onDelete: (ch: SlackChannel) => void;
   onEdit: (ch: SlackChannel) => void;
   onMemory: (ch: SlackChannel) => void;
+  onOpenItems: (ch: SlackChannel) => void;
 }) {
   const update = useUpdateSlackChannel();
 
@@ -654,17 +909,30 @@ function ChannelRow({
       </td>
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-300">{channel.agentKey}</td>
       <td className="py-3 pr-4 text-center">
-        {channel.ambientEnabled ? (
-          <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            on
-            {channel.ambientCron && (
-              <span className="text-paper-600"> · {channel.ambientCron}</span>
-            )}
-          </span>
-        ) : (
-          <span className="font-mono text-[10px] text-paper-600">off</span>
-        )}
+        <div className="flex flex-col items-center gap-0.5">
+          {channel.ambientEnabled ? (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              ambient
+              {channel.ambientCron && (
+                <span className="text-paper-600"> · {channel.ambientCron}</span>
+              )}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-paper-600">ambient off</span>
+          )}
+          {channel.reactiveEnabled ? (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+              reactive
+              {channel.reactiveCron && (
+                <span className="text-paper-600"> · {channel.reactiveCron}</span>
+              )}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-paper-600">reactive off</span>
+          )}
+        </div>
       </td>
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</td>
       <td className="py-3 pr-4 text-center">
@@ -683,6 +951,9 @@ function ChannelRow({
       </td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-2">
+          <Button onClick={() => onOpenItems(channel)} size="sm" variant="secondary">
+            Open Items
+          </Button>
           <Button onClick={() => onMemory(channel)} size="sm" variant="secondary">
             Memory
           </Button>
@@ -707,6 +978,7 @@ export default function AdminSlackChannelsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SlackChannel | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<SlackChannel | null>(null);
+  const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -785,6 +1057,7 @@ export default function AdminSlackChannelsPage() {
                     onDelete={setDeleteTarget}
                     onEdit={setEditTarget}
                     onMemory={setMemoryTarget}
+                    onOpenItems={setOpenItemsTarget}
                   />
                 ))}
               </tbody>
@@ -798,6 +1071,8 @@ export default function AdminSlackChannelsPage() {
       <EditChannelModal channel={editTarget} onClose={() => setEditTarget(null)} />
 
       <MemoryModal channel={memoryTarget} onClose={() => setMemoryTarget(null)} />
+
+      <OpenItemsModal channel={openItemsTarget} onClose={() => setOpenItemsTarget(null)} />
 
       <ConfirmModal
         confirmLabel="Delete"

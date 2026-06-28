@@ -1,8 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
 import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
+import { resolvePersonaPrompt } from '../lib/channelPersona.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   accrueChannelUsage,
+  DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
@@ -11,9 +13,6 @@ import {
 export interface ChannelAmbientInput {
   channelId: string;
 }
-
-/** Fallback agent key when a channel row somehow lacks one (column has a default). */
-const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
 
 /** Cap on how many recent memory items are injected into the digest prompt. */
 const MAX_DIGEST_MEMORY_ITEMS = 15;
@@ -95,7 +94,9 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
         isActive: true,
         monthlyBudgetUsdCents: true,
         orgId: true,
+        personaPrompt: true,
         slackChannelId: true,
+        team: { select: { defaultPersonaPrompt: true } },
         teamId: true,
       },
       where: { id: input.channelId },
@@ -119,8 +120,12 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
+    const personaPrompt = await resolvePersonaPrompt(
+      channel.personaPrompt,
+      channel.team?.defaultPersonaPrompt
+    );
     const { reply, costUsd } = await runChannelAgentTurn(
-      { agentKey, id: channel.id, orgId: channel.orgId, teamId: channel.teamId },
+      { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
       buildAmbientPrompt(memory),
       'llm.channel_ambient'
     );

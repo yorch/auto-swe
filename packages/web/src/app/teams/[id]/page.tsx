@@ -7,11 +7,14 @@ import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor'
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
+import { useUpdateTeam } from '@/hooks/useTeams';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -32,10 +35,24 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const ownTeamRole = team?.memberships?.find((m) => m.user?.id === userId)?.role;
   const canManageTeamConfig = platformRole === 'ADMIN' || ownTeamRole === 'ADMIN';
 
+  const updateTeam = useUpdateTeam(id);
+
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
+  const [personaInput, setPersonaInput] = useState('');
+  const [personaError, setPersonaError] = useState<string | null>(null);
+
+  async function handleSavePersona() {
+    setPersonaError(null);
+    try {
+      await updateTeam.mutateAsync({ defaultPersonaPrompt: personaInput.trim() || null });
+      setPersonaInput('');
+    } catch (e) {
+      setPersonaError(e instanceof Error ? e.message : 'Failed to update persona');
+    }
+  }
 
   if (isLoading) {
     return <LoadingState />;
@@ -177,6 +194,53 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       {canManageTeamConfig && <ShellAllowlistEditor teamId={id} />}
       {canManageTeamConfig && <EgressAllowlistEditor teamId={id} />}
       {canManageTeamConfig && <TeamAgentLibrarySection teamId={id} />}
+
+      {canManageTeamConfig && (
+        <Card>
+          <CardHeader>
+            <CardTitle eyebrow="Channel Assistant">Default Persona</CardTitle>
+          </CardHeader>
+          <div className="space-y-4">
+            {personaError ? <Alert variant="error">{personaError}</Alert> : null}
+            <div>
+              <p className="text-sm text-paper-500">Current default persona</p>
+              {team.defaultPersonaPrompt ? (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-paper-100">
+                  {team.defaultPersonaPrompt}
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-paper-500 italic">None set</p>
+              )}
+            </div>
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <Textarea
+                  hint="Team-wide default persona for all channel assistants. Channels can override this individually. Leave blank to clear."
+                  label="New persona"
+                  onChange={(e) => setPersonaInput(e.target.value)}
+                  placeholder="You are a helpful assistant for this team…"
+                  value={personaInput}
+                />
+              </div>
+              <Button disabled={updateTeam.isPending} onClick={handleSavePersona} variant="primary">
+                {team.defaultPersonaPrompt ? 'Update' : 'Set'}
+              </Button>
+            </div>
+            {team.defaultPersonaPrompt && (
+              <Button
+                disabled={updateTeam.isPending}
+                onClick={() => {
+                  setPersonaInput('');
+                  updateTeam.mutate({ defaultPersonaPrompt: null });
+                }}
+                variant="ghost"
+              >
+                Clear persona
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
 
       <TeamFormModal
         mode={{

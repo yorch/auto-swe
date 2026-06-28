@@ -325,6 +325,9 @@ model Team {
   /// from `finalizeWorkflowRun`. Default false so existing teams don't get
   /// a sudden notification firehose.
   slackNotifySuccess  Boolean      @default(false) @map("slack_notify_success")
+  /// Default persona prompt for all channel assistants belonging to this team.
+  /// Channel-level personaPrompt overrides this. Null = no team-wide persona.
+  defaultPersonaPrompt String?     @map("default_persona_prompt")
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -440,8 +443,32 @@ model SlackChannel {
   ambientEnabled   Boolean        @default(false) @map("ambient_enabled")
   /// 5-field cron for the ambient digest (null = no scheduled digest).
   ambientCron      String?        @map("ambient_cron")
+  /// Reactive interjection (Gap A): when true, a per-channel Schedule polls recent
+  /// channel history and the assistant may proactively chime in (opt-in, default
+  /// off so the bot is never a firehose responder).
+  reactiveEnabled  Boolean        @default(false) @map("reactive_enabled")
+  /// 5-field cron for the reactive poll cadence (null = no reactive poll).
+  reactiveCron     String?        @map("reactive_cron")
+  /// Cursor: the newest message timestamp the reactive pass has already evaluated.
+  /// Advanced every tick so the LLM only fires on genuinely new conversation.
+  lastReactiveCheckAt DateTime?   @map("last_reactive_check_at") @db.Timestamptz
+  /// Cooldown anchor: when the reactive pass last actually posted an interjection.
+  /// Rate-limits proactive posts (at most one per cooldown window).
+  lastReactiveAt   DateTime?      @map("last_reactive_at") @db.Timestamptz
   /// Optional per-channel monthly spend cap in USD cents. Null = inherit org cap.
   monthlyBudgetUsdCents Int?      @map("monthly_budget_usd_cents")
+  /// Per-channel persona prompt injected at the top of every system prompt for
+  /// this channel's assistant turns, reactive interjections, and ambient digests.
+  /// Overrides the team-level defaultPersonaPrompt when set.
+  personaPrompt    String?        @map("persona_prompt")
+  /// Passive memory ingestion (Gap G): when true, the ambient workflow silently
+  /// extracts salient facts from human messages and writes them to channel memory
+  /// without requiring an @mention. Default false (opt-in, noise-averse).
+  passiveIngestEnabled Boolean    @default(false) @map("passive_ingest_enabled")
+  /// Cursor for passive ingest: the Slack `ts` string of the newest message
+  /// already processed. Stored raw (no DateTime conversion) to avoid float
+  /// precision loss. Null means "start from the beginning of time" (no cursor).
+  passiveIngestCursor String?     @map("passive_ingest_cursor")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -449,11 +476,45 @@ model SlackChannel {
   agents       Agent[]
   memoryItems  MemoryItem[]
   monthlyUsage ChannelMonthlyUsage[]
+  openItems    ChannelOpenItem[]
 
   @@unique([workspaceId, slackChannelId])
   @@index([teamId])
   @@index([orgId])
   @@map("slack_channels")
+}
+
+/// Status of a channel open item (Gap C: follow-up tracking).
+enum ChannelOpenItemStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+
+  @@map("channel_open_item_status")
+}
+
+/// A tracked open action-item, question, or task detected by the channel
+/// assistant in the conversation. Populated by the ambient sweep (Gap C) and
+/// cleared when the assistant observes a resolution or the admin dismisses it.
+model ChannelOpenItem {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId   String                @map("channel_id") @db.Uuid
+  channel     SlackChannel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  /// Human-readable description of the open item (question, task, decision).
+  description String
+  /// Slack user ID of the person who owns / was assigned the item, if known.
+  ownerUserId String?               @map("owner_user_id")
+  status      ChannelOpenItemStatus @default(OPEN)
+  /// Slack message timestamp that originated this item (used as a dedup anchor
+  /// so the sweep never creates the same item twice).
+  sourceTs    String?               @map("source_ts")
+  /// When the assistant last posted a follow-up nudge for this item.
+  lastNudgedAt DateTime?            @map("last_nudged_at") @db.Timestamptz
+  createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([channelId, status])
+  @@map("channel_open_items")
 }
 
 /// Per-channel monthly cost aggregation (channel assistant budget). Mirrors

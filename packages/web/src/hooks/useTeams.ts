@@ -31,8 +31,11 @@ export function useCreateTeam() {
 export function useUpdateTeam(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; description?: string }) =>
-      api.patch<{ data: TeamSummary }>(`/api/v1/teams/${id}`, body),
+    mutationFn: (body: {
+      name?: string;
+      description?: string;
+      defaultPersonaPrompt?: string | null;
+    }) => api.patch<{ data: TeamSummary }>(`/api/v1/teams/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', id] });

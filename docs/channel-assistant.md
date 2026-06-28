@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend. Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -215,6 +215,21 @@ Three follow-on capabilities round out memory and task execution:
   inspect consolidated rows via `GET …/memory?includeConsolidated=true` and the
   "Show consolidated (archived) items" toggle in `/admin/slack-channels`.
 
+- **Gap G — passive memory ingestion.** `passiveIngestChannelMemory`
+  (`packages/worker/src/activities/passiveIngestChannelMemory.ts`) runs as the 4th
+  best-effort activity in `ChannelAmbientWorkflow` on every ambient fire. When
+  `passiveIngestEnabled` is true it silently extracts at most 5 salient facts from
+  recent human messages (no `@mention` required) using the `commitToMemory` model.
+  Cursor: `passiveIngestCursor` is a raw Slack `ts` string (float-format, avoids
+  DateTime precision loss) — advanced to the newest message ts seen each tick so
+  no window is re-read. Bot messages and empty texts are filtered before the LLM
+  call. De-dup: each candidate fact is embedded and checked against existing channel
+  memories at threshold 0.85; near-duplicates are skipped (the `consolidateChannelMemory`
+  pass handles the rest). Budget-gated (`isChannelOverBudgetNow`) and accrued with
+  `countRun: false`. Opt-in per channel; default `false`. Admin UI checkbox at
+  `/admin/slack-channels`. Migration:
+  Columns folded into `packages/shared/src/prisma/migrations/00000000000000_init/migration.sql`.
+
 - **Gap D — deferred (scheduled) task execution.** The `delegateTask` tool gains
   an optional `runAt` (ISO 8601). `createChannelTaskRun` validates it — only a
   parseable, strictly-future timestamp is kept (`validFutureRunAt`); a garbled or
@@ -230,7 +245,115 @@ Three follow-on capabilities round out memory and task execution:
   helper (`workflows/taskChild.ts`) that owns the ABANDON / task-queue /
   REJECT_DUPLICATE invariants.
 
-## 10. Observability & admin UI
+## 10. Reactive interjection — Gap A (shipped)
+
+Beyond `@mention` (a turn) and the scheduled ambient digest, a channel can opt into
+**reactive interjection**: the assistant watches the live conversation and
+proactively chimes in only when it can clearly help — the difference between "a bot
+you summon" and "a teammate paying attention."
+
+Substrate (buffer + Schedule): rather than a gateway hot-path + per-message buffer
+table, a per-channel **reactive Temporal Schedule** (`reactiveEnabled` +
+`reactiveCron`, opt-in, default off) fires `ChannelReactiveWorkflow` →
+`evaluateReactiveInterjection`, which reads recent channel history via
+`conversations.history` at tick time (reusing the `channels:history` scope). No
+firehose on the event path.
+
+Cost-bounded + noise-averse (the #1 reported risk for proactive agents):
+- **New-message gate** — the LLM fires ONLY when there are human messages newer
+  than the channel's `lastReactiveCheckAt` cursor (advanced every tick). A quiet
+  channel costs one cheap Slack read and zero tokens.
+- **Budget gate** — over the monthly cap ⇒ no LLM, no post (same `isChannelOverBudgetNow`
+  gate as the turn/digest).
+- **Cooldown** — at most one interjection per 10-minute window (`lastReactiveAt`);
+  on cooldown the LLM is skipped entirely.
+- **High-bar SKIP** — the prompt instructs the agent to reply `SKIP` unless it has
+  something genuinely useful (answer an unanswered question, correct a stale fact,
+  surface forgotten context); a `SKIP`/empty/trivial reply is not posted.
+
+Cost accrues to `ChannelMonthlyUsage`; `countRun` is true only when it actually
+posts (a `SKIP` is a no-op evaluation, not a user-facing run). Admins toggle
+reactive mode + cadence at `/admin/slack-channels`. Memory retrieval reuses the
+cross-channel `retrieveChannelMemory` (Gap E). Passive memory ingestion (learning
+from non-mention messages) is the natural next step on this same poll.
+
+## 11. Open-item tracking — Gap C (shipped)
+
+The channel assistant tracks **open items** — unanswered questions, unresolved tasks,
+pending decisions — and nudges the channel when things go stale.
+
+**How it works (rides the ambient schedule):** `ChannelAmbientWorkflow` calls
+`sweepChannelOpenItems` as a best-effort third activity on every ambient fire (after the
+digest and after `consolidateChannelMemory`). Three things happen per sweep:
+
+1. **Detect** — the LLM reads the last 4 hours of channel messages and produces two
+   lists: new `ChannelOpenItem` rows (description, optional `ownerUserId`, optional
+   `sourceTs`) and `resolvedIds` (existing OPEN items that appear resolved in the
+   recent thread).
+2. **Persist** — new items are inserted; resolved IDs are `updateMany`-ed to `RESOLVED`.
+   `sourceTs` (Slack message timestamp) is used as a **dedup anchor** so the same
+   message never spawns two items across consecutive ambient fires.
+3. **Nudge** — any OPEN item older than 24 hours and not nudged in the last 12 hours
+   receives a polite top-level channel message: `<@USER> Just checking in — any update
+   on: _description_?`. `lastNudgedAt` is advanced after each nudge; the cooldown
+   prevents spam.
+
+**Budget-gated:** same `isChannelOverBudgetNow` gate as the digest/reactive paths.
+Never throws — a flaky sweep cannot crash the ambient schedule.
+
+**Data model:** `ChannelOpenItem` (schema: `packages/shared/src/prisma/schema.prisma`),
+`ChannelOpenItemStatus` enum (`OPEN` / `RESOLVED` / `DISMISSED`), composite index on
+`(channel_id, status)`, `sourceTs` for dedup, `lastNudgedAt` for nudge cooldown.
+Migration: `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
+
+**Admin API + UI:**
+- `GET  /api/v1/admin/slack-channels/:id/open-items?status=OPEN|RESOLVED|DISMISSED|all`
+  — ENGINEER+ authed, team-scoped, optional status filter.
+- `PATCH /api/v1/admin/slack-channels/:id/open-items/:itemId` — admin-only, updates
+  `status` (Resolve / Dismiss from the UI).
+- `/admin/slack-channels` page gains an **"Open Items"** button per channel row →
+  modal with status-filter tabs (OPEN / RESOLVED / DISMISSED / all), item list with
+  description, age, owner mention, last-nudge time, and Resolve + Dismiss actions for
+  OPEN items.
+
+## 12. Per-channel personas (shipped)
+
+Admins can give the channel assistant a **persona** — a free-form prompt fragment
+(up to 2 000 chars) prepended to the top of every system prompt before any tool
+hints or task-specific notes, letting different channels carry distinct voices,
+domain focus, or behavioural rules.
+
+**Resolution cascade** (`packages/worker/src/lib/channelPersona.ts`):
+
+1. `SlackChannel.personaPrompt` — channel-specific override (highest priority).
+2. `Team.defaultPersonaPrompt` — team-wide default for all channels belonging to
+   that team that don't set their own.
+3. `null` — no persona, system prompt is unchanged.
+
+`resolvePersonaPrompt(channelPersonaPrompt, teamDefaultPersonaPrompt)` is a pure
+async function — callers include `team: { select: { defaultPersonaPrompt: true } }`
+in their channel query and pass it directly, eliminating the extra DB round-trip.
+`applyPersona(systemPrompt, persona)` prepends with a blank separator
+(`"${persona}\n\n${systemPrompt}"`).
+
+**Injection point:** `runChannelAgentTurn` (shared core for assistant, ambient,
+and reactive paths) applies the persona to `spec.systemPrompt` immediately after
+`resolveAgentSpec` and before any `promptNote` or tool hints, so tool-calling
+instructions stay closest to the model's attention boundary.
+
+**Admin surfaces:**
+- `SlackChannel` create/patch: `personaPrompt` field (nullable string). Surfaced
+  in the `/admin/slack-channels` modal (Textarea below the budget field) for both
+  create and edit.
+- `Team` default: `PATCH /api/v1/teams/:id` with `{ defaultPersonaPrompt }` (team
+  LEAD or platform ADMIN). Surfaced in the `/teams/[id]` page as a "Default
+  Persona" card (visible to team ADMINs and platform ADMINs).
+
+**Scope:** persona is resolved at turn time (same activity call as model
+selection), so changing it takes effect on the next LLM call without a workflow
+restart.
+
+## 13. Observability & admin UI
 
 Every channel turn + ambient digest creates a lightweight `WorkflowRun` keyed to
 its Temporal workflow id (`startChannelRun` → the turn → `finalizeChannelRun`),
@@ -252,13 +375,15 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
-## 11. Future refinements (not built)
+## 14. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
   mid-task hand-off is now covered for *task runs* (§8: a delegated run is durable,
   thread-bound, and steerable from replies). A single long-lived per-*channel*
   signal workflow (vs. per-mention conversational turns + scheduled ambient) remains
   a possible consolidation, but isn't required for the hand-off use case anymore.
+- **Reactive interjection in a thread** — §10 posts top-level; targeting the reply
+  into the most-relevant thread (rather than the channel root) is a refinement.
 - **Per-stage progress posts** back into the task thread (the run is already
   observable in `/runs`; richer in-thread "working on X" updates are a polish item).
 - **Richer general-route decomposition** — the general "Channel Task" template is a
@@ -281,27 +406,35 @@ memory) from `/admin/slack-channels`.
 > (added in the manifest); see `docs/slack-app-setup.md` for reinstall
 > instructions.
 
-## 12. Key files
+## 15. Key files
 
 - Schema: `packages/shared/src/prisma/schema.prisma` (`SlackWorkspace`,
-  `SlackChannel`, `ChannelMonthlyUsage`, `ConfigScope.CHANNEL`).
+  `SlackChannel`, `ChannelMonthlyUsage`, `ChannelOpenItem`, `ChannelOpenItemStatus`,
+  `ConfigScope.CHANNEL`); migration:
+  `packages/shared/src/prisma/migrations/00000000000003_channel_open_items/`.
 - Resolver: `packages/worker/src/lib/config/agentResolver.ts`, `types.ts`.
 - Worker: `packages/worker/src/workflows/channelAssistant.ts`,
   `packages/worker/src/workflows/channelScheduledTask.ts` (Gap D deferral, §9),
+  `packages/worker/src/workflows/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/workflows/taskChild.ts` (`startThreadTaskChild` launch helper),
   `packages/worker/src/activities/channelAssistant.ts`,
+  `packages/worker/src/activities/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
+  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (Gap G, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),
   `packages/worker/src/activities/runAgentNode.ts` (`prependSteering`),
-  `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`).
+  `packages/worker/src/lib/slackNotify.ts` (`postSlackThreadMessage`, `fetchChannelHistory`).
 - Gateway: `packages/gateway/src/routes/slack.ts` (`/events`, thread-reply steering),
   `packages/gateway/src/routes/slackChannels.ts`,
   `packages/gateway/src/plugins/temporal.ts` (`startChannelAssistant`).
 - Web: `packages/web/src/app/admin/slack-channels/`,
-  `packages/web/src/hooks/useSlackChannels.ts`.
+  `packages/web/src/app/teams/[id]/page.tsx` (persona card),
+  `packages/web/src/hooks/useSlackChannels.ts`,
+  `packages/web/src/hooks/useTeams.ts` (`useUpdateTeam` with `defaultPersonaPrompt`).
 - Shared: `packages/shared/src/lib/channelTask.ts` (`channelTaskWorkflowId`,
   `CHANNEL_TASK_STEER_SIGNAL`), `packages/shared/src/workflow/interpreter.ts`
   (`drainSteering`).

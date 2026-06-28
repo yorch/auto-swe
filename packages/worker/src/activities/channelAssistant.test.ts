@@ -13,6 +13,7 @@ vi.mock('@auto-swe/shared/db', () => {
 });
 
 vi.mock('@auto-swe/shared/lib/agentPrompts', () => ({
+  CHANNEL_MEMORY_SUMMARIZER_PROMPT: 'channel memory summarizer prompt',
   MEMORY_SUMMARIZER_PROMPT: 'memory summarizer prompt',
 }));
 
@@ -66,6 +67,12 @@ const writeChannelMemoryMock = vi.fn();
 vi.mock('../lib/channelMemory.js', () => ({
   retrieveChannelMemory: (...args: unknown[]) => retrieveChannelMemoryMock(...args),
   writeChannelMemory: (...args: unknown[]) => writeChannelMemoryMock(...args),
+}));
+
+vi.mock('../lib/channelPersona.js', () => ({
+  applyPersona: (systemPrompt: string, persona: string | null) =>
+    persona ? `${persona}\n\n${systemPrompt}` : systemPrompt,
+  resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
 }));
 
 // Accrual now consumes the authoritative `costUsd` returned by runAgent (mocked

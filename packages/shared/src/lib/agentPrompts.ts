@@ -250,6 +250,28 @@ You MUST respond with valid JSON matching this schema:
   ]
 }`;
 
+/**
+ * System prompt for the channel-memory consolidator (Gap F).
+ * Mirrors {@link LESSON_CONSOLIDATOR_PROMPT} but targets channel-scoped memory
+ * items instead of SWE workflow lessons. Structured-output coupling — callers
+ * parse the result with a Zod schema; do not make freely user-editable without
+ * pinning the output-format instruction.
+ */
+export const CHANNEL_MEMORY_CONSOLIDATOR_PROMPT = [
+  'You are a memory-consolidation assistant for a Slack channel.',
+  'You will receive a cluster of related channel-memory items (facts, decisions,',
+  'Q&A, and context this channel has discussed) that are semantically similar to',
+  'each other. Consolidate them into ONE or TWO durable, reusable facts that',
+  'capture the essence of the cluster without redundancy.',
+  '',
+  'For each output memory:',
+  '- `lessonSummary`: A clear, concrete fact worth remembering (1–2 sentences).',
+  '- `rationale`: Why this matters / when it is useful (1 sentence).',
+  '',
+  'Return valid JSON: { "memories": [ { "lessonSummary": "…", "rationale": "…" } ] }',
+  'Return at most 2 memories per cluster — prefer one if the items all say the same thing.',
+].join('\n');
+
 export const CI_FIX_SYSTEM_PROMPT = `You are a highly constrained CI Fix Engineer operating within an isolated repository environment.
 
 Your previous code passed local tests but failed the CI/CD pipeline. You must analyze the CI logs and fix the failures.
@@ -381,6 +403,80 @@ You MUST respond with valid JSON matching this schema:
   "severity": "PASS" | "INFO" | "WARNING" | "CRITICAL",
   "findings": [{ "file": string, "line": number?, "category": string, "description": string, "suggestedFix": string }]
 }`;
+
+/**
+ * System prompt for the channel-memory summarizer. Reuses the same framing as
+ * {@link MEMORY_SUMMARIZER_PROMPT} (distill into a reusable lesson) but targets
+ * a single conversational exchange instead of a whole workflow.
+ */
+export const CHANNEL_MEMORY_SUMMARIZER_PROMPT = `${MEMORY_SUMMARIZER_PROMPT}
+
+You are summarizing a single Slack conversational exchange (a user's question and
+the assistant's answer) into ONE durable, reusable fact for this channel's memory.
+Capture the concrete knowledge worth remembering — not the pleasantries.
+
+Respond with valid JSON matching this schema:
+{
+  "lessonSummary": "The durable fact worth remembering (1-2 sentences, specific and concrete)",
+  "rationale": "Why this matters / when it's useful (1 sentence)"
+}`;
+
+/**
+ * System prompt for the channel open-item sweeper (Gap C).
+ * Detects new open items and marks resolved ones in a fixed structured-output
+ * contract — do not make this user-configurable without also pinning the output
+ * schema instruction, as callers parse the result with a Zod schema.
+ */
+export const CHANNEL_OPEN_ITEM_SWEEPER_PROMPT = [
+  'You are an open-item tracker for a Slack channel. Your job:',
+  '',
+  '1. Detect NEW open items (unanswered questions, unresolved tasks, pending decisions)',
+  '   in the recent conversation that are not already tracked.',
+  '2. Identify which EXISTING tracked items have been resolved in the recent conversation.',
+  '',
+  'Rules for new items:',
+  '- Only track items that are clearly actionable and unresolved.',
+  '- Do NOT create items for casual chat, already-answered questions, or trivial remarks.',
+  '- Keep descriptions concise (1–2 sentences).',
+  '- Set ownerUserId to the Slack user ID (e.g. "U0ABC") of the person responsible, if clear.',
+  '- Set sourceTs to the Slack message ts of the message that created the item, if you can.',
+  '',
+  'Return valid JSON matching the requested schema.',
+].join('\n');
+
+/**
+ * System prompt for the channel passive-memory ingestor (Gap G).
+ * Extracts salient facts from a Slack transcript into a fixed structured-output
+ * contract — do not make this user-configurable without also pinning the output
+ * schema instruction, as callers parse the result with a Zod schema.
+ */
+export const CHANNEL_PASSIVE_INGEST_PROMPT = [
+  'You are a silent fact-extractor for a Slack channel.',
+  'You will receive a transcript of recent channel messages (human messages only).',
+  'Your job is to silently extract at most 5 salient, durable facts worth',
+  'remembering about this team, project, or domain — without generating any reply.',
+  '',
+  'A "salient fact" is something a future channel assistant would find useful when',
+  'answering questions or providing context. Examples:',
+  '  - "The team deploys every Monday at 9 AM UTC"',
+  '  - "The codebase uses Prisma 7 with pgvector for semantic search"',
+  '  - "Alice owns the billing module; Bob owns the auth module"',
+  '  - "The v2 API migration is blocked on security review"',
+  '',
+  'Do NOT extract:',
+  '  - Casual chit-chat, greetings, or reactions',
+  '  - Facts already obvious from the topic/channel name',
+  '  - Opinions or speculation without clear team consensus',
+  '  - Anything that would be stale within hours',
+  '',
+  'If there are no salient facts in the transcript, return { "facts": [] }.',
+  '',
+  'For each fact:',
+  '  - `summary`: A clear, concrete sentence (team-agnostic, reusable in future context).',
+  '  - `rationale`: Why a future assistant would benefit from knowing this (1 sentence).',
+  '',
+  'Return valid JSON: { "facts": [ { "summary": "…", "rationale": "…" } ] }',
+].join('\n');
 
 export const DECOMPOSER_AGENT_PROMPT = `You are a Feature Decomposer that splits a single work request into independent feature-level subtasks.
 

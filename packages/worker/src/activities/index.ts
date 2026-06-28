@@ -8,6 +8,15 @@ export {
   runChannelAssistantTurn,
   updateChannelReply,
 } from './channelAssistant.js';
+// Channel assistant (Gap C) — open-item tracking + follow-up
+export type {
+  SweepChannelOpenItemsInput,
+  SweepChannelOpenItemsResult,
+} from './channelOpenItems.js';
+export { sweepChannelOpenItems } from './channelOpenItems.js';
+// Channel assistant (Gap A) — reactive interjection (proactive responding)
+export type { ChannelReactiveInput, ChannelReactiveResult } from './channelReactive.js';
+export { evaluateReactiveInterjection } from './channelReactive.js';
 // Channel assistant — lightweight WorkflowRun records for observability
 export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun } from './channelRun.js';
@@ -60,6 +69,12 @@ export { getReposForConsolidation } from './getReposForConsolidation.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 // P2/WS4 — declarative mcp node (single MCP tool call)
 export { mcpCallTool } from './mcpCallTool.js';
+// Channel assistant (Gap G) — passive memory ingestion (silent fact extraction)
+export type {
+  PassiveIngestChannelMemoryInput,
+  PassiveIngestChannelMemoryResult,
+} from './passiveIngestChannelMemory.js';
+export { passiveIngestChannelMemory } from './passiveIngestChannelMemory.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
 export type {

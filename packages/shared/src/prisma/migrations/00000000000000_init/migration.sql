@@ -1,23 +1,3 @@
--- Consolidated initial schema, generated from schema.prisma via
--- `prisma migrate diff --from-empty --to-schema --script` (pre-deployment
--- consolidation — nothing has been deployed to any environment, so the whole
--- Prisma-derivable migration history is collapsed into this single baseline).
---
--- Folds in every prior Prisma-generated migration: the original init,
--- trace_enrichment, webhook_token, issue_tracker_kb (issue-tracker + knowledge
--- base), p5_org_rbac_billing (Organization RBAC + OrgMonthlyUsage billing), the
--- evals feature (eval_results / eval_datasets / eval_cases / eval_runs /
--- eval_rubrics + the EvalScoreType / EvalSignalSource enums), and the Claude Tag
--- Slack teammate (slack_workspaces / slack_channels / channel_monthly_usage, the
--- CHANNEL value on ConfigScope, and the channel/team/org scoping columns on
--- memory_items + agents).
---
--- Custom DDL that Prisma's schema DSL cannot express — the pgvector HNSW index,
--- partial unique indexes per config scope (incl. ORGANIZATION and CHANNEL),
--- CHECK constraints, NOT NULL on array columns, and the embedding-config seed —
--- lives in the next migration, 00000000000001_custom_constraints_and_indexes.
-
--- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateExtension
@@ -55,6 +35,9 @@ CREATE TYPE "EvalScoreType" AS ENUM ('BOOLEAN', 'NUMERIC', 'CATEGORICAL');
 
 -- CreateEnum
 CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY');
+
+-- CreateEnum
+CREATE TYPE "channel_open_item_status" AS ENUM ('OPEN', 'RESOLVED', 'DISMISSED');
 
 -- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE');
@@ -190,6 +173,7 @@ CREATE TABLE "teams" (
     "egress_allowlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "slack_notify_channel" TEXT,
     "slack_notify_success" BOOLEAN NOT NULL DEFAULT false,
+    "default_persona_prompt" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -256,12 +240,34 @@ CREATE TABLE "slack_channels" (
     "agent_key" TEXT NOT NULL DEFAULT 'channelAssistant',
     "ambient_enabled" BOOLEAN NOT NULL DEFAULT false,
     "ambient_cron" TEXT,
+    "reactive_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "reactive_cron" TEXT,
+    "last_reactive_check_at" TIMESTAMPTZ,
+    "last_reactive_at" TIMESTAMPTZ,
     "monthly_budget_usd_cents" INTEGER,
+    "persona_prompt" TEXT,
+    "passive_ingest_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "passive_ingest_cursor" TEXT,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "slack_channels_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "channel_open_items" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "channel_id" UUID NOT NULL,
+    "description" TEXT NOT NULL,
+    "owner_user_id" TEXT,
+    "status" "channel_open_item_status" NOT NULL DEFAULT 'OPEN',
+    "source_ts" TEXT,
+    "last_nudged_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "channel_open_items_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1004,6 +1010,9 @@ CREATE INDEX "slack_channels_org_id_idx" ON "slack_channels"("org_id");
 CREATE UNIQUE INDEX "slack_channels_workspace_id_slack_channel_id_key" ON "slack_channels"("workspace_id", "slack_channel_id");
 
 -- CreateIndex
+CREATE INDEX "channel_open_items_channel_id_status_idx" ON "channel_open_items"("channel_id", "status");
+
+-- CreateIndex
 CREATE INDEX "channel_monthly_usage_channel_id_idx" ON "channel_monthly_usage"("channel_id");
 
 -- CreateIndex
@@ -1200,6 +1209,9 @@ ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_team_id_fkey" FOREIG
 
 -- AddForeignKey
 ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "channel_open_items" ADD CONSTRAINT "channel_open_items_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "channel_monthly_usage" ADD CONSTRAINT "channel_monthly_usage_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;

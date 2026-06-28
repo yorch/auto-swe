@@ -78,6 +78,7 @@ export interface TeamSummary {
   name: string;
   slug: string;
   description: string;
+  defaultPersonaPrompt: string | null;
   _count: { memberships: number; repositories: number };
 }
 

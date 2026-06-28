@@ -26,7 +26,11 @@ export interface SlackChannel {
   agentKey: string;
   ambientEnabled: boolean;
   ambientCron: string | null;
+  reactiveEnabled: boolean;
+  reactiveCron: string | null;
+  passiveIngestEnabled: boolean;
   monthlyBudgetUsdCents: number | null;
+  personaPrompt: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -49,7 +53,11 @@ export interface CreateSlackChannelBody {
   agentKey?: string;
   ambientEnabled?: boolean;
   ambientCron?: string | null;
+  reactiveEnabled?: boolean;
+  reactiveCron?: string | null;
+  passiveIngestEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
+  personaPrompt?: string | null;
 }
 
 export interface UpdateSlackChannelBody {
@@ -57,7 +65,11 @@ export interface UpdateSlackChannelBody {
   agentKey?: string;
   ambientEnabled?: boolean;
   ambientCron?: string | null;
+  reactiveEnabled?: boolean;
+  reactiveCron?: string | null;
+  passiveIngestEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
+  personaPrompt?: string | null;
   isActive?: boolean;
   teamId?: string;
 }
@@ -159,6 +171,61 @@ export function useUpdateChannelMemory() {
         .then((r) => r.data),
     onSuccess: (_data, { channelId }) => {
       qc.invalidateQueries({ queryKey: ['admin-slack-channel-memory', channelId] });
+    },
+  });
+}
+
+// ── Open items (Gap C) ───────────────────────────────────────────────────────
+
+export type ChannelOpenItemStatus = 'OPEN' | 'RESOLVED' | 'DISMISSED';
+
+export interface ChannelOpenItemDto {
+  id: string;
+  channelId: string;
+  description: string;
+  ownerUserId: string | null;
+  status: ChannelOpenItemStatus;
+  sourceTs: string | null;
+  lastNudgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function useChannelOpenItems(
+  channelId: string | null,
+  status: ChannelOpenItemStatus | 'all' = 'OPEN'
+) {
+  return useQuery({
+    enabled: !!channelId,
+    queryFn: () => {
+      const qs = status !== 'all' ? `?status=${status}` : '';
+      return api
+        .get<{ data: ChannelOpenItemDto[] }>(`${BASE}/${channelId}/open-items${qs}`)
+        .then((r) => r.data);
+    },
+    queryKey: ['admin-slack-channel-open-items', channelId, status],
+  });
+}
+
+export function useUpdateChannelOpenItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      channelId,
+      itemId,
+      status,
+    }: {
+      channelId: string;
+      itemId: string;
+      status: ChannelOpenItemStatus;
+    }) =>
+      api
+        .patch<{ data: ChannelOpenItemDto }>(`${BASE}/${channelId}/open-items/${itemId}`, {
+          status,
+        })
+        .then((r) => r.data),
+    onSuccess: (_data, { channelId }) => {
+      qc.invalidateQueries({ queryKey: ['admin-slack-channel-open-items', channelId] });
     },
   });
 }

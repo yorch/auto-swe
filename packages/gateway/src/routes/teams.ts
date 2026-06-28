@@ -19,6 +19,7 @@ const CreateTeamSchema = z.object({
 });
 
 const UpdateTeamSchema = z.object({
+  defaultPersonaPrompt: z.string().max(2000).nullable().optional(),
   description: z.string().max(500).optional(),
   name: z.string().min(1).max(100).optional(),
 });
