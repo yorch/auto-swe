@@ -243,14 +243,18 @@ function decryptWorkspaceToken(row: WorkspaceTokenRow | null | undefined): strin
  * singleton `SlackConfig` token (env included) when the channel isn't a
  * provisioned `SlackChannel` or its workspace never completed the install flow.
  *
- * A Slack channel id is unique within a workspace; the cross-workspace collision
- * needed to pick the wrong row is astronomically unlikely within one install, so
- * the first active match is used.
+ * A Slack channel id is unique within a workspace, so within one install there is
+ * normally exactly one active match. Should two workspaces ever share a channel id
+ * (astronomically unlikely), resolution is made deterministic by preferring the
+ * row whose workspace has completed install (`installedAt` set, nulls last) — i.e.
+ * the workspace that actually has a per-workspace token — rather than an arbitrary
+ * first match.
  */
 export async function resolveSlackBotTokenForSlackChannel(
   slackChannelId: string
 ): Promise<string | null> {
   const channel = await (await db()).slackChannel.findFirst({
+    orderBy: { workspace: { installedAt: { nulls: 'last', sort: 'desc' } } },
     select: { workspace: { select: WORKSPACE_TOKEN_SELECT } },
     where: { isActive: true, slackChannelId },
   });
