@@ -6,6 +6,7 @@ import type {
   ScheduledConsolidationInput,
   ScheduledEvalInput,
 } from '@auto-swe/shared/types/workflow';
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
   Client,
   Connection,
@@ -109,6 +110,16 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      /**
+       * Generate a WorkflowSpec from a natural-language description. Unlike the
+       * other helpers this is request/response: it starts WorkflowAuthorWorkflow
+       * and AWAITS the result (the generate→validate→repair loop runs in the
+       * worker, where models bind).
+       */
+      generateWorkflowSpec: (
+        workflowId: string,
+        input: { prompt: string; teamId?: string | null; allowShell?: boolean }
+      ) => Promise<{ spec: WorkflowSpec; summary: string; attempts: number }>;
       startChannelAssistant: (
         workflowId: string,
         input: ChannelAssistantTurnInput
@@ -290,6 +301,20 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       } catch {
         // Already gone (or never created) — deletion is idempotent.
       }
+    },
+
+    async generateWorkflowSpec(
+      workflowId: string,
+      input: { prompt: string; teamId?: string | null; allowShell?: boolean }
+    ): Promise<{ spec: WorkflowSpec; summary: string; attempts: number }> {
+      // execute() = start + await result. Bounded above the activity's 5m
+      // start-to-close so the workflow doesn't time out before the activity does.
+      return (await client.workflow.execute('WorkflowAuthorWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '6 minutes',
+        workflowId,
+      })) as { spec: WorkflowSpec; summary: string; attempts: number };
     },
 
     async getChannelAmbientScheduleStatus(

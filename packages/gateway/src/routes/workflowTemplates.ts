@@ -357,6 +357,151 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Generate a template from a natural-language description ──
+  // POST /generate { prompt, teamId?, name? }
+  // Runs the workflowAuthor agent (in the worker) to synthesize a WorkflowSpec,
+  // then persists it as a DRAFT template so a human can review/edit it on the
+  // canvas before activating. Same authoring RBAC + shell gating as POST /.
+  // Placed before `/:id` so 'generate' is not matched as a template UUID.
+  const GenerateTemplateBody = z.object({
+    name: z.string().min(1).max(120).optional(),
+    prompt: z.string().min(1).max(8000),
+    teamId: z.string().uuid().nullable().optional(),
+  });
+  app.post(
+    '/generate',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { body: GenerateTemplateBody },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { prompt, teamId, name: nameOverride } = request.body;
+
+      // RBAC mirrors POST /: non-admins may only target a team they belong to and
+      // may not author global templates. `allowShell` is the hint passed to the
+      // author agent (the real gate is assertShellAuthoringAllowed at persist).
+      let allowShell = user.role === 'ADMIN';
+      if (user.role !== 'ADMIN') {
+        if (!teamId) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' },
+          });
+        }
+        const member = await fastify.prisma.teamMembership.findFirst({
+          where: { teamId, userId: user.sub },
+        });
+        if (!member) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Not a member of this team' },
+          });
+        }
+        allowShell = member.role === 'ADMIN';
+      }
+
+      // Generate via the worker (start WorkflowAuthorWorkflow + await its result).
+      let generated: { spec: WorkflowSpec; summary: string; attempts: number };
+      try {
+        const wfId = `wfauthor-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+        generated = await fastify.temporal.generateWorkflowSpec(wfId, {
+          allowShell,
+          prompt,
+          teamId: teamId ?? null,
+        });
+      } catch (err) {
+        request.log.error({ err }, 'workflow generation failed');
+        return reply.status(422).send({
+          error: {
+            code: 'GENERATION_FAILED',
+            message:
+              'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.',
+          },
+        });
+      }
+
+      // Defensive re-validation (the worker already validated against the schema).
+      let parsed: unknown;
+      try {
+        parsed = parseSpecOrThrow(generated.spec);
+      } catch (err) {
+        const e = err as Error & { statusCode?: number };
+        return reply
+          .status(e.statusCode ?? 400)
+          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+      }
+
+      const parsedSpec = parsed as WorkflowSpec;
+      // Caller may override the model-chosen name; keep template + spec name aligned.
+      if (nameOverride) {
+        parsedSpec.name = nameOverride;
+      }
+      const name = parsedSpec.name;
+
+      const shellNodes = collectShellNodes(parsedSpec);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
+      ]);
+      if (rbac) {
+        return reply.status(rbac.statusCode).send(rbac.body);
+      }
+      if (!imgGate.ok) {
+        return reply.status(imgGate.statusCode).send(imgGate.body);
+      }
+      const { egressAllowlist } = imgGate;
+
+      try {
+        // DRAFT (not ACTIVE): the human reviews/edits on the canvas, then activates.
+        const tpl = await fastify.prisma.$transaction(async (tx) => {
+          const created = await tx.workflowTemplate.create({
+            data: {
+              activeVersion: 1,
+              description: parsedSpec.description ?? '',
+              name,
+              status: 'DRAFT',
+              teamId: teamId ?? null,
+              versions: {
+                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
+              },
+            },
+            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+          });
+          const initialVersion = created.versions[0];
+          if (initialVersion) {
+            await recordShellAudit(
+              tx,
+              initialVersion.id,
+              teamId ?? null,
+              user.sub,
+              shellNodes,
+              egressAllowlist
+            );
+          }
+          return created;
+        });
+        const warnings = await validateSpecRefs(fastify.prisma, parsedSpec);
+        return reply.status(201).send({
+          attempts: generated.attempts,
+          data: projectTemplate(tpl, undefined),
+          spec: parsed,
+          summary: generated.summary,
+          ...(warnings.length > 0 ? { warnings } : {}),
+        });
+      } catch (err: unknown) {
+        const e = err as { code?: string };
+        if (e.code === 'P2002') {
+          return reply.status(409).send({
+            error: {
+              code: 'NAME_CONFLICT',
+              message: `A template named "${name}" already exists — pass a different "name".`,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
   // ── List templates ──
   app.get(
     '/',
