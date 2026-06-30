@@ -2,10 +2,10 @@
 
 > A granular inventory of **what Anthropic's Claude Tag does that our channel
 > assistant does not yet support**. Source material:
-> [`claude-tag-research.md`](./claude-tag-research.md). Builds on the prior
-> [`channel-assistant-gaps.md`](./channel-assistant-gaps.md) by breaking the
-> *remaining* gaps into concrete, independently-shippable capabilities — with
-> severity, rough effort, and how each would fit our existing architecture.
+> [`claude-tag-research.md`](./claude-tag-research.md). Supersedes the earlier
+> `channel-assistant-gaps.md` by breaking all remaining gaps into concrete,
+> independently-shippable capabilities — with severity, rough effort, and how each
+> fits our existing architecture.
 >
 > **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gap A). Four rows this
 > doc originally listed as Missing/Partial have since shipped: **A — reactive
@@ -192,13 +192,27 @@ it needs a real install, a pilot channel, and observation.
 
 ---
 
-## 7. Where we already match or exceed
+## 7. Divergences and where we already match or exceed
+
+### 7a. Divergences (different by design, not strictly worse)
+
+| Area | Claude Tag | Ours |
+| --- | --- | --- |
+| **Budget** | Token-based plan consumption, caps per channel/org | USD `monthlyBudgetUsdCents` per-channel + per-org `OrgMonthlyUsage`; **soft** cap (Serializable-read gate — a true pre-flight hard cap isn't achievable for post-hoc LLM cost) |
+| **Private channels** | "Does not report from private channels" (explicit rule) | No explicit rule yet (tracked as **G**); channel-scoping prevents cross-channel leakage today (private-channel memory stays scoped to that channel) |
+| **Distribution** | Hosted; replaces the Claude Slack app (30-day migration); fixed on Opus 4.8 | Self-hosted feature; model is DB-configurable (defaults to `anthropic/claude-opus-4-8`) |
+
+### 7b. Where ours matches or exceeds
 
 Not gaps — called out so the comparison is honest:
 
 - **Tenant isolation** via the `CHANNEL` config tier (per-channel agent / tools /
-  MCP / credentials) is arguably *stronger* and more explicit than a hosted
-  product exposes.
+  MCP / credentials) is arguably *stronger* and more explicit than a hosted product
+  exposes. ("HR's assistant won't leak to engineering.")
+- **DM for sensitive data** — parity (`message.im` handled).
+- **Admin control + observability** — likely *more* than the hosted product exposes:
+  `/admin/slack-channels` CRUD, memory view/**edit**/delete, per-channel usage,
+  `/runs` per-turn traces/cost, and a `CHANNEL_SUSPICIOUS` security feed.
 - **Self-hosted + MCP-extensible + multi-provider/DB-configurable models** —
   Claude Tag is hosted and pinned to Opus 4.8.
 - **Cost in real USD** per channel + per org (vs. plan-token consumption), with the
