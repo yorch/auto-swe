@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/C/D/E/F shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/C/D/E/F/G shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + future org-wide reporting. Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -248,6 +248,19 @@ Three follow-on capabilities round out memory and task execution:
   three child-launch call sites share one isolate-safe `startThreadTaskChild`
   helper (`workflows/taskChild.ts`) that owns the ABANDON / task-queue /
   REJECT_DUPLICATE invariants.
+
+- **Gap G — private-channel reporting exclusion.** A `SlackChannel.isPrivate` flag
+  (default false) implements Claude Tag's "does not report from private channels"
+  rule. When set, the channel's memory is never surfaced as a *source* in another
+  channel's cross-channel read: `searchTeamChannelMemory` (the team-scoped half of
+  `retrieveChannelMemory`, Gap E) JOINs `slack_channels` and filters
+  `sc.is_private = false`, so a private channel's facts stay inside it even though
+  it shares a team. The reading channel's OWN memory (the `channel_id = X` query) is
+  unaffected — a private channel still uses its own memory normally. The flag is
+  auto-defaulted from Slack's `channel_type: 'group'` at provision time (set on
+  CREATE only, so a best-effort default never silently undoes a later admin
+  override) and is admin-editable in `/admin/slack-channels`. It is also the
+  exclusion hook the planned org-wide flagging (Gap B) will honour.
 
 ## 10. Reactive interjection — Gap A (shipped)
 

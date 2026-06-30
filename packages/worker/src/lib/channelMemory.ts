@@ -98,6 +98,13 @@ export async function retrieveChannelMemory(
  * Uses a slightly higher threshold than the channel-scoped search to ensure
  * only strongly-matching cross-channel items appear (reducing noise).
  *
+ * Gap G ("does not report from private channels"): a private SOURCE channel's
+ * memory must never bleed into another channel. We JOIN `slack_channels` and
+ * exclude rows whose owning channel has `is_private = true`, so a private
+ * channel's facts stay inside that channel even though they share a team. (The
+ * reading channel's OWN memory is fetched by the separate `channel_id = X` query
+ * and is unaffected — a private channel still uses its own memory normally.)
+ *
  * Raw SQL is required because pgvector operators aren't parameterisable and
  * `team_id != channel_id` isn't expressible via the single-column
  * `searchMemoryItemsByVector` helper. Takes a pre-computed query embedding so the
@@ -114,18 +121,20 @@ async function searchTeamChannelMemory(opts: {
 
   return prisma.$queryRawUnsafe<RetrievedChannelMemoryRow[]>(
     `SELECT
-       id,
-       lesson_summary AS "summary",
-       1 - (embedding <=> $1::vector) AS similarity
-     FROM memory_items
-     WHERE team_id = $2::uuid
-       AND channel_id IS NOT NULL
-       AND channel_id != $3::uuid
-       AND embedding IS NOT NULL
-       AND consolidated_at IS NULL
-       AND (embedding_model IS NULL OR embedding_model = $6)
-       AND 1 - (embedding <=> $1::vector) >= $4
-     ORDER BY embedding <=> $1::vector ASC
+       mi.id,
+       mi.lesson_summary AS "summary",
+       1 - (mi.embedding <=> $1::vector) AS similarity
+     FROM memory_items mi
+     JOIN slack_channels sc ON sc.id = mi.channel_id
+     WHERE mi.team_id = $2::uuid
+       AND mi.channel_id IS NOT NULL
+       AND mi.channel_id != $3::uuid
+       AND sc.is_private = false
+       AND mi.embedding IS NOT NULL
+       AND mi.consolidated_at IS NULL
+       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
+       AND 1 - (mi.embedding <=> $1::vector) >= $4
+     ORDER BY mi.embedding <=> $1::vector ASC
      LIMIT $5`,
     JSON.stringify(queryEmbedding),
     opts.teamId,

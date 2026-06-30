@@ -248,6 +248,7 @@ CREATE TABLE "slack_channels" (
     "persona_prompt" TEXT,
     "passive_ingest_enabled" BOOLEAN NOT NULL DEFAULT false,
     "passive_ingest_cursor" TEXT,
+    "is_private" BOOLEAN NOT NULL DEFAULT false,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

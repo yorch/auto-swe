@@ -574,7 +574,12 @@ async function processChannelEvent(
   const userText = stripMentions(event.text ?? '');
   const threadTs = event.thread_ts ?? eventTs;
 
-  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId);
+  // Gap G: Slack tags private channels with `channel_type: 'group'` (public is
+  // 'channel', DMs 'im'). Pass it as a best-effort default for a freshly
+  // provisioned channel's `isPrivate` flag; admins can override afterwards.
+  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId, {
+    isPrivate: event.channel_type === 'group',
+  });
   if (!channelRow) {
     return;
   }
@@ -699,7 +704,8 @@ async function trySteerThreadTask(
 async function provisionChannel(
   fastify: FastifyInstance,
   slackTeamId: string,
-  slackChannelId: string
+  slackChannelId: string,
+  opts: { isPrivate?: boolean } = {}
 ): Promise<{ id: string; teamId: string; orgId: string } | null> {
   const { defaultTeamSlug } = await resolveWorkflowDefaults();
   const defaultTeam = await fastify.prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
@@ -737,7 +743,10 @@ async function provisionChannel(
   };
   const channel = await fastify.prisma.slackChannel
     .upsert({
+      // `isPrivate` is set on CREATE only — never on update — so a best-effort
+      // provision-time default can't silently undo a later admin override.
       create: {
+        isPrivate: opts.isPrivate ?? false,
         orgId: workspace.orgId,
         slackChannelId,
         teamId: defaultTeam.id,

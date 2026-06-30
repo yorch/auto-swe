@@ -469,6 +469,13 @@ model SlackChannel {
   /// already processed. Stored raw (no DateTime conversion) to avoid float
   /// precision loss. Null means "start from the beginning of time" (no cursor).
   passiveIngestCursor String?     @map("passive_ingest_cursor")
+  /// Private-channel reporting exclusion (Gap G — "does not report from private
+  /// channels"). When true, this channel's memory is never surfaced as a SOURCE in
+  /// another channel's cross-channel reads (`retrieveChannelMemory` team search) or
+  /// in any org-wide proactive reporting. The channel still uses its OWN memory
+  /// normally. Auto-set from Slack's `channel_type: 'group'` at provision time;
+  /// admin-overridable. Default false (public).
+  isPrivate        Boolean        @default(false) @map("is_private")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

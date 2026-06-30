@@ -32,7 +32,7 @@
 | D | Future / scheduled task planning ("plan tasks to complete later") | `runAt` → `ChannelScheduledTaskWorkflow` | **Have ✅ #112** |
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
-| G | "Does not report from private channels" rule | no explicit rule | **Missing** |
+| G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
 | H | Persistent live conversational session | reconstructed per turn | **Partial** |
 | I | Packaged Slack app UX (App Home, slash commands, install) | raw Events API webhooks | **Partial** |
 | J | Multiplayer auditing (who asked what, per channel) | `/runs` + security events | **Partial** |
@@ -164,14 +164,20 @@ configurable (built-in defaults, no opt-out) — tracked as a future refinement 
 
 ## 5. Safety, session & distribution (rows G, H, I, J)
 
-### G. "Does not report from private channels" — **Missing · Severity Medium · Effort S**
+### G. "Does not report from private channels" — **Have ✅ · shipped**
 **Claude Tag** has an explicit rule: it does not surface content *from* private
-channels (into ambient/org-wide reporting). **Now load-bearing, not hypothetical:**
-E (shipped #112) already lets `retrieveChannelMemory` read a sibling channel's
-memory within a team, so a private channel's facts can already surface in another
-channel. The fix is a flag on `SlackChannel` that (a) excludes the channel as a
-*source* in cross-channel reads and (b) excludes it from any future org-wide
-reporting (B). Cheap; a prerequisite for B.
+channels (into ambient/org-wide reporting).
+
+**Shipped:** a `SlackChannel.isPrivate` flag (default false). When set, the
+channel's memory is never returned as a *source* in another channel's
+cross-channel read — `searchTeamChannelMemory` (the team-scoped half of
+`retrieveChannelMemory`) JOINs `slack_channels` and filters `sc.is_private = false`,
+so a private channel's facts stay inside it even though they share a team. The
+channel still uses its OWN memory normally (the `channel_id = X` query is
+unaffected). The flag is auto-defaulted from Slack's `channel_type: 'group'` at
+provision time (set on create only, so it never silently undoes an admin override)
+and is admin-editable in `/admin/slack-channels`. The same flag is the exclusion
+hook B will honour for org-wide reporting. See `packages/worker/src/lib/channelMemory.ts`.
 
 ### H. Persistent live conversational session — **Partial · Severity Medium · Effort M**
 **Claude Tag** feels like a continuous teammate. **Us:** each turn is a *stateless*
@@ -214,7 +220,7 @@ it needs a real install, a pilot channel, and observation.
 | Area | Claude Tag | Ours |
 | --- | --- | --- |
 | **Budget** | Token-based plan consumption, caps per channel/org | USD `monthlyBudgetUsdCents` per-channel + per-org `OrgMonthlyUsage`; **soft** cap (Serializable-read gate — a true pre-flight hard cap isn't achievable for post-hoc LLM cost) |
-| **Private channels** | "Does not report from private channels" (explicit rule) | No explicit rule yet (tracked as **G**); channel-scoping prevents cross-channel leakage today (private-channel memory stays scoped to that channel) |
+| **Private channels** | "Does not report from private channels" (explicit rule) | Explicit `SlackChannel.isPrivate` flag (Gap G ✅) excludes a private channel as a source in cross-channel reads + future org-wide reporting; channel-scoping still prevents leakage at the base tier |
 | **Distribution** | Hosted; replaces the Claude Slack app (30-day migration); fixed on Opus 4.8 | Self-hosted feature; model is DB-configurable (defaults to `anthropic/claude-opus-4-8`) |
 
 ### 7b. Where ours matches or exceeds
@@ -243,24 +249,19 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-1. **G — private-channel exclusion** (S): now *more* than a future hedge — E's
-   team-scoped cross-channel reads already exist, so a private channel's memory can
-   bleed into a sibling channel today. A flag on `SlackChannel` that excludes a
-   channel from cross-channel reads and any cross-channel/ambient reporting closes
-   that. Cheap, and a prerequisite for B.
-2. **B + G together** (L): the org-wide proactive-flagging cluster — the most
-   architecturally significant remaining gap (cuts against per-channel isolation),
-   so design it as one phase with the private-channel rule (G) baked in from the
-   start. (E already shipped the *team*-scoped read half.)
-3. **J — audit view** (S–M), **H — live session** (M), **I — app UX** (M): UX/ops
+1. **B — org-wide proactive flagging** (L): the most architecturally significant
+   remaining gap (cuts against per-channel isolation). G (✅) already shipped the
+   private-channel exclusion this depends on, so B can honour `isPrivate` from the
+   start. (E shipped the *team*-scoped read half.)
+2. **J — audit view** (S–M), **H — live session** (M), **I — app UX** (M): UX/ops
    polish; valuable but not differentiating.
-4. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
+3. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
    per-channel consolidation config; making a fired deferred run steerable.
-5. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
+4. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
 
 > Open question for discussion: how aggressively do we want **B (org-wide
 > proactive visibility)**? It's the biggest remaining lever toward "knows your
 > company," but it directly trades against the per-channel isolation that is
 > currently our strongest differentiator. #112's E read path stayed *within a
-> team* precisely to avoid that tension; B crosses it. The answer shapes whether #2
+> team* precisely to avoid that tension; B crosses it. The answer shapes whether #1
 > above is a near-term phase or a deliberate non-goal.

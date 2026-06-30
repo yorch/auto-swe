@@ -37,6 +37,7 @@ const CreateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
+  isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
   passiveIngestEnabled: z.boolean().optional(),
@@ -64,6 +65,7 @@ const UpdateChannelSchema = z.object({
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
   passiveIngestEnabled: z.boolean().optional(),
@@ -107,6 +109,7 @@ function channelWritableData(body: {
   ambientCron?: string | null;
   ambientEnabled?: boolean;
   isActive?: boolean;
+  isPrivate?: boolean;
   monthlyBudgetUsdCents?: number | null;
   name?: string | null;
   passiveIngestEnabled?: boolean;
@@ -119,6 +122,7 @@ function channelWritableData(body: {
     ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
     ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
     ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+    ...(body.isPrivate !== undefined ? { isPrivate: body.isPrivate } : {}),
     ...(body.monthlyBudgetUsdCents !== undefined
       ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
       : {}),

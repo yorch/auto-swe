@@ -70,6 +70,7 @@ interface CreateForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   passiveIngestEnabled: boolean;
+  isPrivate: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -79,6 +80,7 @@ const EMPTY_CREATE: CreateForm = {
   ambientCron: '',
   ambientEnabled: false,
   budgetDollars: '',
+  isPrivate: false,
   name: '',
   passiveIngestEnabled: false,
   personaPrompt: '',
@@ -112,6 +114,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         agentKey: form.agentKey || 'implementer',
         ambientCron: form.ambientCron || null,
         ambientEnabled: form.ambientEnabled,
+        isPrivate: form.isPrivate,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
         passiveIngestEnabled: form.passiveIngestEnabled,
@@ -230,6 +233,18 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             Passive memory ingestion (silent fact extraction on ambient fire)
           </label>
         </div>
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.isPrivate}
+            className="h-4 w-4 accent-ember-400"
+            id="create-is-private"
+            onChange={(e) => set('isPrivate', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-is-private">
+            Private channel (never surface its memory in other channels)
+          </label>
+        </div>
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -271,6 +286,7 @@ interface EditForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   passiveIngestEnabled: boolean;
+  isPrivate: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -282,6 +298,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    isPrivate: ch.isPrivate,
     name: ch.name ?? '',
     passiveIngestEnabled: ch.passiveIngestEnabled,
     personaPrompt: ch.personaPrompt ?? '',
@@ -314,6 +331,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       agentKey: form.agentKey || undefined,
       ambientCron: form.ambientCron || null,
       ambientEnabled: form.ambientEnabled,
+      isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
       passiveIngestEnabled: form.passiveIngestEnabled,
@@ -412,6 +430,18 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         />
         <label className="text-sm text-paper-300" htmlFor="edit-passive-ingest">
           Passive memory ingestion (silent fact extraction on ambient fire)
+        </label>
+      </div>
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.isPrivate}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-is-private"
+          onChange={(e) => set('isPrivate', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-is-private">
+          Private channel (never surface its memory in other channels)
         </label>
       </div>
       <Input
@@ -931,6 +961,12 @@ function ChannelRow({
             </span>
           ) : (
             <span className="font-mono text-[10px] text-paper-600">reactive off</span>
+          )}
+          {channel.isPrivate && (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              private
+            </span>
           )}
         </div>
       </td>
