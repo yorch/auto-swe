@@ -62,13 +62,30 @@ export async function ChannelScheduledTaskWorkflow(
   // launch: forward each reply straight to the running child run.
   const preSteers: string[] = [];
   let childHandle: ChildWorkflowHandle<Workflow> | undefined;
+
+  // Forward one steer to the running child, swallowing a signal failure. A steer
+  // can land just as the child run finishes (or while this wrapper is itself
+  // closing after `result()` resolves), so `handle.signal()` may reject with
+  // "workflow already completed". Steering an already-finished task is a no-op, so
+  // never let that rejection escape — an unhandled rejection inside an async signal
+  // handler fails the wrapper's workflow task.
+  const forwardSteer = async (handle: ChildWorkflowHandle<Workflow>, text: string) => {
+    try {
+      await handle.signal(steerSignal, text);
+    } catch (err) {
+      log.info('ChannelScheduledTaskWorkflow: steer not delivered (child already closed?)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   setHandler(steerSignal, async (msg: string) => {
     const trimmed = msg.trim();
     if (trimmed.length === 0) {
       return;
     }
     if (childHandle) {
-      await childHandle.signal(steerSignal, trimmed);
+      await forwardSteer(childHandle, trimmed);
     } else {
       preSteers.push(trimmed);
     }
@@ -129,7 +146,7 @@ export async function ChannelScheduledTaskWorkflow(
   // `preSteers` instead of forwarding. Drains that narrow window so no reply is
   // lost in the handoff.
   for (const straggler of preSteers.slice(folded)) {
-    await childHandle.signal(steerSignal, straggler);
+    await forwardSteer(childHandle, straggler);
   }
 
   // Stay alive for the task's whole life so post-launch thread replies keep
