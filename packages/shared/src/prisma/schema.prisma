@@ -469,19 +469,61 @@ model SlackChannel {
   /// already processed. Stored raw (no DateTime conversion) to avoid float
   /// precision loss. Null means "start from the beginning of time" (no cursor).
   passiveIngestCursor String?     @map("passive_ingest_cursor")
+  /// Private-channel reporting exclusion (Gap G — "does not report from private
+  /// channels"). When true, this channel's memory is never surfaced as a SOURCE in
+  /// another channel's cross-channel reads (`retrieveChannelMemory` team search) or
+  /// in any org-wide proactive reporting. The channel still uses its OWN memory
+  /// normally. Auto-set from Slack's `channel_type: 'group'` at provision time;
+  /// admin-overridable. Default false (public).
+  isPrivate        Boolean        @default(false) @map("is_private")
+  /// Org-wide proactive flagging (Gap B): when true, the ambient workflow may
+  /// surface notable activity from OTHER (non-private) channels in the same org
+  /// into this channel — "flags things from across the organization". Opt-in,
+  /// default off; the cross-org read still excludes `isPrivate` source channels.
+  orgFlaggingEnabled Boolean      @default(false) @map("org_flagging_enabled")
+  /// Cooldown anchor: when the org-flagging pass last *evaluated* (advanced once
+  /// the embedding + org search ran, for the no-signals/skip/posted outcomes
+  /// alike — NOT only when a flag was posted). Org flags are digest-level, so this
+  /// rate-limits both the spend and the posting to at most once per ~20 h.
+  lastOrgFlagCheckAt DateTime?    @map("last_org_flag_check_at") @db.Timestamptz
+  /// Persistent live session (Gap H): when true, a plain follow-up reply in a
+  /// thread the assistant was recently active in continues the conversation
+  /// WITHOUT a re-@mention (within a short session window). Opt-in, default off.
+  followupSessionEnabled Boolean  @default(false) @map("followup_session_enabled")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  agents       Agent[]
-  memoryItems  MemoryItem[]
-  monthlyUsage ChannelMonthlyUsage[]
-  openItems    ChannelOpenItem[]
+  agents         Agent[]
+  memoryItems    MemoryItem[]
+  monthlyUsage   ChannelMonthlyUsage[]
+  openItems      ChannelOpenItem[]
+  threadSessions ChannelThreadSession[]
 
   @@unique([workspaceId, slackChannelId])
   @@index([teamId])
   @@index([orgId])
   @@map("slack_channels")
+}
+
+/// Persistent live session (Gap H): tracks when the assistant was last active in
+/// a given Slack thread, so a plain follow-up reply (no re-@mention) can continue
+/// the conversation while the session is fresh. Written by the worker after each
+/// channel turn; read by the gateway on an incoming non-mention thread reply.
+model ChannelThreadSession {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId String       @map("channel_id") @db.Uuid
+  channel   SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  /// Slack thread root `ts` this session belongs to.
+  threadTs  String       @map("thread_ts")
+  /// When the assistant last replied in this thread (the session freshness anchor).
+  lastAssistantAt DateTime @default(now()) @map("last_assistant_at") @db.Timestamptz
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([channelId, threadTs])
+  @@index([channelId])
+  @@map("channel_thread_sessions")
 }
 
 /// Status of a channel open item (Gap C: follow-up tracking).

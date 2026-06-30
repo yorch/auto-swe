@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + Gaps A/C/D/E/F/G shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A–J shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,8 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagCheckAt` gate + rate-limit org-wide proactive flagging (Gap B); `followupSessionEnabled` opts into re-mention-free follow-up sessions (Gap H). Unique on `(workspaceId, slackChannelId)`. |
+| `ChannelThreadSession` | Persistent live session (Gap H): `lastAssistantAt` per `(channelId, threadTs)` — written after each turn, read by the gateway so a plain follow-up reply within the session window continues the thread without a re-`@mention`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -116,7 +117,7 @@ Proactive posting via a per-channel Temporal Schedule:
 - After the digest, the same ambient fire runs three best-effort activities in
   order: `consolidateChannelMemory` (Gap F, §9) to compact accumulated channel
   memory; `sweepChannelOpenItems` (Gap C, §11) to track and nudge open items;
-  and `passiveIngestChannelMemory` (Gap G, §9) to silently extract new facts
+  and `passiveIngestChannelMemory` (passive ingestion, §9) to silently extract new facts
   from human messages.
 - Scope note: ambient proactivity is delivered via Schedules (reusing the
   existing schedule machinery), not a long-lived signal-driven workflow — see
@@ -219,7 +220,7 @@ Three follow-on capabilities round out memory and task execution:
   inspect consolidated rows via `GET …/memory?includeConsolidated=true` and the
   "Show consolidated (archived) items" toggle in `/admin/slack-channels`.
 
-- **Gap G — passive memory ingestion.** `passiveIngestChannelMemory`
+- **Passive memory ingestion.** `passiveIngestChannelMemory`
   (`packages/worker/src/activities/passiveIngestChannelMemory.ts`) runs as the 4th
   best-effort activity in `ChannelAmbientWorkflow` on every ambient fire. When
   `passiveIngestEnabled` is true it silently extracts at most 5 salient facts from
@@ -248,6 +249,70 @@ Three follow-on capabilities round out memory and task execution:
   three child-launch call sites share one isolate-safe `startThreadTaskChild`
   helper (`workflows/taskChild.ts`) that owns the ABANDON / task-queue /
   REJECT_DUPLICATE invariants.
+
+- **Gap G — private-channel reporting exclusion.** A `SlackChannel.isPrivate` flag
+  (default false) implements Claude Tag's "does not report from private channels"
+  rule. When set, the channel's memory is never surfaced as a *source* in another
+  channel's cross-channel read: `searchTeamChannelMemory` (the team-scoped half of
+  `retrieveChannelMemory`, Gap E) JOINs `slack_channels` and filters
+  `sc.is_private = false`, so a private channel's facts stay inside it even though
+  it shares a team. The reading channel's OWN memory (the `channel_id = X` query) is
+  unaffected — a private channel still uses its own memory normally. The flag is
+  auto-defaulted from Slack's `channel_type: 'group'` at provision time (set on
+  CREATE only, so a best-effort default never silently undoes a later admin
+  override) and is admin-editable in `/admin/slack-channels`. It is also the
+  exclusion hook org-wide flagging (Gap B) honours.
+
+- **Gap B — org-wide proactive flagging.** `flagOrgSignals`
+  (`packages/worker/src/activities/flagOrgSignals.ts`) is a best-effort 5th activity
+  on the ambient fire that surfaces notable activity from OTHER channels in the same
+  org into this channel — "flags things from across the organization." Opt-in per
+  channel (`orgFlaggingEnabled`, default off). It embeds the channel's recent memory
+  (its focus) ONCE, runs `searchOrgChannelMemory` (org-scoped pgvector search,
+  `is_private = false` + active source channels only — Gap G baked in), and lets the
+  channel agent decide (high bar, SKIP-aware) whether to post a brief heads-up naming
+  the source channel. Hard rate-limited by a `lastOrgFlagCheckAt` cooldown (20 h)
+  that is advanced once the embedding + org search have run — for the no-signals,
+  skip, AND posted outcomes alike (stamped before the LLM + the best-effort post) —
+  so a channel that rarely or never flags doesn't re-pay the embedding + pgvector
+  search on each ambient fire, and a Slack hiccup can't trigger a re-spend. (The
+  field is a "last checked" anchor, not "last posted".) Budget-gated; cost accrues
+  with `countRun: false` only when it posts. The conservative opt-in + private-source
+  exclusion is deliberate: org-wide visibility never happens by default, preserving
+  per-channel isolation.
+
+- **Gap H — persistent live session (re-mention-free follow-ups).** The friction
+  this closes: a channel user previously had to **re-`@mention` on every turn**
+  (plain replies only steered an active task). When a channel opts in
+  (`followupSessionEnabled`), a plain follow-up reply in a thread the assistant was
+  recently active in continues the conversation with no re-mention. After each
+  delivered turn `ChannelAssistantWorkflow` calls `touchChannelThreadSession`
+  (upserts `ChannelThreadSession.lastAssistantAt`); the gateway's `/events` handler,
+  on a non-mention thread reply with no in-flight task to steer, calls
+  `isLiveThreadSession` (fresh within a 30 min window) and, if live, starts a normal
+  continuation turn (which already reconstructs context from thread history +
+  memory). Self-limiting — the window closes, so the bot never re-engages stale
+  threads — and opt-in (default off). Steering an in-flight *task* still takes
+  precedence over a continuation turn. Stale `ChannelThreadSession` rows are swept
+  occasionally (a ~10%-per-touch probabilistic `deleteMany`, 24 h retention) to keep
+  the table bounded off the per-turn hot path; a channel that goes fully idle stops
+  sweeping, but its rows are tiny and harmless until it's next active or deleted. **Scope note:** while a session is live the assistant treats
+  *any* plain reply in that thread as a continuation — including humans replying to
+  each other — so opting in means "the assistant participates in threads it's
+  recently active in" for the window's duration. This is bounded by the 30 min
+  window + the per-channel budget cap; a true "addressed-to-me" intent gate is a
+  future refinement.
+
+- **Gap I — packaged Slack-app UX (App Home).** On `app_home_opened` (the `home`
+  tab), the gateway publishes a Block Kit Home view — the assistant's "front door"
+  describing what it does and how to drive it (@mention, thread steering, follow-up
+  sessions, slash commands). `buildAppHomeView` is a pure, unit-tested view builder;
+  `publishAppHome` (`views.publish`) is best-effort and never throws into the events
+  handler. The `messages` tab is ignored. Slash commands (`/auto-swe help |
+  workflows list | workflows show | run`) already existed. A one-click OAuth install
+  flow + message/global shortcuts remain the only packaged-distribution follow-ups.
+  Requires the `app_home_opened` event subscription + Home tab enabled in the Slack
+  app config (see `slack-app-setup.md`).
 
 ## 10. Reactive interjection — Gap A (shipped)
 
@@ -381,6 +446,16 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
+**Per-channel audit feed (Gap J).** Building on those run records, `startChannelRun`
+stamps the triggering `userSlackId` + a truncated message snapshot onto the mention
+run's `specSnapshot.channel`. `GET /api/v1/admin/slack-channels/:id/audit` aggregates
+the channel's `WorkflowRun` rows (matched by the `channelId` in the Json snapshot)
+into a **"who asked what, when, and what it touched"** feed — kind, who, when,
+status, cost, tokens, and the `runId`. The admin **"Audit"** modal in
+`/admin/slack-channels` renders it with a kind filter (mention/ambient/reactive) and
+a `trace →` link to the full `/runs/<id>` tool-call sequence. Team-scoped read (same
+`assertChannelAccess` guard as memory/open-items).
+
 ## 14. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight
@@ -428,7 +503,7 @@ memory) from `/admin/slack-channels`.
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
   `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
-  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (Gap G, §9),
+  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (passive ingestion, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),

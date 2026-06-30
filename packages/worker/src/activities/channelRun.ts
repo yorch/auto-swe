@@ -54,11 +54,94 @@ export interface StartChannelRunInput {
   kind: 'mention' | 'ambient' | 'reactive';
   /** Short human label for the run (e.g. the Slack channel id or a thread ref). */
   label: string;
+  /** Gap J (audit): Slack user (`U…`) who triggered the run — `mention` path only. */
+  userSlackId?: string;
+  /** Gap J (audit): the triggering message text (truncated) for "who asked what". */
+  userText?: string;
 }
+
+/** Cap on the audit text snapshot stashed onto the run (defensive against a paste). */
+const MAX_AUDIT_TEXT_CHARS = 280;
 
 export interface FinalizeChannelRunInput {
   workflowId: string;
   status: 'SUCCESS' | 'FAILED';
+}
+
+export interface TouchChannelThreadSessionInput {
+  channelId: string;
+  threadTs: string;
+}
+
+/**
+ * Retention for `ChannelThreadSession` rows. Sessions only matter while fresh (the
+ * gateway's read window is far shorter), so rows older than this are dead and are
+ * swept opportunistically on the next touch — keeping the table bounded per channel
+ * without a separate scheduled job. Must comfortably exceed the gateway's
+ * `SESSION_WINDOW_MS` (30 min) so a live session is never reaped.
+ */
+const THREAD_SESSION_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Probability of running the stale-session sweep on any given touch. The sweep is
+ * a bounding mechanism, not a correctness one (the gateway's read window already
+ * ignores stale rows), so it doesn't need to run every turn — gating it keeps the
+ * extra `deleteMany` off the per-turn hot path while still reaping a channel's dead
+ * rows within a handful of turns. (An activity, not a workflow, so `Math.random`
+ * is fine here — no determinism constraint.) Note: a channel that goes fully idle
+ * stops touching and so stops sweeping; its (tiny) rows linger harmlessly until the
+ * channel is next active or deleted — acceptable for a bounded-size convenience table.
+ */
+const THREAD_SESSION_SWEEP_PROBABILITY = 0.1;
+
+/**
+ * Persistent live session (Gap H): record that the assistant was just active in
+ * this thread, so a plain follow-up reply (no re-@mention) can continue the
+ * conversation while the session is fresh. Upserts `ChannelThreadSession` keyed on
+ * `(channelId, threadTs)`, bumping `lastAssistantAt` to now, and (occasionally)
+ * sweeps this channel's long-dead session rows so the table stays bounded (one
+ * permanent row per thread otherwise).
+ *
+ * Always written (cheap) regardless of whether the channel has the follow-up
+ * feature enabled — the gateway gates on `followupSessionEnabled` at read time, so
+ * a stale row is harmless. Best-effort: a failure here must not break the turn.
+ */
+export async function touchChannelThreadSession(
+  input: TouchChannelThreadSessionInput
+): Promise<void> {
+  try {
+    const now = new Date();
+    await prisma.channelThreadSession.upsert({
+      create: { channelId: input.channelId, lastAssistantAt: now, threadTs: input.threadTs },
+      update: { lastAssistantAt: now },
+      where: {
+        channelId_threadTs: { channelId: input.channelId, threadTs: input.threadTs },
+      },
+    });
+    // Sweep this channel's dead sessions occasionally (not every turn — see
+    // THREAD_SESSION_SWEEP_PROBABILITY). Cheap + bounds growth; a failure here
+    // must not affect the turn (own try/catch).
+    if (Math.random() < THREAD_SESSION_SWEEP_PROBABILITY) {
+      try {
+        await prisma.channelThreadSession.deleteMany({
+          where: {
+            channelId: input.channelId,
+            lastAssistantAt: { lt: new Date(now.getTime() - THREAD_SESSION_RETENTION_MS) },
+          },
+        });
+      } catch (sweepErr) {
+        console.error(
+          `[channelRun] thread-session sweep failed for ${input.channelId}:`,
+          sweepErr instanceof Error ? sweepErr.message : sweepErr
+        );
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[channelRun] failed to touch thread session for ${input.channelId}/${input.threadTs}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
 }
 
 /**
@@ -121,6 +204,9 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
       label: input.label,
       orgId: orgId ?? null,
       teamId: teamId ?? null,
+      // Gap J (audit): who triggered the run + what they asked (mention path only).
+      userSlackId: input.userSlackId ?? null,
+      userText: input.userText ? input.userText.slice(0, MAX_AUDIT_TEXT_CHARS) : null,
     },
   };
 

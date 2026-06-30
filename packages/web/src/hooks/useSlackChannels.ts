@@ -29,6 +29,9 @@ export interface SlackChannel {
   reactiveEnabled: boolean;
   reactiveCron: string | null;
   passiveIngestEnabled: boolean;
+  isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
   isActive: boolean;
@@ -56,6 +59,9 @@ export interface CreateSlackChannelBody {
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
   passiveIngestEnabled?: boolean;
+  isPrivate?: boolean;
+  orgFlaggingEnabled?: boolean;
+  followupSessionEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
 }
@@ -68,6 +74,9 @@ export interface UpdateSlackChannelBody {
   reactiveEnabled?: boolean;
   reactiveCron?: string | null;
   passiveIngestEnabled?: boolean;
+  isPrivate?: boolean;
+  orgFlaggingEnabled?: boolean;
+  followupSessionEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
   isActive?: boolean;
@@ -227,5 +236,35 @@ export function useUpdateChannelOpenItem() {
     onSuccess: (_data, { channelId }) => {
       qc.invalidateQueries({ queryKey: ['admin-slack-channel-open-items', channelId] });
     },
+  });
+}
+
+// ── Gap J: per-channel audit feed ──────────────────────────────────────────────
+
+export type ChannelAuditKind = 'mention' | 'ambient' | 'reactive';
+
+export interface ChannelAuditEntry {
+  runId: string;
+  kind: ChannelAuditKind;
+  status: string;
+  userSlackId: string | null;
+  userText: string | null;
+  costUsd: number;
+  tokensInput: number;
+  tokensOutput: number;
+  createdAt: string;
+  endedAt: string | null;
+}
+
+export function useChannelAudit(channelId: string | null, kind: ChannelAuditKind | 'all' = 'all') {
+  return useQuery({
+    enabled: !!channelId,
+    queryFn: () => {
+      const qs = kind !== 'all' ? `?kind=${kind}` : '';
+      return api
+        .get<{ data: ChannelAuditEntry[] }>(`${BASE}/${channelId}/audit${qs}`)
+        .then((r) => r.data);
+    },
+    queryKey: ['admin-slack-channel-audit', channelId, kind],
   });
 }

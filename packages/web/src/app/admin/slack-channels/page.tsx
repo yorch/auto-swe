@@ -10,11 +10,13 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
+  type ChannelAuditKind,
   type ChannelOpenItemDto,
   type ChannelOpenItemStatus,
   type MemoryItemDto,
   type SlackChannel,
   type UpdateSlackChannelBody,
+  useChannelAudit,
   useChannelMemory,
   useChannelOpenItems,
   useCreateSlackChannel,
@@ -57,6 +59,34 @@ function centsToDisplayDollars(cents: number | null | undefined): string {
   return (cents / 100).toFixed(2);
 }
 
+/** A labelled checkbox row, shared by the create + edit channel forms. */
+function CheckboxField({
+  checked,
+  id,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  id: string;
+  label: string;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <input
+        checked={checked}
+        className="h-4 w-4 accent-ember-400"
+        id={id}
+        onChange={(e) => onChange(e.target.checked)}
+        type="checkbox"
+      />
+      <label className="text-sm text-paper-300" htmlFor={id}>
+        {label}
+      </label>
+    </div>
+  );
+}
+
 // ── Create modal ─────────────────────────────────────────────────────────────
 
 interface CreateForm {
@@ -70,6 +100,9 @@ interface CreateForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   passiveIngestEnabled: boolean;
+  isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -79,7 +112,10 @@ const EMPTY_CREATE: CreateForm = {
   ambientCron: '',
   ambientEnabled: false,
   budgetDollars: '',
+  followupSessionEnabled: false,
+  isPrivate: false,
   name: '',
+  orgFlaggingEnabled: false,
   passiveIngestEnabled: false,
   personaPrompt: '',
   reactiveCron: '',
@@ -112,8 +148,11 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         agentKey: form.agentKey || 'implementer',
         ambientCron: form.ambientCron || null,
         ambientEnabled: form.ambientEnabled,
+        followupSessionEnabled: form.followupSessionEnabled,
+        isPrivate: form.isPrivate,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        orgFlaggingEnabled: form.orgFlaggingEnabled,
         passiveIngestEnabled: form.passiveIngestEnabled,
         personaPrompt: form.personaPrompt.trim() || null,
         reactiveCron: form.reactiveCron || null,
@@ -230,6 +269,24 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             Passive memory ingestion (silent fact extraction on ambient fire)
           </label>
         </div>
+        <CheckboxField
+          checked={form.isPrivate}
+          id="create-is-private"
+          label="Private channel (never surface its memory in other channels)"
+          onChange={(v) => set('isPrivate', v)}
+        />
+        <CheckboxField
+          checked={form.orgFlaggingEnabled}
+          id="create-org-flagging"
+          label="Org-wide flagging (surface signals from other channels here)"
+          onChange={(v) => set('orgFlaggingEnabled', v)}
+        />
+        <CheckboxField
+          checked={form.followupSessionEnabled}
+          id="create-followup-session"
+          label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
+          onChange={(v) => set('followupSessionEnabled', v)}
+        />
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -271,6 +328,9 @@ interface EditForm {
   reactiveEnabled: boolean;
   reactiveCron: string;
   passiveIngestEnabled: boolean;
+  isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -282,7 +342,10 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    followupSessionEnabled: ch.followupSessionEnabled,
+    isPrivate: ch.isPrivate,
     name: ch.name ?? '',
+    orgFlaggingEnabled: ch.orgFlaggingEnabled,
     passiveIngestEnabled: ch.passiveIngestEnabled,
     personaPrompt: ch.personaPrompt ?? '',
     reactiveCron: ch.reactiveCron ?? '',
@@ -314,8 +377,11 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       agentKey: form.agentKey || undefined,
       ambientCron: form.ambientCron || null,
       ambientEnabled: form.ambientEnabled,
+      followupSessionEnabled: form.followupSessionEnabled,
+      isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      orgFlaggingEnabled: form.orgFlaggingEnabled,
       passiveIngestEnabled: form.passiveIngestEnabled,
       personaPrompt: form.personaPrompt.trim() || null,
       reactiveCron: form.reactiveCron || null,
@@ -414,6 +480,24 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           Passive memory ingestion (silent fact extraction on ambient fire)
         </label>
       </div>
+      <CheckboxField
+        checked={form.isPrivate}
+        id="edit-is-private"
+        label="Private channel (never surface its memory in other channels)"
+        onChange={(v) => set('isPrivate', v)}
+      />
+      <CheckboxField
+        checked={form.orgFlaggingEnabled}
+        id="edit-org-flagging"
+        label="Org-wide flagging (surface signals from other channels here)"
+        onChange={(v) => set('orgFlaggingEnabled', v)}
+      />
+      <CheckboxField
+        checked={form.followupSessionEnabled}
+        id="edit-followup-session"
+        label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
+        onChange={(v) => set('followupSessionEnabled', v)}
+      />
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"
@@ -870,16 +954,112 @@ function OpenItemsModal({
   );
 }
 
+// ── Audit modal (Gap J) ─────────────────────────────────────────────────────────
+
+const AUDIT_KIND_COLORS: Record<ChannelAuditKind, string> = {
+  ambient: 'text-emerald-400',
+  mention: 'text-sky-400',
+  reactive: 'text-amber-400',
+};
+
+function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
+  const [kindFilter, setKindFilter] = useState<ChannelAuditKind | 'all'>('all');
+  const { data: entries, isLoading } = useChannelAudit(channel?.id ?? null, kindFilter);
+
+  return (
+    <Modal
+      eyebrow="Admin / Slack"
+      onClose={onClose}
+      open={channel !== null}
+      title={channel ? `Audit — ${channel.name ?? channel.slackChannelId}` : 'Audit'}
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-paper-500">
+          Who triggered the assistant in this channel, what they asked, and what it touched. Each
+          entry links to the full run trace.
+        </p>
+        <div className="flex gap-2">
+          {(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => (
+            <button
+              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                kindFilter === k
+                  ? 'bg-ink-600 text-paper-100'
+                  : 'text-paper-500 hover:text-paper-300'
+              }`}
+              key={k}
+              onClick={() => setKindFilter(k)}
+              type="button"
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <LoadingState />
+        ) : !entries || entries.length === 0 ? (
+          <p className="py-4 text-center text-sm text-paper-500">
+            No {kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {entries.map((e) => (
+              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={e.runId}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-paper-100">
+                      {e.userText ?? (
+                        <span className="italic text-paper-500">
+                          {e.kind === 'mention' ? '(no message captured)' : 'proactive — no user'}
+                        </span>
+                      )}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
+                      <span className={AUDIT_KIND_COLORS[e.kind]}>{e.kind}</span>
+                      <span>·</span>
+                      <span>{e.userSlackId ? `by ${e.userSlackId}` : 'system'}</span>
+                      <span>·</span>
+                      <span>{relativeTime(e.createdAt)}</span>
+                      <span>·</span>
+                      <span>{e.status}</span>
+                      <span>·</span>
+                      <span>${e.costUsd.toFixed(4)}</span>
+                      <span>·</span>
+                      <span>
+                        {e.tokensInput}/{e.tokensOutput} tok
+                      </span>
+                    </div>
+                  </div>
+                  <a
+                    className="shrink-0 font-mono text-[10px] text-ember-400 hover:underline"
+                    href={`/runs/${e.runId}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    trace →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function ChannelRow({
   channel,
+  onAudit,
   onDelete,
   onEdit,
   onMemory,
   onOpenItems,
 }: {
   channel: SlackChannel;
+  onAudit: (ch: SlackChannel) => void;
   onDelete: (ch: SlackChannel) => void;
   onEdit: (ch: SlackChannel) => void;
   onMemory: (ch: SlackChannel) => void;
@@ -932,6 +1112,12 @@ function ChannelRow({
           ) : (
             <span className="font-mono text-[10px] text-paper-600">reactive off</span>
           )}
+          {channel.isPrivate && (
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              private
+            </span>
+          )}
         </div>
       </td>
       <td className="py-3 pr-4 font-mono text-[11px] text-paper-400">{fmtBudget(spent, budget)}</td>
@@ -953,6 +1139,9 @@ function ChannelRow({
         <div className="flex items-center justify-end gap-2">
           <Button onClick={() => onOpenItems(channel)} size="sm" variant="secondary">
             Open Items
+          </Button>
+          <Button onClick={() => onAudit(channel)} size="sm" variant="secondary">
+            Audit
           </Button>
           <Button onClick={() => onMemory(channel)} size="sm" variant="secondary">
             Memory
@@ -979,6 +1168,7 @@ export default function AdminSlackChannelsPage() {
   const [editTarget, setEditTarget] = useState<SlackChannel | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<SlackChannel | null>(null);
   const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
+  const [auditTarget, setAuditTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -1054,6 +1244,7 @@ export default function AdminSlackChannelsPage() {
                   <ChannelRow
                     channel={ch}
                     key={ch.id}
+                    onAudit={setAuditTarget}
                     onDelete={setDeleteTarget}
                     onEdit={setEditTarget}
                     onMemory={setMemoryTarget}
@@ -1073,6 +1264,8 @@ export default function AdminSlackChannelsPage() {
       <MemoryModal channel={memoryTarget} onClose={() => setMemoryTarget(null)} />
 
       <OpenItemsModal channel={openItemsTarget} onClose={() => setOpenItemsTarget(null)} />
+
+      <AuditModal channel={auditTarget} onClose={() => setAuditTarget(null)} />
 
       <ConfirmModal
         confirmLabel="Delete"

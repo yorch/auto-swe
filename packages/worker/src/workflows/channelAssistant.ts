@@ -62,8 +62,11 @@ const { postChannelReply, postChannelPlaceholder, updateChannelReply } = proxyAc
 // Run-record lifecycle: a lightweight WorkflowRun keyed to this Temporal
 // workflowId so the turn's agent traces (LLM calls inside runChannelAssistantTurn)
 // persist + show up in /runs. Quick DB writes — short timeout, a couple retries.
-const { startChannelRun, finalizeChannelRun } = proxyActivities<
-  Pick<typeof activitiesType, 'startChannelRun' | 'finalizeChannelRun'>
+const { startChannelRun, finalizeChannelRun, touchChannelThreadSession } = proxyActivities<
+  Pick<
+    typeof activitiesType,
+    'startChannelRun' | 'finalizeChannelRun' | 'touchChannelThreadSession'
+  >
 >({
   retry: {
     backoffCoefficient: 2,
@@ -146,6 +149,10 @@ export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput)
       label: input.slackChannelId,
       orgId: input.orgId,
       teamId: input.teamId,
+      // Gap J (audit): capture who asked + what, so the per-channel audit view
+      // can show "who asked what, when, and what it touched".
+      userSlackId: input.userSlackId,
+      userText: input.userText,
       workflowId,
     });
   } catch (err) {
@@ -162,6 +169,23 @@ export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput)
     // runTurn only rethrows when even the fallback delivery failed.
     runStatus = 'FAILED';
   } finally {
+    // Persistent live session (Gap H): mark this thread as freshly active so a
+    // plain follow-up reply (no re-@mention) can continue the conversation while
+    // the session window is open. Only on a delivered turn; best-effort.
+    if (runStatus === 'SUCCESS') {
+      try {
+        await touchChannelThreadSession({
+          channelId: input.channelId,
+          threadTs: input.threadTs,
+        });
+      } catch (err) {
+        log.warn('ChannelAssistantWorkflow: touchChannelThreadSession failed', {
+          channelId: input.channelId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Finalize the run record with the terminal status + summed trace cost/tokens.
     // Best-effort; a finalize failure must not surface to the user.
     try {

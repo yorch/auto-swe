@@ -88,12 +88,20 @@ function buildApp(state: FakeState): FastifyInstance {
 
   app.decorate('prisma', {
     activeWorkflow: { create: async () => ({}) },
+    channelThreadSession: {
+      findUnique: async () => null,
+    },
     repository: {
       findMany: async () => [],
       findUnique: async () => null,
     },
     slackChannel: {
-      upsert: async () => ({ id: 'chan-1', orgId: 'org-1', teamId: 'team-default' }),
+      upsert: async () => ({
+        followupSessionEnabled: false,
+        id: 'chan-1',
+        orgId: 'org-1',
+        teamId: 'team-default',
+      }),
     },
     slackWorkspace: {
       upsert: async () => ({ id: 'ws-1', orgId: 'org-1', slackTeamId: 'T1' }),
@@ -834,6 +842,81 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
     expect(state.channelAssistantStarts).toHaveLength(0);
   });
 
+  it('continues a plain thread reply WITHOUT a re-mention when the channel has a live session (Gap H)', async () => {
+    setSteerNotFound();
+    // Channel opts into follow-up sessions, and the assistant was active in this
+    // thread 1 minute ago (within the 30-min window).
+    (app as unknown as { prisma: Record<string, unknown> }).prisma = {
+      ...(app as unknown as { prisma: Record<string, unknown> }).prisma,
+      channelThreadSession: {
+        findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 60_000) }),
+      },
+      slackChannel: {
+        upsert: async () => ({
+          followupSessionEnabled: true,
+          id: 'chan-1',
+          orgId: 'org-1',
+          teamId: 'team-default',
+        }),
+      },
+    };
+
+    const res = await postEvent({
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'and what about retries?',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'message',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // No active task to steer (rejected), but a live session ⇒ a continuation turn.
+    expect(state.signalCalls).toHaveLength(1);
+    expect(state.channelAssistantStarts).toHaveLength(1);
+    expect(state.channelAssistantStarts[0]?.input).toMatchObject({
+      threadTs: '1700.root',
+      userText: 'and what about retries?',
+    });
+  });
+
+  it('does NOT continue a plain thread reply when the session window has lapsed (Gap H)', async () => {
+    setSteerNotFound();
+    (app as unknown as { prisma: Record<string, unknown> }).prisma = {
+      ...(app as unknown as { prisma: Record<string, unknown> }).prisma,
+      channelThreadSession: {
+        // Last active 2 hours ago — well outside the 30-min window.
+        findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+      },
+      slackChannel: {
+        upsert: async () => ({
+          followupSessionEnabled: true,
+          id: 'chan-1',
+          orgId: 'org-1',
+          teamId: 'team-default',
+        }),
+      },
+    };
+
+    const res = await postEvent({
+      channel: 'C9',
+      channel_type: 'channel',
+      team: 'T1',
+      text: 'stale follow-up',
+      thread_ts: '1700.root',
+      ts: '1700.reply',
+      type: 'message',
+      user: 'UME',
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
   it('drops a plain non-mention channel message that is NOT a thread reply (never steers/starts)', async () => {
     const res = await postEvent({
       channel: 'C9',
@@ -887,5 +970,58 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
 
     expect(state.signalCalls).toHaveLength(0);
     expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+});
+
+describe('POST /api/v1/auth/slack/events — App Home tab (Gap I)', () => {
+  const originalFetch = globalThis.fetch;
+  let publishCalls: Array<{ url: string; body: Record<string, unknown> }>;
+
+  beforeEach(() => {
+    publishCalls = [];
+    globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+      publishCalls.push({ body: init?.body ? JSON.parse(init.body) : {}, url: String(url) });
+      return { json: async () => ({ ok: true }) } as unknown as Response;
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function postEvent(event: Record<string, unknown>) {
+    const body = JSON.stringify({ event, team_id: 'T1', type: 'event_callback' });
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+  }
+
+  it('publishes the Home view when a user opens the home tab', async () => {
+    const res = await postEvent({ tab: 'home', type: 'app_home_opened', user: 'UME' });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(publishCalls).toHaveLength(1);
+    expect(publishCalls[0].url).toContain('views.publish');
+    expect(publishCalls[0].body.user_id).toBe('UME');
+    const view = publishCalls[0].body.view as { type: string; blocks: unknown[] };
+    expect(view.type).toBe('home');
+    expect(view.blocks.length).toBeGreaterThan(0);
+    // No conversational workflow is started for a Home open.
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('ignores the messages tab (only the home tab publishes)', async () => {
+    const res = await postEvent({ tab: 'messages', type: 'app_home_opened', user: 'UME' });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(publishCalls).toHaveLength(0);
   });
 });

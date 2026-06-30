@@ -90,50 +90,130 @@ export async function retrieveChannelMemory(
   return channelItems;
 }
 
+/** One org-wide cross-channel memory hit, carrying its source channel for labelling. */
+export interface OrgChannelMemoryItem {
+  id: string;
+  summary: string;
+  similarity: number;
+  sourceChannelId: string;
+  sourceChannelName: string | null;
+}
+
 /**
- * Gap E: cross-channel memory search. Queries memory items belonging to OTHER
- * channels in the same team (same `team_id`, different `channel_id`) so the
- * assistant can surface relevant knowledge from sibling channels in the org.
+ * Shared builder for the cross-channel pgvector search (Gap E team-scoped + Gap B
+ * org-scoped). Both queries are identical except the scope column (`team_id` vs
+ * `org_id`), optional extra SELECT columns, and an optional extra WHERE clause.
  *
- * Uses a slightly higher threshold than the channel-scoped search to ensure
- * only strongly-matching cross-channel items appear (reducing noise).
+ * Centralising the SQL here means the **Gap G privacy filter** (`sc.is_private =
+ * false` — a private channel is never a cross-channel SOURCE) lives in exactly ONE
+ * place, so a future cross-channel reader can't silently re-introduce the leak. The
+ * `$1..$6` positional binding is also defined once: $1 embedding, $2 scopeId, $3
+ * excludeChannelId, $4 similarityThreshold, $5 limit, $6 embeddingModel.
  *
- * Raw SQL is required because pgvector operators aren't parameterisable and
- * `team_id != channel_id` isn't expressible via the single-column
- * `searchMemoryItemsByVector` helper. Takes a pre-computed query embedding so the
- * caller embeds the query text once across both searches.
+ * Raw SQL is required (pgvector `<=>` isn't parameterisable; `scope != channel_id`
+ * + the JOIN aren't expressible via the single-column `searchMemoryItemsByVector`).
+ *
+ * SAFETY: `extraSelect`/`extraWhere` are spliced into the query text, so they MUST
+ * be literal constants (as both call sites below are) — never request/config/DB
+ * input. All variable values flow through the `$1..$6` bindings, never the builder.
+ * The result is computed once at module load (see the two consts below), so it is
+ * never rebuilt per call.
  */
-async function searchTeamChannelMemory(opts: {
+function crossChannelMemorySql(opts: {
+  scopeColumn: 'team_id' | 'org_id';
+  extraSelect?: string;
+  extraWhere?: string;
+}): string {
+  const select = [
+    'mi.id',
+    'mi.lesson_summary AS "summary"',
+    '1 - (mi.embedding <=> $1::vector) AS similarity',
+  ]
+    .concat(opts.extraSelect ?? [])
+    .join(',\n       ');
+  return `SELECT
+       ${select}
+     FROM memory_items mi
+     JOIN slack_channels sc ON sc.id = mi.channel_id
+     WHERE mi.${opts.scopeColumn} = $2::uuid
+       AND mi.channel_id IS NOT NULL
+       AND mi.channel_id != $3::uuid
+       AND sc.is_private = false${opts.extraWhere ? `\n       ${opts.extraWhere}` : ''}
+       AND mi.embedding IS NOT NULL
+       AND mi.consolidated_at IS NULL
+       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
+       AND 1 - (mi.embedding <=> $1::vector) >= $4
+     ORDER BY mi.embedding <=> $1::vector ASC
+     LIMIT $5`;
+}
+
+/** Team-scoped cross-channel SQL — built once (constant inputs). */
+const TEAM_CROSS_CHANNEL_SQL = crossChannelMemorySql({ scopeColumn: 'team_id' });
+
+/** Org-scoped cross-channel SQL (source-channel columns + active filter) — built once. */
+const ORG_CROSS_CHANNEL_SQL = crossChannelMemorySql({
+  extraSelect: ['sc.id   AS "sourceChannelId"', 'sc.name AS "sourceChannelName"'].join(
+    ',\n       '
+  ),
+  extraWhere: 'AND sc.is_active = true',
+  scopeColumn: 'org_id',
+});
+
+/** Run a {@link crossChannelMemorySql} query with the shared `$1..$6` binding. */
+function runCrossChannelMemoryQuery<T>(
+  sql: string,
+  scopeId: string,
+  opts: {
+    excludeChannelId: string;
+    limit: number;
+    similarityThreshold: number;
+    precomputed: QueryEmbedding;
+  }
+): Promise<T[]> {
+  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
+  return prisma.$queryRawUnsafe<T[]>(
+    sql,
+    JSON.stringify(queryEmbedding),
+    scopeId,
+    opts.excludeChannelId,
+    opts.similarityThreshold,
+    opts.limit,
+    embeddingSpec
+  );
+}
+
+/**
+ * Gap E: cross-channel memory search over OTHER channels in the same team (higher
+ * threshold than the channel-scoped search so only strong matches bleed in). Gap G
+ * privacy filter is applied by the shared {@link crossChannelMemorySql} builder.
+ */
+function searchTeamChannelMemory(opts: {
   teamId: string;
   excludeChannelId: string;
   limit: number;
   similarityThreshold: number;
   precomputed: QueryEmbedding;
 }): Promise<RetrievedChannelMemoryRow[]> {
-  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
-
-  return prisma.$queryRawUnsafe<RetrievedChannelMemoryRow[]>(
-    `SELECT
-       id,
-       lesson_summary AS "summary",
-       1 - (embedding <=> $1::vector) AS similarity
-     FROM memory_items
-     WHERE team_id = $2::uuid
-       AND channel_id IS NOT NULL
-       AND channel_id != $3::uuid
-       AND embedding IS NOT NULL
-       AND consolidated_at IS NULL
-       AND (embedding_model IS NULL OR embedding_model = $6)
-       AND 1 - (embedding <=> $1::vector) >= $4
-     ORDER BY embedding <=> $1::vector ASC
-     LIMIT $5`,
-    JSON.stringify(queryEmbedding),
+  return runCrossChannelMemoryQuery<RetrievedChannelMemoryRow>(
+    TEAM_CROSS_CHANNEL_SQL,
     opts.teamId,
-    opts.excludeChannelId,
-    opts.similarityThreshold,
-    opts.limit,
-    embeddingSpec
+    opts
   );
+}
+
+/**
+ * Gap B: org-wide cross-channel memory search over OTHER (non-private, active)
+ * channels in the same org, returning the source channel id + name for
+ * attribution. Privacy filter (Gap G) lives in the shared builder.
+ */
+export function searchOrgChannelMemory(opts: {
+  orgId: string;
+  excludeChannelId: string;
+  limit: number;
+  similarityThreshold: number;
+  precomputed: QueryEmbedding;
+}): Promise<OrgChannelMemoryItem[]> {
+  return runCrossChannelMemoryQuery<OrgChannelMemoryItem>(ORG_CROSS_CHANNEL_SQL, opts.orgId, opts);
 }
 
 /** One recent (un-consolidated) channel-memory row, for ambient digest context. */

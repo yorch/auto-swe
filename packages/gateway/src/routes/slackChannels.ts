@@ -37,8 +37,11 @@ const CreateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
+  followupSessionEnabled: z.boolean().optional(),
+  isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  orgFlaggingEnabled: z.boolean().optional(),
   passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
@@ -63,9 +66,12 @@ const UpdateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
+  followupSessionEnabled: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  orgFlaggingEnabled: z.boolean().optional(),
   passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
@@ -106,9 +112,12 @@ function channelWritableData(body: {
   agentKey?: string;
   ambientCron?: string | null;
   ambientEnabled?: boolean;
+  followupSessionEnabled?: boolean;
   isActive?: boolean;
+  isPrivate?: boolean;
   monthlyBudgetUsdCents?: number | null;
   name?: string | null;
+  orgFlaggingEnabled?: boolean;
   passiveIngestEnabled?: boolean;
   personaPrompt?: string | null;
   reactiveCron?: string | null;
@@ -118,11 +127,18 @@ function channelWritableData(body: {
     ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
     ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
     ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
+    ...(body.followupSessionEnabled !== undefined
+      ? { followupSessionEnabled: body.followupSessionEnabled }
+      : {}),
     ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+    ...(body.isPrivate !== undefined ? { isPrivate: body.isPrivate } : {}),
     ...(body.monthlyBudgetUsdCents !== undefined
       ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
       : {}),
     ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.orgFlaggingEnabled !== undefined
+      ? { orgFlaggingEnabled: body.orgFlaggingEnabled }
+      : {}),
     ...(body.passiveIngestEnabled !== undefined
       ? { passiveIngestEnabled: body.passiveIngestEnabled }
       : {}),
@@ -653,6 +669,85 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: item.id },
       });
       return { data: updated };
+    }
+  );
+
+  // GET /:id/audit — Gap J: per-channel "who asked what, when, what it touched"
+  // audit feed. Aggregation over the lightweight channel `WorkflowRun` rows
+  // (created by startChannelRun): each row carries `specSnapshot.channel`
+  // metadata (kind/userSlackId/userText) plus the run's denormalized
+  // status/cost/tokens. The `runId` links to the full `/runs/<id>` trace, which
+  // shows the tool calls the turn actually made ("what it touched").
+  const AuditQuery = z.object({
+    kind: z.enum(['mention', 'ambient', 'reactive', 'all']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+  });
+  app.get(
+    '/:id/audit',
+    { onRequest: authed, schema: { params: IdParams, querystring: AuditQuery } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const channel = await fastify.prisma.slackChannel.findUnique({
+        select: { teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!channel) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+        return reply;
+      }
+
+      // Match channel runs by the channelId stashed in the Json spec snapshot.
+      // The kind filter is pushed into the WHERE clause (a second JSON-path
+      // predicate on `channel.kind`) rather than applied in JS after `take`, so
+      // `take`/`limit` caps the already-filtered set — a post-take JS filter would
+      // silently under-return (cron ambient/reactive runs dominate the recent
+      // window, starving a `kind=mention` request).
+      const kindFilter = request.query.kind;
+      const runs = await fastify.prisma.workflowRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        select: {
+          costUsdAccrued: true,
+          endedAt: true,
+          id: true,
+          specSnapshot: true,
+          startedAt: true,
+          status: true,
+          tokensInputTotal: true,
+          tokensOutputTotal: true,
+        },
+        take: request.query.limit ?? 50,
+        where: {
+          AND: [
+            { specSnapshot: { equals: request.params.id, path: ['channel', 'channelId'] } },
+            ...(kindFilter && kindFilter !== 'all'
+              ? [{ specSnapshot: { equals: kindFilter, path: ['channel', 'kind'] } }]
+              : []),
+          ],
+        },
+      });
+
+      const data = runs.map((run) => {
+        const meta =
+          (run.specSnapshot as { channel?: Record<string, unknown> } | null)?.channel ?? {};
+        return {
+          costUsd: Number(run.costUsdAccrued ?? 0),
+          createdAt: run.startedAt,
+          endedAt: run.endedAt,
+          kind: (meta.kind as string) ?? 'mention',
+          runId: run.id,
+          status: run.status,
+          tokensInput: run.tokensInputTotal ?? 0,
+          tokensOutput: run.tokensOutputTotal ?? 0,
+          userSlackId: (meta.userSlackId as string | null) ?? null,
+          userText: (meta.userText as string | null) ?? null,
+        };
+      });
+
+      return { data };
     }
   );
 

@@ -8,7 +8,7 @@ import type * as activitiesType from '../activities/index.js';
  * the channel's `ambientCron`. Name MUST be `'ChannelAmbientWorkflow'`, task
  * queue `'engineering-workflow'`, single arg `{ channelId: string }`.
  *
- * Four activities run on each fire:
+ * Five activities run on each fire (each best-effort — a failure never blocks the rest):
  *  1. `runChannelAmbientDigest` — proactively posts a short digest to the
  *     channel, surfacing recent/forgotten memory items (budget-gated, noise-averse).
  *  2. `consolidateChannelMemory` (Gap F) — clusters similar channel-memory items,
@@ -17,9 +17,12 @@ import type * as activitiesType from '../activities/index.js';
  *  3. `sweepChannelOpenItems` (Gap C) — detects new open action items / questions
  *     in recent channel history, tracks them, marks resolved ones, and nudges stale
  *     items that haven't had a follow-up. Best-effort: runs after consolidation.
- *  4. `passiveIngestChannelMemory` (Gap G) — silently extracts salient facts from
- *     recent human messages and writes them to channel memory. Opt-in per channel
- *     (`passiveIngestEnabled`). Best-effort: a failure here never affects the rest.
+ *  4. `passiveIngestChannelMemory` — silently extracts salient facts from recent
+ *     human messages and writes them to channel memory. Opt-in per channel
+ *     (`passiveIngestEnabled`).
+ *  5. `flagOrgSignals` (Gap B) — surfaces notable activity from OTHER (non-private)
+ *     channels in the same org into this channel. Opt-in (`orgFlaggingEnabled`),
+ *     cooldown-rate-limited, private-source-excluded (Gap G).
  *
  * V8-isolate rule: only `import type` from external packages / `@auto-swe/shared`;
  * runtime imports come from `@temporalio/workflow` and the activity proxies below.
@@ -63,11 +66,22 @@ const { sweepChannelOpenItems } = proxyActivities<
   startToCloseTimeout: '5m',
 });
 
-// Gap G: passive memory ingestion — silently extract salient facts from human
-// messages. Single attempt, 5 min timeout (LLM + per-fact embedding writes).
+// Passive memory ingestion — silently extract salient facts from human messages.
+// Single attempt, 5 min timeout (LLM + per-fact embedding writes).
 const { passiveIngestChannelMemory } = proxyActivities<
   Pick<typeof activitiesType, 'passiveIngestChannelMemory'>
 >({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '30s',
+    maximumAttempts: 1,
+  },
+  startToCloseTimeout: '5m',
+});
+
+// Gap B: org-wide proactive flagging — surface notable activity from other
+// (non-private) channels in the org. Opt-in per channel; single attempt.
+const { flagOrgSignals } = proxyActivities<Pick<typeof activitiesType, 'flagOrgSignals'>>({
   retry: {
     backoffCoefficient: 2,
     initialInterval: '30s',
@@ -143,12 +157,24 @@ export async function ChannelAmbientWorkflow(input: { channelId: string }): Prom
     });
   }
 
-  // Gap G: passive memory ingestion — silently extract facts from recent human
-  // messages. Best-effort: a failure here must not affect the other activities.
+  // Passive memory ingestion — silently extract facts from recent human messages.
+  // Best-effort: a failure here must not affect the other activities.
   try {
     await passiveIngestChannelMemory({ channelId: input.channelId });
   } catch (err) {
     log.warn('ChannelAmbientWorkflow: passiveIngestChannelMemory failed (best-effort)', {
+      channelId: input.channelId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Gap B: org-wide proactive flagging — surface cross-channel signals into this
+  // channel (opt-in, private-source-excluded). Best-effort: a failure here must
+  // not affect the digest/consolidation/sweep/ingest outcomes.
+  try {
+    await flagOrgSignals({ channelId: input.channelId });
+  } catch (err) {
+    log.warn('ChannelAmbientWorkflow: flagOrgSignals failed (best-effort)', {
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });

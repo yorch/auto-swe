@@ -7,12 +7,15 @@
 > independently-shippable capabilities — with severity, rough effort, and how each
 > fits our existing architecture.
 >
-> **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gap A). Four rows this
-> doc originally listed as Missing/Partial have since shipped: **A — reactive
-> interjection**, **D — future/scheduled tasks**, **E — workspace-level memory**,
-> and **F — channel-memory consolidation**. They are kept in the scorecard (marked
-> **Have ✅**) for continuity, and their detail sections record what shipped; the
-> open analysis below is rows **B, C, G, H, I, J, K**.
+> **Updated through the B/G/H/I/J work.** Every lettered Claude-Tag capability
+> (**A–J**) is now shipped; only **K** (battle-testing — non-technical) remains
+> open. History: **A** reactive interjection + **C** open-item follow-up (#113, also
+> passive ingestion + persona); **D/E/F** scheduled tasks + cross-channel memory +
+> consolidation (#112); **G** private-channel exclusion, **J** per-channel audit,
+> **B** org-wide flagging, **H** persistent live session, **I** App-Home/slash UX
+> (this work). Shipped rows are kept in the scorecard (marked **Have ✅**) with their
+> detail sections recording what shipped; small follow-ups + the **K** pilot are the
+> only remaining items (§8).
 >
 > Legend — **Have**: at parity. **Partial**: a weaker form exists. **Missing**: not
 > built. Effort is a rough order of magnitude (S ≈ days, M ≈ 1–2 weeks, L ≈ a phase).
@@ -24,15 +27,15 @@
 | # | Claude Tag capability | Us | Status |
 | --- | --- | --- | --- |
 | A | Reactive ambient (watch messages, decide to interject) | `evaluateReactiveInterjection` + per-channel Schedule | **Have ✅ #113** |
-| B | Organization-wide awareness ("flag things from across the org") | per-channel; cross-channel *memory* only | **Missing** |
-| C | Follow-up on forgotten threads / open tasks | memory digest, no item tracking | **Missing** |
+| B | Organization-wide awareness ("flag things from across the org") | opt-in `flagOrgSignals` on the ambient fire (private sources excluded) | **Have ✅** |
+| C | Follow-up on forgotten threads / open tasks | `ChannelOpenItem` + `sweepChannelOpenItems` on the ambient fire | **Have ✅ #113** |
 | D | Future / scheduled task planning ("plan tasks to complete later") | `runAt` → `ChannelScheduledTaskWorkflow` | **Have ✅ #112** |
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
-| G | "Does not report from private channels" rule | no explicit rule | **Missing** |
-| H | Persistent live conversational session | reconstructed per turn | **Partial** |
-| I | Packaged Slack app UX (App Home, slash commands, install) | raw Events API webhooks | **Partial** |
-| J | Multiplayer auditing (who asked what, per channel) | `/runs` + security events | **Partial** |
+| G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
+| H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread, no re-`@mention` | **Have ✅** |
+| I | Packaged Slack app UX (App Home, slash commands, install) | App Home tab (`views.publish`) + `/auto-swe` slash commands | **Have ✅** (install flow still manual) |
+| J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
 | — | One shared `@assistant` per channel | shared agent + memory + steering | Have |
 | — | Per-channel scoping of tools/data/memory | `CHANNEL` config tier | Have |
@@ -42,9 +45,12 @@
 | — | DM for sensitive data | `message.im` handled | Have |
 | — | Admin view/edit/delete of memory | admin memory CRUD | Have |
 | — | Configurable model (Opus 4.8 default) | DB-driven model config | Have / ahead |
+| — | Passive memory ingestion (learn from non-mention messages) | `passiveIngestChannelMemory` (opt-in, #113) | Have |
+| — | Per-channel / per-team persona | `personaPrompt` / `defaultPersonaPrompt` (#113) | Have / ahead |
 
-The rest of this doc details the **open Partial/Missing** rows (B, C, G, H, I,
-J, K), grouped by theme. §2.A and §3–§4 record what A/D/E/F shipped, for continuity.
+The rest of this doc details each row, grouped by theme. Rows A–J are now shipped
+(detail sections record what landed); **K** is the only open row. §8 lists the
+remaining small follow-ups + the pilot.
 
 ---
 
@@ -67,37 +73,51 @@ when a message is actually posted. The per-channel `reactiveCron` + `reactiveEna
 toggle are managed via the existing admin slack-channels UI. See
 `channel-assistant.md` §10 and `packages/worker/src/activities/channelReactive.ts`.
 
-**Still open (natural next step):** passive memory ingestion — learning from
-non-mention channel messages one message at a time (the "learns your company from
-ambient chatter" behaviour we don't yet have). The reactive poll is the natural
-place to do it; it reads the history already.
+**Passive memory ingestion (also shipped in #113):** `passiveIngestChannelMemory`
+runs on the ambient fire when a channel opts in (`passiveIngestEnabled`, default
+off). It reads recent human messages past a `passiveIngestCursor` (the Slack `ts`
+of the newest message already processed, stored raw to avoid float-precision loss),
+extracts salient durable facts via an LLM, and writes them to channel memory — no
+`@mention` required. This is the "learns your company from ambient chatter"
+behaviour. Budget-gated and best-effort like the other ambient passes.
 
-### B. Organization-wide awareness — **Missing · Severity Medium · Effort L**
+### B. Organization-wide awareness — **Have ✅ · shipped**
 **Claude Tag:** flags things *from across the organization* — it can connect a
 question in one channel to activity in another, **proactively**.
 
-**Us:** #112 added a cross-channel **read** path on the *reactive* side —
-`retrieveChannelMemory` now also searches sibling channels in the same team (Gap
-E). But the **proactive** half is still missing: the ambient digest
-(`ChannelAmbientWorkflow`) is per-channel and never flags activity from *other*
-channels into a channel. There is no org-level ambient workflow that watches the
-whole org and surfaces cross-channel signals. This is the part of B that remains,
-and it is the one in real tension with isolation — it needs an explicit,
-admin-granted "org-visibility" capability rather than a default (a new config
-scope or memory-visibility flag), plus the private-channel exclusion in G baked
-in. (The E read path deliberately stays within one *team*, which is why it didn't
-require G.)
+**Shipped:** `flagOrgSignals`, a best-effort 5th activity on the ambient fire. When
+a channel opts in (`orgFlaggingEnabled`, default off), it embeds the channel's
+recent memory (its "focus") once, runs `searchOrgChannelMemory` over OTHER channels
+in the same **org**, and lets the channel agent decide — high bar, SKIP-aware —
+whether anything is worth flagging into this channel, naming the source channel.
 
-### C. Follow-up on forgotten threads / tasks — **Missing · Severity Medium · Effort M**
+Designed to respect isolation, which is the tension B always carried:
+- **Opt-in + admin-granted** — `orgFlaggingEnabled` is off by default; an admin
+  turns it on per channel. No org-wide visibility happens by default.
+- **Private-channel exclusion (Gap G) baked in** — `searchOrgChannelMemory` JOINs
+  `slack_channels` and excludes `is_private = true` (and inactive) SOURCE channels,
+  so a private channel's content is never flagged elsewhere.
+- **Rate-limited** — a hard `lastOrgFlagCheckAt` cooldown (20 h, advanced per *check*) keeps org flags rare
+  and signal-rich; budget-gated; cost accrues with `countRun: false`.
+
+This shipped the *proactive* half; the *team*-scoped reactive read half was Gap E
+(#112). See `packages/worker/src/activities/flagOrgSignals.ts`.
+
+### C. Follow-up on forgotten threads / tasks — **Have ✅ · shipped #113**
 **Claude Tag:** "follows up on forgotten threads or tasks."
 
-**Us:** the ambient digest *summarizes* recent memory, but we don't **track open
-action items** as first-class objects with a due/stale notion, so we can't chase a
-specific unanswered question or stalled task.
-
-**Fit:** a lightweight `ChannelOpenItem` model (source message, owner, status,
-lastNudgedAt) populated by the turn/ambient agent and swept by the existing
-schedule. Reuses the Temporal Schedule we already run for digests.
+**Shipped:** a first-class `ChannelOpenItem` model (`description`, `ownerUserId`,
+`status` ∈ {OPEN, RESOLVED, DISMISSED}, `sourceTs` dedup anchor, `lastNudgedAt`)
+plus `sweepChannelOpenItems`, run on every ambient fire after consolidation. Each
+sweep does three things: **detect** new open items in the recent message window
+(LLM, structured output) and which tracked items now read as resolved; **persist**
+— insert fresh items (deduped by `sourceTs`, else by description) and flip resolved
+ones to RESOLVED; **nudge** — for each still-OPEN item older than 24 h and not
+nudged in the last 12 h, post a brief `<@owner> any update on …?` follow-up. The
+cooldown stamp is written *before* the Slack post (at-most-once) so a transient
+Slack failure can't double-nudge. Budget-gated and best-effort like the other
+ambient passes; cost accrues with `countRun: false`. Admins view/dismiss items in
+the `/admin/slack-channels` UI. See `packages/worker/src/activities/channelOpenItems.ts`.
 
 ---
 
@@ -151,34 +171,68 @@ configurable (built-in defaults, no opt-out) — tracked as a future refinement 
 
 ## 5. Safety, session & distribution (rows G, H, I, J)
 
-### G. "Does not report from private channels" — **Missing · Severity Medium · Effort S**
+### G. "Does not report from private channels" — **Have ✅ · shipped**
 **Claude Tag** has an explicit rule: it does not surface content *from* private
-channels (into ambient/org-wide reporting). Our channel-scoping prevents
-cross-channel leakage today, but once we add B/E (cross-channel reads), we need an
-explicit private-channel exclusion or we recreate the leak. Cheap to add now as a
-flag on `SlackChannel`; load-bearing once cross-channel reads exist.
+channels (into ambient/org-wide reporting).
 
-### H. Persistent live conversational session — **Partial · Severity Medium · Effort M**
-**Claude Tag** feels like a continuous teammate. **Us:** each turn is a *stateless*
-workflow invocation; continuity is **reconstructed** from thread history + channel
-memory, and in a channel the user must **re-`@mention` on every turn** (plain
-replies only steer an active task). Fast back-and-forth feels more stateless than
-the Claude app. A long-lived per-thread (or per-channel) signal workflow that
-holds session state — and lets a follow-up reply continue without a re-mention —
-would close this. (Noted as a future refinement in `channel-assistant.md` §10.)
+**Shipped:** a `SlackChannel.isPrivate` flag (default false). When set, the
+channel's memory is never returned as a *source* in another channel's
+cross-channel read — `searchTeamChannelMemory` (the team-scoped half of
+`retrieveChannelMemory`) JOINs `slack_channels` and filters `sc.is_private = false`,
+so a private channel's facts stay inside it even though they share a team. The
+channel still uses its OWN memory normally (the `channel_id = X` query is
+unaffected). The flag is auto-defaulted from Slack's `channel_type: 'group'` at
+provision time (set on create only, so it never silently undoes an admin override)
+and is admin-editable in `/admin/slack-channels`. The same flag is the exclusion
+hook B will honour for org-wide reporting. See `packages/worker/src/lib/channelMemory.ts`.
 
-### I. Packaged Slack-app UX — **Partial · Severity Low · Effort M**
-**Claude Tag** ships as a first-class Slack app (replacing the old one). We drive
-everything through the **Events API** with a manifest, but lack App Home, slash
-commands (`/assistant …`), shortcuts, and a one-click install/onboarding flow.
-Functional parity exists; the packaged-product polish does not.
+### H. Persistent live conversational session — **Have ✅ · shipped**
+**Claude Tag** feels like a continuous teammate.
 
-### J. Multiplayer auditing — **Partial · Severity Low–Med · Effort S–M**
+**Shipped (re-mention-free follow-ups):** the friction this gap named was that a
+channel user had to **re-`@mention` on every turn** — plain replies only steered an
+active task. Now, when a channel opts in (`followupSessionEnabled`), a plain
+follow-up reply in a thread the assistant was recently active in **continues the
+conversation without a re-mention**. The worker stamps a `ChannelThreadSession`
+(`lastAssistantAt`) after each delivered turn; the gateway, on a non-mention thread
+reply with no in-flight task to steer, checks for a *live* session (within a 30 min
+window) and starts a continuation turn (which already reconstructs context from
+thread history + memory). Self-limiting (the window closes; the bot never
+re-engages stale threads) and opt-in (default off). A full long-lived per-channel
+signal workflow remains possible but isn't needed for the re-mention-free
+continuity this gap was really about. See `packages/gateway/src/routes/slack.ts`
+(`isLiveThreadSession`) + `touchChannelThreadSession`.
+
+### I. Packaged Slack-app UX — **Have ✅ (mostly) · shipped**
+**Claude Tag** ships as a first-class Slack app (replacing the old one).
+
+**Shipped:** the two packaged-product surfaces that were missing —
+- **App Home tab** — on `app_home_opened` (home tab), the gateway publishes a Block
+  Kit Home view (`publishAppHome` → `views.publish`) that is the assistant's "front
+  door": what it does + how to drive it (@mention, thread steering, follow-up
+  sessions, slash commands). `buildAppHomeView` is pure/unit-tested.
+- **Slash commands** already existed — `/auto-swe help | workflows list | workflows
+  show <name> | run` (the `run` subcommand opens a Block Kit modal). The gap text's
+  `/assistant` was a naming guess; the real command namespace is `/auto-swe`.
+
+**Still open (small):** a true *one-click install / OAuth onboarding* flow is still
+manual (admin imports the manifest + enters credentials per `slack-app-setup.md`).
+Shortcuts (message/global) aren't wired. Functional + packaged parity is there;
+distribution polish is the remainder.
+
+### J. Multiplayer auditing — **Have ✅ · shipped**
 Claude Tag's own reported concern: multiplayer makes **permissions + auditing**
-harder. We have `/runs` traces + a `CHANNEL_SUSPICIOUS` security feed, but no
-per-channel **"who asked what, when, and what did it touch"** audit view. Mostly an
-aggregation over data we already persist (`WorkflowRun` + `AgentTrace` + the run's
-`userSlackId`).
+harder.
+
+**Shipped:** a per-channel **"who asked what, when, and what it touched"** audit
+feed. `startChannelRun` now stamps the triggering `userSlackId` + a truncated
+message snapshot onto the channel run's `specSnapshot.channel` (mention path);
+`GET /api/v1/admin/slack-channels/:id/audit` aggregates the channel's `WorkflowRun`
+rows (matched by the `channelId` in the Json snapshot), returning kind
+(mention/ambient/reactive), who, when, status, cost, tokens, and the `runId`. The
+admin "Audit" modal in `/admin/slack-channels` renders it with a kind filter and a
+`trace →` link to the full `/runs/<id>` tool-call sequence ("what it touched").
+Team-scoped read (same `assertChannelAccess` guard as the other channel reads).
 
 ---
 
@@ -199,7 +253,7 @@ it needs a real install, a pilot channel, and observation.
 | Area | Claude Tag | Ours |
 | --- | --- | --- |
 | **Budget** | Token-based plan consumption, caps per channel/org | USD `monthlyBudgetUsdCents` per-channel + per-org `OrgMonthlyUsage`; **soft** cap (Serializable-read gate — a true pre-flight hard cap isn't achievable for post-hoc LLM cost) |
-| **Private channels** | "Does not report from private channels" (explicit rule) | No explicit rule yet (tracked as **G**); channel-scoping prevents cross-channel leakage today (private-channel memory stays scoped to that channel) |
+| **Private channels** | "Does not report from private channels" (explicit rule) | Explicit `SlackChannel.isPrivate` flag (Gap G ✅) excludes a private channel as a source in cross-channel reads + future org-wide reporting; channel-scoping still prevents leakage at the base tier |
 | **Distribution** | Hosted; replaces the Claude Slack app (30-day migration); fixed on Opus 4.8 | Self-hosted feature; model is DB-configurable (defaults to `anthropic/claude-opus-4-8`) |
 
 ### 7b. Where ours matches or exceeds
@@ -224,29 +278,23 @@ Not gaps — called out so the comparison is honest:
 
 ## 8. Suggested priority order
 
-A/D/E/F shipped (A in #113, D/E/F in #112). Remaining work, re-ranked for
-discussion (not a commitment):
+A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
+ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
+commitment):
 
-1. **C — open-item follow-up** (M): pairs naturally with the reactive Schedule A
-   just shipped; a lightweight `ChannelOpenItem` model swept each tick. Complements
-   the *explicit* scheduling that D shipped with *autonomous* follow-up detection.
-   The reactive poll already reads the history window needed for detection.
-2. **B + G together** (L): the org-wide proactive-flagging cluster — the most
-   architecturally significant remaining gap (cuts against per-channel isolation),
-   so design it as one phase with the private-channel rule (G) baked in from the
-   start. (E already shipped the *team*-scoped read half; A's poll is the natural
-   place to extend it once B is designed.)
-3. **H — live session** (M), **J — audit view** (S–M), **I — app UX** (M): UX/ops
-   polish; valuable but not differentiating.
-4. **F-config follow-up** (S) + **D steering follow-up** (S) + **A passive-memory
-   follow-up** (S–M): small refinements — per-channel consolidation config; making
-   a fired deferred run steerable; folding passive memory ingestion into the
-   reactive poll.
-5. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
+All lettered feature gaps (A–J) are now shipped; the remaining work is polish +
+pilot:
+1. **I install-flow follow-up** (S–M): one-click OAuth install / onboarding +
+   Slack shortcuts (App Home + slash commands already shipped).
+2. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
+   per-channel consolidation config; making a fired deferred run steerable.
+3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless. The
+   only non-technical gap left — it needs a real install + observation, not code.
 
-> Open question for discussion: how aggressively do we want **B (org-wide
-> proactive visibility)**? It's the biggest remaining lever toward "knows your
-> company," but it directly trades against the per-channel isolation that is
-> currently our strongest differentiator. #112's E read path stayed *within a
-> team* precisely to avoid that tension; B crosses it. The answer shapes whether #2
-> above is a near-term phase or a deliberate non-goal.
+> Resolved (B shipped): the open question was *how aggressively* to do org-wide
+> proactive visibility given it trades against per-channel isolation. The answer
+> taken was **conservative**: B is **opt-in per channel** (default off, admin
+> turns it on), **excludes private source channels** (Gap G baked in), and is
+> **hard rate-limited** (a 20 h cooldown). So the differentiating isolation holds
+> by default — org-wide flagging is a deliberate, per-channel opt-in, not a
+> platform-wide posture.

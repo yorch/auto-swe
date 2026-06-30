@@ -26,6 +26,7 @@ function newMockPrisma() {
     slackWorkspace: { upsert: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
+    workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -532,6 +533,81 @@ describe('slackChannelRoutes', () => {
     expect(select.embedding).toBeUndefined();
     expect(select.id).toBe(true);
     expect(select.consolidatedAt).toBe(true);
+    await app.close();
+  });
+
+  it('audit feed: queries channel runs by JSON channelId and flattens metadata', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, teamId: TEAM });
+    mockPrisma.workflowRun.findMany.mockResolvedValue([
+      {
+        costUsdAccrued: 0.0123,
+        endedAt: '2026-06-24T00:01:00.000Z',
+        id: 'run-1',
+        specSnapshot: {
+          channel: { channelId: CHANNEL, kind: 'mention', userSlackId: 'U9', userText: 'deploy?' },
+        },
+        startedAt: '2026-06-24T00:00:00.000Z',
+        status: 'SUCCESS',
+        tokensInputTotal: 100,
+        tokensOutputTotal: 50,
+      },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/audit`,
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data[0]).toMatchObject({
+      costUsd: 0.0123,
+      kind: 'mention',
+      runId: 'run-1',
+      status: 'SUCCESS',
+      userSlackId: 'U9',
+      userText: 'deploy?',
+    });
+    // Matched by the channelId stashed in the Json spec snapshot. With no kind
+    // filter, the WHERE carries just the channelId predicate in its AND.
+    const where = mockPrisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([
+      { specSnapshot: { equals: CHANNEL, path: ['channel', 'channelId'] } },
+    ]);
+    await app.close();
+  });
+
+  it('audit feed: pushes the kind filter into the query WHERE (not a post-take JS filter)', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, teamId: TEAM });
+    // The DB does the kind filtering now, so the mock returns only the matching row.
+    mockPrisma.workflowRun.findMany.mockResolvedValue([
+      {
+        costUsdAccrued: 0,
+        endedAt: null,
+        id: 'r-m',
+        specSnapshot: { channel: { kind: 'mention' } },
+        startedAt: '2026-06-24T00:00:00.000Z',
+        status: 'SUCCESS',
+        tokensInputTotal: 0,
+        tokensOutputTotal: 0,
+      },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/audit?kind=mention`,
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data).toHaveLength(1);
+    expect(data[0].runId).toBe('r-m');
+    // The kind predicate must be pushed into the WHERE so `take` applies post-filter.
+    const where = mockPrisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([
+      { specSnapshot: { equals: CHANNEL, path: ['channel', 'channelId'] } },
+      { specSnapshot: { equals: 'mention', path: ['channel', 'kind'] } },
+    ]);
     await app.close();
   });
 
