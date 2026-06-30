@@ -11,3 +11,4 @@ export { ReembedMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';
+export { WorkflowAuthorWorkflow } from './workflowAuthor.js';

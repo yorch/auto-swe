@@ -64,6 +64,12 @@ export {
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
+// Natural-language workflow authoring (generate a WorkflowSpec from a description)
+export type {
+  GenerateWorkflowSpecInput,
+  GenerateWorkflowSpecResult,
+} from './generateWorkflowSpec.js';
+export { generateWorkflowSpec } from './generateWorkflowSpec.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
 export { getReposForConsolidation } from './getReposForConsolidation.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
