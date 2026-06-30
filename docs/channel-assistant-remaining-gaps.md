@@ -7,12 +7,12 @@
 > *remaining* gaps into concrete, independently-shippable capabilities — with
 > severity, rough effort, and how each would fit our existing architecture.
 >
-> **Updated after PR #112** (Gaps D/E/F). Three of the rows this doc originally
-> listed as Missing/Partial have since shipped: **D — future/scheduled tasks**,
-> **E — workspace-level memory**, and **F — channel-memory consolidation**. They
-> are kept in the scorecard (marked **Have ✅ #112**) for continuity, and their
-> detail sections now record what shipped; the open analysis below is rows **A,
-> B, C, G, H, I, J, K**.
+> **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gap A). Four rows this
+> doc originally listed as Missing/Partial have since shipped: **A — reactive
+> interjection**, **D — future/scheduled tasks**, **E — workspace-level memory**,
+> and **F — channel-memory consolidation**. They are kept in the scorecard (marked
+> **Have ✅**) for continuity, and their detail sections record what shipped; the
+> open analysis below is rows **B, C, G, H, I, J, K**.
 >
 > Legend — **Have**: at parity. **Partial**: a weaker form exists. **Missing**: not
 > built. Effort is a rough order of magnitude (S ≈ days, M ≈ 1–2 weeks, L ≈ a phase).
@@ -23,7 +23,7 @@
 
 | # | Claude Tag capability | Us | Status |
 | --- | --- | --- | --- |
-| A | Reactive ambient (watch messages, decide to interject) | scheduled digest only | **Partial** |
+| A | Reactive ambient (watch messages, decide to interject) | `evaluateReactiveInterjection` + per-channel Schedule | **Have ✅ #113** |
 | B | Organization-wide awareness ("flag things from across the org") | per-channel; cross-channel *memory* only | **Missing** |
 | C | Follow-up on forgotten threads / open tasks | memory digest, no item tracking | **Missing** |
 | D | Future / scheduled task planning ("plan tasks to complete later") | `runAt` → `ChannelScheduledTaskWorkflow` | **Have ✅ #112** |
@@ -43,30 +43,34 @@
 | — | Admin view/edit/delete of memory | admin memory CRUD | Have |
 | — | Configurable model (Opus 4.8 default) | DB-driven model config | Have / ahead |
 
-The rest of this doc details the **open Partial/Missing** rows (A, B, C, G, H, I,
-J, K), grouped by theme. §3–§4 record what D/E/F shipped, for continuity.
+The rest of this doc details the **open Partial/Missing** rows (B, C, G, H, I,
+J, K), grouped by theme. §2.A and §3–§4 record what A/D/E/F shipped, for continuity.
 
 ---
 
 ## 2. Ambient & proactivity (rows A, B, C)
 
-Claude Tag's ambient mode does three distinct things; we only do the first, and
-only on a timer.
+### A. Reactive interjection — **Have ✅ · shipped #113**
 
-### A. Reactive interjection — **Partial · Severity High · Effort M**
-**Claude Tag:** watches ongoing conversation and *decides* to jump in (answer a
-question nobody tagged it on, correct a stale fact, surface a relevant doc).
+Claude Tag's ambient mode does three distinct things; #113 shipped the first, A.
+Rows B and C remain open.
 
-**Us:** a per-channel Temporal **Schedule** fires `ChannelAmbientWorkflow` to post
-a digest from channel memory. It never reacts to a specific live message — it's a
-cron, not a listener.
+**Shipped:** `evaluateReactiveInterjection` polls `conversations.history` at each
+Schedule tick (configurable `reactiveCron` per channel), using `lastReactiveCheckAt`
+as an exclusive cursor so it never re-reads the same window. Four hard gates keep it
+noise-averse: (1) new-message gate — LLM fires only when there are human messages
+since the cursor; (2) budget gate — `isChannelOverBudgetNow` check; (3) cooldown —
+no re-interject within 10 minutes of the last post; (4) SKIP-aware — a reply
+beginning with `skip` is not posted. `retrieveChannelMemory` is injected as context
+(best-effort). Cost accrues to `ChannelMonthlyUsage`; `countRun` is `true` only
+when a message is actually posted. The per-channel `reactiveCron` + `reactiveEnabled`
+toggle are managed via the existing admin slack-channels UI. See
+`channel-assistant.md` §10 and `packages/worker/src/activities/channelReactive.ts`.
 
-**Fit:** we already ingest `message.channels` events (the steering path). The
-missing piece is a cheap **"should I interject?" classifier** on non-mention
-messages, gated hard (rate-limited, confidence-thresholded, opt-in per channel) to
-avoid the firehose Claude Tag itself warns about. Highest-value remaining gap —
-it's the difference between "a bot you summon" and "a teammate that's paying
-attention."
+**Still open (natural next step):** passive memory ingestion — learning from
+non-mention channel messages one message at a time (the "learns your company from
+ambient chatter" behaviour we don't yet have). The reactive poll is the natural
+place to do it; it reads the history already.
 
 ### B. Organization-wide awareness — **Missing · Severity Medium · Effort L**
 **Claude Tag:** flags things *from across the organization* — it can connect a
@@ -206,33 +210,29 @@ Not gaps — called out so the comparison is honest:
 
 ## 8. Suggested priority order
 
-D/E/F shipped in #112 (the bottom of the original "value ÷ effort" list cleared).
-Remaining work, re-ranked for discussion (not a commitment):
+A/D/E/F shipped (A in #113, D/E/F in #112). Remaining work, re-ranked for
+discussion (not a commitment):
 
-1. **A — reactive interjection** (M): now the highest *product* value remaining;
-   turns "summon" into "teammate that's paying attention." Must ship behind a hard
-   per-channel opt-in + rate limit + confidence threshold to avoid the firehose
-   Claude Tag itself warns about. The message-stream subscription it needs is also
-   the foundation for **passive memory ingestion** (learn from non-mention
-   messages, not just turns — the "learns your company one message at a time"
-   behavior we don't yet have).
-2. **C — open-item follow-up** (M): pairs naturally with A on the existing ambient
-   schedule; a lightweight `ChannelOpenItem` model swept each fire. Complements the
-   *explicit* scheduling that D shipped with *autonomous* follow-up detection.
-3. **B + G together** (L): the org-wide proactive-flagging cluster — the most
+1. **C — open-item follow-up** (M): pairs naturally with the reactive Schedule A
+   just shipped; a lightweight `ChannelOpenItem` model swept each tick. Complements
+   the *explicit* scheduling that D shipped with *autonomous* follow-up detection.
+   The reactive poll already reads the history window needed for detection.
+2. **B + G together** (L): the org-wide proactive-flagging cluster — the most
    architecturally significant remaining gap (cuts against per-channel isolation),
    so design it as one phase with the private-channel rule (G) baked in from the
-   start. (E already shipped the *team*-scoped read half.)
-4. **H — live session** (M), **J — audit view** (S–M), **I — app UX** (M): UX/ops
+   start. (E already shipped the *team*-scoped read half; A's poll is the natural
+   place to extend it once B is designed.)
+3. **H — live session** (M), **J — audit view** (S–M), **I — app UX** (M): UX/ops
    polish; valuable but not differentiating.
-5. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements to
-   the #112 work — per-channel consolidation config, and making a fired deferred
-   run steerable.
-6. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
+4. **F-config follow-up** (S) + **D steering follow-up** (S) + **A passive-memory
+   follow-up** (S–M): small refinements — per-channel consolidation config; making
+   a fired deferred run steerable; folding passive memory ingestion into the
+   reactive poll.
+5. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
 
 > Open question for discussion: how aggressively do we want **B (org-wide
 > proactive visibility)**? It's the biggest remaining lever toward "knows your
 > company," but it directly trades against the per-channel isolation that is
 > currently our strongest differentiator. #112's E read path stayed *within a
-> team* precisely to avoid that tension; B crosses it. The answer shapes whether #3
+> team* precisely to avoid that tension; B crosses it. The answer shapes whether #2
 > above is a near-term phase or a deliberate non-goal.
