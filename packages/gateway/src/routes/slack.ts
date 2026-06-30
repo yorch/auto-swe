@@ -53,6 +53,31 @@ const SLACK_INSTALL_BOT_SCOPES = [
   'users:read.email',
 ].join(',');
 
+/**
+ * Exchange a Slack OAuth `code` for tokens via `oauth.v2.access`. Shared by the
+ * account-link (`/callback`) and app-install (`/install/callback`) flows, which
+ * differ only in the scopes requested and which token field they read back
+ * (`authed_user.access_token` vs. the top-level bot `access_token`).
+ */
+async function exchangeSlackOAuthCode(
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string
+): Promise<SlackOAuthResponse> {
+  const res = await fetch('https://slack.com/api/oauth.v2.access', {
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri,
+    }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: 'POST',
+  });
+  return (await res.json()) as SlackOAuthResponse;
+}
+
 interface SlackIdentityResponse {
   ok: boolean;
   user: { id: string };
@@ -163,20 +188,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
     const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/callback`;
-
-    // Exchange code for token
-    const tokenResponse = await fetch('https://slack.com/api/oauth.v2.access', {
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code,
-        redirect_uri: redirectUri,
-      }),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      method: 'POST',
-    });
-
-    const tokenData = (await tokenResponse.json()) as SlackOAuthResponse;
+    const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     if (!tokenData.ok) {
       return reply.status(400).send({
         error: { code: 'SLACK_AUTH_FAILED', message: tokenData.error ?? 'Slack OAuth failed' },
@@ -274,18 +286,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
     const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/install/callback`;
-
-    const tokenResponse = await fetch('https://slack.com/api/oauth.v2.access', {
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code,
-        redirect_uri: redirectUri,
-      }),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      method: 'POST',
-    });
-    const tokenData = (await tokenResponse.json()) as SlackOAuthResponse;
+    const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     // A bot install returns the bot token as the top-level `access_token` plus the
     // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
     if (!tokenData.ok || !tokenData.access_token || !tokenData.team?.id) {
