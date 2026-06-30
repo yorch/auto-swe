@@ -30,6 +30,7 @@ export interface SlackChannel {
   reactiveCron: string | null;
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
   isActive: boolean;
@@ -58,6 +59,7 @@ export interface CreateSlackChannelBody {
   reactiveCron?: string | null;
   passiveIngestEnabled?: boolean;
   isPrivate?: boolean;
+  orgFlaggingEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
 }
@@ -71,6 +73,7 @@ export interface UpdateSlackChannelBody {
   reactiveCron?: string | null;
   passiveIngestEnabled?: boolean;
   isPrivate?: boolean;
+  orgFlaggingEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
   isActive?: boolean;

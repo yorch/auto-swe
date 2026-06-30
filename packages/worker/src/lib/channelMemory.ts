@@ -145,6 +145,66 @@ async function searchTeamChannelMemory(opts: {
   );
 }
 
+/** One org-wide cross-channel memory hit, carrying its source channel for labelling. */
+export interface OrgChannelMemoryItem {
+  id: string;
+  summary: string;
+  similarity: number;
+  sourceChannelId: string;
+  sourceChannelName: string | null;
+}
+
+/**
+ * Gap B: org-wide cross-channel memory search. Queries memory items from OTHER
+ * channels in the same ORG (`org_id = X`, `channel_id != current`) so the ambient
+ * org-flagging pass can surface notable activity from across the organization.
+ *
+ * Privacy (Gap G): JOINs `slack_channels` and excludes `is_private = true` source
+ * channels — a private channel's facts are never flagged into another channel,
+ * exactly as the team-scoped {@link searchTeamChannelMemory} does. Also excludes
+ * inactive source channels. Returns the source channel id + name for attribution.
+ *
+ * Raw SQL is required for the pgvector `<=>` operator + the cross-row JOIN. Embeds
+ * the query text once (caller passes a precomputed embedding).
+ */
+export async function searchOrgChannelMemory(opts: {
+  orgId: string;
+  excludeChannelId: string;
+  limit: number;
+  similarityThreshold: number;
+  precomputed: QueryEmbedding;
+}): Promise<OrgChannelMemoryItem[]> {
+  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
+
+  return prisma.$queryRawUnsafe<OrgChannelMemoryItem[]>(
+    `SELECT
+       mi.id,
+       mi.lesson_summary AS "summary",
+       1 - (mi.embedding <=> $1::vector) AS similarity,
+       sc.id   AS "sourceChannelId",
+       sc.name AS "sourceChannelName"
+     FROM memory_items mi
+     JOIN slack_channels sc ON sc.id = mi.channel_id
+     WHERE mi.org_id = $2::uuid
+       AND mi.channel_id IS NOT NULL
+       AND mi.channel_id != $3::uuid
+       AND sc.is_private = false
+       AND sc.is_active = true
+       AND mi.embedding IS NOT NULL
+       AND mi.consolidated_at IS NULL
+       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
+       AND 1 - (mi.embedding <=> $1::vector) >= $4
+     ORDER BY mi.embedding <=> $1::vector ASC
+     LIMIT $5`,
+    JSON.stringify(queryEmbedding),
+    opts.orgId,
+    opts.excludeChannelId,
+    opts.similarityThreshold,
+    opts.limit,
+    embeddingSpec
+  );
+}
+
 /** One recent (un-consolidated) channel-memory row, for ambient digest context. */
 export interface RecentChannelMemoryItem {
   id: string;

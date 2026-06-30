@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/C/D/E/F/G shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/B/C/D/E/F/G/J shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + future org-wide reporting. Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagAt` gate + rate-limit org-wide proactive flagging (Gap B). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -260,7 +260,20 @@ Three follow-on capabilities round out memory and task execution:
   auto-defaulted from Slack's `channel_type: 'group'` at provision time (set on
   CREATE only, so a best-effort default never silently undoes a later admin
   override) and is admin-editable in `/admin/slack-channels`. It is also the
-  exclusion hook the planned org-wide flagging (Gap B) will honour.
+  exclusion hook org-wide flagging (Gap B) honours.
+
+- **Gap B — org-wide proactive flagging.** `flagOrgSignals`
+  (`packages/worker/src/activities/flagOrgSignals.ts`) is a best-effort 5th activity
+  on the ambient fire that surfaces notable activity from OTHER channels in the same
+  org into this channel — "flags things from across the organization." Opt-in per
+  channel (`orgFlaggingEnabled`, default off). It embeds the channel's recent memory
+  (its focus) ONCE, runs `searchOrgChannelMemory` (org-scoped pgvector search,
+  `is_private = false` + active source channels only — Gap G baked in), and lets the
+  channel agent decide (high bar, SKIP-aware) whether to post a brief heads-up naming
+  the source channel. Hard rate-limited by a `lastOrgFlagAt` cooldown (20 h) so flags
+  stay rare; budget-gated; cost accrues with `countRun: false` only when it posts.
+  The conservative opt-in + private-source exclusion is deliberate: org-wide
+  visibility never happens by default, preserving per-channel isolation.
 
 ## 10. Reactive interjection — Gap A (shipped)
 

@@ -73,6 +73,7 @@ interface CreateForm {
   reactiveCron: string;
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -84,6 +85,7 @@ const EMPTY_CREATE: CreateForm = {
   budgetDollars: '',
   isPrivate: false,
   name: '',
+  orgFlaggingEnabled: false,
   passiveIngestEnabled: false,
   personaPrompt: '',
   reactiveCron: '',
@@ -119,6 +121,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         isPrivate: form.isPrivate,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
+        orgFlaggingEnabled: form.orgFlaggingEnabled,
         passiveIngestEnabled: form.passiveIngestEnabled,
         personaPrompt: form.personaPrompt.trim() || null,
         reactiveCron: form.reactiveCron || null,
@@ -247,6 +250,18 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             Private channel (never surface its memory in other channels)
           </label>
         </div>
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.orgFlaggingEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-org-flagging"
+            onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-org-flagging">
+            Org-wide flagging (surface signals from other channels here)
+          </label>
+        </div>
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -289,6 +304,7 @@ interface EditForm {
   reactiveCron: string;
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
+  orgFlaggingEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -302,6 +318,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
     isPrivate: ch.isPrivate,
     name: ch.name ?? '',
+    orgFlaggingEnabled: ch.orgFlaggingEnabled,
     passiveIngestEnabled: ch.passiveIngestEnabled,
     personaPrompt: ch.personaPrompt ?? '',
     reactiveCron: ch.reactiveCron ?? '',
@@ -336,6 +353,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      orgFlaggingEnabled: form.orgFlaggingEnabled,
       passiveIngestEnabled: form.passiveIngestEnabled,
       personaPrompt: form.personaPrompt.trim() || null,
       reactiveCron: form.reactiveCron || null,
@@ -444,6 +462,18 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         />
         <label className="text-sm text-paper-300" htmlFor="edit-is-private">
           Private channel (never surface its memory in other channels)
+        </label>
+      </div>
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.orgFlaggingEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-org-flagging"
+          onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-org-flagging">
+          Org-wide flagging (surface signals from other channels here)
         </label>
       </div>
       <Input

@@ -70,6 +70,9 @@ export {
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
+// Channel assistant (Gap B) — org-wide proactive flagging
+export type { FlagOrgSignalsInput, FlagOrgSignalsResult } from './flagOrgSignals.js';
+export { flagOrgSignals } from './flagOrgSignals.js';
 // Natural-language workflow authoring (generate a WorkflowSpec from a description)
 export type {
   GenerateWorkflowSpecInput,
@@ -81,7 +84,7 @@ export { getReposForConsolidation } from './getReposForConsolidation.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 // P2/WS4 — declarative mcp node (single MCP tool call)
 export { mcpCallTool } from './mcpCallTool.js';
-// Channel assistant (Gap G) — passive memory ingestion (silent fact extraction)
+// Channel assistant — passive memory ingestion (silent fact extraction)
 export type {
   PassiveIngestChannelMemoryInput,
   PassiveIngestChannelMemoryResult,

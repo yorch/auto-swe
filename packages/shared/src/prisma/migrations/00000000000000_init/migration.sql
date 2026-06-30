@@ -249,6 +249,8 @@ CREATE TABLE "slack_channels" (
     "passive_ingest_enabled" BOOLEAN NOT NULL DEFAULT false,
     "passive_ingest_cursor" TEXT,
     "is_private" BOOLEAN NOT NULL DEFAULT false,
+    "org_flagging_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "last_org_flag_at" TIMESTAMPTZ,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -27,7 +27,7 @@
 | # | Claude Tag capability | Us | Status |
 | --- | --- | --- | --- |
 | A | Reactive ambient (watch messages, decide to interject) | `evaluateReactiveInterjection` + per-channel Schedule | **Have ✅ #113** |
-| B | Organization-wide awareness ("flag things from across the org") | per-channel; cross-channel *memory* only | **Missing** |
+| B | Organization-wide awareness ("flag things from across the org") | opt-in `flagOrgSignals` on the ambient fire (private sources excluded) | **Have ✅** |
 | C | Follow-up on forgotten threads / open tasks | `ChannelOpenItem` + `sweepChannelOpenItems` on the ambient fire | **Have ✅ #113** |
 | D | Future / scheduled task planning ("plan tasks to complete later") | `runAt` → `ChannelScheduledTaskWorkflow` | **Have ✅ #112** |
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
@@ -80,21 +80,27 @@ extracts salient durable facts via an LLM, and writes them to channel memory —
 `@mention` required. This is the "learns your company from ambient chatter"
 behaviour. Budget-gated and best-effort like the other ambient passes.
 
-### B. Organization-wide awareness — **Missing · Severity Medium · Effort L**
+### B. Organization-wide awareness — **Have ✅ · shipped**
 **Claude Tag:** flags things *from across the organization* — it can connect a
 question in one channel to activity in another, **proactively**.
 
-**Us:** #112 added a cross-channel **read** path on the *reactive* side —
-`retrieveChannelMemory` now also searches sibling channels in the same team (Gap
-E). But the **proactive** half is still missing: the ambient digest
-(`ChannelAmbientWorkflow`) is per-channel and never flags activity from *other*
-channels into a channel. There is no org-level ambient workflow that watches the
-whole org and surfaces cross-channel signals. This is the part of B that remains,
-and it is the one in real tension with isolation — it needs an explicit,
-admin-granted "org-visibility" capability rather than a default (a new config
-scope or memory-visibility flag), plus the private-channel exclusion in G baked
-in. (The E read path deliberately stays within one *team*, which is why it didn't
-require G.)
+**Shipped:** `flagOrgSignals`, a best-effort 5th activity on the ambient fire. When
+a channel opts in (`orgFlaggingEnabled`, default off), it embeds the channel's
+recent memory (its "focus") once, runs `searchOrgChannelMemory` over OTHER channels
+in the same **org**, and lets the channel agent decide — high bar, SKIP-aware —
+whether anything is worth flagging into this channel, naming the source channel.
+
+Designed to respect isolation, which is the tension B always carried:
+- **Opt-in + admin-granted** — `orgFlaggingEnabled` is off by default; an admin
+  turns it on per channel. No org-wide visibility happens by default.
+- **Private-channel exclusion (Gap G) baked in** — `searchOrgChannelMemory` JOINs
+  `slack_channels` and excludes `is_private = true` (and inactive) SOURCE channels,
+  so a private channel's content is never flagged elsewhere.
+- **Rate-limited** — a hard `lastOrgFlagAt` cooldown (20 h) keeps org flags rare
+  and signal-rich; budget-gated; cost accrues with `countRun: false`.
+
+This shipped the *proactive* half; the *team*-scoped reactive read half was Gap E
+(#112). See `packages/worker/src/activities/flagOrgSignals.ts`.
 
 ### C. Follow-up on forgotten threads / tasks — **Have ✅ · shipped #113**
 **Claude Tag:** "follows up on forgotten threads or tasks."
@@ -256,19 +262,17 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-1. **B — org-wide proactive flagging** (L): the most architecturally significant
-   remaining gap (cuts against per-channel isolation). G (✅) already shipped the
-   private-channel exclusion this depends on, so B can honour `isPrivate` from the
-   start. (E shipped the *team*-scoped read half.)
-2. **H — live session** (M), **I — app UX** (M): UX/ops polish; valuable but not
-   differentiating. (**J — audit view** ✅ shipped.)
-3. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
+1. **H — live session** (M), **I — app UX** (M): UX/ops polish; valuable but not
+   differentiating. (**B — org-wide flagging** ✅, **G** ✅, **J — audit view** ✅
+   all shipped.)
+2. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
    per-channel consolidation config; making a fired deferred run steerable.
-4. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
+3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
 
-> Open question for discussion: how aggressively do we want **B (org-wide
-> proactive visibility)**? It's the biggest remaining lever toward "knows your
-> company," but it directly trades against the per-channel isolation that is
-> currently our strongest differentiator. #112's E read path stayed *within a
-> team* precisely to avoid that tension; B crosses it. The answer shapes whether #1
-> above is a near-term phase or a deliberate non-goal.
+> Resolved (B shipped): the open question was *how aggressively* to do org-wide
+> proactive visibility given it trades against per-channel isolation. The answer
+> taken was **conservative**: B is **opt-in per channel** (default off, admin
+> turns it on), **excludes private source channels** (Gap G baked in), and is
+> **hard rate-limited** (a 20 h cooldown). So the differentiating isolation holds
+> by default — org-wide flagging is a deliberate, per-channel opt-in, not a
+> platform-wide posture.
