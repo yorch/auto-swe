@@ -97,6 +97,19 @@ describe('generateWorkflowSpec', () => {
     expect(repairMsg).toContain('missing');
   });
 
+  it('sends a repair message (not the original) when the model omits specJson', async () => {
+    mockedRunAgent
+      .mockResolvedValueOnce({ object: { summary: 'oops' } } as never)
+      .mockResolvedValueOnce(out(JSON.stringify(VALID_SPEC)));
+
+    const result = await generateWorkflowSpec({ prompt: 'x', teamId: 'team-1' });
+
+    expect(result.attempts).toBe(2);
+    const repairMsg = mockedRunAgent.mock.calls[1][1] as string;
+    expect(repairMsg).toContain('specJson');
+    expect(repairMsg).toContain('ERRORS');
+  });
+
   it('throws after exhausting all attempts on persistent invalid output', async () => {
     mockedRunAgent.mockResolvedValue(out('{ still not json'));
 

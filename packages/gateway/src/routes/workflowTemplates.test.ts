@@ -280,9 +280,20 @@ function buildApp(state: {
 
   app.decorate('temporal', {
     generateWorkflowSpec: async () => {
-      const s = state as { generateError?: boolean; generatedSpec?: unknown };
+      const s = state as {
+        generateError?: boolean;
+        generateInfraError?: boolean;
+        generatedSpec?: unknown;
+      };
+      if (s.generateInfraError) {
+        // No author-failure marker → treated as an infra error (503).
+        throw new Error('Temporal connection refused');
+      }
       if (s.generateError) {
-        throw new Error('workflow generation failed');
+        // Mirrors the activity's thrown message so the route maps it to 422.
+        throw new Error(
+          'workflowAuthor could not produce a valid WorkflowSpec after 3 attempts: bad spec'
+        );
       }
       return { attempts: 1, spec: s.generatedSpec ?? VALID_SPEC, summary: 'generated summary' };
     },
@@ -387,6 +398,19 @@ describe('workflow-templates routes', () => {
     (state as { generateError?: boolean }).generateError = false;
     expect(res.statusCode).toBe(422);
     expect(res.json().error?.code).toBe('GENERATION_FAILED');
+  });
+
+  it('returns 503 when generation hits an infrastructure error', async () => {
+    (state as { generateInfraError?: boolean }).generateInfraError = true;
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'x', teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567' },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    (state as { generateInfraError?: boolean }).generateInfraError = false;
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error?.code).toBe('GENERATION_UNAVAILABLE');
   });
 
   it('forbids a non-admin from generating a global template', async () => {

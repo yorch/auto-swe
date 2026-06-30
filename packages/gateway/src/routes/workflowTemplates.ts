@@ -20,6 +20,28 @@ import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
+/**
+ * Stable marker the `generateWorkflowSpec` activity puts in its thrown message
+ * when the model fails to produce a valid spec after all repair attempts. Used
+ * to tell a genuine generation failure (→ 422) from an infra error (→ 503).
+ */
+const AUTHOR_GENERATION_FAILURE_MARKER = 'could not produce a valid WorkflowSpec';
+
+/**
+ * A Temporal `WorkflowFailedError` wraps the activity's `ApplicationFailure` in a
+ * `cause` chain, so walk it looking for the author-failure marker.
+ */
+function isAuthorGenerationFailure(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 6 && cur instanceof Error; i++) {
+    if (cur.message.includes(AUTHOR_GENERATION_FAILURE_MARKER)) {
+      return true;
+    }
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 interface ShellNodeWithId {
   id: string;
   /** Structural subset shared by `shell` and `containerStep` — both run a
@@ -193,6 +215,52 @@ const TEMPLATE_INCLUDE = {
 } satisfies Prisma.WorkflowTemplateInclude;
 
 type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof TEMPLATE_INCLUDE }>;
+
+/**
+ * Create a template + its initial v1 version + shell audit in one transaction
+ * (so a failed audit insert rolls back the template, keeping API success aligned
+ * with persisted state). Shared by `POST /` (status ACTIVE) and `POST /generate`
+ * (status DRAFT) so the persist/audit shape lives in one place.
+ */
+async function createTemplateWithInitialVersion(
+  prisma: FastifyInstance['prisma'],
+  args: {
+    name: string;
+    description: string;
+    teamId: string | null;
+    status: 'ACTIVE' | 'DRAFT';
+    specJson: object;
+    authorUserId: string;
+    shellNodes: ShellNodeWithId[];
+    egressAllowlist: string[];
+  }
+): Promise<TemplateWithIncludes> {
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.workflowTemplate.create({
+      data: {
+        activeVersion: 1,
+        description: args.description,
+        name: args.name,
+        status: args.status,
+        teamId: args.teamId,
+        versions: { create: { createdBy: args.authorUserId, spec: args.specJson, version: 1 } },
+      },
+      include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+    });
+    const initialVersion = created.versions[0];
+    if (initialVersion) {
+      await recordShellAudit(
+        tx,
+        initialVersion.id,
+        args.teamId,
+        args.authorUserId,
+        args.shellNodes,
+        args.egressAllowlist
+      );
+    }
+    return created;
+  });
+}
 
 function teamMembershipFilter(user: {
   sub: string;
@@ -410,11 +478,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err) {
         request.log.error({ err }, 'workflow generation failed');
-        return reply.status(422).send({
+        // Distinguish a genuine "model couldn't produce a valid spec" (the user
+        // should rephrase → 422) from an infrastructure failure (worker down,
+        // Temporal unreachable → 503, rephrasing won't help). The author activity
+        // tags the former with a stable marker in its thrown message.
+        if (isAuthorGenerationFailure(err)) {
+          return reply.status(422).send({
+            error: {
+              code: 'GENERATION_FAILED',
+              message:
+                'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.',
+            },
+          });
+        }
+        return reply.status(503).send({
           error: {
-            code: 'GENERATION_FAILED',
-            message:
-              'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.',
+            code: 'GENERATION_UNAVAILABLE',
+            message: 'Workflow generation is temporarily unavailable. Please try again shortly.',
           },
         });
       }
@@ -452,32 +532,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         // DRAFT (not ACTIVE): the human reviews/edits on the canvas, then activates.
-        const tpl = await fastify.prisma.$transaction(async (tx) => {
-          const created = await tx.workflowTemplate.create({
-            data: {
-              activeVersion: 1,
-              description: parsedSpec.description ?? '',
-              name,
-              status: 'DRAFT',
-              teamId: teamId ?? null,
-              versions: {
-                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
-              },
-            },
-            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
-          });
-          const initialVersion = created.versions[0];
-          if (initialVersion) {
-            await recordShellAudit(
-              tx,
-              initialVersion.id,
-              teamId ?? null,
-              user.sub,
-              shellNodes,
-              egressAllowlist
-            );
-          }
-          return created;
+        const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          authorUserId: user.sub,
+          description: parsedSpec.description ?? '',
+          egressAllowlist,
+          name,
+          shellNodes,
+          specJson: parsed as object,
+          status: 'DRAFT',
+          teamId: teamId ?? null,
         });
         const warnings = await validateSpecRefs(fastify.prisma, parsedSpec);
         return reply.status(201).send({
@@ -582,38 +645,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const { egressAllowlist } = imgGate;
 
       try {
-        // Wrap the template + initial version + shell-audit insert in one
-        // transaction so a failed audit insert rolls back the template row,
-        // keeping API success/failure aligned with persisted state.
-        const tpl = await fastify.prisma.$transaction(async (tx) => {
-          const created = await tx.workflowTemplate.create({
-            data: {
-              activeVersion: 1,
-              description: description ?? '',
-              name,
-              status: 'ACTIVE',
-              teamId: teamId ?? null,
-              versions: {
-                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
-              },
-            },
-            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
-          });
-          const initialVersion = created.versions[0];
-          if (initialVersion) {
-            await recordShellAudit(
-              tx,
-              initialVersion.id,
-              teamId ?? null,
-              user.sub,
-              shellNodes,
-              egressAllowlist
-            );
-          }
-          return created;
+        const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          authorUserId: user.sub,
+          description: description ?? '',
+          egressAllowlist,
+          name,
+          shellNodes,
+          specJson: parsed as object,
+          status: 'ACTIVE',
+          teamId: teamId ?? null,
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
-        const warnings = await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec);
+        const warnings = await validateSpecRefs(fastify.prisma, parsedSpec);
         return reply.status(201).send({
           data: projectTemplate(tpl, undefined),
           ...(warnings.length > 0 ? { warnings } : {}),

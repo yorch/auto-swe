@@ -44,12 +44,31 @@ export async function createChannelWorkflowDraft(
       teamId: input.teamId,
     });
     const spec = generated.spec;
+
+    // The channel path is never authorized to author shell / containerStep nodes
+    // (`allowShell: false`), and that flag is only a prompt hint — `parseWorkflowSpec`
+    // does not reject them. Refuse a draft that slipped one through: persisting it
+    // would bypass the shell-authoring RBAC + `WorkflowShellAudit` that the gateway
+    // routes enforce. Better to ask the user to author it on the canvas instead.
+    const hasShellNode = Object.values(spec.nodes).some(
+      (n) => n.type === 'shell' || n.type === 'containerStep'
+    );
+    if (hasShellNode) {
+      console.warn(
+        `[channelAssistant] refusing channel-authored draft with shell nodes for ${input.channelId}`
+      );
+      return null;
+    }
+
     const baseName = input.name?.trim() || spec.name;
 
     // (teamId, name) is unique — retry with a numeric suffix on collision so a
     // channel-authored draft never fails just because the name is taken.
     for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
-      const name = attempt === 0 ? baseName : `${baseName} (${attempt + 1})`;
+      // Keep the suffixed name within the WorkflowSpec 120-char `name` cap so the
+      // persisted spec stays re-validatable (the canvas re-parses on save).
+      const suffix = attempt === 0 ? '' : ` (${attempt + 1})`;
+      const name = `${baseName.slice(0, 120 - suffix.length)}${suffix}`;
       spec.name = name;
       try {
         const created = await prisma.workflowTemplate.create({

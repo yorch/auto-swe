@@ -210,6 +210,14 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
     // template scoped to the channel's team, then tell the user (instead of the
     // agent's ack). The draft lands in the Workflow library for review/activation.
     if (generate) {
+      // Generation is an LLM-heavy activity (≤3 model calls) — gate it on the
+      // channel budget exactly like a delegated task, so an over-budget channel
+      // can't be driven to burn spend by repeated "create a workflow" asks.
+      const overBudget = await isChannelOverBudgetForTask(input.channelId);
+      if (overBudget) {
+        await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
+        return 'SUCCESS';
+      }
       const draft = await createChannelWorkflowDraft({
         channelId: input.channelId,
         description: generate.description,

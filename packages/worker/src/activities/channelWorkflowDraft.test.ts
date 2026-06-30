@@ -1,3 +1,4 @@
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { tplCreate } = vi.hoisted(() => ({ tplCreate: vi.fn() }));
@@ -12,12 +13,12 @@ import { generateWorkflowSpec } from './generateWorkflowSpec.js';
 
 const mockedGenerate = vi.mocked(generateWorkflowSpec);
 
-const SPEC = {
+const SPEC: WorkflowSpec = {
   description: 'demo',
   entry: 'done',
   name: 'Auto Name',
   nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
-  schemaVersion: 1 as const,
+  schemaVersion: 1,
 };
 
 beforeEach(() => {
@@ -75,6 +76,44 @@ describe('createChannelWorkflowDraft', () => {
 
     expect(result?.name).toBe('Auto Name (2)');
     expect(tplCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a draft containing a shell node (channel path is not shell-authorized)', async () => {
+    const shellSpec: WorkflowSpec = {
+      ...SPEC,
+      entry: 'sh',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: { command: 'echo hi', image: 'alpine', next: 'done', type: 'shell' },
+      },
+    };
+    mockedGenerate.mockResolvedValue({ attempts: 1, spec: shellSpec, summary: '' });
+
+    const result = await createChannelWorkflowDraft({
+      channelId: 'c1',
+      description: 'run a shell command',
+      teamId: 'team-1',
+    });
+
+    expect(result).toBeNull();
+    expect(tplCreate).not.toHaveBeenCalled();
+  });
+
+  it('clamps a long suffixed name to the 120-char spec cap', async () => {
+    const longName = 'A'.repeat(120);
+    mockedGenerate.mockResolvedValue({ attempts: 1, spec: { ...SPEC }, summary: '' });
+    tplCreate.mockRejectedValueOnce({ code: 'P2002' }).mockResolvedValueOnce({ id: 'tpl-9' });
+
+    const result = await createChannelWorkflowDraft({
+      channelId: 'c1',
+      description: 'x',
+      name: longName,
+      teamId: 'team-1',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.name.length).toBeLessThanOrEqual(120);
+    expect(result?.name.endsWith(' (2)')).toBe(true);
   });
 
   it('returns null (best-effort) when generation throws', async () => {

@@ -563,6 +563,16 @@ export async function runChannelAssistantTurn(
 
   // When the agent delegated, prefer its (brief) ack but always surface a
   // sensible fallback. The workflow decides whether to launch based on `delegate`.
+  // The two action intents are mutually exclusive — the workflow handles
+  // `generate` with an early return, so a co-fired `delegate` would be silently
+  // dropped. Prefer the more specific `generateWorkflow` and drop the delegate.
+  if (generate && delegate) {
+    console.warn(
+      `[channelAssistant] both generateWorkflow and delegateTask fired for ${input.channelId}; preferring generateWorkflow`
+    );
+    delegate = undefined;
+  }
+
   const ackFallback =
     delegate || generate
       ? "On it — I'll follow up in this thread when it's done."

@@ -69,15 +69,20 @@ function formatErrors(err: unknown): string[] {
  */
 async function buildCatalog(teamId: string | null, allowShell: boolean): Promise<AuthoringCatalog> {
   const agentRows = await prisma.agent.findMany({
-    orderBy: [{ key: 'asc' }, { scope: 'asc' }],
+    // scope DESC so a TEAM row sorts before the GLOBAL one ('TEAM' > 'GLOBAL'),
+    // letting the dedupe below keep the team override's name/description.
+    orderBy: [{ key: 'asc' }, { scope: 'desc' }],
     select: { description: true, key: true, name: true },
     where: {
       isActive: true,
-      OR: [{ scope: 'GLOBAL' }, ...(teamId ? [{ teamId } as const] : [])],
+      // Only GLOBAL + the requester's TEAM-scoped agents — not ORGANIZATION /
+      // CHANNEL / WORKFLOW_TEMPLATE rows that merely carry the same teamId.
+      OR: [{ scope: 'GLOBAL' as const }, ...(teamId ? [{ scope: 'TEAM' as const, teamId }] : [])],
     },
   });
   // Dedupe by key (a team override + the GLOBAL row share a key) — keep the first
-  // seen, which is fine because only the key matters for an `agentRef`.
+  // seen, which is the TEAM row when present (scope DESC), so the catalog shows
+  // the most-specific label. Only the key matters for an `agentRef` either way.
   const agentsByKey = new Map<string, { key: string; name: string; description?: string | null }>();
   for (const a of agentRows) {
     if (!agentsByKey.has(a.key)) {
@@ -132,9 +137,18 @@ export async function generateWorkflowSpec(
     const specJson = result.object?.specJson;
     const summary = result.object?.summary ?? '';
     if (!specJson) {
-      lastErrors = ['model returned no specJson field'];
-      // No previous attempt to repair from — re-issue the original request.
-      message = buildAuthorRequestMessage(input.prompt, catalog);
+      // Tell the model what went wrong rather than re-sending the identical
+      // request — a stateless re-issue would just reproduce the same omission.
+      lastErrors = [
+        'You did not return a non-empty `specJson` field. Return the full ' +
+          'WorkflowSpec as a JSON string in the `specJson` field.',
+      ];
+      message = buildRepairRequestMessage({
+        catalog,
+        errors: lastErrors,
+        intent: input.prompt,
+        previousSpecJson: '(no specJson field was returned)',
+      });
       continue;
     }
 
