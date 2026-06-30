@@ -1,6 +1,14 @@
 import { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { defineSignal, log, setHandler, sleep, workflowInfo } from '@temporalio/workflow';
+import {
+  type ChildWorkflowHandle,
+  defineSignal,
+  log,
+  setHandler,
+  sleep,
+  type Workflow,
+  workflowInfo,
+} from '@temporalio/workflow';
 import { startThreadTaskChild } from './taskChild.js';
 
 /**
@@ -34,10 +42,15 @@ const steerSignal = defineSignal<[string]>(CHANNEL_TASK_STEER_SIGNAL);
  * private `<id>-run` child id, which the wrapper alone ever uses — so there is no
  * id collision between the wrapper and its child.
  *
- * STEERING: a thread reply during the wait reaches this wrapper via the shared
- * `steer` signal (the gateway reconstructs the same `chantask-` id). Steering text
- * is appended to the task description before launch, so deferred tasks honour
- * mid-wait refinements.
+ * STEERING: a thread reply reaches this wrapper via the shared `steer` signal
+ * (the gateway reconstructs the same `chantask-` id and signals it for the whole
+ * task lifetime, with no DB lookup). Before the run launches, steering text is
+ * folded into the task description. After it launches, this wrapper stays alive
+ * and forwards each new reply straight to the running child run — so a deferred
+ * task is steerable in-flight exactly like an immediate one (Gap D). Holding the
+ * per-thread id for the task's whole life also keeps "one task per thread" intact
+ * (a re-delegate is rejected), mirroring the immediate path where the
+ * `RunnableWorkflow` itself owns the per-thread id.
  *
  * V8-isolate rule: only `import type` from external packages / `@auto-swe/shared`;
  * runtime imports come from `@temporalio/workflow` only.
@@ -45,11 +58,19 @@ const steerSignal = defineSignal<[string]>(CHANNEL_TASK_STEER_SIGNAL);
 export async function ChannelScheduledTaskWorkflow(
   input: ChannelScheduledTaskInput
 ): Promise<void> {
-  // Collect any steering refinements that arrive while we wait.
-  const steers: string[] = [];
-  setHandler(steerSignal, (msg: string) => {
-    if (msg.trim().length > 0) {
-      steers.push(msg.trim());
+  // Before launch: buffer steering to fold into the task description. After
+  // launch: forward each reply straight to the running child run.
+  const preSteers: string[] = [];
+  let childHandle: ChildWorkflowHandle<Workflow> | undefined;
+  setHandler(steerSignal, async (msg: string) => {
+    const trimmed = msg.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    if (childHandle) {
+      await childHandle.signal(steerSignal, trimmed);
+    } else {
+      preSteers.push(trimmed);
     }
   });
 
@@ -68,12 +89,17 @@ export async function ChannelScheduledTaskWorkflow(
     await sleep(delayMs);
   }
 
-  // Fold any mid-wait steering into the task description before launch.
+  // Freeze the description with the steering gathered so far, then launch. Steers
+  // that arrive after this point (during child startup or the run) are forwarded
+  // live below, not folded here.
+  const folded = preSteers.length;
   const request =
-    steers.length > 0
+    folded > 0
       ? {
           ...input.request,
-          description: `${input.request.description}\n\nAdditional guidance:\n${steers.join('\n')}`,
+          description: `${input.request.description}\n\nAdditional guidance:\n${preSteers
+            .slice(0, folded)
+            .join('\n')}`,
         }
       : input.request;
 
@@ -82,7 +108,7 @@ export async function ChannelScheduledTaskWorkflow(
   const taskRunWorkflowId = `${workflowInfo().workflowId}-run`;
 
   try {
-    await startThreadTaskChild(
+    childHandle = await startThreadTaskChild(
       'RunnableWorkflow',
       [{ request, templateId: input.templateId, templateVersion: input.templateVersion }],
       taskRunWorkflowId
@@ -96,5 +122,28 @@ export async function ChannelScheduledTaskWorkflow(
       taskRunWorkflowId,
     });
     throw err;
+  }
+
+  // Forward any steering that landed during child startup — after the description
+  // was frozen but before `childHandle` was set, so the handler buffered it into
+  // `preSteers` instead of forwarding. Drains that narrow window so no reply is
+  // lost in the handoff.
+  for (const straggler of preSteers.slice(folded)) {
+    await childHandle.signal(steerSignal, straggler);
+  }
+
+  // Stay alive for the task's whole life so post-launch thread replies keep
+  // reaching the running child via the handler above, and the per-thread id stays
+  // reserved (one task per thread). The child runs under ABANDON, so it survives
+  // even if this wrapper is later terminated; awaiting its result is purely to
+  // hold the steering bridge open. A child failure isn't this wrapper's to
+  // surface (the run reports its own outcome) — log and close cleanly.
+  try {
+    await childHandle.result();
+  } catch (err) {
+    log.info('ChannelScheduledTaskWorkflow: child run ended with error', {
+      err: err instanceof Error ? err.message : String(err),
+      taskRunWorkflowId,
+    });
   }
 }
