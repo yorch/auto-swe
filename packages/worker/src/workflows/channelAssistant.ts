@@ -95,8 +95,23 @@ const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTa
     startToCloseTimeout: '30s',
   });
 
+// Workflow generation: an LLM activity (generate→validate→repair) + a DB write.
+// Generous timeout; one attempt only (the activity has its own internal repair
+// loop, and it is best-effort — it returns null rather than throwing on failure).
+const { createChannelWorkflowDraft } = proxyActivities<
+  Pick<typeof activitiesType, 'createChannelWorkflowDraft'>
+>({
+  retry: { maximumAttempts: 1 },
+  startToCloseTimeout: '6m',
+});
+
 const CHANNEL_ERROR_TEXT =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
+
+// Posted when a `generateWorkflow` intent couldn't produce a valid draft.
+const CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT =
+  ":warning: I couldn't turn that into a valid workflow. Try describing it with more " +
+  'detail — which steps or agents should run, and in what order.';
 
 // Phase A: posted instead of launching a task when the channel is over budget.
 const CHANNEL_TASK_BUDGET_TEXT =
@@ -189,7 +204,34 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply, delegate } = await runChannelAssistantTurn(input);
+    const { reply, delegate, generate } = await runChannelAssistantTurn(input);
+
+    // The agent asked to draft a reusable workflow. Generate + persist a DRAFT
+    // template scoped to the channel's team, then tell the user (instead of the
+    // agent's ack). The draft lands in the Workflow library for review/activation.
+    if (generate) {
+      // Generation is an LLM-heavy activity (≤3 model calls) — gate it on the
+      // channel budget exactly like a delegated task, so an over-budget channel
+      // can't be driven to burn spend by repeated "create a workflow" asks.
+      const overBudget = await isChannelOverBudgetForTask(input.channelId);
+      if (overBudget) {
+        await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
+        return 'SUCCESS';
+      }
+      const draft = await createChannelWorkflowDraft({
+        channelId: input.channelId,
+        description: generate.description,
+        name: generate.name,
+        teamId: input.teamId,
+      });
+      const text = draft
+        ? `:sparkles: I drafted a workflow *"${draft.name}"* for you.` +
+          `${draft.summary ? ` ${draft.summary}` : ''}` +
+          '\nReview and activate it in the *Workflow library* on the dashboard before running it.'
+        : CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT;
+      await deliver(input, placeholderTs, text);
+      return 'SUCCESS';
+    }
 
     // Phase A: the agent asked to launch a durable task. Gate on the channel
     // budget, then start a thread-bound RunnableWorkflow that works the task and

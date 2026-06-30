@@ -14,6 +14,18 @@ export {
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
 } from './analytics.js';
+export type {
+  AuthoringAgentRef,
+  AuthoringCatalog,
+  AuthoringMcpRef,
+  WorkflowAuthorOutput,
+} from './authoring.js';
+export {
+  buildAuthorRequestMessage,
+  buildRepairRequestMessage,
+  renderAuthoringCatalog,
+  WorkflowAuthorOutputSchema,
+} from './authoring.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
 export type { CostEstimate, CostRole } from './costEstimator.js';

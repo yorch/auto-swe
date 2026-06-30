@@ -99,4 +99,62 @@ describe('runWorkflowsCommand flag validation', () => {
     expect(code).toBe(1);
     expect(stderrWrites.join('')).toContain('requires a file path');
   });
+
+  it('rejects generate with no description', async () => {
+    const code = await runWorkflowsCommand(['generate'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('workflows generate');
+  });
+});
+
+describe('runWorkflowsCommand generate', () => {
+  let stdoutWrites: string[];
+  let originalStdout: typeof process.stdout.write;
+  let originalStderr: typeof process.stderr.write;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    stdoutWrites = [];
+    originalStdout = process.stdout.write;
+    originalStderr = process.stderr.write;
+    process.stdout.write = ((s: string | Uint8Array) => {
+      stdoutWrites.push(typeof s === 'string' ? s : Buffer.from(s).toString());
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    process.stdout.write = originalStdout;
+    process.stderr.write = originalStderr;
+    globalThis.fetch = originalFetch;
+  });
+
+  it('posts the description and prints the created DRAFT + summary', async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ body: JSON.parse(String(init.body)), url: String(url) });
+      return {
+        ok: true,
+        status: 201,
+        text: async () =>
+          JSON.stringify({
+            attempts: 2,
+            data: { activeVersion: 1, id: 'tpl-9', name: 'My Flow', status: 'DRAFT', team: null },
+            summary: 'Runs the implementer then opens a PR.',
+          }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const code = await runWorkflowsCommand(['generate', 'build', 'me', 'a', 'flow'], ENV);
+
+    expect(code).toBe(0);
+    expect(calls[0].url).toBe('http://gw/api/v1/workflow-templates/generate');
+    expect(calls[0].body).toMatchObject({ prompt: 'build me a flow', teamId: null });
+    const out = stdoutWrites.join('');
+    expect(out).toContain('Created DRAFT "My Flow"');
+    expect(out).toContain('Runs the implementer then opens a PR.');
+    expect(out).toContain('2 attempts');
+  });
 });

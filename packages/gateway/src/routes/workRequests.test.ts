@@ -118,6 +118,17 @@ describe('POST /api/v1/work-requests', () => {
       deleteChannelAmbientSchedule: async () => {},
       deleteChannelReactiveSchedule: async () => {},
       deleteWorkRequestSchedule: async () => {},
+      generateWorkflowSpec: async () => ({
+        attempts: 1,
+        spec: {
+          description: '',
+          entry: 'done',
+          name: 'generated',
+          nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
+          schemaVersion: 1,
+        },
+        summary: '',
+      }),
       getChannelAmbientScheduleStatus: async () => ({
         exists: false,
         nextRunAt: null,

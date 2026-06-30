@@ -15,17 +15,18 @@ export class GatewayError extends Error {
   }
 }
 
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
 /**
- * Thin fetch wrapper that decorates every request with the bearer token, parses
- * JSON, and turns non-2xx responses into a typed `GatewayError` so callers can
- * format a useful CLI message without rolling their own status handling.
+ * Shared fetch core: decorate with the bearer token, parse JSON, and turn a
+ * non-2xx response into a typed `GatewayError`. Returns the FULL parsed envelope.
  */
-export async function apiRequest<T>(
+async function requestEnvelope(
   env: CliEnv,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: HttpMethod,
   path: string,
   body?: unknown
-): Promise<T> {
+): Promise<Record<string, unknown>> {
   const res = await fetch(`${env.apiUrl}${path}`, {
     body: body === undefined ? undefined : JSON.stringify(body),
     headers: {
@@ -35,7 +36,7 @@ export async function apiRequest<T>(
     method,
   });
   const text = await res.text();
-  const json = text ? (safeParseJson(text) as { data?: T } & GatewayErrorBody) : {};
+  const json = (text ? safeParseJson(text) : {}) as Record<string, unknown> & GatewayErrorBody;
   if (!res.ok) {
     throw new GatewayError(
       res.status,
@@ -43,7 +44,36 @@ export async function apiRequest<T>(
       json.error?.message ?? `HTTP ${res.status}`
     );
   }
-  return (json.data ?? (json as unknown as T)) as T;
+  return json;
+}
+
+/**
+ * Thin fetch wrapper that decorates every request with the bearer token, parses
+ * JSON, and turns non-2xx responses into a typed `GatewayError`. Returns the
+ * response's `data` field (or the whole body when there is no `data`).
+ */
+export async function apiRequest<T>(
+  env: CliEnv,
+  method: HttpMethod,
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const json = await requestEnvelope(env, method, path, body);
+  return (json.data ?? json) as T;
+}
+
+/**
+ * Like {@link apiRequest} but returns the FULL response envelope rather than
+ * just `.data`. Use when the endpoint returns sibling fields alongside `data`
+ * (e.g. the workflow generator's `summary` / `warnings`).
+ */
+export async function apiRequestFull<T>(
+  env: CliEnv,
+  method: HttpMethod,
+  path: string,
+  body?: unknown
+): Promise<T> {
+  return (await requestEnvelope(env, method, path, body)) as T;
 }
 
 function safeParseJson(text: string): unknown {

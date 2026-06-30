@@ -90,6 +90,20 @@ export function useCreateWorkflowTemplate() {
   });
 }
 
+export function useGenerateWorkflowTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { prompt: string; name?: string; teamId?: string | null }) =>
+      api.post<{
+        data: WorkflowTemplateSummary;
+        summary?: string;
+        attempts?: number;
+        warnings?: string[];
+      }>('/api/v1/workflow-templates/generate', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+  });
+}
+
 export function useCreateWorkflowVersion(templateId: string) {
   const qc = useQueryClient();
   return useMutation({

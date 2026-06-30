@@ -278,6 +278,27 @@ function buildApp(state: {
     }) as unknown as never
   );
 
+  app.decorate('temporal', {
+    generateWorkflowSpec: async () => {
+      const s = state as {
+        generateError?: boolean;
+        generateInfraError?: boolean;
+        generatedSpec?: unknown;
+      };
+      if (s.generateInfraError) {
+        // No author-failure marker → treated as an infra error (503).
+        throw new Error('Temporal connection refused');
+      }
+      if (s.generateError) {
+        // Mirrors the activity's thrown message so the route maps it to 422.
+        throw new Error(
+          'workflowAuthor could not produce a valid WorkflowSpec after 3 attempts: bad spec'
+        );
+      }
+      return { attempts: 1, spec: s.generatedSpec ?? VALID_SPEC, summary: 'generated summary' };
+    },
+  } as unknown as never);
+
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   return app;
 }
@@ -331,6 +352,75 @@ describe('workflow-templates routes', () => {
     expect(body.data.activeVersion).toBe(1);
     expect(body.data.status).toBe('ACTIVE');
     expect(body.data.versionCount).toBe(1);
+  });
+
+  it('generates a DRAFT template from a description', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        prompt: 'Open a PR after the implementer runs',
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.data.status).toBe('DRAFT');
+    expect(body.data.activeVersion).toBe(1);
+    expect(body.summary).toBe('generated summary');
+    expect(body.spec.entry).toBe('start');
+  });
+
+  it('applies a name override to the generated draft', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'My Custom Name',
+        prompt: 'do something',
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.name).toBe('My Custom Name');
+  });
+
+  it('returns 422 when generation fails', async () => {
+    (state as { generateError?: boolean }).generateError = true;
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'x', teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567' },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    (state as { generateError?: boolean }).generateError = false;
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error?.code).toBe('GENERATION_FAILED');
+  });
+
+  it('returns 503 when generation hits an infrastructure error', async () => {
+    (state as { generateInfraError?: boolean }).generateInfraError = true;
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'x', teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567' },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    (state as { generateInfraError?: boolean }).generateInfraError = false;
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error?.code).toBe('GENERATION_UNAVAILABLE');
+  });
+
+  it('forbids a non-admin from generating a global template', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'x' },
+      url: '/api/v1/workflow-templates/generate',
+    });
+    expect(res.statusCode).toBe(403);
   });
 
   it('lists templates with last run summary', async () => {

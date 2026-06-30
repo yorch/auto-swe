@@ -19,6 +19,7 @@ import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import {
   useCreateWorkflowTemplate,
+  useGenerateWorkflowTemplate,
   useUpdateWorkflowTemplate,
   useWorkflowTemplates,
 } from '@/hooks/useWorkflows';
@@ -129,6 +130,95 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
+function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const router = useRouter();
+  const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
+  const generate = useGenerateWorkflowTemplate();
+  const [prompt, setPrompt] = useState('');
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setPrompt('');
+    setName('');
+    setError(null);
+  };
+
+  const handleGenerate = async () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      setError('Describe what the workflow should do');
+      return;
+    }
+    setError(null);
+    try {
+      const result = await generate.mutateAsync({
+        name: name.trim() || undefined,
+        prompt: trimmed,
+        teamId: selectedTeamId ?? undefined,
+      });
+      const id = result.data.id;
+      onClose();
+      reset();
+      // Land on the canvas editor for the new DRAFT so the human reviews/edits
+      // before activating.
+      router.push(`/templates/${id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'generation failed');
+    }
+  };
+
+  return (
+    <Modal
+      eyebrow="§ Templates"
+      onClose={() => {
+        onClose();
+        reset();
+      }}
+      open={open}
+      title="Generate a workflow with AI"
+    >
+      <div className="space-y-4">
+        <p className="text-sm leading-relaxed text-paper-400">
+          Describe what you want the workflow to do in plain language. An AI agent assembles a
+          workflow from your available steps, agents, and connections, and saves it as a{' '}
+          <span className="font-mono text-paper-300">DRAFT</span> for you to review and edit on the
+          canvas before activating.
+        </p>
+        {error && <Alert>{error}</Alert>}
+        <Textarea
+          label="Description"
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="e.g. When a ticket comes in, run the implementer, then the review network, and open a pull request. Pause for human approval before merging."
+          rows={6}
+          value={prompt}
+        />
+        <Input
+          hint="Optional — defaults to a name the AI picks"
+          label="Name"
+          onChange={(e) => setName(e.target.value)}
+          placeholder="my-workflow"
+          value={name}
+        />
+        <div className="flex justify-end gap-2 pt-2">
+          <Button
+            onClick={() => {
+              onClose();
+              reset();
+            }}
+            variant="secondary"
+          >
+            Cancel
+          </Button>
+          <Button disabled={generate.isPending} onClick={handleGenerate} variant="primary">
+            {generate.isPending ? 'Generating…' : 'Generate draft →'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function TemplatesPage() {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
@@ -137,6 +227,7 @@ export default function TemplatesPage() {
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
   const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
@@ -166,6 +257,8 @@ export default function TemplatesPage() {
     <div className="space-y-12">
       <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
+      <GenerateTemplateModal onClose={() => setGenerateOpen(false)} open={generateOpen} />
+
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
       {runTarget && (
@@ -175,9 +268,14 @@ export default function TemplatesPage() {
       <div className="fade-up">
         <PageHeader
           actions={
-            <Button onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-              + New workflow
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
+                ✨ Generate with AI
+              </Button>
+              <Button onClick={() => setCreateOpen(true)} size="sm" variant="secondary">
+                + New workflow
+              </Button>
+            </div>
           }
           chapter="§ Workflows"
           subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."

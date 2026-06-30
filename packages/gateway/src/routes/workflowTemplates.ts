@@ -20,6 +20,28 @@ import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
+/**
+ * Stable marker the `generateWorkflowSpec` activity puts in its thrown message
+ * when the model fails to produce a valid spec after all repair attempts. Used
+ * to tell a genuine generation failure (→ 422) from an infra error (→ 503).
+ */
+const AUTHOR_GENERATION_FAILURE_MARKER = 'could not produce a valid WorkflowSpec';
+
+/**
+ * A Temporal `WorkflowFailedError` wraps the activity's `ApplicationFailure` in a
+ * `cause` chain, so walk it looking for the author-failure marker.
+ */
+function isAuthorGenerationFailure(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 6 && cur instanceof Error; i++) {
+    if (cur.message.includes(AUTHOR_GENERATION_FAILURE_MARKER)) {
+      return true;
+    }
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 interface ShellNodeWithId {
   id: string;
   /** Structural subset shared by `shell` and `containerStep` — both run a
@@ -194,6 +216,52 @@ const TEMPLATE_INCLUDE = {
 
 type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof TEMPLATE_INCLUDE }>;
 
+/**
+ * Create a template + its initial v1 version + shell audit in one transaction
+ * (so a failed audit insert rolls back the template, keeping API success aligned
+ * with persisted state). Shared by `POST /` (status ACTIVE) and `POST /generate`
+ * (status DRAFT) so the persist/audit shape lives in one place.
+ */
+async function createTemplateWithInitialVersion(
+  prisma: FastifyInstance['prisma'],
+  args: {
+    name: string;
+    description: string;
+    teamId: string | null;
+    status: 'ACTIVE' | 'DRAFT';
+    specJson: object;
+    authorUserId: string;
+    shellNodes: ShellNodeWithId[];
+    egressAllowlist: string[];
+  }
+): Promise<TemplateWithIncludes> {
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.workflowTemplate.create({
+      data: {
+        activeVersion: 1,
+        description: args.description,
+        name: args.name,
+        status: args.status,
+        teamId: args.teamId,
+        versions: { create: { createdBy: args.authorUserId, spec: args.specJson, version: 1 } },
+      },
+      include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
+    });
+    const initialVersion = created.versions[0];
+    if (initialVersion) {
+      await recordShellAudit(
+        tx,
+        initialVersion.id,
+        args.teamId,
+        args.authorUserId,
+        args.shellNodes,
+        args.egressAllowlist
+      );
+    }
+    return created;
+  });
+}
+
 function teamMembershipFilter(user: {
   sub: string;
   role: string;
@@ -357,6 +425,146 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // ── Generate a template from a natural-language description ──
+  // POST /generate { prompt, teamId?, name? }
+  // Runs the workflowAuthor agent (in the worker) to synthesize a WorkflowSpec,
+  // then persists it as a DRAFT template so a human can review/edit it on the
+  // canvas before activating. Same authoring RBAC + shell gating as POST /.
+  // Placed before `/:id` so 'generate' is not matched as a template UUID.
+  const GenerateTemplateBody = z.object({
+    name: z.string().min(1).max(120).optional(),
+    prompt: z.string().min(1).max(8000),
+    teamId: z.string().uuid().nullable().optional(),
+  });
+  app.post(
+    '/generate',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { body: GenerateTemplateBody },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { prompt, teamId, name: nameOverride } = request.body;
+
+      // RBAC mirrors POST /: non-admins may only target a team they belong to and
+      // may not author global templates. `allowShell` is the hint passed to the
+      // author agent (the real gate is assertShellAuthoringAllowed at persist).
+      let allowShell = user.role === 'ADMIN';
+      if (user.role !== 'ADMIN') {
+        if (!teamId) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' },
+          });
+        }
+        const member = await fastify.prisma.teamMembership.findFirst({
+          where: { teamId, userId: user.sub },
+        });
+        if (!member) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Not a member of this team' },
+          });
+        }
+        allowShell = member.role === 'ADMIN';
+      }
+
+      // Generate via the worker (start WorkflowAuthorWorkflow + await its result).
+      let generated: { spec: WorkflowSpec; summary: string; attempts: number };
+      try {
+        const wfId = `wfauthor-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+        generated = await fastify.temporal.generateWorkflowSpec(wfId, {
+          allowShell,
+          prompt,
+          teamId: teamId ?? null,
+        });
+      } catch (err) {
+        request.log.error({ err }, 'workflow generation failed');
+        // Distinguish a genuine "model couldn't produce a valid spec" (the user
+        // should rephrase → 422) from an infrastructure failure (worker down,
+        // Temporal unreachable → 503, rephrasing won't help). The author activity
+        // tags the former with a stable marker in its thrown message.
+        if (isAuthorGenerationFailure(err)) {
+          return reply.status(422).send({
+            error: {
+              code: 'GENERATION_FAILED',
+              message:
+                'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.',
+            },
+          });
+        }
+        return reply.status(503).send({
+          error: {
+            code: 'GENERATION_UNAVAILABLE',
+            message: 'Workflow generation is temporarily unavailable. Please try again shortly.',
+          },
+        });
+      }
+
+      // Defensive re-validation (the worker already validated against the schema).
+      let parsed: unknown;
+      try {
+        parsed = parseSpecOrThrow(generated.spec);
+      } catch (err) {
+        const e = err as Error & { statusCode?: number };
+        return reply
+          .status(e.statusCode ?? 400)
+          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+      }
+
+      const parsedSpec = parsed as WorkflowSpec;
+      // Caller may override the model-chosen name; keep template + spec name aligned.
+      if (nameOverride) {
+        parsedSpec.name = nameOverride;
+      }
+      const name = parsedSpec.name;
+
+      const shellNodes = collectShellNodes(parsedSpec);
+      const [rbac, imgGate] = await Promise.all([
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
+      ]);
+      if (rbac) {
+        return reply.status(rbac.statusCode).send(rbac.body);
+      }
+      if (!imgGate.ok) {
+        return reply.status(imgGate.statusCode).send(imgGate.body);
+      }
+      const { egressAllowlist } = imgGate;
+
+      try {
+        // DRAFT (not ACTIVE): the human reviews/edits on the canvas, then activates.
+        const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          authorUserId: user.sub,
+          description: parsedSpec.description ?? '',
+          egressAllowlist,
+          name,
+          shellNodes,
+          specJson: parsed as object,
+          status: 'DRAFT',
+          teamId: teamId ?? null,
+        });
+        const warnings = await validateSpecRefs(fastify.prisma, parsedSpec);
+        return reply.status(201).send({
+          attempts: generated.attempts,
+          data: projectTemplate(tpl, undefined),
+          spec: parsed,
+          summary: generated.summary,
+          ...(warnings.length > 0 ? { warnings } : {}),
+        });
+      } catch (err: unknown) {
+        const e = err as { code?: string };
+        if (e.code === 'P2002') {
+          return reply.status(409).send({
+            error: {
+              code: 'NAME_CONFLICT',
+              message: `A template named "${name}" already exists — pass a different "name".`,
+            },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
   // ── List templates ──
   app.get(
     '/',
@@ -437,38 +645,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const { egressAllowlist } = imgGate;
 
       try {
-        // Wrap the template + initial version + shell-audit insert in one
-        // transaction so a failed audit insert rolls back the template row,
-        // keeping API success/failure aligned with persisted state.
-        const tpl = await fastify.prisma.$transaction(async (tx) => {
-          const created = await tx.workflowTemplate.create({
-            data: {
-              activeVersion: 1,
-              description: description ?? '',
-              name,
-              status: 'ACTIVE',
-              teamId: teamId ?? null,
-              versions: {
-                create: { createdBy: user.sub, spec: parsed as object, version: 1 },
-              },
-            },
-            include: { ...TEMPLATE_INCLUDE, versions: { select: { id: true, version: true } } },
-          });
-          const initialVersion = created.versions[0];
-          if (initialVersion) {
-            await recordShellAudit(
-              tx,
-              initialVersion.id,
-              teamId ?? null,
-              user.sub,
-              shellNodes,
-              egressAllowlist
-            );
-          }
-          return created;
+        const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          authorUserId: user.sub,
+          description: description ?? '',
+          egressAllowlist,
+          name,
+          shellNodes,
+          specJson: parsed as object,
+          status: 'ACTIVE',
+          teamId: teamId ?? null,
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
-        const warnings = await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec);
+        const warnings = await validateSpecRefs(fastify.prisma, parsedSpec);
         return reply.status(201).send({
           data: projectTemplate(tpl, undefined),
           ...(warnings.length > 0 ? { warnings } : {}),
