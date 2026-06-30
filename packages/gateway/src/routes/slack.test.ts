@@ -972,3 +972,56 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
     expect(state.channelAssistantStarts).toHaveLength(0);
   });
 });
+
+describe('POST /api/v1/auth/slack/events — App Home tab (Gap I)', () => {
+  const originalFetch = globalThis.fetch;
+  let publishCalls: Array<{ url: string; body: Record<string, unknown> }>;
+
+  beforeEach(() => {
+    publishCalls = [];
+    globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+      publishCalls.push({ body: init?.body ? JSON.parse(init.body) : {}, url: String(url) });
+      return { json: async () => ({ ok: true }) } as unknown as Response;
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function postEvent(event: Record<string, unknown>) {
+    const body = JSON.stringify({ event, team_id: 'T1', type: 'event_callback' });
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+  }
+
+  it('publishes the Home view when a user opens the home tab', async () => {
+    const res = await postEvent({ tab: 'home', type: 'app_home_opened', user: 'UME' });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(publishCalls).toHaveLength(1);
+    expect(publishCalls[0].url).toContain('views.publish');
+    expect(publishCalls[0].body.user_id).toBe('UME');
+    const view = publishCalls[0].body.view as { type: string; blocks: unknown[] };
+    expect(view.type).toBe('home');
+    expect(view.blocks.length).toBeGreaterThan(0);
+    // No conversational workflow is started for a Home open.
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('ignores the messages tab (only the home tab publishes)', async () => {
+    const res = await postEvent({ tab: 'messages', type: 'app_home_opened', user: 'UME' });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(publishCalls).toHaveLength(0);
+  });
+});

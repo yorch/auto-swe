@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/B/C/D/E/F/G/H/J shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A–J shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -289,6 +289,17 @@ Three follow-on capabilities round out memory and task execution:
   memory). Self-limiting — the window closes, so the bot never re-engages stale
   threads — and opt-in (default off). Steering an in-flight *task* still takes
   precedence over a continuation turn.
+
+- **Gap I — packaged Slack-app UX (App Home).** On `app_home_opened` (the `home`
+  tab), the gateway publishes a Block Kit Home view — the assistant's "front door"
+  describing what it does and how to drive it (@mention, thread steering, follow-up
+  sessions, slash commands). `buildAppHomeView` is a pure, unit-tested view builder;
+  `publishAppHome` (`views.publish`) is best-effort and never throws into the events
+  handler. The `messages` tab is ignored. Slash commands (`/auto-swe help |
+  workflows list | workflows show | run`) already existed. A one-click OAuth install
+  flow + message/global shortcuts remain the only packaged-distribution follow-ups.
+  Requires the `app_home_opened` event subscription + Home tab enabled in the Slack
+  app config (see `slack-app-setup.md`).
 
 ## 10. Reactive interjection — Gap A (shipped)
 

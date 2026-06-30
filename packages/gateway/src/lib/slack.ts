@@ -118,6 +118,99 @@ interface SlackViewsOpenResponse {
 }
 
 /**
+ * Gap I (packaged Slack-app UX): build the App Home tab view (Block Kit). Pure
+ * (no I/O) so it's directly unit-testable. The Home tab is the assistant's
+ * "front door" — what it does and how to drive it — shown when a user opens the
+ * app in Slack. Static content (no per-user DB read), so it can't fail.
+ */
+export function buildAppHomeView(): {
+  type: 'home';
+  blocks: unknown[];
+} {
+  return {
+    blocks: [
+      {
+        text: {
+          emoji: true,
+          text: ':robot_face: auto-swe — your channel teammate',
+          type: 'plain_text',
+        },
+        type: 'header',
+      },
+      {
+        text: {
+          text: "I'm a shared assistant that lives in your Slack channels. Add me to a channel, then *@mention* me to ask a question or hand off real work — I keep per-channel memory, can run multi-step tasks end to end, and (when enabled) chime in proactively.",
+          type: 'mrkdwn',
+        },
+        type: 'section',
+      },
+      { type: 'divider' },
+      {
+        text: { text: '*How to work with me*', type: 'mrkdwn' },
+        type: 'section',
+      },
+      {
+        text: {
+          text: "• *@mention me in a channel* — ask a question, or delegate a task (I'll work it and report back in the thread).\n• *Reply in a task's thread* — steer a run while it's in flight; anyone on the channel can jump in.\n• *Follow-up replies* — when a channel enables follow-up sessions, you can keep the conversation going without re-@mentioning me.\n• *DM me* — for anything you'd rather keep private.",
+          type: 'mrkdwn',
+        },
+        type: 'section',
+      },
+      { type: 'divider' },
+      {
+        text: { text: '*Slash commands*', type: 'mrkdwn' },
+        type: 'section',
+      },
+      {
+        text: {
+          text: '• `/auto-swe help` — show what I can do\n• `/auto-swe workflows list` — list available workflows\n• `/auto-swe run` — start a workflow from a picker',
+          type: 'mrkdwn',
+        },
+        type: 'section',
+      },
+      {
+        elements: [
+          {
+            text: 'Admins configure channels, budgets, memory, and proactivity in the auto-swe dashboard.',
+            type: 'mrkdwn',
+          },
+        ],
+        type: 'context',
+      },
+    ],
+    type: 'home',
+  };
+}
+
+/**
+ * Gap I: publish the App Home view for a user via `views.publish`. Best-effort —
+ * returns `{ok:false}` on any failure (a Home-tab publish must never throw into
+ * the events handler). Mirrors {@link openSlackView}'s token + fetch pattern.
+ */
+export async function publishAppHome(
+  userId: string,
+  token: string | undefined
+): Promise<{ ok: boolean; error?: string }> {
+  if (!token) {
+    return { error: 'Slack bot token not configured', ok: false };
+  }
+  try {
+    const res = await fetch('https://slack.com/api/views.publish', {
+      body: JSON.stringify({ user_id: userId, view: buildAppHomeView() }),
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      method: 'POST',
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    return data.ok ? { ok: true } : { error: data.error ?? 'unknown', ok: false };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err), ok: false };
+  }
+}
+
+/**
  * Open a Slack modal via `views.open`. Used by the work-request slash command
  * to show a workflow + repo picker.
  */

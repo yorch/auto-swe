@@ -30,7 +30,7 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 
 ## @mention teammate (channel assistant)
 
-Once Event Subscriptions are enabled with the `app_mention`, `message.channels`, and `message.im` bot events, the bot becomes a conversational teammate:
+Once Event Subscriptions are enabled with the `app_mention`, `message.channels`, `message.im`, and `app_home_opened` bot events, the bot becomes a conversational teammate:
 
 - **@mention it in a channel** (`@auto-swe how do I …`) → the gateway strips the mention, auto-provisions a `SlackChannel` row for that channel (mapped to the default team + its org), and starts a `ChannelAssistantWorkflow`. The worker generates the answer and posts it back **in-thread**.
 - **DM the bot** → same flow; DMs (`message.im`) are treated like a private thread.
@@ -41,6 +41,10 @@ The gateway acks Slack within the 3-second window and starts the workflow (or se
 > **Why `message.channels` does not make the bot a firehose.** The bot receives every public-channel message via `message.channels`, but it acts on a plain (non-mention) channel message **only** when it is a thread reply *and* an in-flight task run is bound to that thread (a successful `steer` signal). A non-thread message, or a thread reply with no matching active task, is ignored — it never starts a turn or otherwise responds. So ambient channel chatter stays silent; the subscription exists solely to enable steering an active task by replying in its thread.
 
 The first @mention in a channel auto-creates the channel mapping using the default team from `/admin/workflow → Default team slug` (and that team's owning organization). If the default team is missing, the turn is dropped and a warning is logged — run `yarn db:seed` or create the team first.
+
+## App Home tab (Gap I — packaged UX)
+
+Enable the **App Home** feature in the Slack app config (Home Tab on) and subscribe to the `app_home_opened` bot event. When a user opens the app's **Home** tab, the gateway publishes a Block Kit Home view (via `views.publish`) describing what the assistant does and how to drive it (@mention, thread steering, follow-up sessions, slash commands). The view is static, published per-user on open; the `messages` tab is ignored. No extra bot scope is required beyond `chat:write`.
 
 ## Bot scopes
 

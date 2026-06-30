@@ -7,15 +7,15 @@
 > independently-shippable capabilities — with severity, rough effort, and how each
 > fits our existing architecture.
 >
-> **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gaps A + C, plus passive
-> memory ingestion and per-channel persona). Five rows this doc originally listed as
-> Missing/Partial have since shipped: **A — reactive interjection**, **C — open-item
-> follow-up**, **D — future/scheduled tasks**, **E — workspace-level memory**, and
-> **F — channel-memory consolidation**. #113 also added two capabilities that were
-> not originally Claude-Tag rows — **passive memory ingestion** (learn from
-> non-mention messages) and a **per-channel/team persona** prompt. Shipped rows are
-> kept in the scorecard (marked **Have ✅**) for continuity, and their detail
-> sections record what shipped; the open analysis below is rows **B, G, H, I, J, K**.
+> **Updated through the B/G/H/I/J work.** Every lettered Claude-Tag capability
+> (**A–J**) is now shipped; only **K** (battle-testing — non-technical) remains
+> open. History: **A** reactive interjection + **C** open-item follow-up (#113, also
+> passive ingestion + persona); **D/E/F** scheduled tasks + cross-channel memory +
+> consolidation (#112); **G** private-channel exclusion, **J** per-channel audit,
+> **B** org-wide flagging, **H** persistent live session, **I** App-Home/slash UX
+> (this work). Shipped rows are kept in the scorecard (marked **Have ✅**) with their
+> detail sections recording what shipped; small follow-ups + the **K** pilot are the
+> only remaining items (§8).
 >
 > Legend — **Have**: at parity. **Partial**: a weaker form exists. **Missing**: not
 > built. Effort is a rough order of magnitude (S ≈ days, M ≈ 1–2 weeks, L ≈ a phase).
@@ -34,7 +34,7 @@
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
 | G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
 | H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread, no re-`@mention` | **Have ✅** |
-| I | Packaged Slack app UX (App Home, slash commands, install) | raw Events API webhooks | **Partial** |
+| I | Packaged Slack app UX (App Home, slash commands, install) | App Home tab (`views.publish`) + `/auto-swe` slash commands | **Have ✅** (install flow still manual) |
 | J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
 | — | One shared `@assistant` per channel | shared agent + memory + steering | Have |
@@ -48,8 +48,9 @@
 | — | Passive memory ingestion (learn from non-mention messages) | `passiveIngestChannelMemory` (opt-in, #113) | Have |
 | — | Per-channel / per-team persona | `personaPrompt` / `defaultPersonaPrompt` (#113) | Have / ahead |
 
-The rest of this doc details the **open Partial/Missing** rows (B, G, H, I,
-J, K), grouped by theme. §2 and §3–§4 record what A/C/D/E/F shipped, for continuity.
+The rest of this doc details each row, grouped by theme. Rows A–J are now shipped
+(detail sections record what landed); **K** is the only open row. §8 lists the
+remaining small follow-ups + the pilot.
 
 ---
 
@@ -202,11 +203,22 @@ signal workflow remains possible but isn't needed for the re-mention-free
 continuity this gap was really about. See `packages/gateway/src/routes/slack.ts`
 (`isLiveThreadSession`) + `touchChannelThreadSession`.
 
-### I. Packaged Slack-app UX — **Partial · Severity Low · Effort M**
-**Claude Tag** ships as a first-class Slack app (replacing the old one). We drive
-everything through the **Events API** with a manifest, but lack App Home, slash
-commands (`/assistant …`), shortcuts, and a one-click install/onboarding flow.
-Functional parity exists; the packaged-product polish does not.
+### I. Packaged Slack-app UX — **Have ✅ (mostly) · shipped**
+**Claude Tag** ships as a first-class Slack app (replacing the old one).
+
+**Shipped:** the two packaged-product surfaces that were missing —
+- **App Home tab** — on `app_home_opened` (home tab), the gateway publishes a Block
+  Kit Home view (`publishAppHome` → `views.publish`) that is the assistant's "front
+  door": what it does + how to drive it (@mention, thread steering, follow-up
+  sessions, slash commands). `buildAppHomeView` is pure/unit-tested.
+- **Slash commands** already existed — `/auto-swe help | workflows list | workflows
+  show <name> | run` (the `run` subcommand opens a Block Kit modal). The gap text's
+  `/assistant` was a naming guess; the real command namespace is `/auto-swe`.
+
+**Still open (small):** a true *one-click install / OAuth onboarding* flow is still
+manual (admin imports the manifest + enters credentials per `slack-app-setup.md`).
+Shortcuts (message/global) aren't wired. Functional + packaged parity is there;
+distribution polish is the remainder.
 
 ### J. Multiplayer auditing — **Have ✅ · shipped**
 Claude Tag's own reported concern: multiplayer makes **permissions + auditing**
@@ -270,11 +282,14 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-1. **I — packaged Slack-app UX** (M): App Home / slash commands / install polish —
-   the last remaining feature gap. (**B** ✅, **G** ✅, **H** ✅, **J** ✅ all shipped.)
+All lettered feature gaps (A–J) are now shipped; the remaining work is polish +
+pilot:
+1. **I install-flow follow-up** (S–M): one-click OAuth install / onboarding +
+   Slack shortcuts (App Home + slash commands already shipped).
 2. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
    per-channel consolidation config; making a fired deferred run steerable.
-3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
+3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless. The
+   only non-technical gap left — it needs a real install + observation, not code.
 
 > Resolved (B shipped): the open question was *how aggressively* to do org-wide
 > proactive visibility given it trades against per-channel isolation. The answer

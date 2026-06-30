@@ -7,7 +7,12 @@ import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/share
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { openSlackView, postSlackMessage, verifySlackSignature } from '../lib/slack.js';
+import {
+  openSlackView,
+  postSlackMessage,
+  publishAppHome,
+  verifySlackSignature,
+} from '../lib/slack.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -480,6 +485,24 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.send({ ok: true });
       }
 
+      // App Home tab (Gap I — packaged Slack-app UX): when a user opens the app's
+      // Home tab, publish the Home view (the assistant's "front door"). Ack first,
+      // publish out-of-band. Only the `home` tab; `messages` tab is ignored.
+      if (event.type === 'app_home_opened' && event.user && event.tab === 'home') {
+        reply.send({ ok: true });
+        const userId = event.user;
+        void (async () => {
+          const { botToken } = await resolveSlackConfig();
+          const result = await publishAppHome(userId, botToken ?? undefined);
+          if (!result.ok) {
+            request.log.warn({ err: result.error, userId }, 'slack app_home publish failed');
+          }
+        })().catch((err) => {
+          request.log.error({ err }, 'slack app_home handler failed');
+        });
+        return reply;
+      }
+
       const isMention = event.type === 'app_mention';
       const isDm = event.type === 'message' && event.channel_type === 'im';
       // A thread reply is a message whose thread root (`thread_ts`) differs from
@@ -530,6 +553,8 @@ interface SlackEventInner {
   thread_ts?: string;
   /** Workspace/team id on the event itself (not always present). */
   team?: string;
+  /** App Home tab id on `app_home_opened` events (`home` | `messages`). */
+  tab?: string;
 }
 
 interface SlackEventCallback {
