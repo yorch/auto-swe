@@ -92,9 +92,9 @@ dynamic catalog + the user's intent go in the user message.
 | Surface | How |
 |---|---|
 | **Web** | Workflow library (`/templates`) → **"✨ Generate with AI"** → describe → routes to the canvas editor for the new DRAFT. |
-| **API** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Returns `422 GENERATION_FAILED` if no valid spec is produced. |
+| **API** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Errors are distinguished: `422 GENERATION_FAILED` when the model can't produce a valid spec (rephrase) vs `503 GENERATION_UNAVAILABLE` for an infra failure (worker/Temporal down — retry). |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
-| **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. |
+| **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes is refused (those require canvas authoring with the proper RBAC + audit). |
 
 ---
 
@@ -124,5 +124,8 @@ dynamic catalog + the user's intent go in the user message.
   and resolved on demand, so it never gates worker boot (`assertConfigReady`).
 - **Cost + tracing** flow through the same `runAgent` path as every other LLM
   activity (OTel span `llm.workflow_author`, `recordLlmUsage`, `AgentTrace`).
+- **One persist path.** Both `POST /` (ACTIVE) and `POST /generate` (DRAFT) go
+  through the shared `createTemplateWithInitialVersion` helper, so the
+  template + v1 + shell-audit transaction can't drift between the two routes.
 - **Future refinements:** stream partial specs to the canvas; let the author
   reference bundles/coded steps; an "explain this workflow" inverse.
