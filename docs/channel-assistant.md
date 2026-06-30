@@ -138,8 +138,9 @@ Proactive posting via a per-channel Temporal Schedule:
 
 ## 8. Autonomous task execution + multiplayer hand-off (shipped)
 
-Closes gaps **#1** and **#2** from [`channel-assistant-gaps.md`](./channel-assistant-gaps.md)
-(full design in [`channel-assistant-autonomy-design.md`](./channel-assistant-autonomy-design.md)).
+Closes the autonomous-execution and multiplayer hand-off gaps (see
+[`channel-assistant-remaining-gaps.md`](./channel-assistant-remaining-gaps.md) for
+the full gap scorecard).
 A mention that is real *work* (not a quick question) no longer just replies — it
 launches a **durable, thread-bound workflow run**.
 
