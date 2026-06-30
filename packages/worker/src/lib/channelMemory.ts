@@ -90,61 +90,6 @@ export async function retrieveChannelMemory(
   return channelItems;
 }
 
-/**
- * Gap E: cross-channel memory search. Queries memory items belonging to OTHER
- * channels in the same team (same `team_id`, different `channel_id`) so the
- * assistant can surface relevant knowledge from sibling channels in the org.
- *
- * Uses a slightly higher threshold than the channel-scoped search to ensure
- * only strongly-matching cross-channel items appear (reducing noise).
- *
- * Gap G ("does not report from private channels"): a private SOURCE channel's
- * memory must never bleed into another channel. We JOIN `slack_channels` and
- * exclude rows whose owning channel has `is_private = true`, so a private
- * channel's facts stay inside that channel even though they share a team. (The
- * reading channel's OWN memory is fetched by the separate `channel_id = X` query
- * and is unaffected — a private channel still uses its own memory normally.)
- *
- * Raw SQL is required because pgvector operators aren't parameterisable and
- * `team_id != channel_id` isn't expressible via the single-column
- * `searchMemoryItemsByVector` helper. Takes a pre-computed query embedding so the
- * caller embeds the query text once across both searches.
- */
-async function searchTeamChannelMemory(opts: {
-  teamId: string;
-  excludeChannelId: string;
-  limit: number;
-  similarityThreshold: number;
-  precomputed: QueryEmbedding;
-}): Promise<RetrievedChannelMemoryRow[]> {
-  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
-
-  return prisma.$queryRawUnsafe<RetrievedChannelMemoryRow[]>(
-    `SELECT
-       mi.id,
-       mi.lesson_summary AS "summary",
-       1 - (mi.embedding <=> $1::vector) AS similarity
-     FROM memory_items mi
-     JOIN slack_channels sc ON sc.id = mi.channel_id
-     WHERE mi.team_id = $2::uuid
-       AND mi.channel_id IS NOT NULL
-       AND mi.channel_id != $3::uuid
-       AND sc.is_private = false
-       AND mi.embedding IS NOT NULL
-       AND mi.consolidated_at IS NULL
-       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
-       AND 1 - (mi.embedding <=> $1::vector) >= $4
-     ORDER BY mi.embedding <=> $1::vector ASC
-     LIMIT $5`,
-    JSON.stringify(queryEmbedding),
-    opts.teamId,
-    opts.excludeChannelId,
-    opts.similarityThreshold,
-    opts.limit,
-    embeddingSpec
-  );
-}
-
 /** One org-wide cross-channel memory hit, carrying its source channel for labelling. */
 export interface OrgChannelMemoryItem {
   id: string;
@@ -155,53 +100,111 @@ export interface OrgChannelMemoryItem {
 }
 
 /**
- * Gap B: org-wide cross-channel memory search. Queries memory items from OTHER
- * channels in the same ORG (`org_id = X`, `channel_id != current`) so the ambient
- * org-flagging pass can surface notable activity from across the organization.
+ * Shared builder for the cross-channel pgvector search (Gap E team-scoped + Gap B
+ * org-scoped). Both queries are identical except the scope column (`team_id` vs
+ * `org_id`), optional extra SELECT columns, and an optional extra WHERE clause.
  *
- * Privacy (Gap G): JOINs `slack_channels` and excludes `is_private = true` source
- * channels — a private channel's facts are never flagged into another channel,
- * exactly as the team-scoped {@link searchTeamChannelMemory} does. Also excludes
- * inactive source channels. Returns the source channel id + name for attribution.
+ * Centralising the SQL here means the **Gap G privacy filter** (`sc.is_private =
+ * false` — a private channel is never a cross-channel SOURCE) lives in exactly ONE
+ * place, so a future cross-channel reader can't silently re-introduce the leak. The
+ * `$1..$6` positional binding is also defined once: $1 embedding, $2 scopeId, $3
+ * excludeChannelId, $4 similarityThreshold, $5 limit, $6 embeddingModel.
  *
- * Raw SQL is required for the pgvector `<=>` operator + the cross-row JOIN. Embeds
- * the query text once (caller passes a precomputed embedding).
+ * Raw SQL is required (pgvector `<=>` isn't parameterisable; `scope != channel_id`
+ * + the JOIN aren't expressible via the single-column `searchMemoryItemsByVector`).
  */
-export async function searchOrgChannelMemory(opts: {
+function crossChannelMemorySql(opts: {
+  scopeColumn: 'team_id' | 'org_id';
+  extraSelect?: string;
+  extraWhere?: string;
+}): string {
+  const select = [
+    'mi.id',
+    'mi.lesson_summary AS "summary"',
+    '1 - (mi.embedding <=> $1::vector) AS similarity',
+  ]
+    .concat(opts.extraSelect ?? [])
+    .join(',\n       ');
+  return `SELECT
+       ${select}
+     FROM memory_items mi
+     JOIN slack_channels sc ON sc.id = mi.channel_id
+     WHERE mi.${opts.scopeColumn} = $2::uuid
+       AND mi.channel_id IS NOT NULL
+       AND mi.channel_id != $3::uuid
+       AND sc.is_private = false${opts.extraWhere ? `\n       ${opts.extraWhere}` : ''}
+       AND mi.embedding IS NOT NULL
+       AND mi.consolidated_at IS NULL
+       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
+       AND 1 - (mi.embedding <=> $1::vector) >= $4
+     ORDER BY mi.embedding <=> $1::vector ASC
+     LIMIT $5`;
+}
+
+/** Run a {@link crossChannelMemorySql} query with the shared `$1..$6` binding. */
+function runCrossChannelMemoryQuery<T>(
+  sql: string,
+  scopeId: string,
+  opts: {
+    excludeChannelId: string;
+    limit: number;
+    similarityThreshold: number;
+    precomputed: QueryEmbedding;
+  }
+): Promise<T[]> {
+  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
+  return prisma.$queryRawUnsafe<T[]>(
+    sql,
+    JSON.stringify(queryEmbedding),
+    scopeId,
+    opts.excludeChannelId,
+    opts.similarityThreshold,
+    opts.limit,
+    embeddingSpec
+  );
+}
+
+/**
+ * Gap E: cross-channel memory search over OTHER channels in the same team (higher
+ * threshold than the channel-scoped search so only strong matches bleed in). Gap G
+ * privacy filter is applied by the shared {@link crossChannelMemorySql} builder.
+ */
+function searchTeamChannelMemory(opts: {
+  teamId: string;
+  excludeChannelId: string;
+  limit: number;
+  similarityThreshold: number;
+  precomputed: QueryEmbedding;
+}): Promise<RetrievedChannelMemoryRow[]> {
+  return runCrossChannelMemoryQuery<RetrievedChannelMemoryRow>(
+    crossChannelMemorySql({ scopeColumn: 'team_id' }),
+    opts.teamId,
+    opts
+  );
+}
+
+/**
+ * Gap B: org-wide cross-channel memory search over OTHER (non-private, active)
+ * channels in the same org, returning the source channel id + name for
+ * attribution. Privacy filter (Gap G) lives in the shared builder.
+ */
+export function searchOrgChannelMemory(opts: {
   orgId: string;
   excludeChannelId: string;
   limit: number;
   similarityThreshold: number;
   precomputed: QueryEmbedding;
 }): Promise<OrgChannelMemoryItem[]> {
-  const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
-
-  return prisma.$queryRawUnsafe<OrgChannelMemoryItem[]>(
-    `SELECT
-       mi.id,
-       mi.lesson_summary AS "summary",
-       1 - (mi.embedding <=> $1::vector) AS similarity,
-       sc.id   AS "sourceChannelId",
-       sc.name AS "sourceChannelName"
-     FROM memory_items mi
-     JOIN slack_channels sc ON sc.id = mi.channel_id
-     WHERE mi.org_id = $2::uuid
-       AND mi.channel_id IS NOT NULL
-       AND mi.channel_id != $3::uuid
-       AND sc.is_private = false
-       AND sc.is_active = true
-       AND mi.embedding IS NOT NULL
-       AND mi.consolidated_at IS NULL
-       AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
-       AND 1 - (mi.embedding <=> $1::vector) >= $4
-     ORDER BY mi.embedding <=> $1::vector ASC
-     LIMIT $5`,
-    JSON.stringify(queryEmbedding),
+  return runCrossChannelMemoryQuery<OrgChannelMemoryItem>(
+    crossChannelMemorySql({
+      extraSelect: ['sc.id   AS "sourceChannelId"', 'sc.name AS "sourceChannelName"'].join(
+        ',\n       '
+      ),
+      extraWhere: 'AND sc.is_active = true',
+      scopeColumn: 'org_id',
+    }),
     opts.orgId,
-    opts.excludeChannelId,
-    opts.similarityThreshold,
-    opts.limit,
-    embeddingSpec
+    opts
   );
 }
 

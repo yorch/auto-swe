@@ -27,7 +27,8 @@ export interface FlagOrgSignalsResult {
     | 'cooldown'
     | 'no-signals'
     | 'skip'
-    | 'posted';
+    | 'posted'
+    | 'error';
 }
 
 const DEFAULT_CHANNEL_AGENT_KEY = 'channelAssistant';
@@ -115,8 +116,9 @@ export function buildOrgFlagPrompt(
  *  - **Private-channel exclusion (Gap G):** `searchOrgChannelMemory` JOINs
  *    `slack_channels` and excludes `is_private = true` SOURCE channels, so a
  *    private channel's content is never flagged elsewhere.
- *  - **Cooldown:** at most one flag per {@link ORG_FLAG_COOLDOWN_MS} so flags stay
- *    rare + signal-rich (skips the LLM entirely while on cooldown).
+ *  - **Cooldown:** at most one *evaluation* per {@link ORG_FLAG_COOLDOWN_MS}
+ *    (`lastOrgFlagAt` is advanced on post OR skip), so a no-signal channel doesn't
+ *    re-pay the embedding + org search + LLM on every ambient fire.
  *  - **Budget-gated + SKIP-aware + best-effort:** over budget ⇒ no spend; a
  *    SKIP/empty reply is not posted; never throws.
  *
@@ -200,21 +202,39 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
     // Accrue the LLM cost (it happened); count a run only when we actually post.
     await accrueChannelUsage(channel.id, costUsd, { countRun: posted });
 
+    // Advance the cooldown on EVERY evaluation that reached the LLM — post OR skip.
+    // The cooldown gate above keys on `lastOrgFlagAt`, so stamping it only on a post
+    // would let a SKIP verdict (the common case) re-pay the embedding + org search +
+    // LLM on every subsequent ambient fire. Stamping here also means a Slack-post
+    // failure below can't trigger a re-spend. Written BEFORE the post (at-most-once,
+    // mirroring the open-item nudge) so a transient Slack failure never re-flags.
+    await prisma.slackChannel.update({
+      data: { lastOrgFlagAt: now },
+      where: { id: channel.id },
+    });
+
     if (posted) {
-      await postSlackChannelMessage(channel.slackChannelId, reply);
-      await prisma.slackChannel.update({
-        data: { lastOrgFlagAt: now },
-        where: { id: channel.id },
-      });
+      // Best-effort: the cost + cooldown are already committed, so a delivery
+      // hiccup must not bubble out and cause a re-evaluation next fire.
+      try {
+        await postSlackChannelMessage(channel.slackChannelId, reply);
+      } catch (err) {
+        console.error(
+          `[flagOrgSignals] post failed for ${channel.id} (flag already accounted):`,
+          err instanceof Error ? err.message : err
+        );
+      }
     }
 
     return { posted, reason: posted ? 'posted' : 'skip' };
   } catch (err) {
-    // Proactive ⇒ quiet on failure: log + report a no-op, never throw/spam.
+    // Proactive ⇒ quiet on failure: log + report a no-op, never throw/spam. Use a
+    // dedicated `error` reason so observability/tests don't conflate a genuine
+    // failure with the `disabled` (opted-out) no-op path.
     console.error(
       `[flagOrgSignals] pass failed for ${input.channelId}:`,
       err instanceof Error ? err.message : err
     );
-    return { posted: false, reason: 'disabled' };
+    return { posted: false, reason: 'error' };
   }
 }

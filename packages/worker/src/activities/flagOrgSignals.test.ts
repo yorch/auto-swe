@@ -157,12 +157,30 @@ describe('flagOrgSignals', () => {
     expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
   });
 
-  it('does NOT post (and does not stamp) when the agent replies SKIP', async () => {
+  it('does NOT post but STILL stamps the cooldown when the agent replies SKIP', async () => {
     runChannelAgentTurnMock.mockResolvedValue({ costUsd: 0.005, reply: 'SKIP' });
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: false, reason: 'skip' });
     expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
     expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.005, { countRun: false });
-    expect(updateChannel).not.toHaveBeenCalled();
+    // The cooldown is advanced on a SKIP too, so the next fire doesn't re-pay the LLM.
+    const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
+  });
+
+  it('reports reason "error" (not "disabled") when an enabled channel throws', async () => {
+    searchOrgChannelMemoryMock.mockRejectedValue(new Error('pgvector boom'));
+    const res = await flagOrgSignals({ channelId: 'chan-1' });
+    expect(res).toEqual({ posted: false, reason: 'error' });
+  });
+
+  it('still reports "posted" when the agent surfaced a signal but the Slack post fails', async () => {
+    postSlackChannelMessageMock.mockRejectedValue(new Error('slack 429'));
+    const res = await flagOrgSignals({ channelId: 'chan-1' });
+    // Cost + cooldown are committed before the best-effort post, so a delivery
+    // hiccup neither throws nor triggers a re-spend next fire.
+    expect(res).toEqual({ posted: true, reason: 'posted' });
+    const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
   });
 });

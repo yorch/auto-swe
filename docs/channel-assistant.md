@@ -271,10 +271,13 @@ Three follow-on capabilities round out memory and task execution:
   (its focus) ONCE, runs `searchOrgChannelMemory` (org-scoped pgvector search,
   `is_private = false` + active source channels only — Gap G baked in), and lets the
   channel agent decide (high bar, SKIP-aware) whether to post a brief heads-up naming
-  the source channel. Hard rate-limited by a `lastOrgFlagAt` cooldown (20 h) so flags
-  stay rare; budget-gated; cost accrues with `countRun: false` only when it posts.
-  The conservative opt-in + private-source exclusion is deliberate: org-wide
-  visibility never happens by default, preserving per-channel isolation.
+  the source channel. Hard rate-limited by a `lastOrgFlagAt` cooldown (20 h) that is
+  advanced on every *evaluation* — post OR skip — so a no-signal channel doesn't
+  re-pay the embedding + org search + LLM on each ambient fire (the cooldown is
+  stamped before the best-effort post, so a Slack hiccup can't trigger a re-spend
+  either). Budget-gated; cost accrues with `countRun: false` only when it posts. The
+  conservative opt-in + private-source exclusion is deliberate: org-wide visibility
+  never happens by default, preserving per-channel isolation.
 
 - **Gap H — persistent live session (re-mention-free follow-ups).** The friction
   this closes: a channel user previously had to **re-`@mention` on every turn**
@@ -288,7 +291,14 @@ Three follow-on capabilities round out memory and task execution:
   continuation turn (which already reconstructs context from thread history +
   memory). Self-limiting — the window closes, so the bot never re-engages stale
   threads — and opt-in (default off). Steering an in-flight *task* still takes
-  precedence over a continuation turn.
+  precedence over a continuation turn. Stale `ChannelThreadSession` rows are swept
+  opportunistically (24 h retention) on the next `touchChannelThreadSession` so the
+  table stays bounded. **Scope note:** while a session is live the assistant treats
+  *any* plain reply in that thread as a continuation — including humans replying to
+  each other — so opting in means "the assistant participates in threads it's
+  recently active in" for the window's duration. This is bounded by the 30 min
+  window + the per-channel budget cap; a true "addressed-to-me" intent gate is a
+  future refinement.
 
 - **Gap I — packaged Slack-app UX (App Home).** On `app_home_opened` (the `home`
   tab), the gateway publishes a Block Kit Home view — the assistant's "front door"

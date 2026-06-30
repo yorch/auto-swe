@@ -183,31 +183,53 @@ export function buildAppHomeView(): {
 }
 
 /**
- * Gap I: publish the App Home view for a user via `views.publish`. Best-effort —
- * returns `{ok:false}` on any failure (a Home-tab publish must never throw into
- * the events handler). Mirrors {@link openSlackView}'s token + fetch pattern.
+ * Shared one-shot POST to a Slack Web API method (JSON body, bot-token auth).
+ * Centralises the token guard + headers + `res.json()` + ok/error shaping that
+ * `publishAppHome` and `openSlackView` otherwise each hand-rolled. Returns the
+ * parsed body on success so callers can read method-specific fields (e.g.
+ * `views.open`'s `view.id`). Never throws — a network error is shaped to
+ * `{ ok: false, error }`. (`postSlackMessage` keeps its own timeout-bounded
+ * variant.)
  */
-export async function publishAppHome(
-  userId: string,
+async function slackApiPost<T extends { ok: boolean; error?: string }>(
+  method: string,
+  payload: unknown,
   token: string | undefined
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; data?: T }> {
   if (!token) {
     return { error: 'Slack bot token not configured', ok: false };
   }
   try {
-    const res = await fetch('https://slack.com/api/views.publish', {
-      body: JSON.stringify({ user_id: userId, view: buildAppHomeView() }),
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      body: JSON.stringify(payload),
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json; charset=utf-8',
       },
       method: 'POST',
     });
-    const data = (await res.json()) as { ok: boolean; error?: string };
-    return data.ok ? { ok: true } : { error: data.error ?? 'unknown', ok: false };
+    const data = (await res.json()) as T;
+    return data.ok ? { data, ok: true } : { error: data.error ?? 'unknown', ok: false };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err), ok: false };
   }
+}
+
+/**
+ * Gap I: publish the App Home view for a user via `views.publish`. Best-effort —
+ * returns `{ok:false}` on any failure (a Home-tab publish must never throw into
+ * the events handler).
+ */
+export async function publishAppHome(
+  userId: string,
+  token: string | undefined
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await slackApiPost(
+    'views.publish',
+    { user_id: userId, view: buildAppHomeView() },
+    token
+  );
+  return { error: res.error, ok: res.ok };
 }
 
 /**
@@ -219,22 +241,16 @@ export async function openSlackView(
   token: string | undefined
 ): Promise<{ ok: boolean; viewId?: string; error?: string }> {
   if (!token) {
+    // Keep the bespoke, user-facing hint (surfaced in the slash-command ephemeral).
     return { error: 'Slack bot token not configured — set it at /admin/integrations', ok: false };
   }
-  try {
-    const res = await fetch('https://slack.com/api/views.open', {
-      body: JSON.stringify({ trigger_id: options.triggerId, view: options.view }),
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      method: 'POST',
-    });
-    const data = (await res.json()) as SlackViewsOpenResponse;
-    return data.ok
-      ? { ok: true, ...(data.view?.id ? { viewId: data.view.id } : {}) }
-      : { error: data.error ?? 'unknown', ok: false };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err), ok: false };
+  const res = await slackApiPost<SlackViewsOpenResponse>(
+    'views.open',
+    { trigger_id: options.triggerId, view: options.view },
+    token
+  );
+  if (!res.ok) {
+    return { error: res.error, ok: false };
   }
+  return { ok: true, ...(res.data?.view?.id ? { viewId: res.data.view.id } : {}) };
 }

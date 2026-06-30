@@ -74,10 +74,21 @@ export interface TouchChannelThreadSessionInput {
 }
 
 /**
+ * Retention for `ChannelThreadSession` rows. Sessions only matter while fresh (the
+ * gateway's read window is far shorter), so rows older than this are dead and are
+ * swept opportunistically on the next touch — keeping the table bounded per channel
+ * without a separate scheduled job. Must comfortably exceed the gateway's
+ * `SESSION_WINDOW_MS` (30 min) so a live session is never reaped.
+ */
+const THREAD_SESSION_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
  * Persistent live session (Gap H): record that the assistant was just active in
  * this thread, so a plain follow-up reply (no re-@mention) can continue the
  * conversation while the session is fresh. Upserts `ChannelThreadSession` keyed on
- * `(channelId, threadTs)`, bumping `lastAssistantAt` to now.
+ * `(channelId, threadTs)`, bumping `lastAssistantAt` to now, and opportunistically
+ * deletes this channel's long-dead session rows so the table stays bounded (one
+ * permanent row per thread otherwise).
  *
  * Always written (cheap) regardless of whether the channel has the follow-up
  * feature enabled — the gateway gates on `followupSessionEnabled` at read time, so
@@ -95,6 +106,21 @@ export async function touchChannelThreadSession(
         channelId_threadTs: { channelId: input.channelId, threadTs: input.threadTs },
       },
     });
+    // Sweep this channel's dead sessions (indexed by channelId). Cheap + bounds
+    // growth; a failure here must not affect the turn (own try/catch).
+    try {
+      await prisma.channelThreadSession.deleteMany({
+        where: {
+          channelId: input.channelId,
+          lastAssistantAt: { lt: new Date(now.getTime() - THREAD_SESSION_RETENTION_MS) },
+        },
+      });
+    } catch (sweepErr) {
+      console.error(
+        `[channelRun] thread-session sweep failed for ${input.channelId}:`,
+        sweepErr instanceof Error ? sweepErr.message : sweepErr
+      );
+    }
   } catch (err) {
     console.error(
       `[channelRun] failed to touch thread session for ${input.channelId}/${input.threadTs}:`,

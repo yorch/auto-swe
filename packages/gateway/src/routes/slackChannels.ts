@@ -701,6 +701,12 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Match channel runs by the channelId stashed in the Json spec snapshot.
+      // The kind filter is pushed into the WHERE clause (a second JSON-path
+      // predicate on `channel.kind`) rather than applied in JS after `take`, so
+      // `take`/`limit` caps the already-filtered set — a post-take JS filter would
+      // silently under-return (cron ambient/reactive runs dominate the recent
+      // window, starving a `kind=mention` request).
+      const kindFilter = request.query.kind;
       const runs = await fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
         select: {
@@ -715,29 +721,31 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         },
         take: request.query.limit ?? 50,
         where: {
-          specSnapshot: { equals: request.params.id, path: ['channel', 'channelId'] },
+          AND: [
+            { specSnapshot: { equals: request.params.id, path: ['channel', 'channelId'] } },
+            ...(kindFilter && kindFilter !== 'all'
+              ? [{ specSnapshot: { equals: kindFilter, path: ['channel', 'kind'] } }]
+              : []),
+          ],
         },
       });
 
-      const kindFilter = request.query.kind;
-      const data = runs
-        .map((run) => {
-          const meta =
-            (run.specSnapshot as { channel?: Record<string, unknown> } | null)?.channel ?? {};
-          return {
-            costUsd: Number(run.costUsdAccrued ?? 0),
-            createdAt: run.startedAt,
-            endedAt: run.endedAt,
-            kind: (meta.kind as string) ?? 'mention',
-            runId: run.id,
-            status: run.status,
-            tokensInput: run.tokensInputTotal ?? 0,
-            tokensOutput: run.tokensOutputTotal ?? 0,
-            userSlackId: (meta.userSlackId as string | null) ?? null,
-            userText: (meta.userText as string | null) ?? null,
-          };
-        })
-        .filter((row) => !kindFilter || kindFilter === 'all' || row.kind === kindFilter);
+      const data = runs.map((run) => {
+        const meta =
+          (run.specSnapshot as { channel?: Record<string, unknown> } | null)?.channel ?? {};
+        return {
+          costUsd: Number(run.costUsdAccrued ?? 0),
+          createdAt: run.startedAt,
+          endedAt: run.endedAt,
+          kind: (meta.kind as string) ?? 'mention',
+          runId: run.id,
+          status: run.status,
+          tokensInput: run.tokensInputTotal ?? 0,
+          tokensOutput: run.tokensOutputTotal ?? 0,
+          userSlackId: (meta.userSlackId as string | null) ?? null,
+          userText: (meta.userText as string | null) ?? null,
+        };
+      });
 
       return { data };
     }

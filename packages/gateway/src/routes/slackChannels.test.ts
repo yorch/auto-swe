@@ -568,29 +568,20 @@ describe('slackChannelRoutes', () => {
       userSlackId: 'U9',
       userText: 'deploy?',
     });
-    // Matched by the channelId stashed in the Json spec snapshot.
-    expect(mockPrisma.workflowRun.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { specSnapshot: { equals: CHANNEL, path: ['channel', 'channelId'] } },
-      })
-    );
+    // Matched by the channelId stashed in the Json spec snapshot. With no kind
+    // filter, the WHERE carries just the channelId predicate in its AND.
+    const where = mockPrisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([
+      { specSnapshot: { equals: CHANNEL, path: ['channel', 'channelId'] } },
+    ]);
     await app.close();
   });
 
-  it('audit feed: filters by kind when requested', async () => {
+  it('audit feed: pushes the kind filter into the query WHERE (not a post-take JS filter)', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, teamId: TEAM });
+    // The DB does the kind filtering now, so the mock returns only the matching row.
     mockPrisma.workflowRun.findMany.mockResolvedValue([
-      {
-        costUsdAccrued: 0,
-        endedAt: null,
-        id: 'r-a',
-        specSnapshot: { channel: { kind: 'ambient' } },
-        startedAt: '2026-06-24T00:00:00.000Z',
-        status: 'SUCCESS',
-        tokensInputTotal: 0,
-        tokensOutputTotal: 0,
-      },
       {
         costUsdAccrued: 0,
         endedAt: null,
@@ -611,6 +602,12 @@ describe('slackChannelRoutes', () => {
     const data = JSON.parse(res.payload).data;
     expect(data).toHaveLength(1);
     expect(data[0].runId).toBe('r-m');
+    // The kind predicate must be pushed into the WHERE so `take` applies post-filter.
+    const where = mockPrisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([
+      { specSnapshot: { equals: CHANNEL, path: ['channel', 'channelId'] } },
+      { specSnapshot: { equals: 'mention', path: ['channel', 'kind'] } },
+    ]);
     await app.close();
   });
 

@@ -59,6 +59,34 @@ function centsToDisplayDollars(cents: number | null | undefined): string {
   return (cents / 100).toFixed(2);
 }
 
+/** A labelled checkbox row, shared by the create + edit channel forms. */
+function CheckboxField({
+  checked,
+  id,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  id: string;
+  label: string;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <input
+        checked={checked}
+        className="h-4 w-4 accent-ember-400"
+        id={id}
+        onChange={(e) => onChange(e.target.checked)}
+        type="checkbox"
+      />
+      <label className="text-sm text-paper-300" htmlFor={id}>
+        {label}
+      </label>
+    </div>
+  );
+}
+
 // ── Create modal ─────────────────────────────────────────────────────────────
 
 interface CreateForm {
@@ -241,42 +269,24 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             Passive memory ingestion (silent fact extraction on ambient fire)
           </label>
         </div>
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.isPrivate}
-            className="h-4 w-4 accent-ember-400"
-            id="create-is-private"
-            onChange={(e) => set('isPrivate', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-is-private">
-            Private channel (never surface its memory in other channels)
-          </label>
-        </div>
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.orgFlaggingEnabled}
-            className="h-4 w-4 accent-ember-400"
-            id="create-org-flagging"
-            onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-org-flagging">
-            Org-wide flagging (surface signals from other channels here)
-          </label>
-        </div>
-        <div className="flex items-center gap-3">
-          <input
-            checked={form.followupSessionEnabled}
-            className="h-4 w-4 accent-ember-400"
-            id="create-followup-session"
-            onChange={(e) => set('followupSessionEnabled', e.target.checked)}
-            type="checkbox"
-          />
-          <label className="text-sm text-paper-300" htmlFor="create-followup-session">
-            Follow-up sessions (continue a thread without re-@mention for ~30 min)
-          </label>
-        </div>
+        <CheckboxField
+          checked={form.isPrivate}
+          id="create-is-private"
+          label="Private channel (never surface its memory in other channels)"
+          onChange={(v) => set('isPrivate', v)}
+        />
+        <CheckboxField
+          checked={form.orgFlaggingEnabled}
+          id="create-org-flagging"
+          label="Org-wide flagging (surface signals from other channels here)"
+          onChange={(v) => set('orgFlaggingEnabled', v)}
+        />
+        <CheckboxField
+          checked={form.followupSessionEnabled}
+          id="create-followup-session"
+          label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
+          onChange={(v) => set('followupSessionEnabled', v)}
+        />
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -470,42 +480,24 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
           Passive memory ingestion (silent fact extraction on ambient fire)
         </label>
       </div>
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.isPrivate}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-is-private"
-          onChange={(e) => set('isPrivate', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-is-private">
-          Private channel (never surface its memory in other channels)
-        </label>
-      </div>
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.orgFlaggingEnabled}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-org-flagging"
-          onChange={(e) => set('orgFlaggingEnabled', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-org-flagging">
-          Org-wide flagging (surface signals from other channels here)
-        </label>
-      </div>
-      <div className="flex items-center gap-3">
-        <input
-          checked={form.followupSessionEnabled}
-          className="h-4 w-4 accent-ember-400"
-          id="edit-followup-session"
-          onChange={(e) => set('followupSessionEnabled', e.target.checked)}
-          type="checkbox"
-        />
-        <label className="text-sm text-paper-300" htmlFor="edit-followup-session">
-          Follow-up sessions (continue a thread without re-@mention for ~30 min)
-        </label>
-      </div>
+      <CheckboxField
+        checked={form.isPrivate}
+        id="edit-is-private"
+        label="Private channel (never surface its memory in other channels)"
+        onChange={(v) => set('isPrivate', v)}
+      />
+      <CheckboxField
+        checked={form.orgFlaggingEnabled}
+        id="edit-org-flagging"
+        label="Org-wide flagging (surface signals from other channels here)"
+        onChange={(v) => set('orgFlaggingEnabled', v)}
+      />
+      <CheckboxField
+        checked={form.followupSessionEnabled}
+        id="edit-followup-session"
+        label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
+        onChange={(v) => set('followupSessionEnabled', v)}
+      />
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"
