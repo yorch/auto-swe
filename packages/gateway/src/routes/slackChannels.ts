@@ -37,6 +37,9 @@ const CreateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
+  consolidationEnabled: z.boolean().optional(),
+  consolidationMinClusterSize: z.number().int().min(2).max(50).nullable().optional(),
+  consolidationSimilarityThreshold: z.number().min(0).max(1).nullable().optional(),
   followupSessionEnabled: z.boolean().optional(),
   isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
@@ -66,6 +69,9 @@ const UpdateChannelSchema = z.object({
   agentKey: z.string().min(1).max(100).optional(),
   ambientCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   ambientEnabled: z.boolean().optional(),
+  consolidationEnabled: z.boolean().optional(),
+  consolidationMinClusterSize: z.number().int().min(2).max(50).nullable().optional(),
+  consolidationSimilarityThreshold: z.number().min(0).max(1).nullable().optional(),
   followupSessionEnabled: z.boolean().optional(),
   isActive: z.boolean().optional(),
   isPrivate: z.boolean().optional(),
@@ -112,6 +118,9 @@ function channelWritableData(body: {
   agentKey?: string;
   ambientCron?: string | null;
   ambientEnabled?: boolean;
+  consolidationEnabled?: boolean;
+  consolidationMinClusterSize?: number | null;
+  consolidationSimilarityThreshold?: number | null;
   followupSessionEnabled?: boolean;
   isActive?: boolean;
   isPrivate?: boolean;
@@ -127,6 +136,15 @@ function channelWritableData(body: {
     ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
     ...(body.ambientCron !== undefined ? { ambientCron: body.ambientCron } : {}),
     ...(body.ambientEnabled !== undefined ? { ambientEnabled: body.ambientEnabled } : {}),
+    ...(body.consolidationEnabled !== undefined
+      ? { consolidationEnabled: body.consolidationEnabled }
+      : {}),
+    ...(body.consolidationMinClusterSize !== undefined
+      ? { consolidationMinClusterSize: body.consolidationMinClusterSize }
+      : {}),
+    ...(body.consolidationSimilarityThreshold !== undefined
+      ? { consolidationSimilarityThreshold: body.consolidationSimilarityThreshold }
+      : {}),
     ...(body.followupSessionEnabled !== undefined
       ? { followupSessionEnabled: body.followupSessionEnabled }
       : {}),
@@ -232,6 +250,42 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     const data = rows.map((row) => ({
       ...row,
       currentMonthUsage: serializeUsage(usageByChannel.get(row.id) ?? null),
+    }));
+    return { data };
+  });
+
+  // GET /workspaces — list installed Slack workspaces with their install status
+  // (Full multi-workspace). Admin-only; never returns the bot token itself, only
+  // its masked last-four + install metadata. Static path, declared before `/:id`
+  // so Fastify routes it as a literal (not a channel id).
+  app.get('/workspaces', { onRequest: adminOnly }, async () => {
+    const rows = await fastify.prisma.slackWorkspace.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        _count: { select: { channels: true } },
+        botTokenLastFour: true,
+        createdAt: true,
+        id: true,
+        installedAt: true,
+        isActive: true,
+        name: true,
+        orgId: true,
+        slackTeamId: true,
+      },
+    });
+    const data = rows.map((r) => ({
+      channelCount: r._count.channels,
+      createdAt: r.createdAt,
+      // `installed` is true only once the workspace completed the bot-install flow;
+      // an event-provisioned workspace runs on the singleton fallback until then.
+      installed: r.installedAt !== null,
+      installedAt: r.installedAt,
+      isActive: r.isActive,
+      name: r.name,
+      orgId: r.orgId,
+      slackTeamId: r.slackTeamId,
+      tokenLastFour: r.botTokenLastFour,
+      workspaceId: r.id,
     }));
     return { data };
   });

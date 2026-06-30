@@ -407,6 +407,31 @@ model SlackWorkspace {
   orgId        String       @map("org_id") @db.Uuid
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   isActive     Boolean      @default(true) @map("is_active")
+
+  /// Multi-workspace install (Full multi-workspace): per-workspace bot token
+  /// (`xoxb-…`) captured by the `oauth.v2.access` exchange when the app is
+  /// installed into THIS workspace. The bot token is the only per-workspace
+  /// secret — the signing secret + OAuth client id/secret stay singleton per app
+  /// (`SlackConfig`). AES-256-GCM enveloped like every other secret. Null until
+  /// the workspace completes the install flow; all Slack I/O then resolves this
+  /// token (per `slackTeamId`/`slackChannelId`) and falls back to the singleton
+  /// `SlackConfig.botToken` when absent, so single-workspace installs are
+  /// unaffected.
+  botTokenCiphertext Bytes?  @map("bot_token_ciphertext")
+  botTokenNonce      Bytes?  @map("bot_token_nonce")
+  botTokenAuthTag    Bytes?  @map("bot_token_auth_tag")
+  botTokenKeyVersion Int?    @map("bot_token_key_version")
+  botTokenLastFour   String? @map("bot_token_last_four")
+  /// Slack app id (`A…`) the install belongs to + the install's bot user id
+  /// (`U…`, the bot's own Slack user — useful for per-workspace self-mention
+  /// filtering). Both captured from `oauth.v2.access`. Null pre-install.
+  appId       String?   @map("app_id")
+  botUserId   String?   @map("bot_user_id")
+  /// When the workspace last completed the bot-token install flow. Null = the
+  /// workspace was auto-provisioned from an event but never installed the app
+  /// (it then runs on the singleton fallback token).
+  installedAt DateTime? @map("installed_at") @db.Timestamptz
+
   createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -490,6 +515,13 @@ model SlackChannel {
   /// thread the assistant was recently active in continues the conversation
   /// WITHOUT a re-@mention (within a short session window). Opt-in, default off.
   followupSessionEnabled Boolean  @default(false) @map("followup_session_enabled")
+  /// Per-channel channel-memory consolidation config (Gap F). `consolidationEnabled`
+  /// (default true) lets a channel opt OUT of the ambient consolidation pass; the
+  /// two nullable overrides tune the cluster size + cosine-similarity threshold
+  /// (null = use the built-in defaults: 3 / 0.85).
+  consolidationEnabled Boolean    @default(true) @map("consolidation_enabled")
+  consolidationMinClusterSize Int? @map("consolidation_min_cluster_size")
+  consolidationSimilarityThreshold Float? @map("consolidation_similarity_threshold")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

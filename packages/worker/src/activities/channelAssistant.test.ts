@@ -330,6 +330,48 @@ describe('runChannelAssistantTurn', () => {
     expect(result.reply).toBe('hi there');
   });
 
+  it('Gap H: suppresses a follow-up turn whose reply is SKIP (not addressed to it)', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({ text: 'SKIP' });
+
+    const result = await runChannelAssistantTurn(makeInput({ followup: true }));
+
+    expect(result.suppressed).toBe(true);
+    expect(result.reply).toBe('');
+    // Cost still accrued (the LLM ran) but no memory written for the trivial reply.
+    expect(upsertUsage).toHaveBeenCalledTimes(1);
+    expect(writeChannelMemoryMock).not.toHaveBeenCalled();
+  });
+
+  it('Gap H: a SKIP reply on a NORMAL (non-follow-up) turn is posted, not suppressed', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({ text: 'SKIP' });
+
+    const result = await runChannelAssistantTurn(makeInput()); // followup undefined
+
+    expect(result.suppressed).toBeUndefined();
+    expect(result.reply).toBe('SKIP');
+  });
+
+  it('Gap H: a substantive follow-up reply is NOT suppressed', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    setTurnReply({ text: 'Yes — deploy with `yarn release` from main.' });
+
+    const result = await runChannelAssistantTurn(makeInput({ followup: true }));
+
+    expect(result.suppressed).toBeUndefined();
+    expect(result.reply).toBe('Yes — deploy with `yarn release` from main.');
+  });
+
   it('injects retrieved channel memory into the message passed to runAgent', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',

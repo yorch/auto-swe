@@ -103,6 +103,7 @@ interface CreateForm {
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
   followupSessionEnabled: boolean;
+  consolidationEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -112,6 +113,7 @@ const EMPTY_CREATE: CreateForm = {
   ambientCron: '',
   ambientEnabled: false,
   budgetDollars: '',
+  consolidationEnabled: true,
   followupSessionEnabled: false,
   isPrivate: false,
   name: '',
@@ -148,6 +150,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         agentKey: form.agentKey || 'implementer',
         ambientCron: form.ambientCron || null,
         ambientEnabled: form.ambientEnabled,
+        consolidationEnabled: form.consolidationEnabled,
         followupSessionEnabled: form.followupSessionEnabled,
         isPrivate: form.isPrivate,
         monthlyBudgetUsdCents: budgetCents,
@@ -287,6 +290,12 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
           onChange={(v) => set('followupSessionEnabled', v)}
         />
+        <CheckboxField
+          checked={form.consolidationEnabled}
+          id="create-consolidation"
+          label="Memory consolidation (compact channel memory on each ambient fire)"
+          onChange={(v) => set('consolidationEnabled', v)}
+        />
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -331,6 +340,7 @@ interface EditForm {
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
   followupSessionEnabled: boolean;
+  consolidationEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -342,6 +352,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    consolidationEnabled: ch.consolidationEnabled,
     followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
     name: ch.name ?? '',
@@ -377,6 +388,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       agentKey: form.agentKey || undefined,
       ambientCron: form.ambientCron || null,
       ambientEnabled: form.ambientEnabled,
+      consolidationEnabled: form.consolidationEnabled,
       followupSessionEnabled: form.followupSessionEnabled,
       isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
@@ -497,6 +509,12 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         id="edit-followup-session"
         label="Follow-up sessions (continue a thread without re-@mention for ~30 min)"
         onChange={(v) => set('followupSessionEnabled', v)}
+      />
+      <CheckboxField
+        checked={form.consolidationEnabled}
+        id="edit-consolidation"
+        label="Memory consolidation (compact channel memory on each ambient fire)"
+        onChange={(v) => set('consolidationEnabled', v)}
       />
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."

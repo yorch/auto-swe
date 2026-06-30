@@ -25,12 +25,7 @@ const state = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubConfig: vi.fn(async () => state.github),
   resolveIssueTrackerConfig: vi.fn(async () => state.jira),
-  resolveSlackConfig: vi.fn(async () => ({
-    botToken: null,
-    clientId: null,
-    clientSecret: null,
-    signingSecret: null,
-  })),
+  resolveSlackBotTokenForSlackChannel: vi.fn(async () => null),
 }));
 
 vi.mock('@auto-swe/shared/lib/trackerSync', () => ({

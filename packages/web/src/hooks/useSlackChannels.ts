@@ -32,6 +32,9 @@ export interface SlackChannel {
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
   followupSessionEnabled: boolean;
+  consolidationEnabled: boolean;
+  consolidationMinClusterSize: number | null;
+  consolidationSimilarityThreshold: number | null;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
   isActive: boolean;
@@ -62,6 +65,9 @@ export interface CreateSlackChannelBody {
   isPrivate?: boolean;
   orgFlaggingEnabled?: boolean;
   followupSessionEnabled?: boolean;
+  consolidationEnabled?: boolean;
+  consolidationMinClusterSize?: number | null;
+  consolidationSimilarityThreshold?: number | null;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
 }
@@ -77,6 +83,9 @@ export interface UpdateSlackChannelBody {
   isPrivate?: boolean;
   orgFlaggingEnabled?: boolean;
   followupSessionEnabled?: boolean;
+  consolidationEnabled?: boolean;
+  consolidationMinClusterSize?: number | null;
+  consolidationSimilarityThreshold?: number | null;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
   isActive?: boolean;
@@ -116,6 +125,30 @@ export function useDeleteSlackChannel() {
   return useMutation({
     mutationFn: (id: string) => api.delete<{ data: { deleted: true } }>(`${BASE}/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// ── Multi-workspace install (Full multi-workspace) ─────────────────────────────
+
+export interface SlackWorkspaceRow {
+  workspaceId: string;
+  slackTeamId: string;
+  name: string | null;
+  orgId: string;
+  /** True once the workspace completed the bot-install flow (has its own token). */
+  installed: boolean;
+  installedAt: string | null;
+  /** Masked last-four of the per-workspace bot token (null until installed). */
+  tokenLastFour: string | null;
+  isActive: boolean;
+  channelCount: number;
+  createdAt: string;
+}
+
+export function useSlackWorkspaces() {
+  return useQuery({
+    queryFn: () => api.get<{ data: SlackWorkspaceRow[] }>(`${BASE}/workspaces`).then((r) => r.data),
+    queryKey: ['admin-slack-workspaces'],
   });
 }
 

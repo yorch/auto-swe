@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 import { CHANNEL_TASK_STEER_SIGNAL, channelTaskWorkflowId } from '@auto-swe/shared/lib/channelTask';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
-import { resolveSlackConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import {
+  resolveSlackBotTokenForSlackChannel,
+  resolveSlackBotTokenForWorkspace,
+  resolveSlackConfig,
+  resolveWorkflowDefaults,
+} from '@auto-swe/shared/lib/systemConfig';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -19,8 +25,33 @@ import { resolveDefaultTemplate } from './workRequests.js';
 interface SlackOAuthResponse {
   ok: boolean;
   error?: string;
+  /** User-token grant (account-link `/connect` flow, scope `identity.basic`). */
   authed_user: { access_token: string };
+  /** Bot-token grant (app-install `/install` flow). Top-level `access_token` is
+   *  the `xoxb-…` bot token; `team`/`app_id`/`bot_user_id` identify the install. */
+  access_token?: string;
+  app_id?: string;
+  bot_user_id?: string;
+  team?: { id?: string; name?: string };
 }
+
+/**
+ * Bot scopes requested at app install (Full multi-workspace). Mirrors
+ * `docs/slack-app-setup.md` § Bot scopes — kept in sync with the app manifest so
+ * the granted token can drive every Slack surface (posts, history, mentions,
+ * DMs, slash commands, App Home).
+ */
+const SLACK_INSTALL_BOT_SCOPES = [
+  'app_mentions:read',
+  'channels:history',
+  'chat:write',
+  'chat:write.public',
+  'commands',
+  'groups:history',
+  'im:history',
+  'users:read',
+  'users:read.email',
+].join(',');
 
 interface SlackIdentityResponse {
   ok: boolean;
@@ -186,6 +217,130 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     return { data: { connected: true, slackId } };
+  });
+
+  // ── App install (Full multi-workspace) ──────────────────────────────────────
+  //
+  // Distinct from the account-link `/connect` flow above: `/install` requests BOT
+  // scopes and captures the per-workspace `xoxb-…` bot token, so the single Slack
+  // app can be installed into many workspaces and each workspace's Slack I/O uses
+  // its own token. The bot token is the only per-workspace secret; the signing
+  // secret + OAuth client id/secret stay singleton in `SlackConfig`.
+
+  // GET /api/v1/auth/slack/install — Begin the bot-install OAuth flow (admins).
+  fastify.get(
+    '/install',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+    },
+    async (request, reply) => {
+      const { clientId } = await resolveSlackConfig();
+      if (!clientId) {
+        return reply.status(503).send({
+          error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth client id not configured' },
+        });
+      }
+      const user = requireUser(request);
+      // Single-purpose, short-lived signed state (not a bearer credential).
+      const state = fastify.auth.signOAuthState(user.sub);
+      const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/install/callback`;
+      const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${encodeURIComponent(SLACK_INSTALL_BOT_SCOPES)}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+      return reply.redirect(url);
+    }
+  );
+
+  // GET /api/v1/auth/slack/install/callback — Complete the bot install: exchange
+  // the code for the workspace bot token and persist it encrypted on the
+  // workspace row. Redirects back to the admin integrations page on success.
+  fastify.get('/install/callback', async (request, reply) => {
+    const { code, state } = request.query as { code?: string; state?: string };
+    if (!code || !state) {
+      return reply.status(400).send({
+        error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
+      });
+    }
+    try {
+      fastify.auth.verifyOAuthState(state);
+    } catch {
+      return reply.status(400).send({
+        error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+      });
+    }
+
+    const { clientId, clientSecret } = await resolveSlackConfig();
+    if (!clientId || !clientSecret) {
+      return reply.status(503).send({
+        error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
+      });
+    }
+    const redirectUri = `${process.env.PUBLIC_URL ?? 'http://localhost:8080'}/api/v1/auth/slack/install/callback`;
+
+    const tokenResponse = await fetch('https://slack.com/api/oauth.v2.access', {
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirectUri,
+      }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: 'POST',
+    });
+    const tokenData = (await tokenResponse.json()) as SlackOAuthResponse;
+    // A bot install returns the bot token as the top-level `access_token` plus the
+    // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
+    if (!tokenData.ok || !tokenData.access_token || !tokenData.team?.id) {
+      return reply.status(400).send({
+        error: {
+          code: 'SLACK_INSTALL_FAILED',
+          message: tokenData.error ?? 'Slack did not return a workspace bot token',
+        },
+      });
+    }
+
+    const slackTeamId = tokenData.team.id;
+    const sealed = encryptSecret(tokenData.access_token);
+    const tokenColumns = {
+      botTokenAuthTag: sealed.authTag,
+      botTokenCiphertext: sealed.ciphertext,
+      botTokenKeyVersion: sealed.keyVersion,
+      botTokenLastFour: sealed.lastFour,
+      botTokenNonce: sealed.nonce,
+      ...(tokenData.app_id ? { appId: tokenData.app_id } : {}),
+      ...(tokenData.bot_user_id ? { botUserId: tokenData.bot_user_id } : {}),
+      installedAt: new Date(),
+      ...(tokenData.team.name ? { name: tokenData.team.name } : {}),
+    };
+
+    // Existing workspace → store the token. New workspace → create under the
+    // default team's org (mirrors event-time auto-provisioning) so a first-ever
+    // install needs no prior event.
+    const existing = await fastify.prisma.slackWorkspace.findUnique({ where: { slackTeamId } });
+    if (existing) {
+      await fastify.prisma.slackWorkspace.update({
+        data: tokenColumns,
+        where: { slackTeamId },
+      });
+    } else {
+      const { defaultTeamSlug } = await resolveWorkflowDefaults();
+      const defaultTeam = await fastify.prisma.team.findUnique({
+        where: { slug: defaultTeamSlug },
+      });
+      if (!defaultTeam) {
+        return reply.status(503).send({
+          error: {
+            code: 'DEFAULT_TEAM_MISSING',
+            message: 'No default team — run `yarn db:seed` before installing into a new workspace',
+          },
+        });
+      }
+      await fastify.prisma.slackWorkspace.create({
+        data: { ...tokenColumns, orgId: defaultTeam.orgId, slackTeamId },
+      });
+    }
+
+    // Bounce back to the admin integrations page with a success flag.
+    const webUrl = process.env.WEB_URL ?? 'http://localhost:3000';
+    return reply.redirect(`${webUrl}/admin/integrations?slack_installed=${slackTeamId}`);
   });
 
   // POST /api/v1/webhooks/slack — Handle Slack interactive webhooks
@@ -396,7 +551,10 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
           if (!built.ok) {
             return ephemeral(built.error);
           }
-          const { botToken: slackBotToken } = await resolveSlackConfig();
+          // Per-workspace token (Full multi-workspace): the slash command carries
+          // the invoking workspace's `team_id` — open the modal with that
+          // workspace's bot token (singleton fallback inside the resolver).
+          const slackBotToken = await resolveSlackBotTokenForWorkspace(body.team_id ?? '');
           const opened = await openSlackView(
             { triggerId, view: built.view },
             slackBotToken ?? undefined
@@ -491,8 +649,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       if (event.type === 'app_home_opened' && event.user && event.tab === 'home') {
         reply.send({ ok: true });
         const userId = event.user;
+        // Per-workspace token: publish with the bot token of the workspace that
+        // raised the event (singleton fallback inside the resolver).
+        const homeTeamId = event.team ?? body.team_id ?? body.authorizations?.[0]?.team_id ?? '';
         void (async () => {
-          const { botToken } = await resolveSlackConfig();
+          const botToken = await resolveSlackBotTokenForWorkspace(homeTeamId);
           const result = await publishAppHome(userId, botToken ?? undefined);
           if (!result.ok) {
             request.log.warn({ err: result.error, userId }, 'slack app_home publish failed');
@@ -641,6 +802,10 @@ async function processChannelEvent(
   // thread, a plain follow-up reply continues the conversation without a
   // re-@mention. Otherwise drop it so arbitrary channel chatter never spawns a
   // workflow.
+  // Gap H: true only for a re-mention-free continuation (a plain thread reply in
+  // a live session). Drives the SKIP-aware intent gate in the turn so the
+  // assistant stays out of human-to-human chatter.
+  let isFollowup = false;
   if (!isMention && !isDm) {
     const continues =
       isThreadReply &&
@@ -650,11 +815,13 @@ async function processChannelEvent(
     if (!continues) {
       return;
     }
+    isFollowup = true;
     // Fall through to start a continuation turn (same path as a mention).
   }
 
   const input: ChannelAssistantTurnInput = {
     channelId: channelRow.id,
+    followup: isFollowup,
     orgId: channelRow.orgId,
     slackChannelId,
     teamId: channelRow.teamId,
@@ -745,7 +912,7 @@ async function trySteerThreadTask(
   // Best-effort in-thread ack so the human sees the steer landed. Never let
   // chatter failures undo the (already-delivered) steer.
   try {
-    const { botToken } = await resolveSlackConfig();
+    const botToken = await resolveSlackBotTokenForSlackChannel(slackChannelId);
     await postSlackMessage(
       {
         channel: slackChannelId,
@@ -940,7 +1107,7 @@ async function respondToInteraction(
 ): Promise<void> {
   try {
     if (!opts.ephemeral && payload.channel?.id && payload.message?.ts) {
-      const { botToken } = await resolveSlackConfig();
+      const botToken = await resolveSlackBotTokenForSlackChannel(payload.channel.id);
       const ts = await postSlackMessage(
         { channel: payload.channel.id, text, threadTs: payload.message.ts },
         botToken ?? undefined

@@ -84,14 +84,35 @@ const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
 export async function consolidateChannelMemory(
   input: ConsolidateChannelMemoryInput
 ): Promise<ConsolidateChannelMemoryResult> {
-  const { channelId, minClusterSize = 3, similarityThreshold = 0.85 } = input;
+  const { channelId } = input;
+
+  // Per-channel consolidation config (Gap F): load the enable flag + optional
+  // tuning overrides alongside the budget cap. A channel can opt OUT of
+  // consolidation, or tune its cluster size / similarity threshold; otherwise the
+  // built-in defaults apply (or whatever the caller passed via `input`).
+  const channel = await prisma.slackChannel.findUnique({
+    select: {
+      consolidationEnabled: true,
+      consolidationMinClusterSize: true,
+      consolidationSimilarityThreshold: true,
+      monthlyBudgetUsdCents: true,
+    },
+    where: { id: channelId },
+  });
+
+  // Opt-out: a channel with consolidation disabled is a no-op (the default is on,
+  // so existing channels are unchanged).
+  if (channel && channel.consolidationEnabled === false) {
+    return EMPTY_RESULT;
+  }
+
+  // Effective params: per-channel override ?? caller input ?? built-in default.
+  const minClusterSize = channel?.consolidationMinClusterSize ?? input.minClusterSize ?? 3;
+  const similarityThreshold =
+    channel?.consolidationSimilarityThreshold ?? input.similarityThreshold ?? 0.85;
 
   // Budget gate: skip consolidation entirely when the channel is over its monthly
   // cap, so an exhausted channel doesn't keep spending on every ambient fire.
-  const channel = await prisma.slackChannel.findUnique({
-    select: { monthlyBudgetUsdCents: true },
-    where: { id: channelId },
-  });
   if (await isChannelOverBudgetNow(channelId, channel?.monthlyBudgetUsdCents ?? null)) {
     return EMPTY_RESULT;
   }
