@@ -1,3 +1,4 @@
+import type { ChildWorkflowHandle, Workflow } from '@temporalio/workflow';
 import { ParentClosePolicy, startChild, WorkflowIdReusePolicy } from '@temporalio/workflow';
 
 /**
@@ -12,6 +13,11 @@ import { ParentClosePolicy, startChild, WorkflowIdReusePolicy } from '@temporali
  * (`ChannelAssistantWorkflow` → `ChannelScheduledTaskWorkflow`), and the deferred
  * run (`ChannelScheduledTaskWorkflow` → `RunnableWorkflow`) can't drift on policy.
  *
+ * Returns the child handle so a caller that needs to outlive its child — the
+ * deferred wrapper, which forwards mid-flight steering to the launched run (Gap
+ * D) — can `await handle.result()` and `handle.signal(...)`. Callers that just
+ * fire-and-forget (the immediate path) discard it.
+ *
  * Isolate-safe: only runtime imports from `@temporalio/workflow`, so it bundles
  * into the workflow V8 isolate.
  */
@@ -19,8 +25,8 @@ export async function startThreadTaskChild(
   workflowType: string,
   args: unknown[],
   workflowId: string
-): Promise<void> {
-  await startChild(workflowType, {
+): Promise<ChildWorkflowHandle<Workflow>> {
+  return startChild(workflowType, {
     args,
     parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON,
     taskQueue: 'engineering-workflow',

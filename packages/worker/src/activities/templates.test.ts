@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackBotTokenForSlackChannel: async () => null,
   resolveSlackConfig: async () => ({
     botToken: null,
     clientId: null,

@@ -434,9 +434,33 @@ export async function runChannelAgentTurn(
  * inside {@link runAgent}; the channel-monthly accrual below is an independent,
  * channel-scoped ledger used purely for the per-channel cap.
  */
-export async function runChannelAssistantTurn(
-  input: ChannelAssistantTurnInput
-): Promise<{ reply: string; delegate?: DelegateIntent; generate?: GenerateWorkflowIntent }> {
+/** Gap H intent gate: a reply beginning with the word `skip` (case-insensitive)
+ *  is the "not addressed to me" sentinel for a follow-up continuation turn. */
+const FOLLOWUP_SKIP_SENTINEL = /^skip\b/i;
+
+/**
+ * Gap H intent gate: prompt note appended ONLY for a follow-up continuation turn
+ * (a plain thread reply, no re-`@mention`). Tells the agent to stay out of a
+ * conversation that isn't directed at it, using the same SKIP convention as the
+ * ambient/reactive paths so the workflow can suppress the reply.
+ */
+const FOLLOWUP_INTENT_PROMPT_NOTE = [
+  '',
+  'You are continuing a thread you were recently active in, WITHOUT being directly ',
+  '@mentioned again. Only respond if the latest message is plausibly addressed to ',
+  'you (a follow-up question to you, or something you can clearly help with). If the ',
+  'teammates are talking among themselves and the latest message is NOT for you, do ',
+  'NOT butt in — reply with exactly: SKIP',
+].join('');
+
+export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput): Promise<{
+  reply: string;
+  delegate?: DelegateIntent;
+  generate?: GenerateWorkflowIntent;
+  /** Gap H: set when a follow-up turn decided the message wasn't addressed to it
+   *  (SKIP) — the workflow then delivers nothing. */
+  suppressed?: boolean;
+}> {
   const channel = await prisma.slackChannel.findUnique({
     select: {
       agentKey: true,
@@ -530,19 +554,33 @@ export async function runChannelAssistantTurn(
     channel?.team?.defaultPersonaPrompt
   );
 
-  // Resolve the channel's agent (CHANNEL tier active) + run one generation.
+  // Resolve the channel's agent (CHANNEL tier active) + run one generation. A
+  // follow-up continuation turn (Gap H) appends the SKIP-aware intent note so the
+  // agent stays out of conversations that aren't addressed to it.
+  const promptNote = input.followup
+    ? `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${FOLLOWUP_INTENT_PROMPT_NOTE}`
+    : `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}`;
   const { reply, costUsd } = await runChannelAgentTurn(
     { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
     userMessage,
     'llm.channel_assistant',
     {
-      promptNote: `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}`,
+      promptNote,
       tools: {
         delegateTask: delegateTool,
         generateWorkflow: generateWorkflowTool,
       } as AgentTools,
     }
   );
+
+  // Gap H intent gate: a follow-up turn that decided the message wasn't for it
+  // (and didn't fire a tool) is suppressed — the cost already happened (budget
+  // bounds it) but nothing is posted, so the assistant doesn't inject itself into
+  // human-to-human chatter. Accrue the cost first so the budget still sees it.
+  if (input.followup && !delegate && !generate && FOLLOWUP_SKIP_SENTINEL.test(reply)) {
+    await accrueChannelUsage(input.channelId, costUsd);
+    return { reply: '', suppressed: true };
+  }
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
   // the reply — the workflow-level ledger (recordLlmUsage inside runAgent) is the
@@ -707,8 +745,8 @@ export async function accrueChannelUsage(
 
 /**
  * Post the assistant's reply back into the originating Slack thread. Delegates
- * to the shared {@link postSlackThreadMessage} helper (resolves the bot token
- * via `resolveSlackConfig`, never `process.env`).
+ * to the shared {@link postSlackThreadMessage} helper (resolves the per-workspace
+ * bot token for the target channel, never `process.env`).
  */
 export async function postChannelReply(args: {
   slackChannelId: string;

@@ -210,25 +210,37 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   // 1. Post a placeholder into the thread immediately so the user sees the
   //    teammate "working". Best-effort: if it fails or returns no ts, we fall
   //    back to a fresh reply message below (placeholderTs stays null).
+  //    Gap H: a follow-up continuation turn may decide the message wasn't for it
+  //    (SKIP) and post nothing, so we DON'T post a placeholder upfront for those —
+  //    a "working…" bubble that's then never resolved would itself be noise.
   let placeholderTs: string | null = null;
-  try {
-    const placeholder = await postChannelPlaceholder({
-      slackChannelId: input.slackChannelId,
-      threadTs: input.threadTs,
-    });
-    placeholderTs = placeholder.ts;
-  } catch (err) {
-    log.warn('ChannelAssistantWorkflow: placeholder post failed; will post a fresh reply', {
-      channelId: input.channelId,
-      err: err instanceof Error ? err.message : String(err),
-    });
+  if (!input.followup) {
+    try {
+      const placeholder = await postChannelPlaceholder({
+        slackChannelId: input.slackChannelId,
+        threadTs: input.threadTs,
+      });
+      placeholderTs = placeholder.ts;
+    } catch (err) {
+      log.warn('ChannelAssistantWorkflow: placeholder post failed; will post a fresh reply', {
+        channelId: input.channelId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // 2. Run the LLM turn, then 3. deliver the reply: edit the placeholder in place
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply, delegate, generate } = await runChannelAssistantTurn(input);
+    const { reply, delegate, generate, suppressed } = await runChannelAssistantTurn(input);
+
+    // Gap H intent gate: a follow-up turn decided the latest message wasn't
+    // addressed to it (SKIP) and fired no tool — post nothing (no placeholder was
+    // posted either). The cost was already accrued inside the activity.
+    if (suppressed) {
+      return 'SUCCESS';
+    }
 
     // The agent asked to draft a reusable workflow. Generate + persist a DRAFT
     // template scoped to the channel's team, then tell the user (instead of the

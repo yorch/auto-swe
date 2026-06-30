@@ -7,15 +7,18 @@
 > independently-shippable capabilities — with severity, rough effort, and how each
 > fits our existing architecture.
 >
-> **Updated through the B/G/H/I/J work.** Every lettered Claude-Tag capability
-> (**A–J**) is now shipped; only **K** (battle-testing — non-technical) remains
-> open. History: **A** reactive interjection + **C** open-item follow-up (#113, also
-> passive ingestion + persona); **D/E/F** scheduled tasks + cross-channel memory +
-> consolidation (#112); **G** private-channel exclusion, **J** per-channel audit,
-> **B** org-wide flagging, **H** persistent live session, **I** App-Home/slash UX
-> (this work). Shipped rows are kept in the scorecard (marked **Have ✅**) with their
-> detail sections recording what shipped; small follow-ups + the **K** pilot are the
-> only remaining items (§8).
+> **Updated through the B/G/H/I/J work + the four follow-ups.** Every lettered
+> Claude-Tag capability (**A–J**) is now shipped; only **K** (battle-testing —
+> non-technical) remains open. History: **A** reactive interjection + **C**
+> open-item follow-up (#113, also passive ingestion + persona); **D/E/F** scheduled
+> tasks + cross-channel memory + consolidation (#112); **G** private-channel
+> exclusion, **J** per-channel audit, **B** org-wide flagging, **H** persistent live
+> session, **I** App-Home/slash UX (the B/G/H/I/J work). The **four follow-ups** then
+> closed the last small items: **H** addressed-to-me intent gate (SKIP-aware
+> follow-up turns), **F** per-channel consolidation config, **D** steerable fired
+> deferred run, and **I** one-click multi-workspace OAuth install (per-workspace bot
+> tokens). Shipped rows are kept in the scorecard (marked **Have ✅**) with their
+> detail sections recording what shipped; only the **K** pilot remains (§8).
 >
 > Legend — **Have**: at parity. **Partial**: a weaker form exists. **Missing**: not
 > built. Effort is a rough order of magnitude (S ≈ days, M ≈ 1–2 weeks, L ≈ a phase).
@@ -33,8 +36,8 @@
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
 | G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
-| H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread, no re-`@mention` | **Have ✅** |
-| I | Packaged Slack app UX (App Home, slash commands, install) | App Home tab (`views.publish`) + `/auto-swe` slash commands | **Have ✅** (install flow still manual) |
+| H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread (no re-`@mention`), SKIP-aware addressed-to-me intent gate | **Have ✅** |
+| I | Packaged Slack app UX (App Home, slash commands, install) | App Home tab (`views.publish`) + `/auto-swe` slash commands + one-click multi-workspace OAuth install | **Have ✅** |
 | J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
 | — | One shared `@assistant` per channel | shared agent + memory + steering | Have |
@@ -133,11 +136,13 @@ mid-wait `steer` replies into the task, then launches the real `RunnableWorkflow
 An invalid/past `runAt` is dropped (runs immediately). See `channel-assistant.md`
 §9.
 
-**Still open (small):** a *fired* deferred run isn't steerable after launch (it
-runs under a private `<id>-run` child id); and autonomous *detection* of
-follow-ups — "this thread has an open question, chase it" — is a different
-capability, tracked as **C** below. D covers *explicit* "do this at time T," not
-self-initiated follow-up.
+**Follow-up shipped — fired run is now steerable:** the `ChannelScheduledTaskWorkflow`
+wrapper no longer returns after launching the run. It stays alive for the task's
+whole life, forwarding `steer` replies to the running child (the gateway always
+targets the per-thread wrapper id) and holding the per-thread id reserved (one task
+per thread). So a deferred task is steerable mid-flight exactly like an immediate
+one. (Autonomous *detection* of follow-ups — "this thread has an open question,
+chase it" — is the separate **C** capability; D covers *explicit* "do this at time T.")
 
 ---
 
@@ -163,9 +168,12 @@ the org-wide *proactive flagging* half is row **B**, still open.
 facts, and soft-deletes the sources. It runs best-effort after the digest on every
 ambient fire, is budget-gated, and accrues cost with `countRun: false`.
 
-**Still open (small):** consolidation cadence/params are not yet per-channel
-configurable (built-in defaults, no opt-out) — tracked as a future refinement in
-`channel-assistant.md` §11.
+**Follow-up shipped — per-channel config:** `SlackChannel` now carries
+`consolidationEnabled` (default on, admin opt-out), `consolidationMinClusterSize`,
+and `consolidationSimilarityThreshold`. `consolidateChannelMemory` reads these from
+the channel row (falling back to the activity-input defaults of 3 / 0.85), and
+no-ops entirely when `consolidationEnabled` is false. The enable toggle is in the
+`/admin/slack-channels` form; the numeric overrides are API-only.
 
 ---
 
@@ -203,6 +211,15 @@ signal workflow remains possible but isn't needed for the re-mention-free
 continuity this gap was really about. See `packages/gateway/src/routes/slack.ts`
 (`isLiveThreadSession`) + `touchChannelThreadSession`.
 
+**Follow-up shipped — addressed-to-me intent gate:** re-mention-free continuity
+risks the bot replying to human-to-human chatter that merely happens to land in a
+live thread. A follow-up turn (`input.followup`) now runs SKIP-aware: the turn gets
+a prompt note to reply `SKIP` when the latest message isn't actually addressed to
+the assistant, and the workflow suppresses the reply (no placeholder, nothing
+posted; cost still accrues, budget-bounded). So a live session never turns the bot
+into a firehose responder. See `runChannelAssistantTurn` (`suppressed`) +
+`FOLLOWUP_SKIP_SENTINEL`.
+
 ### I. Packaged Slack-app UX — **Have ✅ (mostly) · shipped**
 **Claude Tag** ships as a first-class Slack app (replacing the old one).
 
@@ -215,10 +232,19 @@ continuity this gap was really about. See `packages/gateway/src/routes/slack.ts`
   show <name> | run` (the `run` subcommand opens a Block Kit modal). The gap text's
   `/assistant` was a naming guess; the real command namespace is `/auto-swe`.
 
-**Still open (small):** a true *one-click install / OAuth onboarding* flow is still
-manual (admin imports the manifest + enters credentials per `slack-app-setup.md`).
-Shortcuts (message/global) aren't wired. Functional + packaged parity is there;
-distribution polish is the remainder.
+**Follow-up shipped — one-click multi-workspace install:** a real OAuth install
+flow now lets one Slack app serve many workspaces, each with its own bot token.
+`GET /api/v1/auth/slack/install` (admin) redirects to Slack's bot-scope authorize
+URL; `GET /api/v1/auth/slack/install/callback` exchanges the code via
+`oauth.v2.access`, encrypts the returned `xoxb-…` token (AES-256-GCM) onto the
+`SlackWorkspace` row (`appId` / `botUserId` / `installedAt`), and bounces back to
+`/admin/integrations`. The bot token is the *only* per-workspace secret — the
+signing secret + OAuth client id/secret stay singleton in `SlackConfig` — so every
+Slack post/read resolves the per-workspace token by channel (`C…`) or workspace
+(`T…`) id via `resolveSlackBotTokenForSlackChannel` / `resolveSlackBotTokenForWorkspace`,
+falling back to the singleton token when a workspace hasn't installed. The admin
+Slack tab shows an "Add to Slack" button + per-workspace install status. Slack
+shortcuts (message/global) remain unwired — a minor remaining nicety.
 
 ### J. Multiplayer auditing — **Have ✅ · shipped**
 Claude Tag's own reported concern: multiplayer makes **permissions + auditing**
@@ -282,14 +308,14 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-All lettered feature gaps (A–J) are now shipped; the remaining work is polish +
-pilot:
-1. **I install-flow follow-up** (S–M): one-click OAuth install / onboarding +
-   Slack shortcuts (App Home + slash commands already shipped).
-2. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
-   per-channel consolidation config; making a fired deferred run steerable.
-3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless. The
+All lettered feature gaps (A–J) **and** the four small follow-ups are now shipped —
+**D** steerable fired run, **F** per-channel consolidation config, **H**
+addressed-to-me intent gate, and **I** one-click multi-workspace OAuth install. The
+only remaining work is:
+1. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless. The
    only non-technical gap left — it needs a real install + observation, not code.
+2. **Minor niceties**: Slack message/global shortcuts aren't wired (slash commands
+   + App Home + install already cover the packaged-product surface).
 
 > Resolved (B shipped): the open question was *how aggressively* to do org-wide
 > proactive visibility given it trades against per-channel isolation. The answer

@@ -10,6 +10,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'Prisma.DbNull' } } }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackBotTokenForSlackChannel: vi.fn(async () => 'xoxb-test'),
+  resolveSlackBotTokenForWorkspace: vi.fn(async () => 'xoxb-test'),
   resolveSlackConfig: vi.fn(async () => ({
     botToken: 'xoxb-test',
     clientId: 'client-id',
@@ -56,6 +58,10 @@ interface FakeState {
   channelAssistantStarts: Array<{ workflowId: string; input: Record<string, unknown> }>;
   /** When set, `startChannelAssistant` throws this instead of recording a start. */
   channelAssistantStartError: Error | null;
+  /** Existing SlackWorkspace returned by findUnique (null = not yet provisioned). */
+  existingWorkspace: Record<string, unknown> | null;
+  workspaceCreateCalls: Array<{ data: Record<string, unknown> }>;
+  workspaceUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -104,6 +110,15 @@ function buildApp(state: FakeState): FastifyInstance {
       }),
     },
     slackWorkspace: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        state.workspaceCreateCalls.push(args);
+        return { id: 'ws-1', ...args.data };
+      },
+      findUnique: async () => state.existingWorkspace,
+      update: async (args: { data: Record<string, unknown>; where: Record<string, unknown> }) => {
+        state.workspaceUpdateCalls.push(args);
+        return { id: 'ws-1', ...args.data };
+      },
       upsert: async () => ({ id: 'ws-1', orgId: 'org-1', slackTeamId: 'T1' }),
     },
     team: {
@@ -161,10 +176,13 @@ let state: FakeState;
 
 beforeAll(() => {
   process.env.SLACK_SIGNING_SECRET = SIGNING_SECRET;
+  // The install callback encrypts the captured bot token (real `encryptSecret`).
+  process.env.CONFIG_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 });
 
 afterAll(async () => {
   delete process.env.SLACK_SIGNING_SECRET;
+  delete process.env.CONFIG_ENCRYPTION_KEY;
   if (app) {
     await app.close();
   }
@@ -177,6 +195,7 @@ beforeEach(async () => {
   state = {
     channelAssistantStartError: null,
     channelAssistantStarts: [],
+    existingWorkspace: null,
     humanStep: null,
     humanStepUpdateCalls: [],
     humanStepUpdateCount: 1,
@@ -213,6 +232,8 @@ beforeEach(async () => {
         },
       ],
     ]),
+    workspaceCreateCalls: [],
+    workspaceUpdateCalls: [],
   };
   app = buildApp(state);
   await app.ready();
@@ -1023,5 +1044,80 @@ describe('POST /api/v1/auth/slack/events — App Home tab (Gap I)', () => {
     expect(res.statusCode).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(publishCalls).toHaveLength(0);
+  });
+});
+
+describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', () => {
+  const originalFetch = globalThis.fetch;
+
+  function stubOauthExchange(body: Record<string, unknown>) {
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes('oauth.v2.access')) {
+        return { json: async () => body } as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('stores the encrypted bot token on a new workspace and redirects', async () => {
+    stubOauthExchange({
+      access_token: 'xoxb-installed-9999',
+      app_id: 'A123',
+      bot_user_id: 'UBOT',
+      ok: true,
+      team: { id: 'T-NEW', name: 'Acme HQ' },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain('/admin/integrations?slack_installed=T-NEW');
+
+    // New workspace → create (not update), carrying encrypted token columns +
+    // install metadata, and never the plaintext token.
+    expect(state.workspaceCreateCalls).toHaveLength(1);
+    const data = state.workspaceCreateCalls[0].data;
+    expect(data.slackTeamId).toBe('T-NEW');
+    expect(data.appId).toBe('A123');
+    expect(data.botUserId).toBe('UBOT');
+    expect(data.botTokenLastFour).toBe('9999');
+    expect(data.botTokenCiphertext).toBeDefined();
+    expect(data.installedAt).toBeInstanceOf(Date);
+    expect(JSON.stringify(data)).not.toContain('xoxb-installed-9999');
+  });
+
+  it('updates an existing workspace in place', async () => {
+    state.existingWorkspace = { id: 'ws-1', orgId: 'org-1', slackTeamId: 'T-EXIST' };
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-EXIST' } });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+    expect(state.workspaceUpdateCalls).toHaveLength(1);
+    expect(state.workspaceUpdateCalls[0].where).toEqual({ slackTeamId: 'T-EXIST' });
+  });
+
+  it('rejects a grant with no bot token (e.g. a user-scope grant)', async () => {
+    stubOauthExchange({ authed_user: { access_token: 'xoxp-user' }, ok: true });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+    expect(state.workspaceUpdateCalls).toHaveLength(0);
   });
 });

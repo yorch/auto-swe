@@ -198,6 +198,84 @@ export async function resolveSlackConfig(_opts?: ResolveOpts): Promise<ResolvedS
   };
 }
 
+// ─── Slack per-workspace bot token (Full multi-workspace) ──────────────────────
+//
+// The bot token is the ONLY per-workspace Slack secret: in a multi-workspace
+// install one Slack app (one signing secret + OAuth client id/secret, all
+// singleton in `SlackConfig`) is installed into N workspaces, each yielding a
+// distinct `xoxb-…` bot token stored encrypted on its `SlackWorkspace` row.
+// A Slack channel id (`C…`) belongs to exactly one workspace, so every post/read
+// site — which always has a channel id or a workspace (`T…`) id in hand — can
+// resolve the right token here, falling back to the singleton `SlackConfig`
+// token so single-workspace installs (and channels not yet provisioned) keep
+// working unchanged.
+
+/** The encrypted-bot-token columns shared by `SlackWorkspace` and `SlackConfig`. */
+type WorkspaceTokenRow = {
+  botTokenCiphertext: Buffer | Uint8Array | null;
+  botTokenNonce: Buffer | Uint8Array | null;
+  botTokenAuthTag: Buffer | Uint8Array | null;
+  botTokenKeyVersion: number | null;
+};
+
+const WORKSPACE_TOKEN_SELECT = {
+  botTokenAuthTag: true,
+  botTokenCiphertext: true,
+  botTokenKeyVersion: true,
+  botTokenNonce: true,
+} as const;
+
+function decryptWorkspaceToken(row: WorkspaceTokenRow | null | undefined): string | null {
+  if (!row) {
+    return null;
+  }
+  return decryptOptional({
+    authTag: row.botTokenAuthTag,
+    ciphertext: row.botTokenCiphertext,
+    keyVersion: row.botTokenKeyVersion,
+    nonce: row.botTokenNonce,
+  });
+}
+
+/**
+ * Resolve the bot token for posting/reading in a specific Slack channel.
+ * Prefers the token of the workspace that owns the channel; falls back to the
+ * singleton `SlackConfig` token (env included) when the channel isn't a
+ * provisioned `SlackChannel` or its workspace never completed the install flow.
+ *
+ * A Slack channel id is unique within a workspace, so within one install there is
+ * normally exactly one active match. Should two workspaces ever share a channel id
+ * (astronomically unlikely), resolution is made deterministic by preferring the
+ * row whose workspace has completed install (`installedAt` set, nulls last) — i.e.
+ * the workspace that actually has a per-workspace token — rather than an arbitrary
+ * first match.
+ */
+export async function resolveSlackBotTokenForSlackChannel(
+  slackChannelId: string
+): Promise<string | null> {
+  const channel = await (await db()).slackChannel.findFirst({
+    orderBy: { workspace: { installedAt: { nulls: 'last', sort: 'desc' } } },
+    select: { workspace: { select: WORKSPACE_TOKEN_SELECT } },
+    where: { isActive: true, slackChannelId },
+  });
+  return decryptWorkspaceToken(channel?.workspace) ?? (await resolveSlackConfig()).botToken;
+}
+
+/**
+ * Resolve the bot token for a workspace by its Slack team id (`T…`). Used by the
+ * surfaces that key off the workspace rather than a channel — App Home publish,
+ * slash-command modals. Falls back to the singleton `SlackConfig` token.
+ */
+export async function resolveSlackBotTokenForWorkspace(
+  slackTeamId: string
+): Promise<string | null> {
+  const workspace = await (await db()).slackWorkspace.findUnique({
+    select: WORKSPACE_TOKEN_SELECT,
+    where: { slackTeamId },
+  });
+  return decryptWorkspaceToken(workspace) ?? (await resolveSlackConfig()).botToken;
+}
+
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
 export interface ResolvedStorageConfig {

@@ -4,7 +4,7 @@ import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputS
 import {
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
-  resolveSlackConfig,
+  resolveSlackBotTokenForSlackChannel,
 } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -293,7 +293,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const teamChannel = pullRequest.workflow.repository?.team?.slackNotifyChannel ?? null;
       const slackChannel = originChannel ?? teamChannel;
       if (slackChannel) {
-        const { botToken } = await resolveSlackConfig();
+        const botToken = await resolveSlackBotTokenForSlackChannel(slackChannel);
         await postSlackMessage(
           {
             channel: slackChannel,

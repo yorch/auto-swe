@@ -22,6 +22,13 @@ export interface ChannelAssistantTurnInput {
   /// Owning team + org for the resolver cascade + per-channel budget.
   teamId: string;
   orgId: string;
+  /// Gap H intent gate: true when this turn is a re-mention-free *continuation*
+  /// of a live follow-up session (a plain thread reply), rather than a direct
+  /// `@mention`/DM. The turn then runs SKIP-aware — the agent is told to reply
+  /// `SKIP` when the latest message isn't actually addressed to it (e.g.
+  /// teammates talking among themselves), and the workflow suppresses that reply
+  /// so the assistant doesn't inject itself into human-to-human conversation.
+  followup?: boolean;
 }
 
 export interface RepoWorkRequest {

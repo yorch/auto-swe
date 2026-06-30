@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
+import { resolveSlackBotTokenForSlackChannel } from '@auto-swe/shared/lib/systemConfig';
 
 /**
  * Slack notifications. Four surfaces:
@@ -14,9 +14,15 @@ import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
  * under one WorkRequest, so we match the run's `workflowId` against
  * `temporalWorkflowId` to pick the correct team (not an arbitrary first row).
  *
- * All functions are best-effort. They silently no-op when `SLACK_BOT_TOKEN`
- * is unset, no channel resolves, the fetch times out, or Slack returns
- * `{ok: false}` — never let a Slack outage block the calling activity.
+ * All functions are best-effort. They silently no-op when no bot token resolves,
+ * no channel resolves, the fetch times out, or Slack returns `{ok: false}` —
+ * never let a Slack outage block the calling activity.
+ *
+ * Token resolution is per-workspace (Full multi-workspace): every helper resolves
+ * the bot token from the Slack channel it's about to post to / read from via
+ * {@link resolveSlackBotTokenForSlackChannel}, which prefers the owning
+ * workspace's installed token and falls back to the singleton `SlackConfig` token
+ * (env included). Single-workspace installs are unaffected.
  */
 
 // Hard upper bound on the wall-clock cost of this best-effort path. Kept short
@@ -247,17 +253,17 @@ export async function postSlackThreadMessageReturningTs(
 /**
  * Channel assistant (Phase 4): edit an already-posted message in place via Slack
  * `chat.update`. Used to replace the channel-assistant placeholder with the
- * final reply (or a friendly error). Resolves the bot token via
- * {@link resolveSlackConfig} (never `process.env`) and throws on a missing
- * token or a `{ok:false}` response — same style as the other "real content"
- * helpers — so the calling activity can retry / surface it.
+ * final reply (or a friendly error). Resolves the per-workspace bot token for the
+ * target channel and throws on a missing token or a `{ok:false}` response — same
+ * style as the other "real content" helpers — so the calling activity can retry /
+ * surface it.
  */
 export async function updateSlackMessage(
   slackChannelId: string,
   ts: string,
   text: string
 ): Promise<void> {
-  const { botToken: token } = await resolveSlackConfig();
+  const token = await resolveSlackBotTokenForSlackChannel(slackChannelId);
   if (!token) {
     throw new Error('updateSlackMessage: no Slack bot token configured');
   }
@@ -319,7 +325,7 @@ export async function fetchThreadReplies(
 ): Promise<SlackThreadMessage[]> {
   let token: string | null;
   try {
-    ({ botToken: token } = await resolveSlackConfig());
+    token = await resolveSlackBotTokenForSlackChannel(channelId);
   } catch {
     return [];
   }
@@ -392,7 +398,7 @@ export async function fetchChannelHistory(
 ): Promise<SlackChannelMessage[]> {
   let token: string | null;
   try {
-    ({ botToken: token } = await resolveSlackConfig());
+    token = await resolveSlackBotTokenForSlackChannel(channelId);
   } catch {
     return [];
   }
@@ -465,7 +471,7 @@ async function postChannelMessage(
   text: string,
   threadTs: string | undefined
 ): Promise<{ ts: string | undefined }> {
-  const { botToken: token } = await resolveSlackConfig();
+  const token = await resolveSlackBotTokenForSlackChannel(slackChannelId);
   if (!token) {
     throw new Error(`${label}: no Slack bot token configured`);
   }
@@ -505,10 +511,6 @@ export async function notifySlackStepFailure(input: {
   attempt: number;
   error?: string | undefined;
 }): Promise<void> {
-  const { botToken: token } = await resolveSlackConfig();
-  if (!token) {
-    return;
-  }
   // Notify only on the FIRST failure for a given (runId, nodeId). Retries that
   // keep failing would otherwise spam the channel.
   if (input.attempt > 1) {
@@ -518,6 +520,10 @@ export async function notifySlackStepFailure(input: {
   try {
     const resolved = await resolveSlackChannel(input.runId, false);
     if (!resolved) {
+      return;
+    }
+    const token = await resolveSlackBotTokenForSlackChannel(resolved.channel);
+    if (!token) {
       return;
     }
     const errLine = input.error ? `: ${truncate(input.error, 400)}` : '';
@@ -538,14 +544,13 @@ export async function notifySlackPrReady(input: {
   prNumber: number;
   prUrl: string;
 }): Promise<void> {
-  const { botToken: token } = await resolveSlackConfig();
-  if (!token) {
-    return;
-  }
-
   try {
     const ctx = await resolveSlackChannelByWorkRequest(input.workRequestId);
     if (!ctx) {
+      return;
+    }
+    const token = await resolveSlackBotTokenForSlackChannel(ctx.channel);
+    if (!token) {
       return;
     }
     const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
@@ -684,14 +689,13 @@ export async function notifySlackHumanStep(input: {
   stepId?: string | undefined;
   options?: Array<{ label: string; value: string }> | undefined;
 }): Promise<void> {
-  const { botToken: token } = await resolveSlackConfig();
-  if (!token) {
-    return;
-  }
-
   try {
     const resolved = await resolveSlackChannel(input.runId, false);
     if (!resolved) {
+      return;
+    }
+    const token = await resolveSlackBotTokenForSlackChannel(resolved.channel);
+    if (!token) {
       return;
     }
     const kindLabel: Record<string, string> = {
@@ -732,14 +736,13 @@ export async function notifySlackRunComplete(input: {
   runId: string;
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED';
 }): Promise<void> {
-  const { botToken: token } = await resolveSlackConfig();
-  if (!token) {
-    return;
-  }
-
   try {
     const resolved = await resolveSlackChannel(input.runId, true);
     if (!resolved) {
+      return;
+    }
+    const token = await resolveSlackBotTokenForSlackChannel(resolved.channel);
+    if (!token) {
       return;
     }
     const emoji =

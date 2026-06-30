@@ -12,7 +12,9 @@ The `slack-app-manifest.json` next to this file is a [Slack app manifest](https:
    - `settings.interactivity.request_url` → `/api/v1/auth/slack/interactive`
    - `settings.event_subscriptions.request_url` → `/api/v1/auth/slack/events`
    - `oauth_config.redirect_urls[0]` → `/api/v1/auth/slack/callback`
-5. **Create**, then **Install to Workspace** to grant the bot scopes.
+   - `oauth_config.redirect_urls[1]` → `/api/v1/auth/slack/install/callback` (multi-workspace install)
+5. **Create**, then **Install to Workspace** to grant the bot scopes (or use the
+   one-click "Add to Slack" install flow below for multi-workspace installs).
 
 > **Event URL verification.** When you set the Event Subscriptions request URL, Slack sends a one-time `url_verification` challenge to it. The `/events` endpoint echoes the challenge automatically, so the URL verifies as soon as the gateway is reachable — no manual step. Note: the handshake is signature-verified like every other event, so the **signing secret must be saved in the admin UI (`/admin/integrations → Slack`) before** you complete Slack's Events URL verification — otherwise the challenge is rejected with a 401/503.
 
@@ -25,8 +27,32 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 | `POST /commands` | `/auto-swe` slash command (HMAC-verified via `SLACK_SIGNING_SECRET`) |
 | `POST /interactive` | Modal submissions (`/auto-swe run` workflow picker) |
 | `POST /events` | Slack Events API — the @mention teammate + thread-reply task steering (HMAC-verified; acks within 3s, then starts the assistant workflow or signals an in-flight task run) |
-| `GET  /callback` | OAuth redirect target after the user clicks the install URL |
-| `GET  /connect` | Linkage flow surfaced in the unknown-Slack-user ephemeral hint |
+| `GET  /callback` | OAuth redirect target for the account-link flow (`/connect`) |
+| `GET  /connect` | Account-link flow surfaced in the unknown-Slack-user ephemeral hint (user scope `identity.basic`) |
+| `GET  /install` | One-click app install — redirects to Slack's bot-scope authorize URL (admin-only) |
+| `GET  /install/callback` | Install OAuth redirect target — captures the per-workspace bot token |
+
+## Multi-workspace install ("Add to Slack")
+
+One Slack app can be installed into **many workspaces**, each with its own bot
+token, via the install flow (`/admin/integrations → Slack → Add to Slack`):
+
+1. An admin clicks **Add to Slack**, which hits `GET /api/v1/auth/slack/install`
+   and redirects to Slack's `oauth/v2/authorize` with the app's bot scopes.
+2. Slack redirects back to `GET /api/v1/auth/slack/install/callback`, which
+   exchanges the code via `oauth.v2.access` and stores the returned `xoxb-…` bot
+   token **encrypted** (AES-256-GCM, `CONFIG_ENCRYPTION_KEY`) on the
+   `SlackWorkspace` row, along with `appId` / `botUserId` / `installedAt`.
+3. The admin lands back on the integrations page; the Slack tab lists each
+   workspace's install status (own token vs. singleton fallback).
+
+The **bot token is the only per-workspace secret** — the signing secret + OAuth
+client id/secret stay singleton in `SlackConfig` (one app). Every Slack post/read
+resolves the per-workspace token by the channel (`C…`) or workspace (`T…`) id it's
+acting on (`resolveSlackBotTokenForSlackChannel` / `resolveSlackBotTokenForWorkspace`),
+falling back to the singleton `SlackConfig` bot token when a workspace hasn't
+completed install — so single-workspace deployments and the legacy single bot
+token keep working unchanged.
 
 ## @mention teammate (channel assistant)
 

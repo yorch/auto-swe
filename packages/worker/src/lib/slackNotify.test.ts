@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackBotTokenForSlackChannel: async () => process.env.SLACK_BOT_TOKEN ?? null,
   resolveSlackConfig: async () => ({
     botToken: process.env.SLACK_BOT_TOKEN ?? null,
     clientId: null,
@@ -53,11 +54,17 @@ afterEach(() => {
 });
 
 describe('notifySlackStepFailure', () => {
-  it('no-ops when SLACK_BOT_TOKEN is unset', async () => {
+  it('no-ops when no bot token resolves', async () => {
     delete process.env.SLACK_BOT_TOKEN;
+    // Per-workspace token resolution depends on the resolved channel, so the
+    // channel is looked up first; the post is still skipped when no token resolves.
+    findRun.mockResolvedValue({
+      template: { name: 'x' },
+      workflowId: 'wf-1',
+      workRequest: { activeWorkflows: [], externalTicketId: 'JIRA-1', slackChannelId: 'C1' },
+    } as never);
     await notifySlackStepFailure({ attempt: 1, nodeId: 'lint', runId: 'r1' });
     expect(fetchCalls).toHaveLength(0);
-    expect(findRun).not.toHaveBeenCalled();
   });
 
   it('throttles to first attempt only', async () => {
@@ -164,15 +171,22 @@ describe('notifySlackStepFailure', () => {
 });
 
 describe('notifySlackPrReady (phase 7)', () => {
-  it('no-ops when SLACK_BOT_TOKEN is unset', async () => {
+  it('no-ops when no bot token resolves', async () => {
     delete process.env.SLACK_BOT_TOKEN;
+    // Channel is resolved first (per-workspace token depends on it); the post is
+    // still skipped when no token resolves.
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [],
+      externalTicketId: 'JIRA-1',
+      slackChannelId: 'C-origin',
+      slackMessageTs: '1700.5',
+    } as never);
     await notifySlackPrReady({
       prNumber: 1,
       prUrl: 'https://github.com/pr/1',
       workRequestId: 'wr-1',
     });
     expect(fetchCalls).toHaveLength(0);
-    expect(findWorkRequest).not.toHaveBeenCalled();
   });
 
   it('posts to originating channel with PR link', async () => {
