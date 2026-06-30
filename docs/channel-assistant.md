@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + Gaps A/C/D/E/F/G shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/C/D/E/F shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (Gap G). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -116,7 +116,7 @@ Proactive posting via a per-channel Temporal Schedule:
 - After the digest, the same ambient fire runs three best-effort activities in
   order: `consolidateChannelMemory` (Gap F, §9) to compact accumulated channel
   memory; `sweepChannelOpenItems` (Gap C, §11) to track and nudge open items;
-  and `passiveIngestChannelMemory` (Gap G, §9) to silently extract new facts
+  and `passiveIngestChannelMemory` (passive ingestion, §9) to silently extract new facts
   from human messages.
 - Scope note: ambient proactivity is delivered via Schedules (reusing the
   existing schedule machinery), not a long-lived signal-driven workflow — see
@@ -219,7 +219,7 @@ Three follow-on capabilities round out memory and task execution:
   inspect consolidated rows via `GET …/memory?includeConsolidated=true` and the
   "Show consolidated (archived) items" toggle in `/admin/slack-channels`.
 
-- **Gap G — passive memory ingestion.** `passiveIngestChannelMemory`
+- **Passive memory ingestion.** `passiveIngestChannelMemory`
   (`packages/worker/src/activities/passiveIngestChannelMemory.ts`) runs as the 4th
   best-effort activity in `ChannelAmbientWorkflow` on every ambient fire. When
   `passiveIngestEnabled` is true it silently extracts at most 5 salient facts from
@@ -428,7 +428,7 @@ memory) from `/admin/slack-channels`.
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
   `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
-  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (Gap G, §9),
+  `packages/worker/src/activities/passiveIngestChannelMemory.ts` (passive ingestion, §9),
   `packages/worker/src/lib/channelMemory.ts` (Gap E cross-channel search, §9),
   `packages/worker/src/lib/embeddingClustering.ts` (shared clustering, §9),
   `packages/worker/src/workflows/runnable.ts` (`steer` handler),

@@ -7,12 +7,15 @@
 > independently-shippable capabilities — with severity, rough effort, and how each
 > fits our existing architecture.
 >
-> **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gap A). Four rows this
-> doc originally listed as Missing/Partial have since shipped: **A — reactive
-> interjection**, **D — future/scheduled tasks**, **E — workspace-level memory**,
-> and **F — channel-memory consolidation**. They are kept in the scorecard (marked
-> **Have ✅**) for continuity, and their detail sections record what shipped; the
-> open analysis below is rows **B, C, G, H, I, J, K**.
+> **Updated after PR #112** (Gaps D/E/F) **and PR #113** (Gaps A + C, plus passive
+> memory ingestion and per-channel persona). Five rows this doc originally listed as
+> Missing/Partial have since shipped: **A — reactive interjection**, **C — open-item
+> follow-up**, **D — future/scheduled tasks**, **E — workspace-level memory**, and
+> **F — channel-memory consolidation**. #113 also added two capabilities that were
+> not originally Claude-Tag rows — **passive memory ingestion** (learn from
+> non-mention messages) and a **per-channel/team persona** prompt. Shipped rows are
+> kept in the scorecard (marked **Have ✅**) for continuity, and their detail
+> sections record what shipped; the open analysis below is rows **B, G, H, I, J, K**.
 >
 > Legend — **Have**: at parity. **Partial**: a weaker form exists. **Missing**: not
 > built. Effort is a rough order of magnitude (S ≈ days, M ≈ 1–2 weeks, L ≈ a phase).
@@ -25,7 +28,7 @@
 | --- | --- | --- | --- |
 | A | Reactive ambient (watch messages, decide to interject) | `evaluateReactiveInterjection` + per-channel Schedule | **Have ✅ #113** |
 | B | Organization-wide awareness ("flag things from across the org") | per-channel; cross-channel *memory* only | **Missing** |
-| C | Follow-up on forgotten threads / open tasks | memory digest, no item tracking | **Missing** |
+| C | Follow-up on forgotten threads / open tasks | `ChannelOpenItem` + `sweepChannelOpenItems` on the ambient fire | **Have ✅ #113** |
 | D | Future / scheduled task planning ("plan tasks to complete later") | `runAt` → `ChannelScheduledTaskWorkflow` | **Have ✅ #112** |
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
@@ -42,9 +45,11 @@
 | — | DM for sensitive data | `message.im` handled | Have |
 | — | Admin view/edit/delete of memory | admin memory CRUD | Have |
 | — | Configurable model (Opus 4.8 default) | DB-driven model config | Have / ahead |
+| — | Passive memory ingestion (learn from non-mention messages) | `passiveIngestChannelMemory` (opt-in, #113) | Have |
+| — | Per-channel / per-team persona | `personaPrompt` / `defaultPersonaPrompt` (#113) | Have / ahead |
 
-The rest of this doc details the **open Partial/Missing** rows (B, C, G, H, I,
-J, K), grouped by theme. §2.A and §3–§4 record what A/D/E/F shipped, for continuity.
+The rest of this doc details the **open Partial/Missing** rows (B, G, H, I,
+J, K), grouped by theme. §2 and §3–§4 record what A/C/D/E/F shipped, for continuity.
 
 ---
 
@@ -67,10 +72,13 @@ when a message is actually posted. The per-channel `reactiveCron` + `reactiveEna
 toggle are managed via the existing admin slack-channels UI. See
 `channel-assistant.md` §10 and `packages/worker/src/activities/channelReactive.ts`.
 
-**Still open (natural next step):** passive memory ingestion — learning from
-non-mention channel messages one message at a time (the "learns your company from
-ambient chatter" behaviour we don't yet have). The reactive poll is the natural
-place to do it; it reads the history already.
+**Passive memory ingestion (also shipped in #113):** `passiveIngestChannelMemory`
+runs on the ambient fire when a channel opts in (`passiveIngestEnabled`, default
+off). It reads recent human messages past a `passiveIngestCursor` (the Slack `ts`
+of the newest message already processed, stored raw to avoid float-precision loss),
+extracts salient durable facts via an LLM, and writes them to channel memory — no
+`@mention` required. This is the "learns your company from ambient chatter"
+behaviour. Budget-gated and best-effort like the other ambient passes.
 
 ### B. Organization-wide awareness — **Missing · Severity Medium · Effort L**
 **Claude Tag:** flags things *from across the organization* — it can connect a
@@ -88,16 +96,21 @@ scope or memory-visibility flag), plus the private-channel exclusion in G baked
 in. (The E read path deliberately stays within one *team*, which is why it didn't
 require G.)
 
-### C. Follow-up on forgotten threads / tasks — **Missing · Severity Medium · Effort M**
+### C. Follow-up on forgotten threads / tasks — **Have ✅ · shipped #113**
 **Claude Tag:** "follows up on forgotten threads or tasks."
 
-**Us:** the ambient digest *summarizes* recent memory, but we don't **track open
-action items** as first-class objects with a due/stale notion, so we can't chase a
-specific unanswered question or stalled task.
-
-**Fit:** a lightweight `ChannelOpenItem` model (source message, owner, status,
-lastNudgedAt) populated by the turn/ambient agent and swept by the existing
-schedule. Reuses the Temporal Schedule we already run for digests.
+**Shipped:** a first-class `ChannelOpenItem` model (`description`, `ownerUserId`,
+`status` ∈ {OPEN, RESOLVED, DISMISSED}, `sourceTs` dedup anchor, `lastNudgedAt`)
+plus `sweepChannelOpenItems`, run on every ambient fire after consolidation. Each
+sweep does three things: **detect** new open items in the recent message window
+(LLM, structured output) and which tracked items now read as resolved; **persist**
+— insert fresh items (deduped by `sourceTs`, else by description) and flip resolved
+ones to RESOLVED; **nudge** — for each still-OPEN item older than 24 h and not
+nudged in the last 12 h, post a brief `<@owner> any update on …?` follow-up. The
+cooldown stamp is written *before* the Slack post (at-most-once) so a transient
+Slack failure can't double-nudge. Budget-gated and best-effort like the other
+ambient passes; cost accrues with `countRun: false`. Admins view/dismiss items in
+the `/admin/slack-channels` UI. See `packages/worker/src/activities/channelOpenItems.ts`.
 
 ---
 
@@ -153,10 +166,12 @@ configurable (built-in defaults, no opt-out) — tracked as a future refinement 
 
 ### G. "Does not report from private channels" — **Missing · Severity Medium · Effort S**
 **Claude Tag** has an explicit rule: it does not surface content *from* private
-channels (into ambient/org-wide reporting). Our channel-scoping prevents
-cross-channel leakage today, but once we add B/E (cross-channel reads), we need an
-explicit private-channel exclusion or we recreate the leak. Cheap to add now as a
-flag on `SlackChannel`; load-bearing once cross-channel reads exist.
+channels (into ambient/org-wide reporting). **Now load-bearing, not hypothetical:**
+E (shipped #112) already lets `retrieveChannelMemory` read a sibling channel's
+memory within a team, so a private channel's facts can already surface in another
+channel. The fix is a flag on `SlackChannel` that (a) excludes the channel as a
+*source* in cross-channel reads and (b) excludes it from any future org-wide
+reporting (B). Cheap; a prerequisite for B.
 
 ### H. Persistent live conversational session — **Partial · Severity Medium · Effort M**
 **Claude Tag** feels like a continuous teammate. **Us:** each turn is a *stateless*
@@ -224,24 +239,23 @@ Not gaps — called out so the comparison is honest:
 
 ## 8. Suggested priority order
 
-A/D/E/F shipped (A in #113, D/E/F in #112). Remaining work, re-ranked for
-discussion (not a commitment):
+A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
+ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
+commitment):
 
-1. **C — open-item follow-up** (M): pairs naturally with the reactive Schedule A
-   just shipped; a lightweight `ChannelOpenItem` model swept each tick. Complements
-   the *explicit* scheduling that D shipped with *autonomous* follow-up detection.
-   The reactive poll already reads the history window needed for detection.
+1. **G — private-channel exclusion** (S): now *more* than a future hedge — E's
+   team-scoped cross-channel reads already exist, so a private channel's memory can
+   bleed into a sibling channel today. A flag on `SlackChannel` that excludes a
+   channel from cross-channel reads and any cross-channel/ambient reporting closes
+   that. Cheap, and a prerequisite for B.
 2. **B + G together** (L): the org-wide proactive-flagging cluster — the most
    architecturally significant remaining gap (cuts against per-channel isolation),
    so design it as one phase with the private-channel rule (G) baked in from the
-   start. (E already shipped the *team*-scoped read half; A's poll is the natural
-   place to extend it once B is designed.)
-3. **H — live session** (M), **J — audit view** (S–M), **I — app UX** (M): UX/ops
+   start. (E already shipped the *team*-scoped read half.)
+3. **J — audit view** (S–M), **H — live session** (M), **I — app UX** (M): UX/ops
    polish; valuable but not differentiating.
-4. **F-config follow-up** (S) + **D steering follow-up** (S) + **A passive-memory
-   follow-up** (S–M): small refinements — per-channel consolidation config; making
-   a fired deferred run steerable; folding passive memory ingestion into the
-   reactive poll.
+4. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
+   per-channel consolidation config; making a fired deferred run steerable.
 5. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.
 
 > Open question for discussion: how aggressively do we want **B (org-wide
