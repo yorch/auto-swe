@@ -20,6 +20,7 @@ import {
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
+  WORKFLOW_AUTHOR_PROMPT,
 } from './agentPrompts.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
 
@@ -319,6 +320,18 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     systemPrompt:
       'You are an impartial code-review judge. Score the candidate output against the ' +
       'provided rubric and return the requested JSON. Be calibrated and concise.',
+  },
+  {
+    // Natural-language workflow authoring: turns a plain-language intent into a
+    // valid WorkflowSpec. Model-backed (its own modelSpec) so it prices + gets a
+    // model-config label, but intentionally NOT in MODEL_BACKED_AGENT_KEYS — no
+    // workflow STEP resolves it, so it must not gate worker boot (resolved on
+    // demand by the generateWorkflowSpec activity, like evalJudge).
+    description: 'Generates a WorkflowSpec from a natural-language description.',
+    key: 'workflowAuthor',
+    modelSpec: 'anthropic/claude-opus-4-8',
+    name: 'Workflow Author',
+    systemPrompt: WORKFLOW_AUTHOR_PROMPT,
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',
