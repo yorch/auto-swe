@@ -16,7 +16,7 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagAt` gate + rate-limit org-wide proactive flagging (Gap B); `followupSessionEnabled` opts into re-mention-free follow-up sessions (Gap H). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagCheckAt` gate + rate-limit org-wide proactive flagging (Gap B); `followupSessionEnabled` opts into re-mention-free follow-up sessions (Gap H). Unique on `(workspaceId, slackChannelId)`. |
 | `ChannelThreadSession` | Persistent live session (Gap H): `lastAssistantAt` per `(channelId, threadTs)` — written after each turn, read by the gateway so a plain follow-up reply within the session window continues the thread without a re-`@mention`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
@@ -271,13 +271,15 @@ Three follow-on capabilities round out memory and task execution:
   (its focus) ONCE, runs `searchOrgChannelMemory` (org-scoped pgvector search,
   `is_private = false` + active source channels only — Gap G baked in), and lets the
   channel agent decide (high bar, SKIP-aware) whether to post a brief heads-up naming
-  the source channel. Hard rate-limited by a `lastOrgFlagAt` cooldown (20 h) that is
-  advanced on every *evaluation* — post OR skip — so a no-signal channel doesn't
-  re-pay the embedding + org search + LLM on each ambient fire (the cooldown is
-  stamped before the best-effort post, so a Slack hiccup can't trigger a re-spend
-  either). Budget-gated; cost accrues with `countRun: false` only when it posts. The
-  conservative opt-in + private-source exclusion is deliberate: org-wide visibility
-  never happens by default, preserving per-channel isolation.
+  the source channel. Hard rate-limited by a `lastOrgFlagCheckAt` cooldown (20 h)
+  that is advanced once the embedding + org search have run — for the no-signals,
+  skip, AND posted outcomes alike (stamped before the LLM + the best-effort post) —
+  so a channel that rarely or never flags doesn't re-pay the embedding + pgvector
+  search on each ambient fire, and a Slack hiccup can't trigger a re-spend. (The
+  field is a "last checked" anchor, not "last posted".) Budget-gated; cost accrues
+  with `countRun: false` only when it posts. The conservative opt-in + private-source
+  exclusion is deliberate: org-wide visibility never happens by default, preserving
+  per-channel isolation.
 
 - **Gap H — persistent live session (re-mention-free follow-ups).** The friction
   this closes: a channel user previously had to **re-`@mention` on every turn**
@@ -292,8 +294,9 @@ Three follow-on capabilities round out memory and task execution:
   memory). Self-limiting — the window closes, so the bot never re-engages stale
   threads — and opt-in (default off). Steering an in-flight *task* still takes
   precedence over a continuation turn. Stale `ChannelThreadSession` rows are swept
-  opportunistically (24 h retention) on the next `touchChannelThreadSession` so the
-  table stays bounded. **Scope note:** while a session is live the assistant treats
+  occasionally (a ~10%-per-touch probabilistic `deleteMany`, 24 h retention) to keep
+  the table bounded off the per-turn hot path; a channel that goes fully idle stops
+  sweeping, but its rows are tiny and harmless until it's next active or deleted. **Scope note:** while a session is live the assistant treats
   *any* plain reply in that thread as a continuation — including humans replying to
   each other — so opting in means "the assistant participates in threads it's
   recently active in" for the window's duration. This is bounded by the 30 min

@@ -83,11 +83,23 @@ export interface TouchChannelThreadSessionInput {
 const THREAD_SESSION_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
+ * Probability of running the stale-session sweep on any given touch. The sweep is
+ * a bounding mechanism, not a correctness one (the gateway's read window already
+ * ignores stale rows), so it doesn't need to run every turn — gating it keeps the
+ * extra `deleteMany` off the per-turn hot path while still reaping a channel's dead
+ * rows within a handful of turns. (An activity, not a workflow, so `Math.random`
+ * is fine here — no determinism constraint.) Note: a channel that goes fully idle
+ * stops touching and so stops sweeping; its (tiny) rows linger harmlessly until the
+ * channel is next active or deleted — acceptable for a bounded-size convenience table.
+ */
+const THREAD_SESSION_SWEEP_PROBABILITY = 0.1;
+
+/**
  * Persistent live session (Gap H): record that the assistant was just active in
  * this thread, so a plain follow-up reply (no re-@mention) can continue the
  * conversation while the session is fresh. Upserts `ChannelThreadSession` keyed on
- * `(channelId, threadTs)`, bumping `lastAssistantAt` to now, and opportunistically
- * deletes this channel's long-dead session rows so the table stays bounded (one
+ * `(channelId, threadTs)`, bumping `lastAssistantAt` to now, and (occasionally)
+ * sweeps this channel's long-dead session rows so the table stays bounded (one
  * permanent row per thread otherwise).
  *
  * Always written (cheap) regardless of whether the channel has the follow-up
@@ -106,20 +118,23 @@ export async function touchChannelThreadSession(
         channelId_threadTs: { channelId: input.channelId, threadTs: input.threadTs },
       },
     });
-    // Sweep this channel's dead sessions (indexed by channelId). Cheap + bounds
-    // growth; a failure here must not affect the turn (own try/catch).
-    try {
-      await prisma.channelThreadSession.deleteMany({
-        where: {
-          channelId: input.channelId,
-          lastAssistantAt: { lt: new Date(now.getTime() - THREAD_SESSION_RETENTION_MS) },
-        },
-      });
-    } catch (sweepErr) {
-      console.error(
-        `[channelRun] thread-session sweep failed for ${input.channelId}:`,
-        sweepErr instanceof Error ? sweepErr.message : sweepErr
-      );
+    // Sweep this channel's dead sessions occasionally (not every turn — see
+    // THREAD_SESSION_SWEEP_PROBABILITY). Cheap + bounds growth; a failure here
+    // must not affect the turn (own try/catch).
+    if (Math.random() < THREAD_SESSION_SWEEP_PROBABILITY) {
+      try {
+        await prisma.channelThreadSession.deleteMany({
+          where: {
+            channelId: input.channelId,
+            lastAssistantAt: { lt: new Date(now.getTime() - THREAD_SESSION_RETENTION_MS) },
+          },
+        });
+      } catch (sweepErr) {
+        console.error(
+          `[channelRun] thread-session sweep failed for ${input.channelId}:`,
+          sweepErr instanceof Error ? sweepErr.message : sweepErr
+        );
+      }
     }
   } catch (err) {
     console.error(

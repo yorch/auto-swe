@@ -44,7 +44,7 @@ function makeChannel(overrides: Record<string, unknown> = {}) {
     agentKey: 'channelAssistant',
     id: 'chan-1',
     isActive: true,
-    lastOrgFlagAt: null,
+    lastOrgFlagCheckAt: null,
     monthlyBudgetUsdCents: null,
     orgFlaggingEnabled: true,
     orgId: 'org-1',
@@ -119,7 +119,7 @@ describe('flagOrgSignals', () => {
 
   it('skips the LLM while on cooldown', async () => {
     findChannel.mockResolvedValue(
-      makeChannel({ lastOrgFlagAt: new Date(Date.now() - 60_000) }) as never
+      makeChannel({ lastOrgFlagCheckAt: new Date(Date.now() - 60_000) }) as never
     );
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res.reason).toBe('cooldown');
@@ -141,11 +141,24 @@ describe('flagOrgSignals', () => {
     expect(searchOrgChannelMemoryMock).not.toHaveBeenCalled();
   });
 
-  it('skips when no cross-org signals are found', async () => {
+  it('stamps the cooldown even when no cross-org signals are found (no re-pay of the embedding)', async () => {
     searchOrgChannelMemoryMock.mockResolvedValue([]);
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res.reason).toBe('no-signals');
     expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
+    // The embedding + org search already ran, so the cooldown is advanced to avoid
+    // re-paying them on every ambient fire.
+    const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
+  });
+
+  it('does NOT stamp the cooldown on the cheap pre-search gates (no-interest)', async () => {
+    recentChannelMemoryMock.mockResolvedValue([]);
+    const res = await flagOrgSignals({ channelId: 'chan-1' });
+    expect(res.reason).toBe('no-interest');
+    // No embedding/search happened, so nothing to throttle — leave the anchor unset
+    // so the channel re-checks as soon as it gains memory.
+    expect(updateChannel).not.toHaveBeenCalled();
   });
 
   it('posts a flag + stamps the cooldown when the agent surfaces a signal', async () => {
@@ -154,7 +167,7 @@ describe('flagOrgSignals', () => {
     expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
     expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.01, { countRun: true });
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
-    expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
   });
 
   it('does NOT post but STILL stamps the cooldown when the agent replies SKIP', async () => {
@@ -165,7 +178,7 @@ describe('flagOrgSignals', () => {
     expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.005, { countRun: false });
     // The cooldown is advanced on a SKIP too, so the next fire doesn't re-pay the LLM.
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
-    expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
   });
 
   it('reports reason "error" (not "disabled") when an enabled channel throws', async () => {
@@ -181,6 +194,6 @@ describe('flagOrgSignals', () => {
     // hiccup neither throws nor triggers a re-spend next fire.
     expect(res).toEqual({ posted: true, reason: 'posted' });
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
-    expect(lastUpdate.data).toHaveProperty('lastOrgFlagAt');
+    expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
   });
 });

@@ -481,9 +481,11 @@ model SlackChannel {
   /// into this channel — "flags things from across the organization". Opt-in,
   /// default off; the cross-org read still excludes `isPrivate` source channels.
   orgFlaggingEnabled Boolean      @default(false) @map("org_flagging_enabled")
-  /// Cooldown anchor: when the org-flagging pass last posted a cross-channel flag.
-  /// Org flags are infrequent (digest-level), so this rate-limits them hard.
-  lastOrgFlagAt    DateTime?      @map("last_org_flag_at") @db.Timestamptz
+  /// Cooldown anchor: when the org-flagging pass last *evaluated* (advanced once
+  /// the embedding + org search ran, for the no-signals/skip/posted outcomes
+  /// alike — NOT only when a flag was posted). Org flags are digest-level, so this
+  /// rate-limits both the spend and the posting to at most once per ~20 h.
+  lastOrgFlagCheckAt DateTime?    @map("last_org_flag_check_at") @db.Timestamptz
   /// Persistent live session (Gap H): when true, a plain follow-up reply in a
   /// thread the assistant was recently active in continues the conversation
   /// WITHOUT a re-@mention (within a short session window). Opt-in, default off.

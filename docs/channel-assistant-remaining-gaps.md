@@ -97,7 +97,7 @@ Designed to respect isolation, which is the tension B always carried:
 - **Private-channel exclusion (Gap G) baked in** — `searchOrgChannelMemory` JOINs
   `slack_channels` and excludes `is_private = true` (and inactive) SOURCE channels,
   so a private channel's content is never flagged elsewhere.
-- **Rate-limited** — a hard `lastOrgFlagAt` cooldown (20 h) keeps org flags rare
+- **Rate-limited** — a hard `lastOrgFlagCheckAt` cooldown (20 h, advanced per *check*) keeps org flags rare
   and signal-rich; budget-gated; cost accrues with `countRun: false`.
 
 This shipped the *proactive* half; the *team*-scoped reactive read half was Gap E

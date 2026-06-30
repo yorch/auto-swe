@@ -116,9 +116,11 @@ export function buildOrgFlagPrompt(
  *  - **Private-channel exclusion (Gap G):** `searchOrgChannelMemory` JOINs
  *    `slack_channels` and excludes `is_private = true` SOURCE channels, so a
  *    private channel's content is never flagged elsewhere.
- *  - **Cooldown:** at most one *evaluation* per {@link ORG_FLAG_COOLDOWN_MS}
- *    (`lastOrgFlagAt` is advanced on post OR skip), so a no-signal channel doesn't
- *    re-pay the embedding + org search + LLM on every ambient fire.
+ *  - **Cooldown:** at most one *evaluation* per {@link ORG_FLAG_COOLDOWN_MS}.
+ *    `lastOrgFlagCheckAt` is advanced once the embedding + org search have run —
+ *    for the no-signals, skip, AND posted outcomes alike — so a channel that
+ *    rarely (or never) flags doesn't re-pay the embedding + pgvector search on
+ *    every ambient fire. (The field is a "last checked" anchor, not "last posted".)
  *  - **Budget-gated + SKIP-aware + best-effort:** over budget ⇒ no spend; a
  *    SKIP/empty reply is not posted; never throws.
  *
@@ -132,7 +134,7 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
         agentKey: true,
         id: true,
         isActive: true,
-        lastOrgFlagAt: true,
+        lastOrgFlagCheckAt: true,
         monthlyBudgetUsdCents: true,
         orgFlaggingEnabled: true,
         orgId: true,
@@ -149,10 +151,10 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
 
     const now = new Date();
 
-    // Cooldown first — cheapest gate, skips the LLM + the org search entirely.
+    // Cooldown first — cheapest gate, skips the embedding + org search + LLM.
     if (
-      channel.lastOrgFlagAt &&
-      now.getTime() - channel.lastOrgFlagAt.getTime() < ORG_FLAG_COOLDOWN_MS
+      channel.lastOrgFlagCheckAt &&
+      now.getTime() - channel.lastOrgFlagCheckAt.getTime() < ORG_FLAG_COOLDOWN_MS
     ) {
       return { posted: false, reason: 'cooldown' };
     }
@@ -180,6 +182,18 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
       similarityThreshold: ORG_SIMILARITY_THRESHOLD,
     });
 
+    // We've now paid the real cost — the embedding + the org pgvector search — so
+    // advance the cooldown for EVERY outcome below (no-signals, skip, posted), not
+    // just when we post. Stamping only on a post (or even only on an LLM verdict)
+    // would let the common no-signals / SKIP cases re-pay the embedding + search on
+    // every ambient fire. Written here (before the LLM + the post) so neither a SKIP
+    // nor a Slack-post failure can trigger a re-spend next fire. The field is a
+    // "last checked" anchor — see the rename to `lastOrgFlagCheckAt`.
+    await prisma.slackChannel.update({
+      data: { lastOrgFlagCheckAt: now },
+      where: { id: channel.id },
+    });
+
     if (candidates.length === 0) {
       return { posted: false, reason: 'no-signals' };
     }
@@ -201,17 +215,6 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
 
     // Accrue the LLM cost (it happened); count a run only when we actually post.
     await accrueChannelUsage(channel.id, costUsd, { countRun: posted });
-
-    // Advance the cooldown on EVERY evaluation that reached the LLM — post OR skip.
-    // The cooldown gate above keys on `lastOrgFlagAt`, so stamping it only on a post
-    // would let a SKIP verdict (the common case) re-pay the embedding + org search +
-    // LLM on every subsequent ambient fire. Stamping here also means a Slack-post
-    // failure below can't trigger a re-spend. Written BEFORE the post (at-most-once,
-    // mirroring the open-item nudge) so a transient Slack failure never re-flags.
-    await prisma.slackChannel.update({
-      data: { lastOrgFlagAt: now },
-      where: { id: channel.id },
-    });
 
     if (posted) {
       // Best-effort: the cost + cooldown are already committed, so a delivery

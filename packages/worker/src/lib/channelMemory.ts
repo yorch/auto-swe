@@ -112,6 +112,12 @@ export interface OrgChannelMemoryItem {
  *
  * Raw SQL is required (pgvector `<=>` isn't parameterisable; `scope != channel_id`
  * + the JOIN aren't expressible via the single-column `searchMemoryItemsByVector`).
+ *
+ * SAFETY: `extraSelect`/`extraWhere` are spliced into the query text, so they MUST
+ * be literal constants (as both call sites below are) — never request/config/DB
+ * input. All variable values flow through the `$1..$6` bindings, never the builder.
+ * The result is computed once at module load (see the two consts below), so it is
+ * never rebuilt per call.
  */
 function crossChannelMemorySql(opts: {
   scopeColumn: 'team_id' | 'org_id';
@@ -140,6 +146,18 @@ function crossChannelMemorySql(opts: {
      ORDER BY mi.embedding <=> $1::vector ASC
      LIMIT $5`;
 }
+
+/** Team-scoped cross-channel SQL — built once (constant inputs). */
+const TEAM_CROSS_CHANNEL_SQL = crossChannelMemorySql({ scopeColumn: 'team_id' });
+
+/** Org-scoped cross-channel SQL (source-channel columns + active filter) — built once. */
+const ORG_CROSS_CHANNEL_SQL = crossChannelMemorySql({
+  extraSelect: ['sc.id   AS "sourceChannelId"', 'sc.name AS "sourceChannelName"'].join(
+    ',\n       '
+  ),
+  extraWhere: 'AND sc.is_active = true',
+  scopeColumn: 'org_id',
+});
 
 /** Run a {@link crossChannelMemorySql} query with the shared `$1..$6` binding. */
 function runCrossChannelMemoryQuery<T>(
@@ -177,7 +195,7 @@ function searchTeamChannelMemory(opts: {
   precomputed: QueryEmbedding;
 }): Promise<RetrievedChannelMemoryRow[]> {
   return runCrossChannelMemoryQuery<RetrievedChannelMemoryRow>(
-    crossChannelMemorySql({ scopeColumn: 'team_id' }),
+    TEAM_CROSS_CHANNEL_SQL,
     opts.teamId,
     opts
   );
@@ -195,17 +213,7 @@ export function searchOrgChannelMemory(opts: {
   similarityThreshold: number;
   precomputed: QueryEmbedding;
 }): Promise<OrgChannelMemoryItem[]> {
-  return runCrossChannelMemoryQuery<OrgChannelMemoryItem>(
-    crossChannelMemorySql({
-      extraSelect: ['sc.id   AS "sourceChannelId"', 'sc.name AS "sourceChannelName"'].join(
-        ',\n       '
-      ),
-      extraWhere: 'AND sc.is_active = true',
-      scopeColumn: 'org_id',
-    }),
-    opts.orgId,
-    opts
-  );
+  return runCrossChannelMemoryQuery<OrgChannelMemoryItem>(ORG_CROSS_CHANNEL_SQL, opts.orgId, opts);
 }
 
 /** One recent (un-consolidated) channel-memory row, for ambient digest context. */
