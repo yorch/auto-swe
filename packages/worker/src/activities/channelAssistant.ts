@@ -150,6 +150,71 @@ function buildDelegateTool(onDelegate: (intent: DelegateIntent) => void) {
   });
 }
 
+/**
+ * Channel assistant: a captured "build me a workflow" intent. When the agent
+ * decides the user is asking to CREATE a reusable workflow/automation (not run a
+ * one-off task) it calls the `generateWorkflow` tool; we capture the structured
+ * intent here and the workflow generates + persists a DRAFT template after the turn.
+ */
+export interface GenerateWorkflowIntent {
+  /** Plain-language description of the workflow to build. */
+  description: string;
+  /** Optional name for the generated template. */
+  name?: string;
+}
+
+const GenerateWorkflowInputSchema = z.object({
+  description: z
+    .string()
+    .describe('A clear, self-contained description of the workflow/automation to build.'),
+  name: z.string().optional().describe('Optional short name for the workflow.'),
+});
+
+const GenerateWorkflowOutputSchema = z.object({
+  note: z.string(),
+  queued: z.boolean(),
+});
+
+/**
+ * System-prompt note for the `generateWorkflow` tool: tells the agent to use it
+ * when the user wants to CREATE a reusable workflow/automation (a saved template)
+ * rather than run a one-off task (`delegateTask`) or answer a question.
+ */
+const GENERATE_WORKFLOW_TOOL_PROMPT_NOTE = [
+  '',
+  'You also have a `generateWorkflow` tool. Use it ONLY when the user asks you to ',
+  'CREATE / SET UP a reusable workflow, automation, or pipeline (a saved template ',
+  'they can run repeatedly) — e.g. "create a workflow that runs the implementer then ',
+  'opens a PR", "set up an automation for…". This generates the workflow and saves it ',
+  'as a DRAFT for a human to review and activate; your own reply should briefly say so ',
+  '("I\'ve drafted that workflow — review and activate it in the Workflow library."). ',
+  'Do NOT use it for a one-off task (use `delegateTask`) or a quick question.',
+].join('');
+
+/**
+ * Build the `generateWorkflow` Mastra tool. Like `delegateTask` it only RECORDS
+ * the intent (into `onGenerate`); the workflow does the generation + persistence
+ * after the turn, keeping this activity a pure "decide + reply" step.
+ */
+function buildGenerateWorkflowTool(onGenerate: (intent: GenerateWorkflowIntent) => void) {
+  return createTool({
+    description:
+      'Generate a reusable workflow (saved as a DRAFT template) from a ' +
+      'natural-language description. Use when the user wants to create or set up an ' +
+      'automation/pipeline, not run a one-off task.',
+    execute: async ({ description, name }) => {
+      onGenerate({ description, name });
+      return {
+        note: 'Workflow drafted — review and activate it in the Workflow library.',
+        queued: true,
+      };
+    },
+    id: 'generateWorkflow',
+    inputSchema: GenerateWorkflowInputSchema,
+    outputSchema: GenerateWorkflowOutputSchema,
+  });
+}
+
 /** Cap on how many retrieved memory items are injected into the prompt. */
 const MAX_MEMORY_CONTEXT_ITEMS = 5;
 
@@ -371,7 +436,7 @@ export async function runChannelAgentTurn(
  */
 export async function runChannelAssistantTurn(
   input: ChannelAssistantTurnInput
-): Promise<{ reply: string; delegate?: DelegateIntent }> {
+): Promise<{ reply: string; delegate?: DelegateIntent; generate?: GenerateWorkflowIntent }> {
   const channel = await prisma.slackChannel.findUnique({
     select: {
       agentKey: true,
@@ -450,6 +515,14 @@ export async function runChannelAssistantTurn(
     delegate = intent;
   });
 
+  // Give the agent a `generateWorkflow` tool so it can draft a reusable workflow
+  // template when the user asks to create an automation. Records the intent here;
+  // the workflow generates + persists the DRAFT after the turn.
+  let generate: GenerateWorkflowIntent | undefined;
+  const generateWorkflowTool = buildGenerateWorkflowTool((intent) => {
+    generate = intent;
+  });
+
   // Resolve the effective persona (channel overrides team default) and pass it
   // into runChannelAgentTurn so it's prepended to the system prompt.
   const personaPrompt = await resolvePersonaPrompt(
@@ -462,7 +535,13 @@ export async function runChannelAssistantTurn(
     { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
     userMessage,
     'llm.channel_assistant',
-    { promptNote: DELEGATE_TOOL_PROMPT_NOTE, tools: { delegateTask: delegateTool } as AgentTools }
+    {
+      promptNote: `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}`,
+      tools: {
+        delegateTask: delegateTool,
+        generateWorkflow: generateWorkflowTool,
+      } as AgentTools,
+    }
   );
 
   // Post-turn channel-scoped accrual. Best-effort: a failure here must NOT break
@@ -484,10 +563,11 @@ export async function runChannelAssistantTurn(
 
   // When the agent delegated, prefer its (brief) ack but always surface a
   // sensible fallback. The workflow decides whether to launch based on `delegate`.
-  const ackFallback = delegate
-    ? "On it — I'll follow up in this thread when it's done."
-    : "I wasn't able to come up with a response. Could you rephrase?";
-  return { delegate, reply: reply || ackFallback };
+  const ackFallback =
+    delegate || generate
+      ? "On it — I'll follow up in this thread when it's done."
+      : "I wasn't able to come up with a response. Could you rephrase?";
+  return { delegate, generate, reply: reply || ackFallback };
 }
 
 /**

@@ -33,6 +33,12 @@ export {
   isChannelOverBudgetForTask,
   resolveChannelRepo,
 } from './channelTask.js';
+// Channel assistant — generate a DRAFT workflow template from a description
+export type {
+  CreateChannelWorkflowDraftInput,
+  CreateChannelWorkflowDraftResult,
+} from './channelWorkflowDraft.js';
+export { createChannelWorkflowDraft } from './channelWorkflowDraft.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,
