@@ -610,10 +610,22 @@ async function processChannelEvent(
   const isMention = event.type === 'app_mention';
   const isDm = event.type === 'message' && event.channel_type === 'im';
   // No active task run to steer. Plain (non-mention, non-DM) channel thread
-  // replies must NOT start a turn — they only exist to attempt a steer. Drop
-  // them here so arbitrary channel chatter never spawns a workflow.
+  // replies normally do NOT start a turn — they only exist to attempt a steer.
+  // EXCEPTION (Gap H — persistent live session): when the channel opts in
+  // (`followupSessionEnabled`) and the assistant was recently active in THIS
+  // thread, a plain follow-up reply continues the conversation without a
+  // re-@mention. Otherwise drop it so arbitrary channel chatter never spawns a
+  // workflow.
   if (!isMention && !isDm) {
-    return;
+    const continues =
+      isThreadReply &&
+      !!event.thread_ts &&
+      channelRow.followupSessionEnabled &&
+      (await isLiveThreadSession(fastify, channelRow.id, event.thread_ts));
+    if (!continues) {
+      return;
+    }
+    // Fall through to start a continuation turn (same path as a mention).
   }
 
   const input: ChannelAssistantTurnInput = {
@@ -641,6 +653,37 @@ async function processChannelEvent(
       return;
     }
     throw err;
+  }
+}
+
+/** Gap H: how long after the assistant's last reply a plain follow-up (no
+ *  re-@mention) still continues the conversation. Self-limiting so the bot never
+ *  re-engages stale threads. */
+const SESSION_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Persistent live session (Gap H): is the assistant "live" in this thread right
+ * now? True when a `ChannelThreadSession` exists for `(channelId, threadTs)` and
+ * its `lastAssistantAt` is within {@link SESSION_WINDOW_MS}. Best-effort: any DB
+ * error resolves to `false` (fail closed — never start an unexpected turn).
+ */
+async function isLiveThreadSession(
+  fastify: FastifyInstance,
+  channelId: string,
+  threadTs: string
+): Promise<boolean> {
+  try {
+    const session = await fastify.prisma.channelThreadSession.findUnique({
+      select: { lastAssistantAt: true },
+      where: { channelId_threadTs: { channelId, threadTs } },
+    });
+    if (!session) {
+      return false;
+    }
+    return Date.now() - session.lastAssistantAt.getTime() < SESSION_WINDOW_MS;
+  } catch (err) {
+    fastify.log.warn({ channelId, err, threadTs }, 'isLiveThreadSession lookup failed');
+    return false;
   }
 }
 
@@ -706,7 +749,12 @@ async function provisionChannel(
   slackTeamId: string,
   slackChannelId: string,
   opts: { isPrivate?: boolean } = {}
-): Promise<{ id: string; teamId: string; orgId: string } | null> {
+): Promise<{
+  id: string;
+  teamId: string;
+  orgId: string;
+  followupSessionEnabled: boolean;
+} | null> {
   const { defaultTeamSlug } = await resolveWorkflowDefaults();
   const defaultTeam = await fastify.prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
   if (!defaultTeam) {
@@ -766,7 +814,12 @@ async function provisionChannel(
     return null;
   }
 
-  return { id: channel.id, orgId: channel.orgId, teamId: channel.teamId };
+  return {
+    followupSessionEnabled: channel.followupSessionEnabled,
+    id: channel.id,
+    orgId: channel.orgId,
+    teamId: channel.teamId,
+  };
 }
 
 // ── HITL resolve button (block_actions, action_id `hitl_resolve[:…]`) ───────

@@ -68,6 +68,41 @@ export interface FinalizeChannelRunInput {
   status: 'SUCCESS' | 'FAILED';
 }
 
+export interface TouchChannelThreadSessionInput {
+  channelId: string;
+  threadTs: string;
+}
+
+/**
+ * Persistent live session (Gap H): record that the assistant was just active in
+ * this thread, so a plain follow-up reply (no re-@mention) can continue the
+ * conversation while the session is fresh. Upserts `ChannelThreadSession` keyed on
+ * `(channelId, threadTs)`, bumping `lastAssistantAt` to now.
+ *
+ * Always written (cheap) regardless of whether the channel has the follow-up
+ * feature enabled — the gateway gates on `followupSessionEnabled` at read time, so
+ * a stale row is harmless. Best-effort: a failure here must not break the turn.
+ */
+export async function touchChannelThreadSession(
+  input: TouchChannelThreadSessionInput
+): Promise<void> {
+  try {
+    const now = new Date();
+    await prisma.channelThreadSession.upsert({
+      create: { channelId: input.channelId, lastAssistantAt: now, threadTs: input.threadTs },
+      update: { lastAssistantAt: now },
+      where: {
+        channelId_threadTs: { channelId: input.channelId, threadTs: input.threadTs },
+      },
+    });
+  } catch (err) {
+    console.error(
+      `[channelRun] failed to touch thread session for ${input.channelId}/${input.threadTs}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 /**
  * Resolve the GLOBAL "Channel Assistant" template's id + active version (seeded
  * by `syncBuiltins`). Throws if it's missing — that's a seed/bootstrap error the

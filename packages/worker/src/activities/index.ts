@@ -18,8 +18,13 @@ export { sweepChannelOpenItems } from './channelOpenItems.js';
 export type { ChannelReactiveInput, ChannelReactiveResult } from './channelReactive.js';
 export { evaluateReactiveInterjection } from './channelReactive.js';
 // Channel assistant — lightweight WorkflowRun records for observability
-export type { FinalizeChannelRunInput, StartChannelRunInput } from './channelRun.js';
-export { finalizeChannelRun, startChannelRun } from './channelRun.js';
+// + persistent live session (Gap H) thread-session touch
+export type {
+  FinalizeChannelRunInput,
+  StartChannelRunInput,
+  TouchChannelThreadSessionInput,
+} from './channelRun.js';
+export { finalizeChannelRun, startChannelRun, touchChannelThreadSession } from './channelRun.js';
 // Channel assistant (Phase A) — general agentic task launch from a mention
 // Channel assistant (Phase B) — code-task route via the default SWE workflow
 export type {

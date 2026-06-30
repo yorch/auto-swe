@@ -33,7 +33,7 @@
 | E | Workspace-level (cross-channel) memory | `retrieveChannelMemory` searches sibling channels | **Have ✅ #112** |
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
 | G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
-| H | Persistent live conversational session | reconstructed per turn | **Partial** |
+| H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread, no re-`@mention` | **Have ✅** |
 | I | Packaged Slack app UX (App Home, slash commands, install) | raw Events API webhooks | **Partial** |
 | J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
@@ -185,14 +185,22 @@ provision time (set on create only, so it never silently undoes an admin overrid
 and is admin-editable in `/admin/slack-channels`. The same flag is the exclusion
 hook B will honour for org-wide reporting. See `packages/worker/src/lib/channelMemory.ts`.
 
-### H. Persistent live conversational session — **Partial · Severity Medium · Effort M**
-**Claude Tag** feels like a continuous teammate. **Us:** each turn is a *stateless*
-workflow invocation; continuity is **reconstructed** from thread history + channel
-memory, and in a channel the user must **re-`@mention` on every turn** (plain
-replies only steer an active task). Fast back-and-forth feels more stateless than
-the Claude app. A long-lived per-thread (or per-channel) signal workflow that
-holds session state — and lets a follow-up reply continue without a re-mention —
-would close this. (Noted as a future refinement in `channel-assistant.md` §10.)
+### H. Persistent live conversational session — **Have ✅ · shipped**
+**Claude Tag** feels like a continuous teammate.
+
+**Shipped (re-mention-free follow-ups):** the friction this gap named was that a
+channel user had to **re-`@mention` on every turn** — plain replies only steered an
+active task. Now, when a channel opts in (`followupSessionEnabled`), a plain
+follow-up reply in a thread the assistant was recently active in **continues the
+conversation without a re-mention**. The worker stamps a `ChannelThreadSession`
+(`lastAssistantAt`) after each delivered turn; the gateway, on a non-mention thread
+reply with no in-flight task to steer, checks for a *live* session (within a 30 min
+window) and starts a continuation turn (which already reconstructs context from
+thread history + memory). Self-limiting (the window closes; the bot never
+re-engages stale threads) and opt-in (default off). A full long-lived per-channel
+signal workflow remains possible but isn't needed for the re-mention-free
+continuity this gap was really about. See `packages/gateway/src/routes/slack.ts`
+(`isLiveThreadSession`) + `touchChannelThreadSession`.
 
 ### I. Packaged Slack-app UX — **Partial · Severity Low · Effort M**
 **Claude Tag** ships as a first-class Slack app (replacing the old one). We drive
@@ -262,9 +270,8 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-1. **H — live session** (M), **I — app UX** (M): UX/ops polish; valuable but not
-   differentiating. (**B — org-wide flagging** ✅, **G** ✅, **J — audit view** ✅
-   all shipped.)
+1. **I — packaged Slack-app UX** (M): App Home / slash commands / install polish —
+   the last remaining feature gap. (**B** ✅, **G** ✅, **H** ✅, **J** ✅ all shipped.)
 2. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
    per-channel consolidation config; making a fired deferred run steerable.
 3. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.

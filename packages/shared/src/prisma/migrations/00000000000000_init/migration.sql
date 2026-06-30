@@ -251,6 +251,7 @@ CREATE TABLE "slack_channels" (
     "is_private" BOOLEAN NOT NULL DEFAULT false,
     "org_flagging_enabled" BOOLEAN NOT NULL DEFAULT false,
     "last_org_flag_at" TIMESTAMPTZ,
+    "followup_session_enabled" BOOLEAN NOT NULL DEFAULT false,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -271,6 +272,18 @@ CREATE TABLE "channel_open_items" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "channel_open_items_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "channel_thread_sessions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "channel_id" UUID NOT NULL,
+    "thread_ts" TEXT NOT NULL,
+    "last_assistant_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "channel_thread_sessions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1016,6 +1029,12 @@ CREATE UNIQUE INDEX "slack_channels_workspace_id_slack_channel_id_key" ON "slack
 CREATE INDEX "channel_open_items_channel_id_status_idx" ON "channel_open_items"("channel_id", "status");
 
 -- CreateIndex
+CREATE INDEX "channel_thread_sessions_channel_id_idx" ON "channel_thread_sessions"("channel_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "channel_thread_sessions_channel_id_thread_ts_key" ON "channel_thread_sessions"("channel_id", "thread_ts");
+
+-- CreateIndex
 CREATE INDEX "channel_monthly_usage_channel_id_idx" ON "channel_monthly_usage"("channel_id");
 
 -- CreateIndex
@@ -1215,6 +1234,9 @@ ALTER TABLE "slack_channels" ADD CONSTRAINT "slack_channels_org_id_fkey" FOREIGN
 
 -- AddForeignKey
 ALTER TABLE "channel_open_items" ADD CONSTRAINT "channel_open_items_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "channel_thread_sessions" ADD CONSTRAINT "channel_thread_sessions_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "channel_monthly_usage" ADD CONSTRAINT "channel_monthly_usage_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;

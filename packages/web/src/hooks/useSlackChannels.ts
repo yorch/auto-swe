@@ -31,6 +31,7 @@ export interface SlackChannel {
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
   isActive: boolean;
@@ -60,6 +61,7 @@ export interface CreateSlackChannelBody {
   passiveIngestEnabled?: boolean;
   isPrivate?: boolean;
   orgFlaggingEnabled?: boolean;
+  followupSessionEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
 }
@@ -74,6 +76,7 @@ export interface UpdateSlackChannelBody {
   passiveIngestEnabled?: boolean;
   isPrivate?: boolean;
   orgFlaggingEnabled?: boolean;
+  followupSessionEnabled?: boolean;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
   isActive?: boolean;

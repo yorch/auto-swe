@@ -1,6 +1,6 @@
 # Channel assistant — Slack channel teammate
 
-> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/B/C/D/E/F/G/J shipped.** Living doc — code is authoritative where this diverges.
+> Status: **Foundation + Phases 0–4 + persona + passive ingestion + Gaps A/B/C/D/E/F/G/H/J shipped.** Living doc — code is authoritative where this diverges.
 
 A channel-assistant-style teammate: one shared assistant that lives in a Slack
 channel, that anyone can `@mention` to delegate work, with per-channel scoping of
@@ -16,7 +16,8 @@ resolver, semantic memory, MCP tool binding, Slack app, and org/team RBAC.
 | Model | Purpose |
 | --- | --- |
 | `SlackWorkspace` | A connected Slack workspace (`slackTeamId` = Slack's `T…` id), owned by one `Organization`. |
-| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagAt` gate + rate-limit org-wide proactive flagging (Gap B). Unique on `(workspaceId, slackChannelId)`. |
+| `SlackChannel` | A channel where the assistant is resident. `agentKey` selects the driving Agent; `teamId` governs RBAC + the team tier of the cascade; `orgId` is denormalized for memory + budget; `ambientEnabled`/`ambientCron` gate proactive mode; `reactiveEnabled`/`reactiveCron` gate reactive-interjection mode; `lastReactiveCheckAt`/`lastReactiveAt` track cursor + cooldown for reactive interjection (Gap A); `monthlyBudgetUsdCents` caps spend; `personaPrompt` is an optional freeform persona injected at the top of every system prompt; `passiveIngestEnabled`/`passiveIngestCursor` gate silent fact extraction (passive ingestion); `isPrivate` (Gap G) excludes the channel as a source in cross-channel memory reads + org-wide reporting; `orgFlaggingEnabled`/`lastOrgFlagAt` gate + rate-limit org-wide proactive flagging (Gap B); `followupSessionEnabled` opts into re-mention-free follow-up sessions (Gap H). Unique on `(workspaceId, slackChannelId)`. |
+| `ChannelThreadSession` | Persistent live session (Gap H): `lastAssistantAt` per `(channelId, threadTs)` — written after each turn, read by the gateway so a plain follow-up reply within the session window continues the thread without a re-`@mention`. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger (`(channelId, yearMonth)` unique), mirroring `OrgMonthlyUsage`; backs the per-channel budget cap. |
 | `MemoryItem` (+`channelId`/`teamId`/`orgId`) | Channel/team/org scoping columns for channel-scoped "team memory" (used from Phase 2). |
 | `Agent` (+`channelId`) | `CHANNEL`-scoped agent rows carry the channel id; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -274,6 +275,20 @@ Three follow-on capabilities round out memory and task execution:
   stay rare; budget-gated; cost accrues with `countRun: false` only when it posts.
   The conservative opt-in + private-source exclusion is deliberate: org-wide
   visibility never happens by default, preserving per-channel isolation.
+
+- **Gap H — persistent live session (re-mention-free follow-ups).** The friction
+  this closes: a channel user previously had to **re-`@mention` on every turn**
+  (plain replies only steered an active task). When a channel opts in
+  (`followupSessionEnabled`), a plain follow-up reply in a thread the assistant was
+  recently active in continues the conversation with no re-mention. After each
+  delivered turn `ChannelAssistantWorkflow` calls `touchChannelThreadSession`
+  (upserts `ChannelThreadSession.lastAssistantAt`); the gateway's `/events` handler,
+  on a non-mention thread reply with no in-flight task to steer, calls
+  `isLiveThreadSession` (fresh within a 30 min window) and, if live, starts a normal
+  continuation turn (which already reconstructs context from thread history +
+  memory). Self-limiting — the window closes, so the bot never re-engages stale
+  threads — and opt-in (default off). Steering an in-flight *task* still takes
+  precedence over a continuation turn.
 
 ## 10. Reactive interjection — Gap A (shipped)
 

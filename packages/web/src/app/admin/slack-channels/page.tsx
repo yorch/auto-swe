@@ -74,6 +74,7 @@ interface CreateForm {
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
 }
@@ -83,6 +84,7 @@ const EMPTY_CREATE: CreateForm = {
   ambientCron: '',
   ambientEnabled: false,
   budgetDollars: '',
+  followupSessionEnabled: false,
   isPrivate: false,
   name: '',
   orgFlaggingEnabled: false,
@@ -118,6 +120,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
         agentKey: form.agentKey || 'implementer',
         ambientCron: form.ambientCron || null,
         ambientEnabled: form.ambientEnabled,
+        followupSessionEnabled: form.followupSessionEnabled,
         isPrivate: form.isPrivate,
         monthlyBudgetUsdCents: budgetCents,
         name: form.name || null,
@@ -262,6 +265,18 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
             Org-wide flagging (surface signals from other channels here)
           </label>
         </div>
+        <div className="flex items-center gap-3">
+          <input
+            checked={form.followupSessionEnabled}
+            className="h-4 w-4 accent-ember-400"
+            id="create-followup-session"
+            onChange={(e) => set('followupSessionEnabled', e.target.checked)}
+            type="checkbox"
+          />
+          <label className="text-sm text-paper-300" htmlFor="create-followup-session">
+            Follow-up sessions (continue a thread without re-@mention for ~30 min)
+          </label>
+        </div>
         <Input
           hint="Monthly spend cap in USD (e.g. 50.00). Leave blank for no cap."
           label="Monthly budget ($)"
@@ -305,6 +320,7 @@ interface EditForm {
   passiveIngestEnabled: boolean;
   isPrivate: boolean;
   orgFlaggingEnabled: boolean;
+  followupSessionEnabled: boolean;
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
@@ -316,6 +332,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
     budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
     name: ch.name ?? '',
     orgFlaggingEnabled: ch.orgFlaggingEnabled,
@@ -350,6 +367,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       agentKey: form.agentKey || undefined,
       ambientCron: form.ambientCron || null,
       ambientEnabled: form.ambientEnabled,
+      followupSessionEnabled: form.followupSessionEnabled,
       isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
@@ -474,6 +492,18 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         />
         <label className="text-sm text-paper-300" htmlFor="edit-org-flagging">
           Org-wide flagging (surface signals from other channels here)
+        </label>
+      </div>
+      <div className="flex items-center gap-3">
+        <input
+          checked={form.followupSessionEnabled}
+          className="h-4 w-4 accent-ember-400"
+          id="edit-followup-session"
+          onChange={(e) => set('followupSessionEnabled', e.target.checked)}
+          type="checkbox"
+        />
+        <label className="text-sm text-paper-300" htmlFor="edit-followup-session">
+          Follow-up sessions (continue a thread without re-@mention for ~30 min)
         </label>
       </div>
       <Input
