@@ -394,6 +394,16 @@ Channel-scoped agents are created from the agent-library admin form (CHANNEL
 scope + channel picker), and channels themselves (agent, ambient cron, budget,
 memory) from `/admin/slack-channels`.
 
+**Per-channel audit feed (Gap J).** Building on those run records, `startChannelRun`
+stamps the triggering `userSlackId` + a truncated message snapshot onto the mention
+run's `specSnapshot.channel`. `GET /api/v1/admin/slack-channels/:id/audit` aggregates
+the channel's `WorkflowRun` rows (matched by the `channelId` in the Json snapshot)
+into a **"who asked what, when, and what it touched"** feed — kind, who, when,
+status, cost, tokens, and the `runId`. The admin **"Audit"** modal in
+`/admin/slack-channels` renders it with a kind filter (mention/ambient/reactive) and
+a `trace →` link to the full `/runs/<id>` tool-call sequence. Team-scoped read (same
+`assertChannelAccess` guard as memory/open-items).
+
 ## 14. Future refinements (not built)
 
 - **Long-lived per-channel workflow** (signals + continue-as-new). In-flight

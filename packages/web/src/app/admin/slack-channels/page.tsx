@@ -10,11 +10,13 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
+  type ChannelAuditKind,
   type ChannelOpenItemDto,
   type ChannelOpenItemStatus,
   type MemoryItemDto,
   type SlackChannel,
   type UpdateSlackChannelBody,
+  useChannelAudit,
   useChannelMemory,
   useChannelOpenItems,
   useCreateSlackChannel,
@@ -900,16 +902,112 @@ function OpenItemsModal({
   );
 }
 
+// ── Audit modal (Gap J) ─────────────────────────────────────────────────────────
+
+const AUDIT_KIND_COLORS: Record<ChannelAuditKind, string> = {
+  ambient: 'text-emerald-400',
+  mention: 'text-sky-400',
+  reactive: 'text-amber-400',
+};
+
+function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClose: () => void }) {
+  const [kindFilter, setKindFilter] = useState<ChannelAuditKind | 'all'>('all');
+  const { data: entries, isLoading } = useChannelAudit(channel?.id ?? null, kindFilter);
+
+  return (
+    <Modal
+      eyebrow="Admin / Slack"
+      onClose={onClose}
+      open={channel !== null}
+      title={channel ? `Audit — ${channel.name ?? channel.slackChannelId}` : 'Audit'}
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-paper-500">
+          Who triggered the assistant in this channel, what they asked, and what it touched. Each
+          entry links to the full run trace.
+        </p>
+        <div className="flex gap-2">
+          {(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => (
+            <button
+              className={`rounded px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                kindFilter === k
+                  ? 'bg-ink-600 text-paper-100'
+                  : 'text-paper-500 hover:text-paper-300'
+              }`}
+              key={k}
+              onClick={() => setKindFilter(k)}
+              type="button"
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <LoadingState />
+        ) : !entries || entries.length === 0 ? (
+          <p className="py-4 text-center text-sm text-paper-500">
+            No {kindFilter !== 'all' ? kindFilter : ''} activity recorded for this channel yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {entries.map((e) => (
+              <div className="rounded border border-ink-600 bg-ink-800 p-3 text-sm" key={e.runId}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-paper-100">
+                      {e.userText ?? (
+                        <span className="italic text-paper-500">
+                          {e.kind === 'mention' ? '(no message captured)' : 'proactive — no user'}
+                        </span>
+                      )}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2 font-mono text-[10px] text-paper-500">
+                      <span className={AUDIT_KIND_COLORS[e.kind]}>{e.kind}</span>
+                      <span>·</span>
+                      <span>{e.userSlackId ? `by ${e.userSlackId}` : 'system'}</span>
+                      <span>·</span>
+                      <span>{relativeTime(e.createdAt)}</span>
+                      <span>·</span>
+                      <span>{e.status}</span>
+                      <span>·</span>
+                      <span>${e.costUsd.toFixed(4)}</span>
+                      <span>·</span>
+                      <span>
+                        {e.tokensInput}/{e.tokensOutput} tok
+                      </span>
+                    </div>
+                  </div>
+                  <a
+                    className="shrink-0 font-mono text-[10px] text-ember-400 hover:underline"
+                    href={`/runs/${e.runId}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    trace →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function ChannelRow({
   channel,
+  onAudit,
   onDelete,
   onEdit,
   onMemory,
   onOpenItems,
 }: {
   channel: SlackChannel;
+  onAudit: (ch: SlackChannel) => void;
   onDelete: (ch: SlackChannel) => void;
   onEdit: (ch: SlackChannel) => void;
   onMemory: (ch: SlackChannel) => void;
@@ -990,6 +1088,9 @@ function ChannelRow({
           <Button onClick={() => onOpenItems(channel)} size="sm" variant="secondary">
             Open Items
           </Button>
+          <Button onClick={() => onAudit(channel)} size="sm" variant="secondary">
+            Audit
+          </Button>
           <Button onClick={() => onMemory(channel)} size="sm" variant="secondary">
             Memory
           </Button>
@@ -1015,6 +1116,7 @@ export default function AdminSlackChannelsPage() {
   const [editTarget, setEditTarget] = useState<SlackChannel | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<SlackChannel | null>(null);
   const [openItemsTarget, setOpenItemsTarget] = useState<SlackChannel | null>(null);
+  const [auditTarget, setAuditTarget] = useState<SlackChannel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SlackChannel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -1090,6 +1192,7 @@ export default function AdminSlackChannelsPage() {
                   <ChannelRow
                     channel={ch}
                     key={ch.id}
+                    onAudit={setAuditTarget}
                     onDelete={setDeleteTarget}
                     onEdit={setEditTarget}
                     onMemory={setMemoryTarget}
@@ -1109,6 +1212,8 @@ export default function AdminSlackChannelsPage() {
       <MemoryModal channel={memoryTarget} onClose={() => setMemoryTarget(null)} />
 
       <OpenItemsModal channel={openItemsTarget} onClose={() => setOpenItemsTarget(null)} />
+
+      <AuditModal channel={auditTarget} onClose={() => setAuditTarget(null)} />
 
       <ConfirmModal
         confirmLabel="Delete"

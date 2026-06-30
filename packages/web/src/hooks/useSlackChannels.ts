@@ -232,3 +232,33 @@ export function useUpdateChannelOpenItem() {
     },
   });
 }
+
+// ── Gap J: per-channel audit feed ──────────────────────────────────────────────
+
+export type ChannelAuditKind = 'mention' | 'ambient' | 'reactive';
+
+export interface ChannelAuditEntry {
+  runId: string;
+  kind: ChannelAuditKind;
+  status: string;
+  userSlackId: string | null;
+  userText: string | null;
+  costUsd: number;
+  tokensInput: number;
+  tokensOutput: number;
+  createdAt: string;
+  endedAt: string | null;
+}
+
+export function useChannelAudit(channelId: string | null, kind: ChannelAuditKind | 'all' = 'all') {
+  return useQuery({
+    enabled: !!channelId,
+    queryFn: () => {
+      const qs = kind !== 'all' ? `?kind=${kind}` : '';
+      return api
+        .get<{ data: ChannelAuditEntry[] }>(`${BASE}/${channelId}/audit${qs}`)
+        .then((r) => r.data);
+    },
+    queryKey: ['admin-slack-channel-audit', channelId, kind],
+  });
+}

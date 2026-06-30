@@ -54,7 +54,14 @@ export interface StartChannelRunInput {
   kind: 'mention' | 'ambient' | 'reactive';
   /** Short human label for the run (e.g. the Slack channel id or a thread ref). */
   label: string;
+  /** Gap J (audit): Slack user (`U…`) who triggered the run — `mention` path only. */
+  userSlackId?: string;
+  /** Gap J (audit): the triggering message text (truncated) for "who asked what". */
+  userText?: string;
 }
+
+/** Cap on the audit text snapshot stashed onto the run (defensive against a paste). */
+const MAX_AUDIT_TEXT_CHARS = 280;
 
 export interface FinalizeChannelRunInput {
   workflowId: string;
@@ -121,6 +128,9 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
       label: input.label,
       orgId: orgId ?? null,
       teamId: teamId ?? null,
+      // Gap J (audit): who triggered the run + what they asked (mention path only).
+      userSlackId: input.userSlackId ?? null,
+      userText: input.userText ? input.userText.slice(0, MAX_AUDIT_TEXT_CHARS) : null,
     },
   };
 

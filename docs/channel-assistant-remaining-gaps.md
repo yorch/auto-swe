@@ -35,7 +35,7 @@
 | G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
 | H | Persistent live conversational session | reconstructed per turn | **Partial** |
 | I | Packaged Slack app UX (App Home, slash commands, install) | raw Events API webhooks | **Partial** |
-| J | Multiplayer auditing (who asked what, per channel) | `/runs` + security events | **Partial** |
+| J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
 | — | One shared `@assistant` per channel | shared agent + memory + steering | Have |
 | — | Per-channel scoping of tools/data/memory | `CHANNEL` config tier | Have |
@@ -194,12 +194,19 @@ everything through the **Events API** with a manifest, but lack App Home, slash
 commands (`/assistant …`), shortcuts, and a one-click install/onboarding flow.
 Functional parity exists; the packaged-product polish does not.
 
-### J. Multiplayer auditing — **Partial · Severity Low–Med · Effort S–M**
+### J. Multiplayer auditing — **Have ✅ · shipped**
 Claude Tag's own reported concern: multiplayer makes **permissions + auditing**
-harder. We have `/runs` traces + a `CHANNEL_SUSPICIOUS` security feed, but no
-per-channel **"who asked what, when, and what did it touch"** audit view. Mostly an
-aggregation over data we already persist (`WorkflowRun` + `AgentTrace` + the run's
-`userSlackId`).
+harder.
+
+**Shipped:** a per-channel **"who asked what, when, and what it touched"** audit
+feed. `startChannelRun` now stamps the triggering `userSlackId` + a truncated
+message snapshot onto the channel run's `specSnapshot.channel` (mention path);
+`GET /api/v1/admin/slack-channels/:id/audit` aggregates the channel's `WorkflowRun`
+rows (matched by the `channelId` in the Json snapshot), returning kind
+(mention/ambient/reactive), who, when, status, cost, tokens, and the `runId`. The
+admin "Audit" modal in `/admin/slack-channels` renders it with a kind filter and a
+`trace →` link to the full `/runs/<id>` tool-call sequence ("what it touched").
+Team-scoped read (same `assertChannelAccess` guard as the other channel reads).
 
 ---
 
@@ -253,8 +260,8 @@ commitment):
    remaining gap (cuts against per-channel isolation). G (✅) already shipped the
    private-channel exclusion this depends on, so B can honour `isPrivate` from the
    start. (E shipped the *team*-scoped read half.)
-2. **J — audit view** (S–M), **H — live session** (M), **I — app UX** (M): UX/ops
-   polish; valuable but not differentiating.
+2. **H — live session** (M), **I — app UX** (M): UX/ops polish; valuable but not
+   differentiating. (**J — audit view** ✅ shipped.)
 3. **F-config follow-up** (S) + **D steering follow-up** (S): small refinements —
    per-channel consolidation config; making a fired deferred run steerable.
 4. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless.

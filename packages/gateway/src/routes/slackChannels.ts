@@ -660,6 +660,77 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // GET /:id/audit — Gap J: per-channel "who asked what, when, what it touched"
+  // audit feed. Aggregation over the lightweight channel `WorkflowRun` rows
+  // (created by startChannelRun): each row carries `specSnapshot.channel`
+  // metadata (kind/userSlackId/userText) plus the run's denormalized
+  // status/cost/tokens. The `runId` links to the full `/runs/<id>` trace, which
+  // shows the tool calls the turn actually made ("what it touched").
+  const AuditQuery = z.object({
+    kind: z.enum(['mention', 'ambient', 'reactive', 'all']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+  });
+  app.get(
+    '/:id/audit',
+    { onRequest: authed, schema: { params: IdParams, querystring: AuditQuery } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const channel = await fastify.prisma.slackChannel.findUnique({
+        select: { teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!channel) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+        return reply;
+      }
+
+      // Match channel runs by the channelId stashed in the Json spec snapshot.
+      const runs = await fastify.prisma.workflowRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        select: {
+          costUsdAccrued: true,
+          endedAt: true,
+          id: true,
+          specSnapshot: true,
+          startedAt: true,
+          status: true,
+          tokensInputTotal: true,
+          tokensOutputTotal: true,
+        },
+        take: request.query.limit ?? 50,
+        where: {
+          specSnapshot: { equals: request.params.id, path: ['channel', 'channelId'] },
+        },
+      });
+
+      const kindFilter = request.query.kind;
+      const data = runs
+        .map((run) => {
+          const meta =
+            (run.specSnapshot as { channel?: Record<string, unknown> } | null)?.channel ?? {};
+          return {
+            costUsd: Number(run.costUsdAccrued ?? 0),
+            createdAt: run.startedAt,
+            endedAt: run.endedAt,
+            kind: (meta.kind as string) ?? 'mention',
+            runId: run.id,
+            status: run.status,
+            tokensInput: run.tokensInputTotal ?? 0,
+            tokensOutput: run.tokensOutputTotal ?? 0,
+            userSlackId: (meta.userSlackId as string | null) ?? null,
+            userText: (meta.userText as string | null) ?? null,
+          };
+        })
+        .filter((row) => !kindFilter || kindFilter === 'all' || row.kind === kindFilter);
+
+      return { data };
+    }
+  );
+
   // DELETE /:id — remove the channel row (ADMIN only).
   app.delete(
     '/:id',

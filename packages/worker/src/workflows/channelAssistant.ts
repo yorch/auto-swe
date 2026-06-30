@@ -146,6 +146,10 @@ export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput)
       label: input.slackChannelId,
       orgId: input.orgId,
       teamId: input.teamId,
+      // Gap J (audit): capture who asked + what, so the per-channel audit view
+      // can show "who asked what, when, and what it touched".
+      userSlackId: input.userSlackId,
+      userText: input.userText,
       workflowId,
     });
   } catch (err) {
