@@ -4,7 +4,7 @@ import type {
   WorkflowTemplateSummary,
   WorkflowTemplateVersionDetail,
 } from '@auto-swe/shared/types/api';
-import { apiRequest, GatewayError } from '../lib/api.js';
+import { apiRequest, apiRequestFull, GatewayError } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { pad, parseOptionalPositiveInt } from '../lib/format.js';
 
@@ -15,6 +15,8 @@ const SUB_HELP = `auto-swe workflows — manage workflow templates
   workflows export <name> [-o <path>]    Write the active spec to a file (or stdout)
   workflows import <path> [--name=NAME] [--team=<slug>]
                                          Create a template (or add a new version if the name already exists)
+  workflows generate "<description>" [--name=NAME] [--team=<slug>]
+                                         Generate a DRAFT template from a plain-language description (AI)
 `;
 
 export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -35,6 +37,9 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     }
     if (sub === 'import') {
       return await cmdImport(rest, env);
+    }
+    if (sub === 'generate') {
+      return await cmdGenerate(rest, env);
     }
   } catch (err) {
     if (err instanceof GatewayError) {
@@ -178,6 +183,59 @@ async function cmdImport(args: string[], env: CliEnv): Promise<number> {
   );
   process.stdout.write(
     `Created "${created.name}" v${created.activeVersion ?? 1}${created.team ? ` in team ${created.team.slug}` : ' (global)'}\n`
+  );
+  return 0;
+}
+
+interface GenerateResponse {
+  data: WorkflowTemplateSummary;
+  summary?: string;
+  attempts?: number;
+  warnings?: string[];
+}
+
+async function cmdGenerate(args: string[], env: CliEnv): Promise<number> {
+  const { positional, flags } = parseFlags(args);
+  const prompt = positional.join(' ').trim();
+  if (!prompt) {
+    process.stderr.write(
+      'Usage: workflows generate "<description>" [--name=NAME] [--team=<slug>]\n'
+    );
+    return 1;
+  }
+
+  let teamId: string | null = null;
+  if (flags.team) {
+    teamId = await resolveTeamIdBySlug(env, flags.team);
+    if (!teamId) {
+      process.stderr.write(`No team with slug "${flags.team}"\n`);
+      return 1;
+    }
+  }
+
+  process.stderr.write('Generating workflow from your description…\n');
+  const res = await apiRequestFull<GenerateResponse>(
+    env,
+    'POST',
+    '/api/v1/workflow-templates/generate',
+    { name: flags.name, prompt, teamId }
+  );
+
+  const tpl = res.data;
+  process.stdout.write(
+    `Created DRAFT "${tpl.name}" (id ${tpl.id})${tpl.team ? ` in team ${tpl.team.slug}` : ' (global)'}\n`
+  );
+  if (res.summary) {
+    process.stdout.write(`Summary: ${res.summary}\n`);
+  }
+  if (res.attempts && res.attempts > 1) {
+    process.stdout.write(`(took ${res.attempts} attempts to produce a valid spec)\n`);
+  }
+  for (const w of res.warnings ?? []) {
+    process.stderr.write(`warning: ${w}\n`);
+  }
+  process.stdout.write(
+    `Review and activate it on the canvas, or run: auto-swe workflows show "${tpl.name}"\n`
   );
   return 0;
 }
