@@ -2,6 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   resolveConsolidationConfig,
   resolveEvalScheduleConfig,
+  resolveRevalidationConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -32,6 +33,7 @@ import {
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
+  updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
   writeSystemConfigAudit,
@@ -137,6 +139,23 @@ const EvalSchedulePutBody = z.object({
     .min(1)
     .max(100)
     .regex(/^[a-z0-9_-]+$/)
+    .optional(),
+  enabled: z.boolean().optional(),
+});
+
+const RevalidationPutBody = z.object({
+  cronExpression: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^(\S+\s+){4}\S+$/, 'must be a valid 5-field cron expression (e.g. "0 5 * * 0")')
+    .optional(),
+  datasetSlug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9_-]+$/)
+    .nullable()
     .optional(),
   enabled: z.boolean().optional(),
 });
@@ -508,6 +527,36 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     { schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       await fastify.temporal.triggerEvalNow();
+      return reply.send({ data: { triggered: true } });
+    }
+  );
+
+  // ── Re-validation schedule ───────────────────────────────────────────────────
+
+  f.get('/config/revalidation', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const config = await resolveRevalidationConfig();
+    const status = await fastify.temporal.getRevalidationScheduleStatus();
+    return reply.send({ data: { ...config, schedule: status } });
+  });
+
+  f.put(
+    '/config/revalidation',
+    { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      await updateRevalidationScheduleConfig(prisma, req.body);
+
+      const config = await resolveRevalidationConfig();
+      await fastify.temporal.syncRevalidationSchedule(config);
+      const status = await fastify.temporal.getRevalidationScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.post(
+    '/config/revalidation/trigger',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      await fastify.temporal.triggerRevalidationNow();
       return reply.send({ data: { triggered: true } });
     }
   );

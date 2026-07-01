@@ -763,6 +763,9 @@ CREATE TABLE "workflow_defaults" (
     "eval_schedule_dataset_slug" TEXT NOT NULL DEFAULT 'swe-implementer-golden',
     "eval_schedule_candidate_ref" TEXT NOT NULL DEFAULT 'main',
     "eval_schedule_baseline_ref" TEXT NOT NULL DEFAULT 'last-release',
+    "revalidation_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "revalidation_cron" TEXT NOT NULL DEFAULT '0 5 * * 0',
+    "revalidation_dataset_slug" TEXT,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")

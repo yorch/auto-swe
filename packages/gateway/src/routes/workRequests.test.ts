@@ -147,6 +147,12 @@ describe('POST /api/v1/work-requests', () => {
         paused: false,
       }),
       getWorkflowAuthorJobStatus: async () => ({ phase: 'generating', status: 'running' }),
+      getRevalidationScheduleStatus: async () => ({
+        exists: false,
+        lastRunAt: null,
+        nextRunAt: null,
+        paused: false,
+      }),
       getWorkRequestScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -167,9 +173,11 @@ describe('POST /api/v1/work-requests', () => {
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},
       syncEvalSchedule: async () => {},
+      syncRevalidationSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
+      triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
     });
 

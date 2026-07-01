@@ -1136,6 +1136,39 @@ export async function updateEvalScheduleConfig(
   });
 }
 
+// ─── Re-validation schedule ───────────────────────────────────────────────────
+
+export type RevalidationConfigInput = {
+  cronExpression?: string;
+  enabled?: boolean;
+  datasetSlug?: string | null;
+};
+
+/// Writes the re-validation fields onto the WorkflowDefaults singleton.
+export async function updateRevalidationScheduleConfig(
+  prisma: PrismaClient,
+  body: RevalidationConfigInput
+): Promise<void> {
+  const { enabled, cronExpression, datasetSlug } = body;
+
+  const data: Record<string, unknown> = {};
+  if (enabled !== undefined) {
+    data.revalidationEnabled = enabled;
+  }
+  if (cronExpression !== undefined) {
+    data.revalidationCron = cronExpression;
+  }
+  if (datasetSlug !== undefined) {
+    data.revalidationDatasetSlug = datasetSlug;
+  }
+
+  await prisma.workflowDefaults.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+}
+
 // ─── Audit log + decrypt check ────────────────────────────────────────────────
 
 /// Returns recent config audit entries with actor emails resolved in one

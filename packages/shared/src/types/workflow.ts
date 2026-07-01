@@ -284,3 +284,25 @@ export interface ScheduledConsolidationResult {
   reposProcessed: number;
   repoResults: ScheduledConsolidationRepoResult[];
 }
+
+// ── Eval golden-set re-validation schedule ──
+
+/** Mirrors RevalidateResult from evalRevalidate activity. */
+export interface RevalidateResult {
+  checked: number;
+  /** Newly quarantined this run (were passing, now stale). */
+  quarantined: number;
+  /** Restored this run (were quarantined, now pass again). */
+  restored: number;
+}
+
+/** Input for the system-wide scheduled re-validation workflow. */
+export interface ScheduledRevalidationInput {
+  /** Optional slug substring to filter which datasets are re-validated. */
+  datasetSlug?: string;
+}
+
+export interface ScheduledRevalidationResult {
+  datasetsProcessed: number;
+  caseResults: { datasetId: string; result: RevalidateResult | { error: string } }[];
+}

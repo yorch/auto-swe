@@ -422,6 +422,29 @@ export async function resolveEvalScheduleConfig(
   };
 }
 
+// ─── Re-validation schedule ───────────────────────────────────────────────────
+
+export interface ResolvedRevalidationConfig {
+  /// Whether the Temporal Schedule should be active (unpaused).
+  enabled: boolean;
+  /// Standard cron expression (5-field) for when to run re-validation.
+  cronExpression: string;
+  /// Optional slug substring to filter which datasets are re-validated. Null = all datasets.
+  datasetSlug: string | null;
+}
+
+export async function resolveRevalidationConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedRevalidationConfig> {
+  const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
+  return {
+    cronExpression: row?.revalidationCron ?? '0 5 * * 0',
+    datasetSlug: row?.revalidationDatasetSlug ?? null,
+    // Off by default — needs seeded EvalDatasets + a Docker-capable worker.
+    enabled: row?.revalidationEnabled ?? false,
+  };
+}
+
 // ─── Issue tracker ────────────────────────────────────────────────────────────
 
 export type TrackerProvider = 'jira' | 'linear' | 'github';

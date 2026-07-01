@@ -431,6 +431,54 @@ export function triggerConsolidationNow() {
   );
 }
 
+// ── Re-validation schedule ──
+
+export interface RevalidationScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+export interface RevalidationConfig {
+  enabled: boolean;
+  cronExpression: string;
+  datasetSlug: string | null;
+  schedule: RevalidationScheduleStatus;
+}
+
+export interface RevalidationConfigInput {
+  enabled?: boolean;
+  cronExpression?: string;
+  datasetSlug?: string | null;
+}
+
+export function useRevalidationConfig() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: RevalidationConfig }>('/api/v1/admin/config/revalidation')
+        .then((r) => r.data),
+    queryKey: ['admin-config-revalidation'],
+  });
+}
+
+export function useUpdateRevalidationConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RevalidationConfigInput) =>
+      api.put<{ data: RevalidationConfig }>('/api/v1/admin/config/revalidation', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-revalidation'] }),
+  });
+}
+
+export function triggerRevalidationNow() {
+  return api.post<{ data: { triggered: boolean } }>(
+    '/api/v1/admin/config/revalidation/trigger',
+    {}
+  );
+}
+
 // ── Config audit log ──
 
 export interface ConfigAuditEntry {

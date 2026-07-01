@@ -1368,6 +1368,13 @@ model WorkflowDefaults {
   evalScheduleCandidateRef String @default("main") @map("eval_schedule_candidate_ref")
   evalScheduleBaselineRef  String @default("last-release") @map("eval_schedule_baseline_ref")
 
+  // Eval golden-set re-validation schedule. The gateway reads these on startup
+  // and on PUT /api/v1/admin/config/revalidation. Disabled by default — needs seeded
+  // EvalDatasets and a Docker-capable worker.
+  revalidationEnabled     Boolean  @default(false) @map("revalidation_enabled")
+  revalidationCron        String   @default("0 5 * * 0") @map("revalidation_cron")
+  revalidationDatasetSlug String?  @map("revalidation_dataset_slug")
+
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("workflow_defaults")
