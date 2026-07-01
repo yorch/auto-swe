@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -92,14 +93,14 @@ export default function UsersPage() {
         />
         <Card variant="inset">
           {inviteError && (
-            <div className="mb-3 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-              ! {inviteError}
-            </div>
+            <Alert className="mb-3" variant="error">
+              {inviteError}
+            </Alert>
           )}
           {inviteInfo && (
-            <div className="mb-3 rounded-[9px] border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
-              ✓ {inviteInfo}
-            </div>
+            <Alert className="mb-3" variant="success">
+              {inviteInfo}
+            </Alert>
           )}
           <form className="flex flex-wrap items-end gap-3" onSubmit={handleInvite}>
             <div className="flex-1 min-w-[240px]">

@@ -1,13 +1,7 @@
 'use client';
 
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import {
-  EmptyChart,
-  LEGEND_STYLE,
-  TOOLTIP_ITEM_STYLE,
-  TOOLTIP_LABEL_STYLE,
-  TOOLTIP_STYLE,
-} from './chartChrome';
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer } from 'recharts';
+import { CHART_HEIGHT, ChartTooltip, EmptyChart, LEGEND_STYLE } from './chartChrome';
 import { STATUS_CHART_COLORS } from './colors';
 
 interface Props {
@@ -20,7 +14,7 @@ export function WorkflowStatusChart({ data }: Props) {
   }
 
   return (
-    <ResponsiveContainer height={280} width="100%">
+    <ResponsiveContainer height={CHART_HEIGHT} width="100%">
       <PieChart>
         <Pie
           cx="50%"
@@ -39,12 +33,7 @@ export function WorkflowStatusChart({ data }: Props) {
             <Cell fill={STATUS_CHART_COLORS[entry.status] ?? '#7a766c'} key={entry.status} />
           ))}
         </Pie>
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          formatter={(value, name) => [value, String(name).replace(/_/g, ' ').toLowerCase()]}
-          itemStyle={TOOLTIP_ITEM_STYLE}
-          labelStyle={TOOLTIP_LABEL_STYLE}
-        />
+        <ChartTooltip formatter={(value, name) => [value, String(name).replace(/_/g, ' ').toLowerCase()]} />
         <Legend
           formatter={(value) => String(value).replace(/_/g, ' ').toLowerCase()}
           wrapperStyle={LEGEND_STYLE}

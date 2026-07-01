@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { SecurityEventBadge, SecurityEventList } from '@/components/security/SecurityEventList';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import type { SecurityEventType } from '@/hooks/useAdmin';
 import { useSecurityEvents } from '@/hooks/useAdmin';
@@ -50,28 +51,24 @@ export default function AdminSecurityPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Security Events</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Recent scanner findings across all runs — shell command blocks, file blocks, content
-            security violations, static code analysis findings, and suspicious LLM output. Click any
-            event to expand details. Events refresh every 30 s.
-          </p>
-        </div>
-        <div className="w-52 shrink-0">
-          <Select
-            onChange={(e) => setTypeFilter(e.target.value as SecurityEventType | '')}
-            value={typeFilter}
-          >
-            {TYPE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
+      <PageHeader
+        actions={
+          <div className="w-52 shrink-0">
+            <Select
+              onChange={(e) => setTypeFilter(e.target.value as SecurityEventType | '')}
+              value={typeFilter}
+            >
+              {TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        }
+        subtitle="Recent scanner findings across all runs — shell command blocks, file blocks, content security violations, static code analysis findings, and suspicious LLM output. Click any event to expand details. Events refresh every 30 s."
+        title="Security Events"
+      />
 
       {isLoading ? (
         <LoadingState />

@@ -7,7 +7,9 @@ import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type ScannerPattern,
   useCreateScannerPattern,
@@ -373,21 +375,7 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
           )}
         </td>
         <td className="py-2 pr-4">
-          <button
-            className={`h-5 w-10 rounded-full transition-colors ${
-              pattern.isActive ? 'bg-ember-400' : 'bg-ink-500'
-            }`}
-            disabled={update.isPending}
-            onClick={toggleActive}
-            title={pattern.isActive ? 'Disable' : 'Enable'}
-            type="button"
-          >
-            <span
-              className={`block h-4 w-4 translate-x-0.5 rounded-full bg-paper-100 transition-transform ${
-                pattern.isActive ? 'translate-x-[1.375rem]' : ''
-              }`}
-            />
-          </button>
+          <ToggleSwitch checked={pattern.isActive} disabled={update.isPending} onChange={toggleActive} />
         </td>
         <td className="py-2 text-right">
           <div className="flex items-center justify-end gap-2">
@@ -463,19 +451,15 @@ export default function AdminScannerPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Scanner Patterns</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Regex patterns used across four scanning stages: skill content injection/exfiltration
-            detection, shell command blocking in the agent workspace, and advisory code security
-            findings fed to the security reviewer. Built-in patterns can be toggled but not deleted.
-          </p>
-        </div>
-        <Button onClick={() => setNewOpen(true)} variant="primary">
-          + New Pattern
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New Pattern
+          </Button>
+        }
+        subtitle="Regex patterns used across four scanning stages: skill content injection/exfiltration detection, shell command blocking in the agent workspace, and advisory code security findings fed to the security reviewer. Built-in patterns can be toggled but not deleted."
+        title="Scanner Patterns"
+      />
 
       {isLoading ? (
         <LoadingState />

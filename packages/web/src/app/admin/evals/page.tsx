@@ -3,6 +3,7 @@
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useEvalDatasets, useEvalResults } from '@/hooks/useAdmin';
 
 /** Group results by scorer → { n, passRate or mean }. The per-scorer trend the
@@ -42,7 +43,7 @@ export default function AdminEvalsPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Evals</h2>
+      <PageHeader title="Evals" />
 
       <Card>
         <CardHeader>

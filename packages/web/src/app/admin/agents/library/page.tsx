@@ -9,6 +9,7 @@ import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -304,18 +305,15 @@ export default function AgentLibraryPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Agent Library</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            First-class, versioned Agents. Editing cuts a new version; running workflows stay pinned
-            to the version they started with.
-          </p>
-        </div>
-        <Button onClick={() => setCreateOpen(true)} variant="primary">
-          + New Agent
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setCreateOpen(true)} variant="primary">
+            + New Agent
+          </Button>
+        }
+        subtitle="First-class, versioned Agents. Editing cuts a new version; running workflows stay pinned to the version they started with."
+        title="Agent Library"
+      />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
       {warnings.length > 0 ? (

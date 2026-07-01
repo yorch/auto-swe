@@ -8,6 +8,7 @@ import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
 import { OAuthTab } from '@/components/integrations/OAuthTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { StorageTab } from '@/components/integrations/StorageTab';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
 
 type Tab = 'github' | 'slack' | 'storage' | 'tracker' | 'knowledge-base' | 'oauth' | 'audit-log';
@@ -28,8 +29,8 @@ export default function AdminIntegrationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Admin — Integrations</h2>
-        <p className="mt-1 text-sm text-paper-400">
+        <PageHeader className="mb-3" title="Admin — Integrations" />
+        <p className="max-w-2xl text-sm leading-relaxed text-paper-400">
           Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
           Masked fields show only the last four characters — enter a new value to rotate. An{' '}
           <span className="rounded bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">

@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import {
   type OrgRole,
@@ -101,8 +102,8 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Organization Settings</h2>
-        <p className="mt-1 font-mono text-xs text-paper-500">{orgId}</p>
+        <PageHeader className="mb-3" title="Organization Settings" />
+        <p className="font-mono text-xs text-paper-500">{orgId}</p>
       </div>
 
       {error ? <Alert variant="error">{error}</Alert> : null}

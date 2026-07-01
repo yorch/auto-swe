@@ -2,12 +2,16 @@
 
 import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
   useCreateSchedule,
@@ -17,9 +21,6 @@ import {
   useUpdateSchedule,
 } from '@/hooks/useSchedules';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
-
-const selectClass =
-  'w-full rounded-[9px] border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-paper-100 focus:border-ember-400 focus:outline-none';
 
 function fmtTime(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : '—';
@@ -84,8 +85,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           />
         </FieldWrapper>
         <FieldWrapper label="Repository">
-          <select
-            className={selectClass}
+          <Select
             onChange={(e) => setForm((f) => ({ ...f, repoId: e.target.value }))}
             required
             value={form.repoId}
@@ -100,7 +100,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
                   {r.organizationName}/{r.repoName}
                 </option>
               ))}
-          </select>
+          </Select>
         </FieldWrapper>
         <div className="grid grid-cols-2 gap-4">
           <FieldWrapper label="Cron (5-field, UTC)">
@@ -122,8 +122,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
         </div>
         <div className="grid grid-cols-2 gap-4">
           <FieldWrapper label="Template (blank → team default)">
-            <select
-              className={selectClass}
+            <Select
               onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
               value={form.templateId}
             >
@@ -133,11 +132,10 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
                   {t.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </FieldWrapper>
           <FieldWrapper label="Budget Tier">
-            <select
-              className={selectClass}
+            <Select
               onChange={(e) =>
                 setForm((f) => ({
                   ...f,
@@ -149,12 +147,11 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
               <option value="STANDARD">STANDARD</option>
               <option value="LARGE">LARGE</option>
               <option value="EPIC">EPIC</option>
-            </select>
+            </Select>
           </FieldWrapper>
         </div>
         <FieldWrapper label="Description (what the agent should do each fire)">
-          <textarea
-            className={selectClass}
+          <Textarea
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             placeholder="Update all dependencies to their latest compatible versions and fix any breakages."
             required
@@ -162,7 +159,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
             value={form.description}
           />
         </FieldWrapper>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
@@ -209,7 +206,7 @@ function DeleteConfirmModal({
         <p className="text-sm text-paper-400">
           This removes the schedule and its Temporal Schedule. Past runs and their history are kept.
         </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} variant="ghost">
             Cancel
@@ -321,20 +318,15 @@ export default function AdminSchedulesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Scheduled Work Requests</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Standing automation: each schedule fires the workflow engine on a cron cadence against
-            one repository (e.g. a weekly dependency update). Fires reuse the same synthetic ticket
-            and branch; runs appear in Run History attributed to the schedule&apos;s standing work
-            request. Templates are snapshotted when the schedule is saved.
-          </p>
-        </div>
-        <Button onClick={() => setNewOpen(true)} variant="primary">
-          + New Schedule
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New Schedule
+          </Button>
+        }
+        subtitle="Standing automation: each schedule fires the workflow engine on a cron cadence against one repository (e.g. a weekly dependency update). Fires reuse the same synthetic ticket and branch; runs appear in Run History attributed to the schedule's standing work request. Templates are snapshotted when the schedule is saved."
+        title="Scheduled Work Requests"
+      />
 
       <Card>
         <CardHeader>
