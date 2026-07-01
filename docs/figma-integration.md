@@ -7,14 +7,17 @@ capability**, not a SWE-only bolt-on: the engine gains a generic "design connect
 context-enrichment seam, and SWE ships the first design *content* (a design-fidelity skill, a
 design-context provider) as seed material.
 
-> Status: **PROPOSED** (rev. 2026-06-30). No code yet — this doc establishes the vision, the
-> conceptual grounding, and a phased build plan sized so each phase lands in one (or a small handful
-> of) PR(s). The scope decided up front: **lead with P0 (design-faithful implementation via an
-> `mcp` Connection — reuses the P2 MCP infrastructure with no schema change) + P1 (submit-time
-> design context, mirroring the tracker/knowledge-base connectors)**. Token-sync (P2) and design-QA
-> review (P3) are scoped here as deliberately-later phases. Per-phase build plans
-> (`figma-integration-p0.md`, …) split out as phases are committed, mirroring `platform-pivot-p*.md`
-> and `evals-p*.md`.
+> Status: **P0 + P1 implemented** (rev. 2026-07-01). Shipped in this change:
+> **P0** — a built-in `design-fidelity` skill (implementer) that steers faithful UI implementation
+> whenever a Figma design is referenced and/or Figma MCP tools are bound (the MCP wiring itself
+> reuses the P2 `mcp` Connection path with **no schema change** — attach the Figma Dev Mode endpoint
+> as an `mcp` Connection and enable `'mcp'` on the agent). **P1** — submit-time design context: a
+> `FigmaConfig` singleton + `resolveFigmaConfig()`, a `FigmaProvider` (REST) behind
+> `createFigmaDesignProvider`, an `extractFigmaRefs` parser, a best-effort `enrichWithDesignData`
+> hook that seeds `ContextSnapshot.rawDesign`, worker wiring that surfaces a compact design block in
+> the implementer prompt, an admin panel at `/admin/integrations → Figma`, and unit tests. Token-sync
+> (P2) and design-QA review (P3) remain deliberately-later phases (unbuilt). The rest of this doc is
+> the original RFC — vision, grounding, and the phased plan; §3–§4 now describe shipped behavior.
 
 ---
 
