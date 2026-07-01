@@ -625,7 +625,7 @@ describe('POST /api/v1/auth/slack/interactive — shortcuts', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(state.channelAssistantStarts).toHaveLength(1);
     const start = state.channelAssistantStarts[0];
-    expect(start?.workflowId).toBe('chan-chan-1-1700.1');
+    expect(start?.workflowId).toBe('chan-chan-1-ask-1700.1');
     expect(start?.input.userText).toBe('summarise this thread');
     expect(start?.input.threadTs).toBe('1700.1');
     expect(start?.input.followup).toBe(false);
@@ -644,6 +644,20 @@ describe('POST /api/v1/auth/slack/interactive — shortcuts', () => {
     expect(res.statusCode).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(state.channelAssistantStarts).toHaveLength(1);
+  });
+
+  it('message shortcut on a text-less message (file/image only) starts no turn', async () => {
+    const res = await injectShortcut({
+      callback_id: 'auto_swe_ask_shortcut',
+      channel: { id: 'C-msg' },
+      message: { text: '', ts: '1700.3' },
+      team: { id: 'T1' },
+      type: 'message_action',
+      user: { id: 'U1' },
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(0);
   });
 });
 
