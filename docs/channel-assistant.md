@@ -345,7 +345,20 @@ Three follow-on capabilities round out memory and task execution:
   handler. The `messages` tab is ignored. Slash commands (`/auto-swe help |
   workflows list | workflows show | run`) already existed. Requires the
   `app_home_opened` event subscription + Home tab enabled in the Slack app config
-  (see `slack-app-setup.md`). Only Slack message/global shortcuts remain unwired.
+  (see `slack-app-setup.md`).
+
+- **Slack shortcuts (packaged UX).** Two manifest shortcuts, both handled by the
+  interactivity endpoint (`/api/v1/auth/slack/interactive`): a **global** shortcut
+  "Run a workflow" (`auto_swe_run_shortcut`) opens the same run-picker modal as
+  `/auto-swe run` (`buildRunModalView` + `openSlackView`; requires a linked
+  account), and a **message** shortcut "Ask auto-swe about this"
+  (`auto_swe_ask_shortcut`) starts a channel-assistant turn seeded with the
+  message's text, replying in its thread via the same `provisionChannel` +
+  `startChannelAssistant` path an `@mention` uses (so it needs no account link;
+  the per-message workflow id is REJECT_DUPLICATE, so a double-click is
+  idempotent). Files: `packages/gateway/src/routes/slack.ts`
+  (`handleAskMessageShortcut` + the two interactivity branches),
+  `docs/slack-app-manifest.json` (`features.shortcuts`).
 
 - **Multi-workspace install (Full multi-workspace).** One Slack app installs into
   many workspaces, each with its own bot token. `GET /api/v1/auth/slack/install`

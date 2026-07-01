@@ -25,7 +25,7 @@ All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
 | Endpoint | Used by |
 |---|---|
 | `POST /commands` | `/auto-swe` slash command (HMAC-verified via `SLACK_SIGNING_SECRET`) |
-| `POST /interactive` | Modal submissions (`/auto-swe run` workflow picker) |
+| `POST /interactive` | Modal submissions (`/auto-swe run` picker), HITL buttons, and shortcuts (global "Run a workflow" + message "Ask auto-swe about this") |
 | `POST /events` | Slack Events API — the @mention teammate + thread-reply task steering (HMAC-verified; acks within 3s, then starts the assistant workflow or signals an in-flight task run) |
 | `GET  /callback` | OAuth redirect target for the account-link flow (`/connect`) |
 | `GET  /connect` | Account-link flow surfaced in the unknown-Slack-user ephemeral hint (user scope `identity.basic`) |
@@ -71,6 +71,15 @@ The first @mention in a channel auto-creates the channel mapping using the defau
 ## App Home tab (Gap I — packaged UX)
 
 Enable the **App Home** feature in the Slack app config (Home Tab on) and subscribe to the `app_home_opened` bot event. When a user opens the app's **Home** tab, the gateway publishes a Block Kit Home view (via `views.publish`) describing what the assistant does and how to drive it (@mention, thread steering, follow-up sessions, slash commands). The view is static, published per-user on open; the `messages` tab is ignored. No extra bot scope is required beyond `chat:write`.
+
+## Shortcuts
+
+The manifest declares two Slack shortcuts (both delivered to the interactivity endpoint `/api/v1/auth/slack/interactive`, so no extra setup beyond interactivity being enabled):
+
+- **Global shortcut — "Run a workflow"** (`callback_id: auto_swe_run_shortcut`). From Slack's ⚡ composer menu anywhere, opens the same run-picker modal as `/auto-swe run` (`views.open`). Requires a linked account (the modal lists the templates + repos you can access).
+- **Message shortcut — "Ask auto-swe about this"** (`callback_id: auto_swe_ask_shortcut`). From a message's ⋯ (More actions) menu, starts a channel-assistant turn seeded with that message's text and replies in its thread — the same path an `@mention` uses (so it does NOT require the clicker to have linked their account). The per-message workflow id is deterministic + REJECT_DUPLICATE, so clicking twice on the same message is idempotent.
+
+No extra bot scopes are needed beyond those already listed. Adding shortcuts to an installed app requires a reinstall (see the scope-change note below).
 
 ## Bot scopes
 

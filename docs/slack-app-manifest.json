@@ -14,6 +14,20 @@
       "always_online": true,
       "display_name": "auto-swe"
     },
+    "shortcuts": [
+      {
+        "callback_id": "auto_swe_run_shortcut",
+        "description": "Open the auto-swe workflow run picker",
+        "name": "Run a workflow",
+        "type": "global"
+      },
+      {
+        "callback_id": "auto_swe_ask_shortcut",
+        "description": "Ask the auto-swe assistant about this message",
+        "name": "Ask auto-swe about this",
+        "type": "message"
+      }
+    ],
     "slash_commands": [
       {
         "command": "/auto-swe",

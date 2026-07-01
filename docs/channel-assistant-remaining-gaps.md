@@ -37,7 +37,7 @@
 | F | Memory consolidation / hygiene for channel memory | `consolidateChannelMemory` on every ambient fire | **Have ✅ #112** |
 | G | "Does not report from private channels" rule | `SlackChannel.isPrivate` excludes the channel as a cross-channel source | **Have ✅** |
 | H | Persistent live conversational session | opt-in follow-up sessions: plain reply continues a thread (no re-`@mention`), SKIP-aware addressed-to-me intent gate | **Have ✅** |
-| I | Packaged Slack app UX (App Home, slash commands, install) | App Home tab (`views.publish`) + `/auto-swe` slash commands + one-click multi-workspace OAuth install | **Have ✅** |
+| I | Packaged Slack app UX (App Home, slash commands, install, shortcuts) | App Home tab (`views.publish`) + `/auto-swe` slash commands + one-click multi-workspace OAuth install + global/message shortcuts | **Have ✅** |
 | J | Multiplayer auditing (who asked what, per channel) | `GET /:id/audit` + admin "Audit" modal over channel runs | **Have ✅** |
 | K | Maturity / battle-testing at scale | newly built, not CI-validated | **Missing** |
 | — | One shared `@assistant` per channel | shared agent + memory + steering | Have |
@@ -243,8 +243,16 @@ signing secret + OAuth client id/secret stay singleton in `SlackConfig` — so e
 Slack post/read resolves the per-workspace token by channel (`C…`) or workspace
 (`T…`) id via `resolveSlackBotTokenForSlackChannel` / `resolveSlackBotTokenForWorkspace`,
 falling back to the singleton token when a workspace hasn't installed. The admin
-Slack tab shows an "Add to Slack" button + per-workspace install status. Slack
-shortcuts (message/global) remain unwired — a minor remaining nicety.
+Slack tab shows an "Add to Slack" button + per-workspace install status.
+
+**Follow-up shipped — Slack shortcuts.** Two manifest shortcuts, both on the
+interactivity endpoint: a **global** "Run a workflow" (`auto_swe_run_shortcut`)
+opens the same run-picker modal as `/auto-swe run`, and a **message** "Ask
+auto-swe about this" (`auto_swe_ask_shortcut`) starts a channel-assistant turn on
+the message (same `provisionChannel` + `startChannelAssistant` path as an
+`@mention`; no account link required; REJECT_DUPLICATE per-message id so a
+double-click is idempotent). With this the packaged Slack-app surface (App Home +
+slash commands + install + shortcuts) is complete.
 
 ### J. Multiplayer auditing — **Have ✅ · shipped**
 Claude Tag's own reported concern: multiplayer makes **permissions + auditing**
@@ -308,14 +316,15 @@ A/C/D/E/F shipped (A + C in #113, D/E/F in #112), along with passive memory
 ingestion and per-channel persona. Remaining work, re-ranked for discussion (not a
 commitment):
 
-All lettered feature gaps (A–J) **and** the four small follow-ups are now shipped —
+All lettered feature gaps (A–J) **and** the small follow-ups are now shipped —
 **D** steerable fired run, **F** per-channel consolidation config, **H**
-addressed-to-me intent gate, and **I** one-click multi-workspace OAuth install. The
-only remaining work is:
+addressed-to-me intent gate, **I** one-click multi-workspace OAuth install, and the
+Slack **global + message shortcuts**. The only remaining work is:
 1. **K — pilot + hardening**: cross-cutting; start a pilot channel regardless. The
    only non-technical gap left — it needs a real install + observation, not code.
-2. **Minor niceties**: Slack message/global shortcuts aren't wired (slash commands
-   + App Home + install already cover the packaged-product surface).
+
+The full packaged Slack-app surface — App Home, slash commands, one-click install,
+and shortcuts — is now complete; nothing on the product surface remains unwired.
 
 > Resolved (B shipped): the open question was *how aggressively* to do org-wide
 > proactive visibility given it trades against per-channel isolation. The answer

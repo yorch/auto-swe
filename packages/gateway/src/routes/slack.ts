@@ -90,7 +90,11 @@ interface SlackInteractivePayload {
   trigger_id?: string;
   response_url?: string;
   channel?: { id?: string };
-  message?: { ts?: string };
+  /** Present on shortcut (`type: 'shortcut'`) + message-action (`message_action`) payloads. */
+  callback_id?: string;
+  /** Workspace context on shortcut / message-action payloads (the `T…` id). */
+  team?: { id?: string };
+  message?: { ts?: string; text?: string; thread_ts?: string };
   view?: {
     callback_id?: string;
     state?: {
@@ -392,6 +396,19 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       const actionId = payload.actions?.[0]?.action_id ?? '';
       const isHitlResolve = actionId === 'hitl_resolve' || actionId.startsWith('hitl_resolve:');
 
+      // Message shortcut ("Ask auto-swe about this"): start a channel-assistant
+      // turn seeded with the message text, replying in its thread. Like an
+      // @mention, it does NOT require the clicker's account to be linked, so it's
+      // handled before the account-link gate below. Ack within Slack's 3s window,
+      // then provision + start out-of-band (the worker posts the reply).
+      if (payload.type === 'message_action' && payload.callback_id === 'auto_swe_ask_shortcut') {
+        reply.send('');
+        void handleAskMessageShortcut(fastify, payload).catch((err) => {
+          request.log.error({ err }, 'slack message shortcut (ask) failed');
+        });
+        return reply;
+      }
+
       // Resolve user by Slack ID
       const user = await fastify.prisma.user.findFirst({
         where: { slackId: slackUserId },
@@ -412,6 +429,29 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send({
           error: { code: 'USER_NOT_FOUND', message: 'No user linked to this Slack account' },
         });
+      }
+
+      // Global shortcut ("Run a workflow"): open the same run-picker modal as
+      // `/auto-swe run`. Requires a linked user (the modal lists the templates +
+      // repos they can access) — an unlinked clicker was already handled by the
+      // account-link gate above.
+      if (payload.type === 'shortcut' && payload.callback_id === 'auto_swe_run_shortcut') {
+        if (!payload.trigger_id) {
+          return { data: { ignored: true, reason: 'missing_trigger_id' } };
+        }
+        const built = await buildRunModalView(fastify, user, '', '');
+        if (!built.ok) {
+          return { data: { ignored: true, reason: built.error } };
+        }
+        const botToken = await resolveSlackBotTokenForWorkspace(payload.team?.id ?? '');
+        const opened = await openSlackView(
+          { triggerId: payload.trigger_id, view: built.view },
+          botToken ?? undefined
+        );
+        if (!opened.ok) {
+          return { data: { ignored: true, reason: opened.error ?? 'views_open_failed' } };
+        }
+        return reply.send('');
       }
 
       // View-submission: the workflow picker modal closing with "Run".
@@ -929,6 +969,57 @@ async function trySteerThreadTask(
     );
   }
   return true;
+}
+
+/**
+ * Message shortcut handler ("Ask auto-swe about this"). Provisions the channel
+ * (like an @mention) and starts a channel-assistant turn seeded with the message
+ * text, threaded under that message. Runs out-of-band after the interactivity ack;
+ * owns its errors (logged by the caller's `.catch`).
+ */
+async function handleAskMessageShortcut(
+  fastify: FastifyInstance,
+  payload: SlackInteractivePayload
+): Promise<void> {
+  const slackChannelId = payload.channel?.id;
+  const messageTs = payload.message?.ts;
+  const slackTeamId = payload.team?.id;
+  if (!slackChannelId || !messageTs || !slackTeamId) {
+    fastify.log.warn(
+      { callbackId: payload.callback_id },
+      'ask message shortcut missing channel/message/team'
+    );
+    return;
+  }
+
+  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId, {});
+  if (!channelRow) {
+    return;
+  }
+
+  // Reply in the message's thread (or thread under it when it's a top-level message).
+  const threadTs = payload.message?.thread_ts ?? messageTs;
+  const input: ChannelAssistantTurnInput = {
+    channelId: channelRow.id,
+    followup: false,
+    orgId: channelRow.orgId,
+    slackChannelId,
+    teamId: channelRow.teamId,
+    threadTs,
+    userSlackId: payload.user?.id ?? '',
+    userText: stripMentions(payload.message?.text ?? ''),
+  };
+
+  try {
+    await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${messageTs}`, input);
+  } catch (err) {
+    // Deterministic per-message workflowId (REJECT_DUPLICATE) → clicking the
+    // shortcut twice on the same message is idempotent.
+    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
