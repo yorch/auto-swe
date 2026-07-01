@@ -395,6 +395,8 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
       const actionId = payload.actions?.[0]?.action_id ?? '';
       const isHitlResolve = actionId === 'hitl_resolve' || actionId.startsWith('hitl_resolve:');
+      const isRunShortcut =
+        payload.type === 'shortcut' && payload.callback_id === 'auto_swe_run_shortcut';
 
       // Message shortcut ("Ask auto-swe about this"): start a channel-assistant
       // turn seeded with the message text, replying in its thread. Like an
@@ -423,6 +425,17 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
             payload,
             ':lock: Link your Slack account in Settings first — then you can resolve steps from Slack.',
             { ephemeral: true }
+          );
+          return { data: { ignored: true, reason: 'slack_user_not_linked' } };
+        }
+        if (isRunShortcut && payload.trigger_id) {
+          // A global shortcut has no channel/response_url, so an ephemeral hint
+          // can't reach the clicker — open an info modal via views.open instead
+          // of a bare 403 (which Slack renders as nothing).
+          const botToken = await resolveSlackBotTokenForWorkspace(payload.team?.id ?? '');
+          await openSlackView(
+            { triggerId: payload.trigger_id, view: buildLinkAccountModalView() },
+            botToken ?? undefined
           );
           return { data: { ignored: true, reason: 'slack_user_not_linked' } };
         }
@@ -871,19 +884,35 @@ async function processChannelEvent(
     userText,
   };
 
+  const started = await startChannelTurn(fastify, `chan-${channelRow.id}-${eventTs}`, input);
+  if (!started) {
+    fastify.log.info(
+      { channelId: channelRow.id, eventTs },
+      'channel-assistant workflow already started for this event — skipping redelivery'
+    );
+  }
+}
+
+/**
+ * Start a channel-assistant turn, swallowing the REJECT_DUPLICATE rejection.
+ * Channel-turn workflow ids are deterministic (`chan-<id>-<ts>` for @mentions,
+ * `chan-<id>-ask-<ts>` for the message shortcut) and started with
+ * REJECT_DUPLICATE, so a Slack redelivery of the same event — or a double
+ * shortcut click on the same message — is rejected here. That's the desired
+ * idempotent behaviour: returns `true` when a fresh run started, `false` when it
+ * was a duplicate (caller decides whether to log). Other errors propagate.
+ */
+async function startChannelTurn(
+  fastify: FastifyInstance,
+  workflowId: string,
+  input: ChannelAssistantTurnInput
+): Promise<boolean> {
   try {
-    await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${eventTs}`, input);
+    await fastify.temporal.startChannelAssistant(workflowId, input);
+    return true;
   } catch (err) {
-    // The workflowId is deterministic (`chan-<id>-<ts>`) and started with
-    // REJECT_DUPLICATE, so a Slack redelivery of the same event after the first
-    // run closed is rejected here. That's the desired idempotent behaviour —
-    // swallow it as a no-op rather than surfacing it as an error.
     if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-      fastify.log.info(
-        { channelId: channelRow.id, eventTs },
-        'channel-assistant workflow already started for this event — skipping redelivery'
-      );
-      return;
+      return false;
     }
     throw err;
   }
@@ -992,7 +1021,23 @@ async function handleAskMessageShortcut(
     return;
   }
 
-  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId, {});
+  // File/image-only messages carry no text — a turn seeded with an empty prompt
+  // is useless, so skip rather than spawn a no-op workflow.
+  const userText = stripMentions(payload.message?.text ?? '');
+  if (!userText) {
+    fastify.log.info(
+      { messageTs, slackChannelId },
+      'ask message shortcut on empty message — skipping'
+    );
+    return;
+  }
+
+  // Gap G: Slack private-channel ids are prefixed `G` (public `C`). Pass it as a
+  // best-effort default for a freshly provisioned channel's `isPrivate` flag —
+  // the shortcut payload lacks the `channel_type` the events path uses.
+  const channelRow = await provisionChannel(fastify, slackTeamId, slackChannelId, {
+    isPrivate: slackChannelId.startsWith('G'),
+  });
   if (!channelRow) {
     return;
   }
@@ -1007,19 +1052,14 @@ async function handleAskMessageShortcut(
     teamId: channelRow.teamId,
     threadTs,
     userSlackId: payload.user?.id ?? '',
-    userText: stripMentions(payload.message?.text ?? ''),
+    userText,
   };
 
-  try {
-    await fastify.temporal.startChannelAssistant(`chan-${channelRow.id}-${messageTs}`, input);
-  } catch (err) {
-    // Deterministic per-message workflowId (REJECT_DUPLICATE) → clicking the
-    // shortcut twice on the same message is idempotent.
-    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-      return;
-    }
-    throw err;
-  }
+  // Namespace with `-ask-` so the shortcut's per-message workflowId never
+  // collides with the @mention path's `chan-<id>-<ts>` for the same message
+  // ts — a collision would be swallowed as a duplicate and the click would go
+  // unanswered. `startChannelTurn` keeps the double-click idempotent.
+  await startChannelTurn(fastify, `chan-${channelRow.id}-ask-${messageTs}`, input);
 }
 
 /**
@@ -1340,6 +1380,29 @@ function formatTemplateShow(
 interface RunModalMetadata {
   channelId: string;
   initialDescription: string;
+}
+
+/**
+ * A minimal info modal shown when an unlinked Slack user triggers the global
+ * "Run a workflow" shortcut. Unlike a slash command or message action, a global
+ * shortcut carries no channel/response_url, so an ephemeral hint can't reach the
+ * clicker — this modal is the only surface available via the `trigger_id`.
+ */
+function buildLinkAccountModalView(): unknown {
+  return {
+    blocks: [
+      {
+        text: {
+          text: 'Link your Slack account in *Settings → Slack* first, then trigger this shortcut again to pick a workflow to run.',
+          type: 'mrkdwn',
+        },
+        type: 'section',
+      },
+    ],
+    close: { text: 'Close', type: 'plain_text' },
+    title: { text: 'auto-swe', type: 'plain_text' },
+    type: 'modal',
+  };
 }
 
 async function buildRunModalView(
