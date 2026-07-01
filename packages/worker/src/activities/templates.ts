@@ -373,13 +373,14 @@ async function finalizeChannelTaskRun(
 
 /**
  * Build the in-thread result message for a finished channel task. On SUCCESS we
- * surface the general-route agent's text result from the in-hand `contextSnapshot`
- * (the Channel Task spec's `agent` node id is `task`); when absent — the code route
- * (a SWE run with different node ids) or an empty answer — we post a plain
- * completion line. The code route's PR link is already threaded into the
- * conversation by `notifySlackPrReady` at PR-open time, so we don't re-surface it
- * here. Non-success statuses get a short failure note. Truncated to
- * {@link CHANNEL_TASK_RESULT_MAX} chars.
+ * surface the general-route agent's text result from the in-hand `contextSnapshot`.
+ * The Channel Task spec has two answer-producing shapes: the decompose path ends at
+ * the `composite` step node (`runChannelSubtasks`), the single-agent path at `task` —
+ * read `composite` first, falling back to `task`. When neither is present — the code
+ * route (a SWE run with different node ids) or an empty answer — we post a plain
+ * completion line. The code route's PR link is already threaded into the conversation
+ * by `notifySlackPrReady` at PR-open time, so we don't re-surface it here. Non-success
+ * statuses get a short failure note. Truncated to {@link CHANNEL_TASK_RESULT_MAX} chars.
  */
 function buildChannelTaskResultText(
   contextSnapshot: unknown,
@@ -392,9 +393,12 @@ function buildChannelTaskResultText(
   }
 
   const snapshot = (contextSnapshot ?? null) as {
-    nodes?: { task?: { output?: { text?: unknown } } };
+    nodes?: {
+      composite?: { output?: { text?: unknown } };
+      task?: { output?: { text?: unknown } };
+    };
   } | null;
-  const out = snapshot?.nodes?.task?.output?.text;
+  const out = snapshot?.nodes?.composite?.output?.text ?? snapshot?.nodes?.task?.output?.text;
   const resultText = typeof out === 'string' ? out.trim() : '';
 
   if (!resultText) {

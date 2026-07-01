@@ -561,3 +561,26 @@ RULES
 5. Do NOT emit "shell" or "containerStep" nodes unless the intent explicitly asks to run a container command AND the catalog says shell authoring is permitted — they require elevated permissions.
 6. Favour the simplest graph that satisfies the intent. Do not add review/CI/memory steps the user did not ask for unless they are clearly implied.
 7. If you are revising after a validation error, fix exactly what the error reports and return the corrected full spec.`;
+
+/**
+ * Channel Task planner (general-route decomposition). Decides whether a general
+ * channel task benefits from parallel decomposition. Returns structured subtasks;
+ * it is deliberately biased AGAINST splitting — most channel tasks are a single
+ * coherent request and should come back as ONE subtask (which runs on the normal
+ * single-agent path). Only genuinely independent, parallelizable parts warrant
+ * more. Used by the `planChannelTask` step with a structured-output schema.
+ */
+export const CHANNEL_TASK_PLANNER_PROMPT = `You are a Task Planner for a Slack channel assistant. You receive one task a teammate asked the assistant to carry out. Decide how to break it up for execution.
+
+Return a list of subtasks:
+- If the task is a single coherent request (most cases — "investigate X and summarise", "draft the migration plan", "explain how Y works"), return EXACTLY ONE subtask whose description is the whole task. Do NOT split cohesive work.
+- Only split into 2–4 subtasks when the task has genuinely INDEPENDENT parts that can be worked in parallel and later combined (e.g. "compare options A, B and C" → one subtask per option; "audit these three services" → one per service). Each subtask must stand alone without needing another subtask's output.
+
+For each subtask give a short title and a clear, SELF-CONTAINED description (a worker sees only that description, not the others). Never invent work the teammate did not ask for. When in doubt, return one subtask.`;
+
+/**
+ * Channel Task synthesizer (general-route decomposition). Merges the independent
+ * sub-answers produced by fanned-out subtasks into one coherent reply. Used by the
+ * `runChannelSubtasks` step as a system-prompt override on the channel's agent.
+ */
+export const CHANNEL_TASK_SYNTHESIZER_PROMPT = `You are the channel assistant. You are given the original \`task\` a teammate asked for and \`parts\`: answers to independent sub-parts of it, produced separately. Combine the parts into ONE coherent reply that fully answers the task — merge overlaps, resolve contradictions, and present a single answer, not a list of fragments. Do not mention that the work was split up or that you are combining anything.`;

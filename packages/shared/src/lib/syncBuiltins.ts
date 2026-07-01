@@ -66,33 +66,74 @@ export const CHANNEL_ASSISTANT_SPEC = {
 } as const;
 
 /**
- * Channel assistant (Phase A): `WorkflowSpec` for the GLOBAL "Channel Task"
- * template — a general agentic task launched from a channel @mention. Unlike the
- * observability-only "Channel Assistant" template (a single terminal node), this
- * one is a real interpreted spec: one `agent` node (the channel
- * assistant) → `terminate { SUCCESS }`. The agent's user message binds the task
- * description from the run request (`request.description`); its text output is
- * surfaced as the run result (`nodes.task.output.text`). Typed loosely (object
- * literal) so this file doesn't depend on the workflow-spec package; it is
+ * Channel assistant: `WorkflowSpec` for the GLOBAL "Channel Task" template — a
+ * general agentic task launched from a channel @mention.
+ *
+ * Conditional decomposition (general-route): a `planChannelTask` step first
+ * decides whether the task splits into independent parts. It is biased AGAINST
+ * splitting, so cohesive tasks (the common case) come back as ONE subtask and the
+ * `decide` cond routes to the single `task` agent node — behaviourally the same as
+ * before, plus one cheap planning call. Genuinely parallelizable tasks (2..N
+ * subtasks) go to the `composite` step (`runChannelSubtasks`), which runs one
+ * `channelAssistant` pass per subtask with bounded concurrency (a dud subtask never
+ * sinks the task) and then synthesizes the partial answers into one reply. The fan
+ * runs inside that activity rather than as engine `fanOut` nodes because the
+ * interpreter's fan-out cannot surface a branch agent's free-text output to the
+ * join (branch outputs are stored under prefixed ids); an activity has full control
+ * over parallelism + synthesis, and each subtask/synth call is still a traced LLM run.
+ *
+ * Either path's answer text is surfaced as the run result and posted back in-thread
+ * by `finalizeChannelTaskRun`, which reads `nodes.composite.output.text` (decompose
+ * path) falling back to `nodes.task.output.text` (single path). Typed loosely
+ * (object literal) so this file doesn't depend on the workflow-spec package; it is
  * parsed/validated wherever it's consumed (`createWorkflowRun` → `parseWorkflowSpec`).
  */
 export const CHANNEL_TASK_SPEC = {
   description:
-    'General agentic task launched from a Slack channel @mention. Runs the ' +
-    "channel's assistant agent against the task description and reports back in-thread.",
-  entry: 'task',
+    'General agentic task launched from a Slack channel @mention. Plans whether the ' +
+    "task decomposes, runs the channel's assistant (single or fanned-out), and reports back in-thread.",
+  entry: 'plan',
   name: CHANNEL_TASK_TEMPLATE_NAME,
   nodes: {
+    // 2b. Decompose path: run each subtask + synthesize inside one activity.
+    composite: {
+      inputs: {
+        subtasks: { from: 'nodes.plan.output.subtasks' },
+        task: { from: 'request.description' },
+      },
+      next: 'doneMulti',
+      step: 'runChannelSubtasks',
+      type: 'step',
+    },
+    decide: {
+      expr: 'nodes.plan.output.subtaskCount > 1',
+      onFalse: 'task',
+      onTrue: 'composite',
+      type: 'cond',
+    },
     done: {
       result: { result: { from: 'nodes.task.output.text' } },
       status: 'SUCCESS',
       type: 'terminate',
     },
+    doneMulti: {
+      result: { result: { from: 'nodes.composite.output.text' } },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
+    // 1. Decide whether to decompose. Biased toward a single subtask.
+    plan: {
+      inputs: { task: { from: 'request.description' } },
+      next: 'decide',
+      spanName: 'llm.channel_task.plan',
+      step: 'planChannelTask',
+      type: 'step',
+    },
+
+    // 2a. Single-agent path (cohesive task).
     task: {
       agentRef: 'channelAssistant',
-      inputs: {
-        task: { from: 'request.description' },
-      },
+      inputs: { task: { from: 'request.description' } },
       next: 'done',
       spanName: 'llm.channel_task',
       type: 'agent',

@@ -64,6 +64,9 @@ export const BUILTIN_STEPS = [
   // Feature decomposition + branch merging (used by fan-out)
   'planDecomposition',
   'mergeBranches',
+  // General-route channel-task decomposition (plan → cond → single | composite)
+  'planChannelTask',
+  'runChannelSubtasks',
   // Implementer-driven merge-conflict resolution
   'resolveMergeConflict',
   // Declarative agent node — runs a library Agent by reference

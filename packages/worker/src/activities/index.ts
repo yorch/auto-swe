@@ -38,6 +38,9 @@ export {
   isChannelOverBudgetForTask,
   resolveChannelRepo,
 } from './channelTask.js';
+// General-route channel-task decomposition: plan → cond → single | composite
+export type { ChannelSubtask, PlanChannelTaskResult } from './channelTaskPlan.js';
+export { planChannelTask, runChannelSubtasks } from './channelTaskPlan.js';
 // Channel assistant — generate a DRAFT workflow template from a description
 export type {
   CreateChannelWorkflowDraftInput,
