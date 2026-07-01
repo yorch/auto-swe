@@ -835,6 +835,11 @@ model WorkflowRun {
   /// (cutting a new version) does not change an in-flight run. Null for runs
   /// created before this column existed (they resolve the latest version).
   agentVersions     Json?             @map("agent_versions")
+  /// The defaultBranch HEAD SHA captured at workspace creation time (before agent
+  /// edits). Used by the P3 historical-replay tier to replay a run deterministically
+  /// against the original repo state. Null for runs created before this field existed
+  /// or when capture failed.
+  baselineSha       String?           @map("baseline_sha")
   status            WorkflowRunStatus @default(RUNNING)
   startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz

@@ -67,6 +67,9 @@ export interface CodeResult {
    * backwards compatibility with context snapshots persisted before it existed.
    */
   repoId?: string;
+  /** The defaultBranch HEAD SHA at workspace creation time (before agent edits).
+   * Stored best-effort; empty string when capture failed. */
+  baseSha?: string;
   codeSecurityFindings?: CodeSecurityFinding[];
   diff: string;
   filesChanged: FileChange[];

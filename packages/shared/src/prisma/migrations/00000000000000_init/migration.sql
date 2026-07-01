@@ -447,6 +447,7 @@ CREATE TABLE "workflow_runs" (
     "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "tokens_input_total" INTEGER NOT NULL DEFAULT 0,
     "tokens_output_total" INTEGER NOT NULL DEFAULT 0,
+    "baseline_sha" TEXT,
 
     CONSTRAINT "workflow_runs_pkey" PRIMARY KEY ("id")
 );
