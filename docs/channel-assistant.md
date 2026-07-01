@@ -545,6 +545,8 @@ a `trace →` link to the full `/runs/<id>` tool-call sequence. Team-scoped read
   `packages/worker/src/activities/channelAssistant.ts`,
   `packages/worker/src/activities/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/activities/channelTaskPlan.ts` (general-route decomposition: `planChannelTask` + `runChannelSubtasks`, §8),
+  `packages/worker/src/lib/channelTurnPrompts.ts` (turn-hint prompt notes),
   `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
   `packages/worker/src/activities/passiveIngestChannelMemory.ts` (passive ingestion, §9),

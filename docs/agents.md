@@ -20,7 +20,7 @@ These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the
 | Security Review | `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
 | Validate Context | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
 | Commit to Memory | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
-| Channel Assistant | `channelAssistant` | `runChannelAgentTurn` (mention/ambient/reactive) | `anthropic/claude-opus-4-8` |
+| Channel Assistant | `channelAssistant` | `runChannelAgentTurn` (mention/ambient/reactive); `planChannelTask` + `runChannelSubtasks` (general-route "Channel Task" decomposition) | `anthropic/claude-opus-4-8` |
 
 > **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` GLOBAL `Agent` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
 
