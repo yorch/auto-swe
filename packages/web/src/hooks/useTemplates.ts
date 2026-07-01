@@ -90,17 +90,46 @@ export function useCreateWorkflowTemplate() {
   });
 }
 
-export function useGenerateWorkflowTemplate() {
-  const qc = useQueryClient();
+export type WorkflowGenerationJobStatus =
+  | { status: 'running'; phase?: string }
+  | { status: 'done'; templateId: string; name: string; summary: string; attempts: number }
+  | { status: 'failed'; code: string; message: string };
+
+export function useStartWorkflowGenerationJob() {
   return useMutation({
     mutationFn: (body: { prompt: string; name?: string; teamId?: string | null }) =>
-      api.post<{
-        data: WorkflowTemplateSummary;
-        summary?: string;
-        attempts?: number;
-        warnings?: string[];
-      }>('/api/v1/workflow-templates/generate', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+      api
+        .post<{ data: { jobId: string } }>('/api/v1/workflow-templates/generate/jobs', body)
+        .then((r) => r.data),
+  });
+}
+
+export function useWorkflowGenerationJob(jobId: string | null) {
+  return useQuery({
+    enabled: !!jobId,
+    queryFn: () =>
+      api
+        .get<{
+          data: WorkflowGenerationJobStatus;
+        }>(`/api/v1/workflow-templates/generate/jobs/${jobId}`)
+        .then((r) => r.data),
+    queryKey: ['workflow-generation-job', jobId],
+    // Poll while the job is running; stop once it reaches a terminal state.
+    refetchInterval: (query) => {
+      const data = query.state.data as WorkflowGenerationJobStatus | undefined;
+      return data && data.status !== 'running' ? false : 1500;
+    },
+  });
+}
+
+export function useExplainWorkflowTemplate(templateId: string) {
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post<{
+          data: { explanation: string };
+        }>(`/api/v1/workflow-templates/${templateId}/explain`, {})
+        .then((r) => r.data),
   });
 }
 
@@ -112,6 +141,27 @@ export function useCreateWorkflowVersion(templateId: string) {
         `/api/v1/workflow-templates/${templateId}/versions`,
         { spec }
       ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+  });
+}
+
+/**
+ * Conversationally refine a template: send a plain-language change and the
+ * gateway saves a NEW version off the current one. Returns the refined spec +
+ * the model's summary so a chat panel can show what changed; invalidates the
+ * template query so the canvas reflects the new latest version.
+ */
+export function useRefineWorkflowTemplate(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prompt: string) =>
+      api.post<{
+        data: WorkflowTemplateVersionDetail;
+        spec: unknown;
+        summary: string;
+        attempts: number;
+        warnings?: string[];
+      }>(`/api/v1/workflow-templates/${templateId}/refine`, { prompt }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
   });
 }

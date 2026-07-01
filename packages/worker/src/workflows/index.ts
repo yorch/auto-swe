@@ -12,3 +12,5 @@ export { RunnableWorkflow } from './runnable.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';
 export { WorkflowAuthorWorkflow } from './workflowAuthor.js';
+export { authorJobProgressQuery, WorkflowAuthorJobWorkflow } from './workflowAuthorJob.js';
+export { WorkflowExplainWorkflow } from './workflowExplain.js';

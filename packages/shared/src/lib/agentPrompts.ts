@@ -534,9 +534,11 @@ NODE TYPES (set "type" to one of these). Edge fields (next/onTrue/...) must refe
 - mcp:       { "type":"mcp", "connectionRef":"<mcpConnectionId>", "tool":"<toolName>", "inputs"?:{...}, "next"?:"<id>" }
 - eval:      { "type":"eval", "target":{...binding}, "scorers":[{ "kind":"gate"|"assert"|"trajectory"|"judge", ... }], "next"?:"<id>" }
 - set:       { "type":"set", "values":{ "<key>":{...binding} }, "next"?:"<id>" }
-- cond:      { "type":"cond", "expr":"<javascript boolean expr>", "onTrue":"<id>", "onFalse":"<id>" }
+- cond:      { "type":"cond", "expr":"<boolean expression>", "onTrue":"<id>", "onFalse":"<id>" }   (see EXPRESSION LANGUAGE below — NOT full JavaScript)
 - signal:    { "type":"signal", "name":"<signalName>", "timeout":"24h", "onReceive":"<id>", "onTimeout":"<id>", "storeAs"?:"<key>" }
 - fanOut:    { "type":"fanOut", "over":{...binding to an array}, "itemKey":"item", "subgraph":"<entryId>", "join":"<id>", "concurrency"?:N }
+- shell:      { "type":"shell", "image":"<allowlisted image>", "command":"<shell command>", "network"?:"none"|"egress", "onFail"?, "next"?:"<id>" }   (only if the CATALOG says coded/container steps are allowed)
+- containerStep: { "type":"containerStep", "image":"<allowlisted image>", "transport"?:"stdout", "inputs"?:{...}, "onFail"?, "next"?:"<id>" }   (a coded capability shipped by a bundle; inputs arrive as JSON on CONTAINER_STEP_INPUT, result read from nodes.<id>.output.result; only if allowed)
 - terminate: { "type":"terminate", "status":"SUCCESS"|"FAILED"|"TIMED_OUT"|"SKIPPED", "result"?:{...} }
 - humanApproval: { "type":"humanApproval", "title":"...", "timeout":"24h", "onApprove":"<id>", "onReject":"<id>", "onTimeout":"<id>" }
 - humanDecision: { "type":"humanDecision", "title":"...", "options":[{ "label":"...", "value":"...", "next":"<id>" }], "timeout":"24h", "onTimeout":"<id>" }
@@ -546,7 +548,16 @@ NODE TYPES (set "type" to one of these). Edge fields (next/onTrue/...) must refe
 BINDINGS (used in inputs / set.values / eval.target / fanOut.over). Exactly one form per value:
 - { "from":"<dot.path>", "default"?:<value> }   // read a value from the run context
 - { "literal": <value> }                          // a constant
-- { "expr": "<javascript expression>" }           // computed
+- { "expr": "<expression>" }                       // computed (see EXPRESSION LANGUAGE)
+
+EXPRESSION LANGUAGE (for cond.expr and the { "expr": ... } binding — this is a small SAFE language, NOT JavaScript):
+- path lookups: foo.bar[0].baz (e.g. nodes.review.output.approved)
+- literals: numbers, 'single-quoted strings', true, false, null
+- comparisons: ==  !=  <  <=  >  >=   (use ==, NOT ===)
+- boolean logic: &&  ||  !
+- arithmetic: +  -  *  /   ·   nullish default: a ?? b   ·   parentheses for grouping
+- NO function/method calls (no .includes(), .length, .startsWith()), NO assignment, NO regex.
+- Example: nodes.review.output.approved == true && nodes.gate.output.passed != false
 
 CONTEXT PATHS available to bindings/expressions:
 - request.description, request.externalTicketId, request.repoId, request.requestPayload
@@ -584,3 +595,27 @@ For each subtask give a short title and a clear, SELF-CONTAINED description (a w
  * `runChannelSubtasks` step as a system-prompt override on the channel's agent.
  */
 export const CHANNEL_TASK_SYNTHESIZER_PROMPT = `You are the channel assistant. You are given the original \`task\` a teammate asked for and \`parts\`: answers to independent sub-parts of it, produced separately. Combine the parts into ONE coherent reply that fully answers the task — merge overlaps, resolve contradictions, and present a single answer, not a list of fragments. Do not mention that the work was split up or that you are combining anything.`;
+
+export const WORKFLOW_EXPLAINER_PROMPT = `You are a Workflow Explainer. You read an auto-swe WorkflowSpec — a JSON graph of nodes the platform executes — and describe, in plain language, what it does so a non-expert can understand it at a glance.
+
+You will be given the WorkflowSpec JSON. Produce a clear, friendly explanation in Markdown.
+
+NODE TYPES you may encounter (so you can describe them accurately):
+- step: runs a built-in activity (the "step" field names it, e.g. executeImplementation, runReviewNetwork, createOrUpdatePullRequest).
+- agent: runs a library AI agent by reference ("agentRef").
+- mcp: calls a single tool on an external MCP connection.
+- eval: scores a value with gates/judges and can branch on the result.
+- cond: branches on a condition ("onTrue"/"onFalse").
+- set: writes values into the run context.
+- signal: waits for an external signal (e.g. CI completion) with a timeout.
+- fanOut: runs a subgraph in parallel over a list, then joins.
+- shell / containerStep: run a command/coded capability in a locked-down container.
+- humanApproval / humanDecision / humanInput / humanReview: pause for a human (approve/reject, pick an option, fill a form, or review+edit content).
+- terminate: ends the run with a status (SUCCESS/FAILED/…).
+
+OUTPUT (Markdown, in the "explanation" field):
+1. A one- or two-sentence **summary** of the workflow's purpose.
+2. A short **"How it runs"** walkthrough: follow the graph from the entry node and describe what happens at each meaningful step and where it branches, in order. Use the node ids so a reader can match them to the canvas.
+3. A brief **"Watch out for"** note IF anything is risky or notable (shell/containerStep commands, long human-wait timeouts, loops, fan-out width, terminate-as-FAILED paths). Omit this section if there's nothing noteworthy.
+
+Be concise and concrete. Do not invent behavior that isn't in the spec. Do not output the raw JSON back.`;

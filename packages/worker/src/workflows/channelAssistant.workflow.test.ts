@@ -49,12 +49,14 @@ const calls: {
   taskRuns: unknown[];
   codeTaskRuns: unknown[];
   budgetChecks: string[];
+  refines: unknown[];
 } = {
   budgetChecks: [],
   codeTaskRuns: [],
   finalizeRuns: [],
   placeholders: [],
   posts: [],
+  refines: [],
   startRuns: [],
   taskRuns: [],
   updates: [],
@@ -73,6 +75,14 @@ let overBudget = false;
 // Phase B: per-test knob — when null, createChannelCodeTaskRun returns null (no
 // repo resolved → the workflow falls back to the general route).
 let codeRepoResolves = true;
+// Refinement: optional refine intent returned by the turn + the activity verdict.
+let turnRefine: { instruction: string } | undefined;
+let refineResult: {
+  status: 'refined' | 'no_target' | 'failed';
+  name?: string;
+  version?: number;
+  summary?: string;
+} = { name: 'My Flow', status: 'refined', summary: 'added a step', version: 2 };
 
 const fakeActivities = {
   // Child RunnableWorkflow lifecycle fakes — the launched (abandoned) child needs
@@ -138,11 +148,15 @@ const fakeActivities = {
   postChannelReply: async (args: PostCall) => {
     calls.posts.push(args);
   },
+  refineChannelWorkflowDraft: async (input: { channelId: string; instruction: string }) => {
+    calls.refines.push(input);
+    return refineResult;
+  },
   runChannelAssistantTurn: async (_input: ChannelAssistantTurnInput) => {
     if (turnThrows) {
       throw new Error('turn failed');
     }
-    return { delegate: turnDelegate, reply: turnReply };
+    return { delegate: turnDelegate, refine: turnRefine, reply: turnReply };
   },
   startChannelRun: async (args: StartRunCall) => {
     calls.startRuns.push(args);
@@ -194,6 +208,9 @@ beforeEach((ctx: TestContext) => {
   turnThrows = false;
   turnReply = 'here is the answer';
   turnDelegate = undefined;
+  turnRefine = undefined;
+  refineResult = { name: 'My Flow', status: 'refined', summary: 'added a step', version: 2 };
+  calls.refines = [];
   overBudget = false;
   codeRepoResolves = true;
 });
@@ -346,6 +363,44 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.budgetChecks).toEqual(['chan-1']);
     expect(calls.taskRuns).toHaveLength(0);
     // The user gets the budget notice instead of the agent's ack.
+    expect(calls.updates[0]?.text).toContain('monthly assistant budget');
+  }, 60_000);
+
+  // ── Conversational refinement (refineWorkflow tool) ─────────────────────────
+
+  it('applies a refinement and posts the new version', async () => {
+    turnRefine = { instruction: 'add a security review step' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-refine'));
+
+    expect(calls.budgetChecks).toEqual(['chan-1']);
+    expect(calls.refines).toHaveLength(1);
+    expect(calls.refines[0]).toMatchObject({
+      channelId: 'chan-1',
+      instruction: 'add a security review step',
+      threadTs: '111.222',
+    });
+    expect(calls.updates[0]?.text).toContain('version 2');
+  }, 60_000);
+
+  it('posts a friendly note when there is nothing to refine yet', async () => {
+    turnRefine = { instruction: 'change it' };
+    refineResult = { status: 'no_target' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-refine-none'));
+
+    expect(calls.refines).toHaveLength(1);
+    expect(calls.updates[0]?.text).toContain("don't have a workflow drafted in this thread");
+  }, 60_000);
+
+  it('does NOT refine when the channel is over budget', async () => {
+    turnRefine = { instruction: 'change it' };
+    overBudget = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-refine-budget'));
+
+    expect(calls.budgetChecks).toEqual(['chan-1']);
+    expect(calls.refines).toHaveLength(0);
     expect(calls.updates[0]?.text).toContain('monthly assistant budget');
   }, 60_000);
 

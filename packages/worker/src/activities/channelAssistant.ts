@@ -17,6 +17,7 @@ import {
   DELEGATE_TOOL_PROMPT_NOTE,
   FOLLOWUP_INTENT_PROMPT_NOTE,
   GENERATE_WORKFLOW_TOOL_PROMPT_NOTE,
+  REFINE_WORKFLOW_TOOL_PROMPT_NOTE,
 } from '../lib/channelTurnPrompts.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -178,6 +179,40 @@ function buildGenerateWorkflowTool(onGenerate: (intent: GenerateWorkflowIntent) 
     },
     id: 'generateWorkflow',
     inputSchema: GenerateWorkflowInputSchema,
+    outputSchema: GenerateWorkflowOutputSchema,
+  });
+}
+
+export interface RefineWorkflowIntent {
+  /** Plain-language change to apply to the thread's current draft. */
+  instruction: string;
+}
+
+const RefineWorkflowInputSchema = z.object({
+  instruction: z
+    .string()
+    .describe('The change to apply to the workflow drafted earlier in this thread.'),
+});
+
+/**
+ * Build the `refineWorkflow` Mastra tool. Like `generateWorkflow` it only RECORDS
+ * the intent; the workflow resolves the thread's current draft and applies the
+ * change after the turn.
+ */
+function buildRefineWorkflowTool(onRefine: (intent: RefineWorkflowIntent) => void) {
+  return createTool({
+    description:
+      'Refine the workflow drafted earlier in this thread by describing a change. ' +
+      'Use for a follow-up adjustment, not to create a new workflow.',
+    execute: async ({ instruction }) => {
+      onRefine({ instruction });
+      return {
+        note: 'Refinement queued — a new draft version will be saved.',
+        queued: true,
+      };
+    },
+    id: 'refineWorkflow',
+    inputSchema: RefineWorkflowInputSchema,
     outputSchema: GenerateWorkflowOutputSchema,
   });
 }
@@ -409,6 +444,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   reply: string;
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
+  refine?: RefineWorkflowIntent;
   /** Gap H: set when a follow-up turn decided the message wasn't addressed to it
    *  (SKIP) — the workflow then delivers nothing. */
   suppressed?: boolean;
@@ -499,6 +535,14 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
     generate = intent;
   });
 
+  // Give the agent a `refineWorkflow` tool so a follow-up in the same thread can
+  // adjust the draft it already created. Records the intent; the workflow resolves
+  // the thread's current draft and applies the change after the turn.
+  let refine: RefineWorkflowIntent | undefined;
+  const refineWorkflowTool = buildRefineWorkflowTool((intent) => {
+    refine = intent;
+  });
+
   // Resolve the effective persona (channel overrides team default) and pass it
   // into runChannelAgentTurn so it's prepended to the system prompt.
   const personaPrompt = await resolvePersonaPrompt(
@@ -506,12 +550,14 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
     channel?.team?.defaultPersonaPrompt
   );
 
-  // Resolve the channel's agent (CHANNEL tier active) + run one generation. A
-  // follow-up continuation turn (Gap H) appends the SKIP-aware intent note so the
+  // Resolve the channel's agent (CHANNEL tier active) + run one generation. The
+  // base note advertises delegate + generate + refine tools; a follow-up
+  // continuation turn (Gap H) also appends the SKIP-aware intent note so the
   // agent stays out of conversations that aren't addressed to it.
+  const baseToolNote = `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${REFINE_WORKFLOW_TOOL_PROMPT_NOTE}`;
   const promptNote = input.followup
-    ? `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${FOLLOWUP_INTENT_PROMPT_NOTE}`
-    : `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}`;
+    ? `${baseToolNote}${FOLLOWUP_INTENT_PROMPT_NOTE}`
+    : baseToolNote;
   const { reply, costUsd } = await runChannelAgentTurn(
     { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
     userMessage,
@@ -521,6 +567,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
       tools: {
         delegateTask: delegateTool,
         generateWorkflow: generateWorkflowTool,
+        refineWorkflow: refineWorkflowTool,
       } as AgentTools,
     }
   );
@@ -529,7 +576,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   // (and didn't fire a tool) is suppressed — the cost already happened (budget
   // bounds it) but nothing is posted, so the assistant doesn't inject itself into
   // human-to-human chatter. Accrue the cost first so the budget still sees it.
-  if (input.followup && !delegate && !generate && FOLLOWUP_SKIP_SENTINEL.test(reply)) {
+  if (input.followup && !delegate && !generate && !refine && FOLLOWUP_SKIP_SENTINEL.test(reply)) {
     await accrueChannelUsage(input.channelId, costUsd);
     return { reply: '', suppressed: true };
   }
@@ -551,23 +598,28 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
     await summarizeAndStoreChannelMemory(input, reply);
   }
 
-  // When the agent delegated, prefer its (brief) ack but always surface a
-  // sensible fallback. The workflow decides whether to launch based on `delegate`.
-  // The two action intents are mutually exclusive — the workflow handles
-  // `generate` with an early return, so a co-fired `delegate` would be silently
-  // dropped. Prefer the more specific `generateWorkflow` and drop the delegate.
-  if (generate && delegate) {
+  // The action intents are mutually exclusive — the workflow handles each with an
+  // early return, so a co-fired lower-precedence intent would be silently dropped.
+  // Resolve to one by precedence: generate (new) > refine (change existing) >
+  // delegate (one-off task), keeping the most specific authoring intent.
+  if (generate && (refine || delegate)) {
     console.warn(
-      `[channelAssistant] both generateWorkflow and delegateTask fired for ${input.channelId}; preferring generateWorkflow`
+      `[channelAssistant] generateWorkflow co-fired with another intent for ${input.channelId}; preferring generateWorkflow`
+    );
+    refine = undefined;
+    delegate = undefined;
+  } else if (refine && delegate) {
+    console.warn(
+      `[channelAssistant] refineWorkflow co-fired with delegateTask for ${input.channelId}; preferring refineWorkflow`
     );
     delegate = undefined;
   }
 
   const ackFallback =
-    delegate || generate
+    delegate || generate || refine
       ? "On it — I'll follow up in this thread when it's done."
       : "I wasn't able to come up with a response. Could you rephrase?";
-  return { delegate, generate, reply: reply || ackFallback };
+  return { delegate, generate, refine, reply: reply || ackFallback };
 }
 
 /**

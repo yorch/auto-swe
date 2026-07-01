@@ -14,6 +14,7 @@
  */
 
 import { z } from 'zod';
+import type { WorkflowSpec } from './spec.js';
 import { listSteps } from './stepRegistry.js';
 
 /**
@@ -52,6 +53,12 @@ export interface AuthoringCatalog {
   mcpConnections: AuthoringMcpRef[];
   /** Whether shell / containerStep authoring is permitted for the requester. */
   allowShell: boolean;
+  /**
+   * Effective container-image allowlist for `shell`/`containerStep` nodes
+   * (built-in images + the team's additions). Only meaningful when
+   * `allowShell` is true; the author must pick an `image` from this list.
+   */
+  shellImages?: string[];
 }
 
 function truncate(text: string, max: number): string {
@@ -95,11 +102,27 @@ export function renderAuthoringCatalog(catalog: AuthoringCatalog): string {
   }
 
   lines.push('');
-  lines.push(
-    catalog.allowShell
-      ? '## Shell: allowed — `shell`/`containerStep` nodes are permitted if the intent needs a container command.'
-      : '## Shell: NOT allowed — do not emit `shell` or `containerStep` nodes.'
-  );
+  if (catalog.allowShell) {
+    lines.push('## Coded / container steps: allowed');
+    lines.push(
+      'You may use `shell` nodes (run a shell `command` in a container) and ' +
+        "`containerStep` nodes (a coded capability: the node's resolved `inputs` are " +
+        'passed as JSON on the `CONTAINER_STEP_INPUT` env var and the container prints ' +
+        'one JSON object to stdout, bound at `nodes.<id>.output.result`). Use these for ' +
+        'capabilities shipped by installed bundles or for one-off commands.'
+    );
+    const images = catalog.shellImages ?? [];
+    if (images.length > 0) {
+      lines.push('Allowed `image` values (you MUST pick one of these):');
+      for (const img of images) {
+        lines.push(`- ${img}`);
+      }
+    } else {
+      lines.push('No images are allowlisted for this team — avoid shell/containerStep nodes.');
+    }
+  } else {
+    lines.push('## Shell: NOT allowed — do not emit `shell` or `containerStep` nodes.');
+  }
 
   return lines.join('\n');
 }
@@ -143,5 +166,57 @@ export function buildRepairRequestMessage(args: {
     '',
     '# REQUEST',
     args.intent.trim(),
+  ].join('\n');
+}
+
+/**
+ * Build the first user message for a REFINEMENT turn: the current spec plus a
+ * plain-language change instruction. Unlike {@link buildAuthorRequestMessage}
+ * (which generates from scratch), this seeds the model with the existing spec so
+ * it edits rather than re-invents — preserving node ids, structure, and intent
+ * the user didn't ask to change. The catalog is still included so any nodes the
+ * change adds can only reference real building blocks.
+ */
+export function buildRefineRequestMessage(args: {
+  baseSpec: WorkflowSpec;
+  instruction: string;
+  catalog: AuthoringCatalog;
+}): string {
+  return [
+    'Refine the following existing WorkflowSpec according to the change request.',
+    'Preserve everything the request does not ask to change: keep existing node',
+    'ids, structure, and behavior intact, and return the FULL updated spec (not a',
+    'diff). Only change what the request calls for.',
+    '',
+    '# CURRENT SPEC',
+    '```json',
+    truncate(JSON.stringify(args.baseSpec, null, 2), 8000),
+    '```',
+    '',
+    '# CATALOG',
+    renderAuthoringCatalog(args.catalog),
+    '',
+    '# CHANGE REQUEST',
+    args.instruction.trim(),
+  ].join('\n');
+}
+
+/**
+ * Structured output of the workflow-explainer agent (the inverse of authoring):
+ * a plain-language, Markdown explanation of an existing {@link WorkflowSpec}.
+ */
+export const WorkflowExplanationSchema = z.object({
+  explanation: z.string().min(1),
+});
+export type WorkflowExplanation = z.infer<typeof WorkflowExplanationSchema>;
+
+/** Build the user message for the explainer: the spec as pretty JSON. */
+export function buildExplainRequestMessage(spec: WorkflowSpec): string {
+  return [
+    'Explain the following WorkflowSpec.',
+    '',
+    '```json',
+    JSON.stringify(spec, null, 2),
+    '```',
   ].join('\n');
 }

@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
+import { SparkleIcon, SparkleTextIcon } from '@/components/ui/icons';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -21,12 +22,14 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TabBar } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
+import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import {
   useCreateWorkflowVersion,
+  useExplainWorkflowTemplate,
   usePromoteWorkflowVersion,
   useRegenerateWebhook,
   useRevokeWebhook,
@@ -337,6 +340,48 @@ function ExperimentCard({
   );
 }
 
+function ExplainModal({
+  open,
+  onClose,
+  templateId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  templateId: string;
+}) {
+  const explain = useExplainWorkflowTemplate(templateId);
+  const { mutate, reset, isPending, data, error } = explain;
+
+  // Kick off the explanation when the modal opens; reset when it closes so the
+  // next open re-fetches (the active version may have changed).
+  useEffect(() => {
+    if (open) {
+      mutate();
+    } else {
+      reset();
+    }
+  }, [open, mutate, reset]);
+
+  return (
+    <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="What this workflow does">
+      <div className="space-y-4">
+        {isPending && <LoadingState />}
+        {error && <Alert>{error instanceof Error ? error.message : 'Could not explain'}</Alert>}
+        {data?.explanation && (
+          <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-paper-200">
+            {data.explanation}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button onClick={onClose} variant="secondary">
+            Close
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function WebhookCard({
   template,
   canManage,
@@ -445,6 +490,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [editMetaOpen, setEditMetaOpen] = useState(false);
   const [editSchemaOpen, setEditSchemaOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [refineOpen, setRefineOpen] = useState(false);
 
   useEffect(() => {
     if (versionDetail) {
@@ -586,6 +633,10 @@ export default function TemplateDetailPage({ params }: PageProps) {
     <div className="space-y-8">
       <RunTemplateModal onClose={() => setRunOpen(false)} open={runOpen} template={template} />
 
+      <ExplainModal onClose={() => setExplainOpen(false)} open={explainOpen} templateId={id} />
+
+      <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
+
       {/* Back + header */}
       <div className="fade-up">
         <Link
@@ -606,6 +657,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {template.status === 'ACTIVE' && template.activeVersion !== null && (
               <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
                 Run →
+              </Button>
+            )}
+            {template.activeVersion !== null && (
+              <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">
+                <SparkleTextIcon />
+                Explain
+              </Button>
+            )}
+            {canManage && (
+              <Button onClick={() => setRefineOpen(true)} size="sm" variant="secondary">
+                <SparkleIcon />
+                Refine with AI
               </Button>
             )}
             <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">

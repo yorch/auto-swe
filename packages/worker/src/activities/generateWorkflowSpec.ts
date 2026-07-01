@@ -16,9 +16,13 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   type AuthoringCatalog,
+  BUILTIN_SHELL_IMAGES,
   buildAuthorRequestMessage,
+  buildRefineRequestMessage,
   buildRepairRequestMessage,
+  formatValidationIssue,
   parseWorkflowSpec,
+  validateSpec,
   type WorkflowAuthorOutput,
   WorkflowAuthorOutputSchema,
   type WorkflowSpec,
@@ -30,12 +34,22 @@ import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { runAgent } from './runAgent.js';
 
 export interface GenerateWorkflowSpecInput {
-  /** The user's plain-language description of the workflow they want. */
+  /**
+   * The user's request. For a fresh generation this is a description of the
+   * workflow to build; for a refinement (when {@link baseSpec} is set) it's the
+   * plain-language change to apply.
+   */
   prompt: string;
   /** Team scope for the catalog + agent resolution (null = global/admin). */
   teamId?: string | null;
   /** Whether the requester may author shell / containerStep nodes. */
   allowShell?: boolean;
+  /**
+   * When set, refine this existing spec instead of generating from scratch: the
+   * model is seeded with the current spec and asked to apply `prompt` as a change,
+   * preserving everything else. Enables conversational refinement.
+   */
+  baseSpec?: WorkflowSpec;
 }
 
 export interface GenerateWorkflowSpecResult {
@@ -100,6 +114,19 @@ async function buildCatalog(teamId: string | null, allowShell: boolean): Promise
       })
     : [];
 
+  // Effective container-image allowlist (built-in + team additions). Only fetched
+  // when shell authoring is allowed, since otherwise the author can't use images.
+  let shellImages: string[] = [];
+  if (allowShell) {
+    const team = teamId
+      ? await prisma.team.findUnique({
+          select: { shellImageAllowlist: true },
+          where: { id: teamId },
+        })
+      : null;
+    shellImages = [...BUILTIN_SHELL_IMAGES, ...(team?.shellImageAllowlist ?? [])];
+  }
+
   return {
     agents: Array.from(agentsByKey.values()),
     allowShell,
@@ -108,6 +135,7 @@ async function buildCatalog(teamId: string | null, allowShell: boolean): Promise
       id: c.id,
       name: c.name ?? c.id,
     })),
+    shellImages,
   };
 }
 
@@ -125,7 +153,16 @@ export async function generateWorkflowSpec(
     { teamId: input.teamId ?? undefined }
   );
 
-  let message = buildAuthorRequestMessage(input.prompt, catalog);
+  // Refinement seeds the model with the current spec; a fresh generation starts
+  // from the description alone. The repair loop below is identical either way —
+  // it echoes the model's own last attempt (already a refined spec) + the errors.
+  let message = input.baseSpec
+    ? buildRefineRequestMessage({
+        baseSpec: input.baseSpec,
+        catalog,
+        instruction: input.prompt,
+      })
+    : buildAuthorRequestMessage(input.prompt, catalog);
   let lastErrors: string[] = ['model produced no output'];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -166,9 +203,9 @@ export async function generateWorkflowSpec(
       continue;
     }
 
+    let validated: WorkflowSpec;
     try {
-      const validated = parseWorkflowSpec(parsedUnknown);
-      return { attempts: attempt, spec: validated, summary };
+      validated = parseWorkflowSpec(parsedUnknown);
     } catch (e) {
       lastErrors = formatErrors(e);
       message = buildRepairRequestMessage({
@@ -177,7 +214,23 @@ export async function generateWorkflowSpec(
         intent: input.prompt,
         previousSpecJson: specJson,
       });
+      continue;
     }
+
+    // Static pre-execution validation beyond the schema (unparseable exprs,
+    // unreachable nodes, no terminal path, …). Feed errors back so the author
+    // self-corrects an unrunnable graph rather than us persisting one.
+    const report = validateSpec(validated);
+    if (report.errors.length === 0) {
+      return { attempts: attempt, spec: validated, summary };
+    }
+    lastErrors = report.errors.map(formatValidationIssue);
+    message = buildRepairRequestMessage({
+      catalog,
+      errors: lastErrors,
+      intent: input.prompt,
+      previousSpecJson: specJson,
+    });
   }
 
   throw new Error(

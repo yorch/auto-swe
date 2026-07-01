@@ -19,12 +19,16 @@ export type {
   AuthoringCatalog,
   AuthoringMcpRef,
   WorkflowAuthorOutput,
+  WorkflowExplanation,
 } from './authoring.js';
 export {
   buildAuthorRequestMessage,
+  buildExplainRequestMessage,
+  buildRefineRequestMessage,
   buildRepairRequestMessage,
   renderAuthoringCatalog,
   WorkflowAuthorOutputSchema,
+  WorkflowExplanationSchema,
 } from './authoring.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
@@ -87,6 +91,7 @@ export type {
 export {
   BindingSchema,
   NodeSchema,
+  nodeEdges,
   parseWorkflowSpec,
   SPEC_SCHEMA_VERSION,
   WorkflowSpecSchema,
@@ -102,3 +107,5 @@ export {
   listSteps,
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
+export type { ValidationIssue, ValidationReport, ValidationSeverity } from './validateSpec.js';
+export { formatValidationErrors, formatValidationIssue, validateSpec } from './validateSpec.js';

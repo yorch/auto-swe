@@ -21,6 +21,7 @@ import {
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
   WORKFLOW_AUTHOR_PROMPT,
+  WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
 
@@ -373,6 +374,16 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-opus-4-8',
     name: 'Workflow Author',
     systemPrompt: WORKFLOW_AUTHOR_PROMPT,
+  },
+  {
+    // Inverse of workflowAuthor: summarizes an existing spec in plain language.
+    // A cheaper model is plenty for read-and-describe; resolved on demand (not
+    // in MODEL_BACKED_AGENT_KEYS, so it never gates worker boot).
+    description: 'Explains an existing WorkflowSpec in plain language.',
+    key: 'workflowExplainer',
+    modelSpec: 'anthropic/claude-sonnet-4-6',
+    name: 'Workflow Explainer',
+    systemPrompt: WORKFLOW_EXPLAINER_PROMPT,
   },
   {
     description: 'Security-focused sub-reviewer in the review network.',

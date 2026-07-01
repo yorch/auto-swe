@@ -47,6 +47,12 @@ export type {
   CreateChannelWorkflowDraftResult,
 } from './channelWorkflowDraft.js';
 export { createChannelWorkflowDraft } from './channelWorkflowDraft.js';
+// Channel assistant — refine the thread's current DRAFT via a follow-up message
+export type {
+  RefineChannelWorkflowDraftInput,
+  RefineChannelWorkflowDraftResult,
+} from './channelWorkflowRefine.js';
+export { refineChannelWorkflowDraft } from './channelWorkflowRefine.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,
@@ -78,6 +84,12 @@ export {
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export { executeImplementation } from './executeImplementation.js';
+// Natural-language workflow authoring — explain an existing WorkflowSpec
+export type {
+  ExplainWorkflowSpecInput,
+  ExplainWorkflowSpecResult,
+} from './explainWorkflowSpec.js';
+export { explainWorkflowSpec } from './explainWorkflowSpec.js';
 // Channel assistant (Gap B) — org-wide proactive flagging
 export type { FlagOrgSignalsInput, FlagOrgSignalsResult } from './flagOrgSignals.js';
 export { flagOrgSignals } from './flagOrgSignals.js';
@@ -98,6 +110,11 @@ export type {
   PassiveIngestChannelMemoryResult,
 } from './passiveIngestChannelMemory.js';
 export { passiveIngestChannelMemory } from './passiveIngestChannelMemory.js';
+export type {
+  PersistDraftTemplateInput,
+  PersistDraftTemplateResult,
+} from './persistDraftTemplate.js';
+export { persistDraftTemplate } from './persistDraftTemplate.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
 export type {

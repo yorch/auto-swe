@@ -264,7 +264,15 @@ function buildApp(state: {
             return null;
           }
           const sorted = [...tpl.versions].sort((a, b) => b.version - a.version);
-          return sorted[0] ?? null;
+          const top = sorted[0];
+          if (!top) {
+            return null;
+          }
+          // Real Prisma findFirst (no `select`) returns every column, including
+          // the stored spec — merge it in so callers that read `.spec` (refine)
+          // see it, not just the version metadata kept on `tpl.versions`.
+          const stored = state.versions.get(`${where?.templateId}:${top.version}`);
+          return { ...top, spec: stored?.spec, templateId: where?.templateId };
         },
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.templateId_version as { templateId: string; version: number };
@@ -279,6 +287,7 @@ function buildApp(state: {
   );
 
   app.decorate('temporal', {
+    explainWorkflowSpec: async () => ({ explanation: 'This workflow does X then Y.' }),
     generateWorkflowSpec: async () => {
       const s = state as {
         generateError?: boolean;
@@ -297,6 +306,11 @@ function buildApp(state: {
       }
       return { attempts: 1, spec: s.generatedSpec ?? VALID_SPEC, summary: 'generated summary' };
     },
+    getWorkflowAuthorJobStatus: async () => {
+      const s = state as { jobStatus?: unknown };
+      return s.jobStatus ?? { phase: 'generating', status: 'running' };
+    },
+    startWorkflowAuthorJob: async () => {},
   } as unknown as never);
 
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
@@ -354,6 +368,80 @@ describe('workflow-templates routes', () => {
     expect(body.data.versionCount).toBe(1);
   });
 
+  it('saves an unparseable cond expression but surfaces it as a warning (non-blocking)', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'warn-expr',
+        spec: {
+          entry: 'a',
+          name: 'warn-expr',
+          nodes: {
+            a: { expr: 'x === 1', onFalse: 'd', onTrue: 'd', type: 'cond' },
+            d: { status: 'SUCCESS', type: 'terminate' },
+          },
+          schemaVersion: SPEC_SCHEMA_VERSION,
+        },
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    // Validation is advisory at save time: the template is created, but the
+    // unparseable expression is reported in `warnings`.
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warnings.join(' ')).toMatch(/unexpected character/i);
+  });
+
+  it('does not flag valid relational expressions over context paths', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'good-expr',
+        spec: {
+          entry: 'a',
+          name: 'good-expr',
+          nodes: {
+            a: { expr: 'context.retries >= 3', onFalse: 'd', onTrue: 'd', type: 'cond' },
+            d: { status: 'SUCCESS', type: 'terminate' },
+          },
+          schemaVersion: SPEC_SCHEMA_VERSION,
+        },
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(res.statusCode).toBe(201);
+    const warnings: string[] = res.json().warnings ?? [];
+    expect(warnings.some((w) => /EXPR_SYNTAX|unexpected|requires a number/i.test(w))).toBe(false);
+  });
+
+  it('explains a template in plain language', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected a template from the create test');
+    }
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      url: `/api/v1/workflow-templates/${tpl.id}/explain`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.explanation).toContain('does X then Y');
+  });
+
+  it('returns 404 explaining an unknown template', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      url: '/api/v1/workflow-templates/00000000-0000-4000-8000-0000000000ff/explain',
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('generates a DRAFT template from a description', async () => {
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
@@ -398,6 +486,43 @@ describe('workflow-templates routes', () => {
     (state as { generateError?: boolean }).generateError = false;
     expect(res.statusCode).toBe(422);
     expect(res.json().error?.code).toBe('GENERATION_FAILED');
+  });
+
+  it('starts an async generation job and returns a jobId', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'build a flow', teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567' },
+      url: '/api/v1/workflow-templates/generate/jobs',
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json().data.jobId).toMatch(/^wfauthorjob-/);
+  });
+
+  it('polls a running job', async () => {
+    (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-abc',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({ phase: 'persisting', status: 'running' });
+  });
+
+  it('polls a finished job and returns the templateId', async () => {
+    (state as { jobStatus?: unknown }).jobStatus = {
+      result: { attempts: 1, name: 'Gen', summary: 's', templateId: 'tpl-async' },
+      status: 'done',
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-abc',
+    });
+    (state as { jobStatus?: unknown }).jobStatus = undefined;
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({ status: 'done', templateId: 'tpl-async' });
   });
 
   it('returns 503 when generation hits an infrastructure error', async () => {
@@ -942,5 +1067,81 @@ describe('computeGlobalAnalytics', () => {
     );
     expect(out.totalRuns).toBe(1);
     expect(out.successRate).toBeNull();
+  });
+});
+
+describe('workflow refinement (POST /:id/refine)', () => {
+  let app: FastifyInstance;
+  let state: Parameters<typeof buildApp>[0];
+
+  beforeAll(async () => {
+    state = { runs: [], templates: [], versions: new Map() };
+    app = buildApp(state);
+    await app.ready();
+    // Seed one template (v1) to refine.
+    await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'refine-me',
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+  });
+
+  afterAll(() => app.close());
+
+  it('refines the latest version into a new version, pinning the template name', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected seeded template');
+    }
+    // The agent returns a refined spec that also tries to rename the workflow —
+    // the route must ignore that rename and keep the template name stable.
+    (state as { generatedSpec?: unknown }).generatedSpec = {
+      ...VALID_SPEC,
+      description: 'now with a lint step',
+      name: 'model-picked-a-new-name',
+    };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'add a lint step before the terminate' },
+      url: `/api/v1/workflow-templates/${tpl.id}/refine`,
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.data.version).toBe(2);
+    expect(body.summary).toBe('generated summary');
+    expect(body.spec.name).toBe('refine-me'); // pinned, not the model's rename
+  });
+
+  it('returns 404 for an unknown template', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'x' },
+      url: '/api/v1/workflow-templates/00000000-0000-4000-8000-0000000000ff/refine',
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('maps an author failure to 422 (rephrase)', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected seeded template');
+    }
+    (state as { generateError?: boolean }).generateError = true;
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: { prompt: 'do something impossible' },
+      url: `/api/v1/workflow-templates/${tpl.id}/refine`,
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('REFINE_FAILED');
+    (state as { generateError?: boolean }).generateError = false;
   });
 });
