@@ -97,6 +97,18 @@ function buildApp(state: FakeState): FastifyInstance {
     channelThreadSession: {
       findUnique: async () => null,
     },
+    // Used by buildRunModalView (the run picker the /auto-swe run slash command +
+    // the global "Run a workflow" shortcut open).
+    connection: {
+      findMany: async () => [
+        {
+          id: 'conn-1',
+          organizationName: 'acme',
+          repoName: 'payments',
+          team: { memberships: [{ userId: 'u1' }] },
+        },
+      ],
+    },
     repository: {
       findMany: async () => [],
       findUnique: async () => null,
@@ -549,6 +561,89 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     });
     expect(state.signalCalls).toHaveLength(0);
     expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+});
+
+describe('POST /api/v1/auth/slack/interactive — shortcuts', () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls: Array<{ url: string; body: unknown }>;
+
+  beforeEach(() => {
+    fetchCalls = [];
+    globalThis.fetch = (async (url: string | URL, init?: { body?: string }) => {
+      fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url: String(url) });
+      return {
+        json: async () => ({ ok: true, ts: '1.0', view: { id: 'V1' } }),
+      } as unknown as Response;
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function injectShortcut(payloadObj: Record<string, unknown>) {
+    const body = `payload=${encodeURIComponent(JSON.stringify(payloadObj))}`;
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/interactive',
+    });
+  }
+
+  it('global "Run a workflow" shortcut opens the run-picker modal', async () => {
+    const res = await injectShortcut({
+      callback_id: 'auto_swe_run_shortcut',
+      team: { id: 'T1' },
+      trigger_id: 'trig-1',
+      type: 'shortcut',
+      user: { id: 'U1' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(fetchCalls.some((c) => c.url.includes('views.open'))).toBe(true);
+    // A shortcut never starts a workflow directly — it just opens the picker.
+    expect(state.channelAssistantStarts).toHaveLength(0);
+  });
+
+  it('message "Ask auto-swe about this" shortcut starts a channel turn on the message', async () => {
+    const res = await injectShortcut({
+      callback_id: 'auto_swe_ask_shortcut',
+      channel: { id: 'C-msg' },
+      message: { text: 'summarise this thread', ts: '1700.1' },
+      team: { id: 'T1' },
+      type: 'message_action',
+      user: { id: 'U1' },
+    });
+    expect(res.statusCode).toBe(200);
+    // The turn is started out-of-band after the 3s ack.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(1);
+    const start = state.channelAssistantStarts[0];
+    expect(start?.workflowId).toBe('chan-chan-1-1700.1');
+    expect(start?.input.userText).toBe('summarise this thread');
+    expect(start?.input.threadTs).toBe('1700.1');
+    expect(start?.input.followup).toBe(false);
+  });
+
+  it('message shortcut does not require the clicker to have a linked account', async () => {
+    // `U-unlinked` is absent from state.users — like an @mention, the turn still starts.
+    const res = await injectShortcut({
+      callback_id: 'auto_swe_ask_shortcut',
+      channel: { id: 'C-msg' },
+      message: { text: 'help me', ts: '1700.2' },
+      team: { id: 'T1' },
+      type: 'message_action',
+      user: { id: 'U-unlinked' },
+    });
+    expect(res.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.channelAssistantStarts).toHaveLength(1);
   });
 });
 
