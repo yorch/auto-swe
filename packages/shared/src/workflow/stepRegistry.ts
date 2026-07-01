@@ -238,8 +238,11 @@ register({
 register({
   category: 'agent',
   // systemPrompt overrides the decomposition planner prompt for this node.
+  // costHint.role is a rough palette estimate; the activity runs on the channel's
+  // channelAssistant model, whose opus-class default `reviewer` approximates (the
+  // cheaper `planner` price would materially under-estimate it).
   configFields: [SYSTEM_PROMPT_FIELD],
-  costHint: { role: 'planner', tokensIn: 2000, tokensOut: 800 },
+  costHint: { role: 'reviewer', tokensIn: 2000, tokensOut: 800 },
   description:
     'Decompose a general channel task into 1..N independent subtasks. Returns { subtasks, subtaskCount }; returns a single subtask (the whole task) for cohesive work.',
   label: 'Plan channel task',
