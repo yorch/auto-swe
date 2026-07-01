@@ -348,6 +348,40 @@ export function testKnowledgeBaseConnection(query: string) {
   });
 }
 
+// ── Figma (design source) config ──
+
+export interface FigmaConfig {
+  enabled: boolean;
+  apiToken: MaskedField | null;
+  maxNodes: number | null;
+}
+
+export interface FigmaConfigInput {
+  enabled?: boolean;
+  apiToken?: string;
+  maxNodes?: number | null;
+}
+
+export function useFigmaConfig() {
+  return useQuery({
+    queryFn: () => api.get<ConfigResponse<FigmaConfig>>('/api/v1/admin/config/figma'),
+    queryKey: ['admin-config-figma'],
+  });
+}
+
+export function useUpdateFigmaConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FigmaConfigInput) =>
+      api.put<{ data: FigmaConfig }>('/api/v1/admin/config/figma', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-figma'] }),
+  });
+}
+
+export function testFigmaConnection() {
+  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/figma/test', {});
+}
+
 // ── Consolidation schedule config ──
 
 export interface ConsolidationScheduleStatus {

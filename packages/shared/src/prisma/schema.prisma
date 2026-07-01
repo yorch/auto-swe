@@ -183,6 +183,9 @@ model ContextSnapshot {
   workRequest      RunInput @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
   rawTicketData    Json?    @map("raw_ticket_data")
   rawDocumentation Json?    @map("raw_documentation")
+  // Compact Figma design summary (FigmaDesignSummary), seeded at submit time
+  // when the ticket references a Figma file/node. Best-effort; null otherwise.
+  rawDesign        Json?    @map("raw_design")
   successCriteria  String[] @map("success_criteria")
   capturedAt       DateTime @default(now()) @map("captured_at") @db.Timestamptz
 
@@ -1444,6 +1447,29 @@ model KnowledgeBaseConfig {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("knowledge_base_config")
+}
+
+/// Singleton config for the Figma design connector. Read-only: agents consume
+/// design truth, never push to Figma. The REST token enriches a work request's
+/// ContextSnapshot.rawDesign at submit time; the same Figma can also be wired as
+/// an `mcp` Connection for agent-time reads (independent of this row).
+model FigmaConfig {
+  id      String  @id @default("default")
+  enabled Boolean @default(false)
+
+  // AES-256-GCM encrypted Figma personal access / REST token
+  apiTokenCiphertext Bytes?  @map("api_token_ciphertext")
+  apiTokenNonce      Bytes?  @map("api_token_nonce")
+  apiTokenAuthTag    Bytes?  @map("api_token_auth_tag")
+  apiTokenKeyVersion Int?    @map("api_token_key_version")
+  apiTokenLastFour   String? @map("api_token_last_four")
+
+  // Cap on summarized nodes per work request (bounds context/cost)
+  maxNodes Int? @default(12) @map("max_nodes")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("figma_config")
 }
 
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.

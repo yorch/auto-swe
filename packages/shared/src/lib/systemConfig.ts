@@ -428,11 +428,12 @@ export type TrackerProvider = 'jira' | 'linear' | 'github';
 
 // Import the richer config types from the integration registry and re-export them.
 import type {
+  ResolvedFigmaConfig,
   ResolvedIssueTrackerConfig,
   ResolvedKnowledgeBaseConfig,
 } from './integrations/registry.js';
 
-export type { ResolvedIssueTrackerConfig, ResolvedKnowledgeBaseConfig };
+export type { ResolvedFigmaConfig, ResolvedIssueTrackerConfig, ResolvedKnowledgeBaseConfig };
 
 function asTrackerProvider(value: string | null | undefined): TrackerProvider | null {
   return value === 'jira' || value === 'linear' || value === 'github' ? value : null;
@@ -514,6 +515,28 @@ export async function resolveKnowledgeBaseConfig(
     maxPages: row?.maxPages ?? undefined,
     provider,
     spaces: row?.spaces?.length ? row.spaces : spacesEnv,
+  };
+}
+
+// ─── Figma (design source) ──────────────────────────────────────────────────────
+
+export async function resolveFigmaConfig(_opts?: ResolveOpts): Promise<ResolvedFigmaConfig> {
+  const row = await (await db()).figmaConfig.findUnique({ where: { id: 'default' } });
+
+  const apiToken =
+    decryptOptional({
+      authTag: row?.apiTokenAuthTag ?? null,
+      ciphertext: row?.apiTokenCiphertext ?? null,
+      keyVersion: row?.apiTokenKeyVersion ?? null,
+      nonce: row?.apiTokenNonce ?? null,
+    }) ??
+    process.env.FIGMA_API_TOKEN ??
+    null;
+
+  return {
+    apiToken,
+    enabled: row?.enabled ?? false,
+    maxNodes: row?.maxNodes ?? undefined,
   };
 }
 

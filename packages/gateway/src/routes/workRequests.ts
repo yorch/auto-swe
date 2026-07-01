@@ -2,8 +2,13 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import { extractFigmaRefs } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import {
+  createFigmaDesignProvider,
+  createKnowledgeBaseProvider,
+} from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveFigmaConfig,
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
   resolveWorkflowDefaults,
@@ -37,12 +42,12 @@ async function enrichWithTicketData(
     repo: { organizationName: string; repoName: string };
     workRequestId: string;
   }
-): Promise<void> {
+): Promise<string> {
   try {
     const tracker = await resolveIssueTrackerConfig();
 
     if (!tracker.provider) {
-      return;
+      return '';
     }
 
     // Resolve KB config independently so a missing/broken KB table never
@@ -58,7 +63,7 @@ async function enrichWithTicketData(
       log: fastify.log,
     });
     if (!ticket) {
-      return;
+      return '';
     }
 
     // Best-effort: fetch linked KB pages when a knowledge base is configured
@@ -111,10 +116,78 @@ async function enrichWithTicketData(
       },
       where: { workRequestId: args.workRequestId },
     });
+
+    // Return the ticket's searchable text so design enrichment can scan it for
+    // Figma links without re-reading the snapshot (and even if the write above
+    // silently failed).
+    return JSON.stringify(ticket);
   } catch (err) {
     fastify.log.warn(
       { err, ticketId: args.externalTicketId, workRequestId: args.workRequestId },
       'Ticket tracker enrichment failed; continuing without rawTicketData'
+    );
+    return '';
+  }
+}
+
+/**
+ * Best-effort design enrichment: when the Figma connector is enabled and the
+ * work request references a Figma file/node — in its own description or in the
+ * ticket text handed over by `enrichWithTicketData` — fetch a compact design
+ * summary and seed `ContextSnapshot.rawDesign`. Runs after `enrichWithTicketData`
+ * (sequentially, so the two never race on the snapshot row); the upsert touches
+ * only `rawDesign`, never clobbering ticket/documentation fields.
+ *
+ * Never throws and never blocks submission.
+ */
+const MAX_FIGMA_REFS = 3;
+
+async function enrichWithDesignData(
+  fastify: FastifyInstance,
+  args: { description: string; ticketText: string; workRequestId: string }
+): Promise<void> {
+  try {
+    const figma = await resolveFigmaConfig();
+    if (!figma.enabled || !figma.apiToken) {
+      return;
+    }
+
+    const refs = extractFigmaRefs(`${args.description}\n${args.ticketText}`).slice(
+      0,
+      MAX_FIGMA_REFS
+    );
+    if (refs.length === 0) {
+      return;
+    }
+
+    const provider = createFigmaDesignProvider(figma);
+    if (!provider) {
+      return;
+    }
+
+    // fetchDesignSummary swallows its own errors and resolves to null, so a
+    // plain Promise.all + null-filter is sufficient (no rejection to guard).
+    const results = await Promise.all(
+      refs.map((ref) => provider.fetchDesignSummary(ref, { log: fastify.log }))
+    );
+    const summaries = results.filter((s): s is NonNullable<typeof s> => s !== null);
+
+    if (summaries.length === 0) {
+      return;
+    }
+
+    await fastify.prisma.contextSnapshot.upsert({
+      create: {
+        rawDesign: summaries as unknown as Prisma.InputJsonValue,
+        workRequestId: args.workRequestId,
+      },
+      update: { rawDesign: summaries as unknown as Prisma.InputJsonValue },
+      where: { workRequestId: args.workRequestId },
+    });
+  } catch (err) {
+    fastify.log.warn(
+      { err, workRequestId: args.workRequestId },
+      'Figma design enrichment failed; continuing without rawDesign'
     );
   }
 }
@@ -502,9 +575,18 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // content when a tracker connector is configured. Failures are logged
       // and never affect the 201. (The retry endpoint intentionally skips
       // this — it reuses the original snapshot.)
-      await enrichWithTicketData(fastify, {
+      const ticketText = await enrichWithTicketData(fastify, {
         externalTicketId,
         repo: { organizationName: repo.organizationName, repoName: repo.repoName },
+        workRequestId: workRequest.id,
+      });
+
+      // Best-effort: seed the snapshot with a compact Figma design summary when
+      // the request references a Figma file/node. Runs after ticket enrichment
+      // and reuses its fetched ticket text (no extra snapshot read).
+      await enrichWithDesignData(fastify, {
+        description,
+        ticketText,
         workRequestId: workRequest.id,
       });
 

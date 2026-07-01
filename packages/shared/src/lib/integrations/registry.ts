@@ -1,7 +1,9 @@
 import { AtlassianClient } from './atlassianClient.js';
+import type { FigmaDesignProvider } from './figmaDesign.js';
 import type { IssueTrackerProvider } from './issueTracker.js';
 import type { KnowledgeBaseProvider } from './knowledgeBase.js';
 import { ConfluenceProvider } from './providers/confluence.js';
+import { FigmaProvider } from './providers/figma.js';
 import { GitHubIssuesProvider } from './providers/githubIssues.js';
 import { JiraProvider } from './providers/jira.js';
 import { LinearProvider } from './providers/linear.js';
@@ -31,6 +33,12 @@ export interface ResolvedKnowledgeBaseConfig {
   apiToken: string | null;
   spaces: string[];
   maxPages?: number;
+}
+
+export interface ResolvedFigmaConfig {
+  enabled: boolean;
+  apiToken: string | null;
+  maxNodes?: number;
 }
 
 export function createIssueTrackerProvider(
@@ -100,4 +108,11 @@ export function createKnowledgeBaseProvider(
     default:
       return null;
   }
+}
+
+export function createFigmaDesignProvider(config: ResolvedFigmaConfig): FigmaDesignProvider | null {
+  if (!config.enabled || !config.apiToken) {
+    return null;
+  }
+  return new FigmaProvider(config);
 }

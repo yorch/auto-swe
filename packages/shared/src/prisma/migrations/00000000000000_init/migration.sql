@@ -92,6 +92,7 @@ CREATE TABLE "context_snapshots" (
     "work_request_id" UUID NOT NULL,
     "raw_ticket_data" JSONB,
     "raw_documentation" JSONB,
+    "raw_design" JSONB,
     "success_criteria" TEXT[],
     "captured_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -826,6 +827,21 @@ CREATE TABLE "knowledge_base_config" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "knowledge_base_config_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "figma_config" (
+    "id" TEXT NOT NULL DEFAULT 'default',
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
+    "api_token_ciphertext" BYTEA,
+    "api_token_nonce" BYTEA,
+    "api_token_auth_tag" BYTEA,
+    "api_token_key_version" INTEGER,
+    "api_token_last_four" TEXT,
+    "max_nodes" INTEGER DEFAULT 12,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "figma_config_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
