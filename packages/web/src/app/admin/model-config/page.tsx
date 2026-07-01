@@ -22,17 +22,19 @@ export default function AdminModelConfigPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <PageHeader className="mb-3" title="Admin — Model configuration" />
-        <p className="max-w-2xl text-sm leading-relaxed text-paper-400">
-          Encrypted provider credentials, the embedding model, and the audit trail. Per-role model,
-          prompt, skill, and tool config now lives in the{' '}
-          <Link className="text-ember-400 hover:text-ember-300" href="/admin/agents/library">
-            Agent library
-          </Link>
-          .
-        </p>
-      </div>
+      <PageHeader
+        subtitle={
+          <>
+            Encrypted provider credentials, the embedding model, and the audit trail. Per-role
+            model, prompt, skill, and tool config now lives in the{' '}
+            <Link className="text-ember-400 hover:text-ember-300" href="/admin/agents/library">
+              Agent library
+            </Link>
+            .
+          </>
+        }
+        title="Admin — Model configuration"
+      />
       <MidRunWarning />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'credentials' && <CredentialsTab />}

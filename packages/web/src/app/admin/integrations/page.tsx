@@ -28,17 +28,19 @@ export default function AdminIntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <PageHeader className="mb-3" title="Admin — Integrations" />
-        <p className="max-w-2xl text-sm leading-relaxed text-paper-400">
-          Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
-          Masked fields show only the last four characters — enter a new value to rotate. An{' '}
-          <span className="rounded bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">
-            env
-          </span>{' '}
-          badge means the value is currently read from an environment variable.
-        </p>
-      </div>
+      <PageHeader
+        subtitle={
+          <>
+            Configure GitHub, Slack, storage backend, issue tracker, and OAuth provider credentials.
+            Masked fields show only the last four characters — enter a new value to rotate. An{' '}
+            <span className="rounded bg-amber-900/40 px-1 font-mono text-[10px] text-amber-400">
+              env
+            </span>{' '}
+            badge means the value is currently read from an environment variable.
+          </>
+        }
+        title="Admin — Integrations"
+      />
       <TabBar active={active} onChange={setActive} tabs={TABS} />
       {active === 'github' && <GitHubTab />}
       {active === 'slack' && <SlackTab />}

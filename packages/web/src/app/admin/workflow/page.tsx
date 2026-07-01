@@ -282,7 +282,9 @@ export default function AdminWorkflowPage() {
                         id="consolidation-threshold"
                         max={1}
                         min={0.5}
-                        onChange={(e) => setConsolidationSimilarityThreshold(Number(e.target.value))}
+                        onChange={(e) =>
+                          setConsolidationSimilarityThreshold(Number(e.target.value))
+                        }
                         step={0.05}
                         type="number"
                         value={consolidationSimilarityThreshold}

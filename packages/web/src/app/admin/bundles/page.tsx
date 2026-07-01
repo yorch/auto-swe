@@ -51,16 +51,18 @@ export default function AdminBundlesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <PageHeader className="mb-3" title="Bundles" />
-        <p className="max-w-2xl text-sm leading-relaxed text-paper-400">
-          Distribute library content (Agents, Skills, scanner patterns, Templates) across
-          deployments. Install seeds a <strong>managed base layer</strong>; your team/template
-          overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
-          installs as <code className="text-paper-300">VERIFIED</code>, otherwise{' '}
-          <code className="text-paper-300">UNVERIFIED</code> (community).
-        </p>
-      </div>
+      <PageHeader
+        subtitle={
+          <>
+            Distribute library content (Agents, Skills, scanner patterns, Templates) across
+            deployments. Install seeds a <strong>managed base layer</strong>; your team/template
+            overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
+            installs as <code className="text-paper-300">VERIFIED</code>, otherwise{' '}
+            <code className="text-paper-300">UNVERIFIED</code> (community).
+          </>
+        }
+        title="Bundles"
+      />
 
       {error && <Alert variant="error">{error}</Alert>}
 

@@ -33,7 +33,9 @@ export function WorkflowStatusChart({ data }: Props) {
             <Cell fill={STATUS_CHART_COLORS[entry.status] ?? '#7a766c'} key={entry.status} />
           ))}
         </Pie>
-        <ChartTooltip formatter={(value, name) => [value, String(name).replace(/_/g, ' ').toLowerCase()]} />
+        <ChartTooltip
+          formatter={(value, name) => [value, String(name).replace(/_/g, ' ').toLowerCase()]}
+        />
         <Legend
           formatter={(value) => String(value).replace(/_/g, ' ').toLowerCase()}
           wrapperStyle={LEGEND_STYLE}

@@ -375,7 +375,11 @@ function PatternRow({ pattern }: { pattern: ScannerPattern }) {
           )}
         </td>
         <td className="py-2 pr-4">
-          <ToggleSwitch checked={pattern.isActive} disabled={update.isPending} onChange={toggleActive} />
+          <ToggleSwitch
+            checked={pattern.isActive}
+            disabled={update.isPending}
+            onChange={toggleActive}
+          />
         </td>
         <td className="py-2 text-right">
           <div className="flex items-center justify-end gap-2">

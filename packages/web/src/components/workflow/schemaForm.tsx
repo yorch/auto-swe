@@ -35,7 +35,7 @@ export function ConnectionPicker({
   );
 }
 
-/** Renders the right input widget for an `InputSchemaProperty`, used by both the live run form and its static preview. */
+/** Renders the widget for an `InputSchemaProperty`, shared by the live run form and its preview. */
 export function SchemaFieldInput({
   name,
   prop,

@@ -140,23 +140,22 @@ export default function AdminMcpConnectionsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <PageHeader
-          actions={
-            <Button onClick={() => setNewOpen(true)} variant="primary">
-              + New Connection
-            </Button>
-          }
-          className="mb-3"
-          title="MCP Connections"
-        />
-        <p className="max-w-2xl text-sm leading-relaxed text-paper-400">
-          MCP servers (http/https) that an Agent can bind tools from. Attach one to an Agent via
-          its <code className="text-paper-300">mcpConnectionId</code> and add{' '}
-          <code className="text-paper-300">mcp</code> to its tool keys; the server&apos;s tools
-          then load at run time alongside the agent&apos;s built-in tools.
-        </p>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New Connection
+          </Button>
+        }
+        subtitle={
+          <>
+            MCP servers (http/https) that an Agent can bind tools from. Attach one to an Agent via
+            its <code className="text-paper-300">mcpConnectionId</code> and add{' '}
+            <code className="text-paper-300">mcp</code> to its tool keys; the server&apos;s tools
+            then load at run time alongside the agent&apos;s built-in tools.
+          </>
+        }
+        title="MCP Connections"
+      />
 
       {isLoading ? (
         <LoadingState />

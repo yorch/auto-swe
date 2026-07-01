@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
@@ -209,17 +210,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             )}
           </FieldWrapper>
           <FieldWrapper label="Active">
-            <div className="flex items-center gap-2">
-              <ToggleSwitch
-                checked={form.isActive}
-                onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
-              />
-              <span className="text-sm text-paper-400">
-                {form.isActive ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
+            <ToggleSwitch
+              checked={form.isActive}
+              label={form.isActive ? 'Enabled' : 'Disabled'}
+              onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+            />
           </FieldWrapper>
-          {error && <p className="text-xs text-brick-400">{error}</p>}
+          {error && <Alert variant="error">{error}</Alert>}
           <div className="flex justify-end gap-2 pt-2">
             <Button onClick={cancelEdit} type="button" variant="ghost">
               Cancel
@@ -341,7 +338,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
             value={form.promptText}
           />
         </FieldWrapper>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
@@ -384,7 +381,7 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
         <p className="text-sm text-paper-400">
           This will remove the skill and all its assignments. This cannot be undone.
         </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} variant="ghost">
             Cancel

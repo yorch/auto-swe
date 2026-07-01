@@ -1,7 +1,13 @@
 'use client';
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { AXIS_COMMON_PROPS, ChartTooltip, EmptyChart, GRID_STROKE, TOOLTIP_CURSOR_FILL } from './chartChrome';
+import {
+  AXIS_COMMON_PROPS,
+  ChartTooltip,
+  EmptyChart,
+  GRID_STROKE,
+  TOOLTIP_CURSOR_FILL,
+} from './chartChrome';
 import { CHART_PALETTE } from './colors';
 
 interface Props {

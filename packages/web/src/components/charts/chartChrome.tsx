@@ -66,7 +66,7 @@ export const LEGEND_STYLE: React.CSSProperties = {
 
 /** Tooltip with the shared Workshop Telemetry content/item/label styling baked in. */
 export function ChartTooltip(
-  props: Omit<ComponentProps<typeof Tooltip>, 'contentStyle' | 'itemStyle' | 'labelStyle'>,
+  props: Omit<ComponentProps<typeof Tooltip>, 'contentStyle' | 'itemStyle' | 'labelStyle'>
 ) {
   return (
     <Tooltip
