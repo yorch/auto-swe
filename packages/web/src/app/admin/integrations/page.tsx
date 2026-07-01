@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AuditLogTab } from '@/components/integrations/AuditLogTab';
+import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
 import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
@@ -11,7 +12,15 @@ import { StorageTab } from '@/components/integrations/StorageTab';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
 
-type Tab = 'github' | 'slack' | 'storage' | 'tracker' | 'knowledge-base' | 'oauth' | 'audit-log';
+type Tab =
+  | 'github'
+  | 'slack'
+  | 'storage'
+  | 'tracker'
+  | 'knowledge-base'
+  | 'figma'
+  | 'oauth'
+  | 'audit-log';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'github', label: 'GitHub' },
@@ -19,6 +28,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'storage', label: 'Storage' },
   { id: 'tracker', label: 'Issue Tracker' },
   { id: 'knowledge-base', label: 'Knowledge Base' },
+  { id: 'figma', label: 'Figma' },
   { id: 'oauth', label: 'OAuth' },
   { id: 'audit-log', label: 'Audit log' },
 ];
@@ -47,6 +57,7 @@ export default function AdminIntegrationsPage() {
       {active === 'storage' && <StorageTab />}
       {active === 'tracker' && <IssueTrackerTab />}
       {active === 'knowledge-base' && <KnowledgeBaseTab />}
+      {active === 'figma' && <FigmaTab />}
       {active === 'oauth' && <OAuthTab />}
       {active === 'audit-log' && <AuditLogTab />}
     </div>
