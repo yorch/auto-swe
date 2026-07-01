@@ -102,6 +102,23 @@ export interface EvalScheduleStatus {
   lastRunAt: string | null;
 }
 
+/** Input to start an async NL-generation job. */
+export interface WorkflowAuthorJobInput {
+  prompt: string;
+  teamId: string | null;
+  name?: string;
+  createdById?: string | null;
+}
+
+/** Poll result for an async NL-generation job. */
+export type WorkflowAuthorJobStatus =
+  | { status: 'running'; phase?: string }
+  | {
+      status: 'done';
+      result: { templateId: string; name: string; summary: string; attempts: number };
+    }
+  | { status: 'failed'; code: string; message: string };
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -118,8 +135,23 @@ declare module 'fastify' {
        */
       generateWorkflowSpec: (
         workflowId: string,
-        input: { prompt: string; teamId?: string | null; allowShell?: boolean }
+        input: {
+          prompt: string;
+          teamId?: string | null;
+          allowShell?: boolean;
+          /** When set, refine this spec instead of generating from scratch. */
+          baseSpec?: WorkflowSpec;
+        }
       ) => Promise<{ spec: WorkflowSpec; summary: string; attempts: number }>;
+      /** Explain a WorkflowSpec in plain language (request/response). */
+      explainWorkflowSpec: (
+        workflowId: string,
+        input: { spec: WorkflowSpec; teamId?: string | null }
+      ) => Promise<{ explanation: string }>;
+      /** Start an async NL-generation job (does NOT await the result). */
+      startWorkflowAuthorJob: (workflowId: string, input: WorkflowAuthorJobInput) => Promise<void>;
+      /** Poll an async NL-generation job's status/progress/result. */
+      getWorkflowAuthorJobStatus: (workflowId: string) => Promise<WorkflowAuthorJobStatus>;
       startChannelAssistant: (
         workflowId: string,
         input: ChannelAssistantTurnInput
@@ -303,9 +335,26 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    async explainWorkflowSpec(
+      workflowId: string,
+      input: { spec: WorkflowSpec; teamId?: string | null }
+    ): Promise<{ explanation: string }> {
+      return (await client.workflow.execute('WorkflowExplainWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '3 minutes',
+        workflowId,
+      })) as { explanation: string };
+    },
+
     async generateWorkflowSpec(
       workflowId: string,
-      input: { prompt: string; teamId?: string | null; allowShell?: boolean }
+      input: {
+        prompt: string;
+        teamId?: string | null;
+        allowShell?: boolean;
+        baseSpec?: WorkflowSpec;
+      }
     ): Promise<{ spec: WorkflowSpec; summary: string; attempts: number }> {
       // execute() = start + await result. Bounded above the activity's 5m
       // start-to-close so the workflow doesn't time out before the activity does.
@@ -364,6 +413,77 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       } catch {
         return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
       }
+    },
+
+    async getWorkflowAuthorJobStatus(workflowId: string): Promise<WorkflowAuthorJobStatus> {
+      const handle = client.workflow.getHandle(workflowId);
+      let desc: Awaited<ReturnType<typeof handle.describe>>;
+      try {
+        desc = await handle.describe();
+      } catch {
+        return { code: 'NOT_FOUND', message: 'Generation job not found', status: 'failed' };
+      }
+      const name = desc.status.name;
+      if (name === 'RUNNING') {
+        let phase: string | undefined;
+        try {
+          const p = (await handle.query('authorJobProgress')) as { phase?: string };
+          phase = p?.phase;
+        } catch {
+          // Query may race the handler registration at the very start — omit phase.
+        }
+        return { phase, status: 'running' };
+      }
+      if (name === 'COMPLETED') {
+        // Guard the result fetch too: a payload/codec error on an otherwise
+        // completed job should surface as a structured failure, not a 500 that
+        // leaves the poller stuck on "Generating…".
+        try {
+          const result = (await handle.result()) as {
+            templateId: string;
+            name: string;
+            summary: string;
+            attempts: number;
+          };
+          return { result, status: 'done' };
+        } catch {
+          return {
+            code: 'GENERATION_UNAVAILABLE',
+            message: 'Generation finished but its result could not be read. Please try again.',
+            status: 'failed',
+          };
+        }
+      }
+      // Terminal non-success: classify the failure. Prefer the structured
+      // ApplicationFailure `type` (e.g. 'SHELL_NOT_ALLOWED'); fall back to the
+      // message marker for the generation-failure case.
+      let code = 'GENERATION_UNAVAILABLE';
+      let message = 'Generation failed. Please try again.';
+      try {
+        await handle.result();
+      } catch (err) {
+        const types: string[] = [];
+        const messages: string[] = [];
+        let cur: unknown = err;
+        for (let i = 0; i < 6 && cur instanceof Error; i++) {
+          messages.push(cur.message);
+          const t = (cur as { type?: unknown }).type;
+          if (typeof t === 'string') {
+            types.push(t);
+          }
+          cur = (cur as { cause?: unknown }).cause;
+        }
+        if (types.includes('SHELL_NOT_ALLOWED')) {
+          code = 'SHELL_NOT_ALLOWED';
+          message =
+            'The generated workflow uses shell/container steps, which must be authored on the canvas.';
+        } else if (messages.some((m) => m.includes('could not produce a valid WorkflowSpec'))) {
+          code = 'GENERATION_FAILED';
+          message =
+            'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.';
+        }
+      }
+      return { code, message, status: 'failed' };
     },
 
     async getWorkRequestScheduleStatus(scheduleRowId: string): Promise<WorkRequestScheduleStatus> {
@@ -465,6 +585,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       await client.workflow.start('RunnableWorkflow', {
         args: [input],
         taskQueue: 'engineering-workflow',
+        workflowId,
+      });
+    },
+
+    async startWorkflowAuthorJob(workflowId: string, input: WorkflowAuthorJobInput): Promise<void> {
+      // Start without awaiting — the caller returns a job id and the client polls
+      // getWorkflowAuthorJobStatus. 6m ceiling > the 5m generate activity.
+      await client.workflow.start('WorkflowAuthorJobWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '6 minutes',
         workflowId,
       });
     },

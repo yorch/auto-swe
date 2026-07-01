@@ -118,6 +118,7 @@ describe('POST /api/v1/work-requests', () => {
       deleteChannelAmbientSchedule: async () => {},
       deleteChannelReactiveSchedule: async () => {},
       deleteWorkRequestSchedule: async () => {},
+      explainWorkflowSpec: async () => ({ explanation: 'does a thing' }),
       generateWorkflowSpec: async () => ({
         attempts: 1,
         spec: {
@@ -145,6 +146,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getWorkflowAuthorJobStatus: async () => ({ phase: 'generating', status: 'running' }),
       getWorkRequestScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -160,6 +162,7 @@ describe('POST /api/v1/work-requests', () => {
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },
+      startWorkflowAuthorJob: async () => {},
       syncChannelAmbientSchedule: async () => {},
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},

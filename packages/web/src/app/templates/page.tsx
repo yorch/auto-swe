@@ -4,12 +4,13 @@ import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
+import { SparkleIcon } from '@/components/ui/icons';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -19,8 +20,9 @@ import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import {
   useCreateWorkflowTemplate,
-  useGenerateWorkflowTemplate,
+  useStartWorkflowGenerationJob,
   useUpdateWorkflowTemplate,
+  useWorkflowGenerationJob,
   useWorkflowTemplates,
 } from '@/hooks/useWorkflows';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -130,19 +132,52 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
+const JOB_PHASE_LABEL: Record<string, string> = {
+  done: 'Finishing…',
+  generating: 'Designing the workflow…',
+  persisting: 'Saving the draft…',
+};
+
 function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
-  const generate = useGenerateWorkflowTemplate();
+  const startJob = useStartWorkflowGenerationJob();
   const [prompt, setPrompt] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  // Poll the async generation job while one is in flight.
+  const { data: job } = useWorkflowGenerationJob(jobId);
 
   const reset = () => {
     setPrompt('');
     setName('');
     setError(null);
+    setJobId(null);
   };
+
+  // React to terminal job states: route to the canvas on success, surface the
+  // message on failure. (Polling is non-blocking, so no proxy idle-timeout.)
+  useEffect(() => {
+    if (!job) {
+      return;
+    }
+    if (job.status === 'done') {
+      const id = job.templateId;
+      // Clear local state inline (setters are stable, so they stay out of deps)
+      // and route to the canvas for the new DRAFT.
+      setPrompt('');
+      setName('');
+      setError(null);
+      setJobId(null);
+      onClose();
+      router.push(`/templates/${id}`);
+    } else if (job.status === 'failed') {
+      setError(job.message);
+      setJobId(null);
+    }
+  }, [job, onClose, router]);
 
   const handleGenerate = async () => {
     const trimmed = prompt.trim();
@@ -152,21 +187,25 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
     }
     setError(null);
     try {
-      const result = await generate.mutateAsync({
+      const result = await startJob.mutateAsync({
         name: name.trim() || undefined,
         prompt: trimmed,
         teamId: selectedTeamId ?? undefined,
       });
-      const id = result.data.id;
-      onClose();
-      reset();
-      // Land on the canvas editor for the new DRAFT so the human reviews/edits
-      // before activating.
-      router.push(`/templates/${id}`);
+      setJobId(result.jobId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'generation failed');
     }
   };
+
+  // Busy while a job is in flight — including the brief window where a transient
+  // poll error leaves `job` undefined — so the button can't re-enable and let the
+  // user start a second (duplicate, billed) generation. The terminal-state effect
+  // clears `jobId`, which ends "busy".
+  const busy =
+    startJob.isPending || (jobId !== null && job?.status !== 'done' && job?.status !== 'failed');
+  const phaseLabel =
+    job?.status === 'running' ? (JOB_PHASE_LABEL[job.phase ?? 'generating'] ?? 'Working…') : null;
 
   return (
     <Modal
@@ -187,6 +226,7 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
         </p>
         {error && <Alert>{error}</Alert>}
         <Textarea
+          disabled={busy}
           label="Description"
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="e.g. When a ticket comes in, run the implementer, then the review network, and open a pull request. Pause for human approval before merging."
@@ -194,12 +234,18 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
           value={prompt}
         />
         <Input
+          disabled={busy}
           hint="Optional — defaults to a name the AI picks"
           label="Name"
           onChange={(e) => setName(e.target.value)}
           placeholder="my-workflow"
           value={name}
         />
+        {phaseLabel && (
+          <div className="font-mono text-xs uppercase tracking-[0.18em] text-paper-500">
+            {phaseLabel}
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button
             onClick={() => {
@@ -210,8 +256,8 @@ function GenerateTemplateModal({ open, onClose }: { open: boolean; onClose: () =
           >
             Cancel
           </Button>
-          <Button disabled={generate.isPending} onClick={handleGenerate} variant="primary">
-            {generate.isPending ? 'Generating…' : 'Generate draft →'}
+          <Button disabled={busy} onClick={handleGenerate} variant="primary">
+            {busy ? 'Generating…' : 'Generate draft →'}
           </Button>
         </div>
       </div>
@@ -270,7 +316,8 @@ export default function TemplatesPage() {
           actions={
             <div className="flex items-center gap-2">
               <Button onClick={() => setGenerateOpen(true)} size="sm" variant="primary">
-                ✨ Generate with AI
+                <SparkleIcon />
+                Generate with AI
               </Button>
               <Button onClick={() => setCreateOpen(true)} size="sm" variant="secondary">
                 + New workflow

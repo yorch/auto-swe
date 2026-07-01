@@ -5,7 +5,9 @@
 > edit on the canvas, and activate.
 
 Status: **Shipped.** Entry points: web canvas, gateway API + CLI, and the Slack
-channel assistant.
+channel assistant. Generated drafts can then be **refined conversationally** —
+describe a change and it's applied as a new version (web chat panel + Slack
+thread follow-ups).
 
 ---
 
@@ -91,8 +93,12 @@ dynamic catalog + the user's intent go in the user message.
 
 | Surface | How |
 |---|---|
-| **Web** | Workflow library (`/templates`) → **"✨ Generate with AI"** → describe → routes to the canvas editor for the new DRAFT. |
-| **API** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Errors are distinguished: `422 GENERATION_FAILED` when the model can't produce a valid spec (rephrase) vs `503 GENERATION_UNAVAILABLE` for an infra failure (worker/Temporal down — retry). |
+| **Web** | Workflow library (`/templates`) → **"Generate with AI"** → describe → routes to the canvas editor for the new DRAFT. |
+| **API (sync)** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Errors are distinguished: `422 GENERATION_FAILED` when the model can't produce a valid spec (rephrase) vs `503 GENERATION_UNAVAILABLE` for an infra failure. Shell-capable (audited) authoring path. |
+| **API (async)** | `POST /api/v1/workflow-templates/generate/jobs` → `202 { jobId }`; poll `GET /api/v1/workflow-templates/generate/jobs/:jobId` → `{ status: running\|done\|failed, phase \| result \| code }`. Non-blocking (no proxy idle-timeout); persists the DRAFT worker-side; refuses shell nodes. |
+| **Explain** | `POST /api/v1/workflow-templates/:id/explain` → `{ data: { explanation } }` (Markdown), CLI `auto-swe workflows explain <name>`, web "Explain" button. The inverse of authoring. |
+| **Refine (web)** | Template page (`/templates/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD. |
+| **Refine (Slack)** | A follow-up in the same thread ("also add a security review step") → the channel assistant's `refineWorkflow` tool → applies the change to the draft that thread generated (linked via `ChannelThreadSession.lastGeneratedTemplateId`) and saves a new version. Budget-gated; refuses shell nodes; replies with the new version (or "nothing to refine yet"). |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
 | **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes is refused (those require canvas authoring with the proper RBAC + audit). |
 
@@ -112,6 +118,10 @@ dynamic catalog + the user's intent go in the user message.
 | CLI command | `packages/cli/src/commands/workflows.ts` (`generate`) |
 | Web modal + hook | `packages/web/src/app/templates/page.tsx`, `packages/web/src/hooks/useTemplates.ts` |
 | Slack tool + draft activity | `packages/worker/src/activities/channelAssistant.ts`, `packages/worker/src/activities/channelWorkflowDraft.ts` |
+| Refine message builder | `packages/shared/src/workflow/authoring.ts` → `buildRefineRequestMessage` |
+| Refine endpoint + version helper | `packages/gateway/src/routes/workflowTemplates.ts` (`POST /:id/refine`, `createTemplateVersion`) |
+| Web refine chat panel + hook | `packages/web/src/components/workflow/RefineChatPanel.tsx`, `useRefineWorkflowTemplate` in `packages/web/src/hooks/useTemplates.ts` |
+| Slack refine activity + thread link | `packages/worker/src/activities/channelWorkflowRefine.ts`, `ChannelThreadSession.lastGeneratedTemplateId` |
 
 ---
 
@@ -127,5 +137,42 @@ dynamic catalog + the user's intent go in the user message.
 - **One persist path.** Both `POST /` (ACTIVE) and `POST /generate` (DRAFT) go
   through the shared `createTemplateWithInitialVersion` helper, so the
   template + v1 + shell-audit transaction can't drift between the two routes.
-- **Future refinements:** stream partial specs to the canvas; let the author
-  reference bundles/coded steps; an "explain this workflow" inverse.
+- **Coded / container steps.** When shell authoring is permitted, the catalog
+  lists the team's effective image allowlist (built-in + additions) and the
+  `containerStep` contract, so generated workflows can use bundle-shipped coded
+  capabilities. The async/channel paths refuse shell nodes (no audit there).
+- **Async generation.** The web uses a non-blocking job (`/generate/jobs` →
+  poll) so a long generation never holds the HTTP request open (proxy-safe); the
+  job persists the DRAFT worker-side, so re-polling is idempotent.
+- **Explain.** `workflowExplainer` reads a spec and returns a Markdown
+  walkthrough — the inverse of authoring.
+- **Conversational refinement.** `generateWorkflowSpec` takes an optional
+  `baseSpec`; when set it runs the same generate→validate→repair loop in *refine*
+  mode (seeded with the current spec via `buildRefineRequestMessage`, asked to
+  return the full updated spec, not a diff). Refinements save a **new version**
+  of the same template (never a new template), so history is preserved and the
+  human still activates. The gateway `POST /:id/refine` refines the latest
+  version and pins the spec name to the template; the Slack path anchors the
+  thread to its draft via `ChannelThreadSession.lastGeneratedTemplateId` (a
+  plain UUID — a deleted template reads as "nothing to refine"). Both save
+  paths reuse the shared `createTemplateVersion` (concurrency-safe append +
+  shell audit); the channel path additionally refuses shell nodes.
+- **Expression language.** `cond.expr` / `{ expr }` bindings use the
+  interpreter's restricted **safe** expression language (`==` not `===`, no
+  method calls), documented in `WORKFLOW_AUTHOR_PROMPT`. An integration test
+  executes a generated spec through the real interpreter to keep this honest.
+- **Pre-execution validation.** `validateSpec` (`packages/shared/src/workflow/validateSpec.ts`)
+  is a pure analyzer that runs *beyond* the schema: it lints every `cond`/binding
+  expression for **syntax** (catches the `===`/method-call class via the
+  parse-only `checkExprSyntax`, without false-positiving on valid relational/
+  arithmetic exprs like `count >= 3`), checks reachability + that a `terminate`
+  is reachable, validates `nodes.<id>` binding provenance, and flags unknown
+  steps / missing required config. It returns structured `{ errors, warnings }`.
+  Wiring: the **generation repair loop** hard-gates on `errors` (the author
+  self-corrects unrunnable graphs); the **gateway save** is *advisory* — findings
+  are returned as non-blocking `warnings` (mirroring `validateSpecRefs`, so a
+  work-in-progress draft is never rejected) and it's ready to back a **canvas
+  live-lint** panel. Graph-edge enumeration lives once in `nodeEdges` (`spec.ts`),
+  shared by the schema's ref check and `validateSpec`.
+- **Future refinements:** true token-level streaming of the forming graph;
+  a canvas live-lint UI + a dry-run that adds the cost estimate.

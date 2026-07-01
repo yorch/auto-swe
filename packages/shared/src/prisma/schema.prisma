@@ -553,6 +553,11 @@ model ChannelThreadSession {
   threadTs  String       @map("thread_ts")
   /// When the assistant last replied in this thread (the session freshness anchor).
   lastAssistantAt DateTime @default(now()) @map("last_assistant_at") @db.Timestamptz
+  /// The most recent workflow template this thread generated, if any. Anchors
+  /// conversational refinement ("also add a security review step") to the draft
+  /// created earlier in the same thread. Plain UUID (no FK): if the template is
+  /// deleted the refine path treats a dangling id as "nothing to refine".
+  lastGeneratedTemplateId String? @map("last_generated_template_id") @db.Uuid
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

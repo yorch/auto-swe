@@ -57,6 +57,14 @@ export function lookupPath(ctx: Context, path: string): unknown {
   return current;
 }
 
+/**
+ * Lexical / structural error in an expression (e.g. `===`, a method call, an
+ * unterminated string, a missing `)`). Distinct from the runtime type errors
+ * the operators throw (e.g. `>` on a `undefined` operand) so a SYNTAX-only check
+ * can ignore the latter — see {@link checkExprSyntax}.
+ */
+export class ExprSyntaxError extends Error {}
+
 export function evalExpr(expr: string, ctx: Context): unknown {
   const tokens = tokenizeExpr(expr);
   const parser = new Parser(tokens, ctx);
@@ -68,6 +76,28 @@ export function evalExpr(expr: string, ctx: Context): unknown {
 export function evalBoolean(expr: string, ctx: Context): boolean {
   const v = evalExpr(expr, ctx);
   return Boolean(v);
+}
+
+/**
+ * Validate an expression's SYNTAX without caring whether it resolves at runtime.
+ * Returns the syntax-error message, or `null` if the expression is well-formed.
+ *
+ * It evaluates against an empty context and treats only {@link ExprSyntaxError}
+ * (tokenizer/parser failures) as a problem — runtime type errors raised by the
+ * operators on absent/undefined operands (e.g. `count >= 3` against `{}`) are
+ * NOT syntax errors and must not be reported, or every comparison/arithmetic
+ * over a context path would be a false positive.
+ */
+export function checkExprSyntax(expr: string): string | null {
+  try {
+    evalExpr(expr, {});
+    return null;
+  } catch (err) {
+    if (err instanceof ExprSyntaxError) {
+      return err.message;
+    }
+    return null;
+  }
 }
 
 // ── Path tokenization ─────────────────────────────────────────────────────
@@ -83,7 +113,9 @@ function tokenizePath(path: string): Array<string | number> {
     if (path[i] === '[') {
       const end = path.indexOf(']', i);
       if (end < 0) {
-        throw new Error(`unterminated [ in path: ${path}`);
+        // Structural path-syntax error (context-independent) → a syntax error so
+        // checkExprSyntax flags it, not just a runtime throw.
+        throw new ExprSyntaxError(`unterminated [ in path: ${path}`);
       }
       const idx = path.slice(i + 1, end).trim();
       if (/^-?\d+$/.test(idx)) {
@@ -94,7 +126,7 @@ function tokenizePath(path: string): Array<string | number> {
       ) {
         out.push(idx.slice(1, -1));
       } else {
-        throw new Error(`invalid index '${idx}' in path: ${path}`);
+        throw new ExprSyntaxError(`invalid index '${idx}' in path: ${path}`);
       }
       i = end + 1;
       continue;
@@ -106,7 +138,7 @@ function tokenizePath(path: string): Array<string | number> {
     }
     const id = path.slice(i, j);
     if (!id) {
-      throw new Error(`empty segment in path: ${path}`);
+      throw new ExprSyntaxError(`empty segment in path: ${path}`);
     }
     out.push(id);
     i = j;
@@ -172,7 +204,7 @@ function tokenizeExpr(input: string): Tok[] {
         }
       }
       if (j >= len) {
-        throw new Error(`unterminated string in expr: ${input}`);
+        throw new ExprSyntaxError(`unterminated string in expr: ${input}`);
       }
       tokens.push({ kind: 'str', val });
       i = j + 1;
@@ -189,7 +221,7 @@ function tokenizeExpr(input: string): Tok[] {
           j++;
         } else if (ch === '.') {
           if (seenDot) {
-            throw new Error(`invalid number literal at position ${i} in expr: ${input}`);
+            throw new ExprSyntaxError(`invalid number literal at position ${i} in expr: ${input}`);
           }
           seenDot = true;
           j++;
@@ -199,7 +231,7 @@ function tokenizeExpr(input: string): Tok[] {
       }
       const literal = input.slice(i, j);
       if (literal === '.' || literal === '-' || literal === '-.') {
-        throw new Error(`invalid number literal '${literal}' in expr: ${input}`);
+        throw new ExprSyntaxError(`invalid number literal '${literal}' in expr: ${input}`);
       }
       tokens.push({ kind: 'num', val: Number.parseFloat(literal) });
       i = j;
@@ -254,7 +286,7 @@ function tokenizeExpr(input: string): Tok[] {
       i = j;
       continue;
     }
-    throw new Error(`unexpected character '${c}' at position ${i} in expr: ${input}`);
+    throw new ExprSyntaxError(`unexpected character '${c}' at position ${i} in expr: ${input}`);
   }
   return tokens;
 }
@@ -268,7 +300,7 @@ class Parser {
 
   expectEnd(): void {
     if (this.pos < this.toks.length) {
-      throw new Error(`unexpected trailing tokens at position ${this.pos}`);
+      throw new ExprSyntaxError(`unexpected trailing tokens at position ${this.pos}`);
     }
   }
 
@@ -357,13 +389,13 @@ class Parser {
   parsePrimary(): unknown {
     const tok = this.toks[this.pos];
     if (!tok) {
-      throw new Error('unexpected end of expression');
+      throw new ExprSyntaxError('unexpected end of expression');
     }
     if (tok.kind === 'op' && tok.val === '(') {
       this.pos++;
       const v = this.parseOr();
       if (!this.matchOp(')')) {
-        throw new Error('expected )');
+        throw new ExprSyntaxError('expected )');
       }
       return v;
     }
@@ -378,7 +410,7 @@ class Parser {
       case 'path':
         return lookupPath(this.ctx, tok.val);
       default:
-        throw new Error(`unexpected operator ${tok.val}`);
+        throw new ExprSyntaxError(`unexpected operator ${tok.val}`);
     }
   }
 

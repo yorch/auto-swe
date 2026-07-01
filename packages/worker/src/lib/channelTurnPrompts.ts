@@ -49,6 +49,20 @@ export const GENERATE_WORKFLOW_TOOL_PROMPT_NOTE = [
 ].join('');
 
 /**
+ * `refineWorkflow` tool note: tells the agent to use it for a follow-up change to a
+ * workflow it already drafted IN THIS THREAD (rather than generating a new one).
+ */
+export const REFINE_WORKFLOW_TOOL_PROMPT_NOTE = [
+  '',
+  'You also have a `refineWorkflow` tool. Use it when the user asks to CHANGE / ',
+  'ADJUST the workflow you already drafted earlier IN THIS THREAD — e.g. "also add ',
+  'a security review step", "make it pause for approval before merge". It applies ',
+  'the change and saves a new DRAFT version; your reply should briefly say so ',
+  '("Updated the draft — review the new version in the Workflow library."). Use ',
+  '`generateWorkflow` (not this) when they want a brand-new, unrelated workflow.',
+].join('');
+
+/**
  * Gap H intent gate: appended ONLY for a follow-up continuation turn (a plain thread
  * reply, no re-`@mention`). Tells the agent to stay out of a conversation that isn't
  * directed at it, using the SKIP convention the ambient/reactive paths use so the

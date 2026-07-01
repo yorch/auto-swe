@@ -17,6 +17,7 @@ const SUB_HELP = `auto-swe workflows — manage workflow templates
                                          Create a template (or add a new version if the name already exists)
   workflows generate "<description>" [--name=NAME] [--team=<slug>]
                                          Generate a DRAFT template from a plain-language description (AI)
+  workflows explain <name>               Explain a template's active version in plain language (AI)
 `;
 
 export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -40,6 +41,9 @@ export async function runWorkflowsCommand(args: string[], env: CliEnv): Promise<
     }
     if (sub === 'generate') {
       return await cmdGenerate(rest, env);
+    }
+    if (sub === 'explain') {
+      return await cmdExplain(rest, env);
     }
   } catch (err) {
     if (err instanceof GatewayError) {
@@ -237,6 +241,28 @@ async function cmdGenerate(args: string[], env: CliEnv): Promise<number> {
   process.stdout.write(
     `Review and activate it on the canvas, or run: auto-swe workflows show "${tpl.name}"\n`
   );
+  return 0;
+}
+
+async function cmdExplain(args: string[], env: CliEnv): Promise<number> {
+  const { positional } = parseFlags(args);
+  const name = positional[0];
+  if (!name) {
+    process.stderr.write('Usage: workflows explain <name>\n');
+    return 1;
+  }
+  const tpl = await findTemplateByName(env, name);
+  if (!tpl) {
+    process.stderr.write(`No template named "${name}" is visible.\n`);
+    return 1;
+  }
+  process.stderr.write('Explaining workflow…\n');
+  const { explanation } = await apiRequest<{ explanation: string }>(
+    env,
+    'POST',
+    `/api/v1/workflow-templates/${tpl.id}/explain`
+  );
+  process.stdout.write(`${explanation}\n`);
   return 0;
 }
 

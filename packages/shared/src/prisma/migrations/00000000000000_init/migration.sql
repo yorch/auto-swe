@@ -292,6 +292,7 @@ CREATE TABLE "channel_thread_sessions" (
     "channel_id" UUID NOT NULL,
     "thread_ts" TEXT NOT NULL,
     "last_assistant_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "last_generated_template_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

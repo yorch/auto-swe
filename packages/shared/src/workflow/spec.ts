@@ -487,50 +487,10 @@ export const WorkflowSpecSchema = z
         path: ['entry'],
       });
     }
-    const isNodeId = (id: string | undefined): id is string =>
-      typeof id === 'string' && id in spec.nodes;
+    const isNodeId = (id: string): boolean => id in spec.nodes;
     for (const [id, node] of Object.entries(spec.nodes)) {
-      const refs: Array<[string, string | undefined]> = [];
-      switch (node.type) {
-        case 'step':
-        case 'agent':
-        case 'set':
-        case 'shell':
-          refs.push(['next', node.next]);
-          break;
-        case 'cond':
-          refs.push(['onTrue', node.onTrue], ['onFalse', node.onFalse]);
-          break;
-        case 'signal':
-          refs.push(['onReceive', node.onReceive], ['onTimeout', node.onTimeout]);
-          break;
-        case 'terminate':
-          break;
-        case 'fanOut':
-          refs.push(['subgraph', node.subgraph], ['join', node.join]);
-          break;
-        case 'humanApproval':
-          refs.push(
-            ['onApprove', node.onApprove],
-            ['onReject', node.onReject],
-            ['onTimeout', node.onTimeout]
-          );
-          break;
-        case 'humanDecision':
-          refs.push(['onTimeout', node.onTimeout]);
-          for (const [i, opt] of node.options.entries()) {
-            refs.push([`options[${i}].next`, opt.next]);
-          }
-          break;
-        case 'humanInput':
-          refs.push(['onSubmit', node.onSubmit], ['onTimeout', node.onTimeout]);
-          break;
-        case 'humanReview':
-          refs.push(['onSubmit', node.onSubmit], ['onTimeout', node.onTimeout]);
-          break;
-      }
-      for (const [field, ref] of refs) {
-        if (ref !== undefined && !isNodeId(ref)) {
+      for (const [field, ref] of nodeEdges(node)) {
+        if (!isNodeId(ref)) {
           ctx.addIssue({
             code: 'custom',
             message: `node '${id}'.${field} refers to unknown node '${ref}'`,
@@ -540,6 +500,63 @@ export const WorkflowSpecSchema = z
       }
     }
   });
+
+/**
+ * Labeled outgoing edges of a node — `[field, targetNodeId]` for every present
+ * edge. The single source of truth for graph traversal: used by the schema's
+ * ref validation (above) and by `validateSpec`'s reachability/termination
+ * analysis, so every node type's edges are enumerated in exactly one place.
+ */
+export function nodeEdges(node: Node): Array<[field: string, target: string]> {
+  const edges: Array<[string, string]> = [];
+  const add = (field: string, target: string | undefined): void => {
+    if (typeof target === 'string') {
+      edges.push([field, target]);
+    }
+  };
+  switch (node.type) {
+    case 'step':
+    case 'agent':
+    case 'mcp':
+    case 'eval':
+    case 'set':
+    case 'shell':
+    case 'containerStep':
+      add('next', node.next);
+      break;
+    case 'cond':
+      add('onTrue', node.onTrue);
+      add('onFalse', node.onFalse);
+      break;
+    case 'signal':
+      add('onReceive', node.onReceive);
+      add('onTimeout', node.onTimeout);
+      break;
+    case 'fanOut':
+      add('subgraph', node.subgraph);
+      add('join', node.join);
+      break;
+    case 'humanApproval':
+      add('onApprove', node.onApprove);
+      add('onReject', node.onReject);
+      add('onTimeout', node.onTimeout);
+      break;
+    case 'humanDecision':
+      add('onTimeout', node.onTimeout);
+      node.options.forEach((opt, i) => {
+        add(`options[${i}].next`, opt.next);
+      });
+      break;
+    case 'humanInput':
+    case 'humanReview':
+      add('onSubmit', node.onSubmit);
+      add('onTimeout', node.onTimeout);
+      break;
+    case 'terminate':
+      break;
+  }
+  return edges;
+}
 
 export type WorkflowSpec = z.infer<typeof WorkflowSpecSchema>;
 

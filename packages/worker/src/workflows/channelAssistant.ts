@@ -101,8 +101,8 @@ const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTa
 // Workflow generation: an LLM activity (generate→validate→repair) + a DB write.
 // Generous timeout; one attempt only (the activity has its own internal repair
 // loop, and it is best-effort — it returns null rather than throwing on failure).
-const { createChannelWorkflowDraft } = proxyActivities<
-  Pick<typeof activitiesType, 'createChannelWorkflowDraft'>
+const { createChannelWorkflowDraft, refineChannelWorkflowDraft } = proxyActivities<
+  Pick<typeof activitiesType, 'createChannelWorkflowDraft' | 'refineChannelWorkflowDraft'>
 >({
   retry: { maximumAttempts: 1 },
   startToCloseTimeout: '6m',
@@ -115,6 +115,16 @@ const CHANNEL_ERROR_TEXT =
 const CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT =
   ":warning: I couldn't turn that into a valid workflow. Try describing it with more " +
   'detail — which steps or agents should run, and in what order.';
+
+// Posted when a `refineWorkflow` intent has no draft in this thread to change.
+const CHANNEL_WORKFLOW_REFINE_NO_TARGET_TEXT =
+  ":information_source: I don't have a workflow drafted in this thread yet. Ask me to " +
+  'create one first, then I can refine it.';
+
+// Posted when a `refineWorkflow` intent couldn't apply the change.
+const CHANNEL_WORKFLOW_REFINE_FAILED_TEXT =
+  ":warning: I couldn't apply that change. Try describing it with more detail, or make " +
+  'the edit on the canvas in the Workflow library.';
 
 // Phase A: posted instead of launching a task when the channel is over budget.
 const CHANNEL_TASK_BUDGET_TEXT =
@@ -233,7 +243,7 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply, delegate, generate, suppressed } = await runChannelAssistantTurn(input);
+    const { reply, delegate, generate, refine, suppressed } = await runChannelAssistantTurn(input);
 
     // Gap H intent gate: a follow-up turn decided the latest message wasn't
     // addressed to it (SKIP) and fired no tool — post nothing (no placeholder was
@@ -259,12 +269,43 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         description: generate.description,
         name: generate.name,
         teamId: input.teamId,
+        threadTs: input.threadTs,
       });
       const text = draft
         ? `:sparkles: I drafted a workflow *"${draft.name}"* for you.` +
           `${draft.summary ? ` ${draft.summary}` : ''}` +
           '\nReview and activate it in the *Workflow library* on the dashboard before running it.'
         : CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT;
+      await deliver(input, placeholderTs, text);
+      return 'SUCCESS';
+    }
+
+    // The agent asked to refine the workflow it drafted earlier in this thread.
+    // Apply the change (a new DRAFT version off the thread's current draft) and
+    // tell the user. Budget-gated exactly like generation.
+    if (refine) {
+      const overBudget = await isChannelOverBudgetForTask(input.channelId);
+      if (overBudget) {
+        await deliver(input, placeholderTs, CHANNEL_TASK_BUDGET_TEXT);
+        return 'SUCCESS';
+      }
+      const result = await refineChannelWorkflowDraft({
+        channelId: input.channelId,
+        instruction: refine.instruction,
+        teamId: input.teamId,
+        threadTs: input.threadTs,
+      });
+      let text: string;
+      if (result.status === 'refined') {
+        text =
+          `:sparkles: I updated *"${result.name}"* (now version ${result.version}).` +
+          `${result.summary ? ` ${result.summary}` : ''}` +
+          '\nReview the new version in the *Workflow library* before activating.';
+      } else if (result.status === 'no_target') {
+        text = CHANNEL_WORKFLOW_REFINE_NO_TARGET_TEXT;
+      } else {
+        text = CHANNEL_WORKFLOW_REFINE_FAILED_TEXT;
+      }
       await deliver(input, placeholderTs, text);
       return 'SUCCESS';
     }

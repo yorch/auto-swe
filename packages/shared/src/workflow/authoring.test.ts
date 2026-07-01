@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   type AuthoringCatalog,
   buildAuthorRequestMessage,
+  buildRefineRequestMessage,
   buildRepairRequestMessage,
   renderAuthoringCatalog,
   WorkflowAuthorOutputSchema,
 } from './authoring.js';
+import type { WorkflowSpec } from './spec.js';
 
 const CATALOG: AuthoringCatalog = {
   agents: [{ description: 'Writes code.', key: 'implementer', name: 'Implementer' }],
@@ -26,8 +28,21 @@ describe('renderAuthoringCatalog', () => {
     expect(renderAuthoringCatalog(CATALOG)).toContain('Shell: NOT allowed');
   });
 
-  it('flags shell as allowed when permitted', () => {
-    expect(renderAuthoringCatalog({ ...CATALOG, allowShell: true })).toContain('Shell: allowed');
+  it('lists allowed images + the containerStep contract when shell is permitted', () => {
+    const text = renderAuthoringCatalog({
+      ...CATALOG,
+      allowShell: true,
+      shellImages: ['node:24-alpine', 'ghcr.io/acme/sbom:1'],
+    });
+    expect(text).toContain('Coded / container steps: allowed');
+    expect(text).toContain('CONTAINER_STEP_INPUT');
+    expect(text).toContain('node:24-alpine');
+    expect(text).toContain('ghcr.io/acme/sbom:1');
+  });
+
+  it('warns when shell is allowed but no images are allowlisted', () => {
+    const text = renderAuthoringCatalog({ ...CATALOG, allowShell: true, shellImages: [] });
+    expect(text).toContain('No images are allowlisted');
   });
 
   it('notes when no agents or connections are available', () => {
@@ -57,6 +72,31 @@ describe('buildRepairRequestMessage', () => {
     expect(msg).toContain('entry node');
     expect(msg).toContain('PREVIOUS ATTEMPT');
     expect(msg).toContain('Do a thing');
+  });
+});
+
+describe('buildRefineRequestMessage', () => {
+  const BASE_SPEC: WorkflowSpec = {
+    description: 'does a thing',
+    entry: 'start',
+    name: 'my-workflow',
+    nodes: { start: { status: 'SUCCESS', type: 'terminate' } },
+    schemaVersion: 1,
+  };
+
+  it('embeds the current spec, the change request, and the catalog', () => {
+    const msg = buildRefineRequestMessage({
+      baseSpec: BASE_SPEC,
+      catalog: CATALOG,
+      instruction: 'add a lint step before the terminate',
+    });
+    expect(msg).toContain('# CURRENT SPEC');
+    expect(msg).toContain('my-workflow');
+    expect(msg).toContain('# CHANGE REQUEST');
+    expect(msg).toContain('add a lint step before the terminate');
+    expect(msg).toContain('# CATALOG');
+    // Instructs the model to return the full spec, not a diff.
+    expect(msg).toContain('FULL updated spec');
   });
 });
 
