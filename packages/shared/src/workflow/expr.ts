@@ -113,7 +113,9 @@ function tokenizePath(path: string): Array<string | number> {
     if (path[i] === '[') {
       const end = path.indexOf(']', i);
       if (end < 0) {
-        throw new Error(`unterminated [ in path: ${path}`);
+        // Structural path-syntax error (context-independent) → a syntax error so
+        // checkExprSyntax flags it, not just a runtime throw.
+        throw new ExprSyntaxError(`unterminated [ in path: ${path}`);
       }
       const idx = path.slice(i + 1, end).trim();
       if (/^-?\d+$/.test(idx)) {
@@ -124,7 +126,7 @@ function tokenizePath(path: string): Array<string | number> {
       ) {
         out.push(idx.slice(1, -1));
       } else {
-        throw new Error(`invalid index '${idx}' in path: ${path}`);
+        throw new ExprSyntaxError(`invalid index '${idx}' in path: ${path}`);
       }
       i = end + 1;
       continue;
@@ -136,7 +138,7 @@ function tokenizePath(path: string): Array<string | number> {
     }
     const id = path.slice(i, j);
     if (!id) {
-      throw new Error(`empty segment in path: ${path}`);
+      throw new ExprSyntaxError(`empty segment in path: ${path}`);
     }
     out.push(id);
     i = j;

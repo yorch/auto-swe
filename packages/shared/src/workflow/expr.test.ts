@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { evalBoolean, evalExpr, lookupPath, resolveBinding } from './expr.js';
+import { checkExprSyntax, evalBoolean, evalExpr, lookupPath, resolveBinding } from './expr.js';
+
+describe('checkExprSyntax', () => {
+  it('flags lexical/structural syntax errors', () => {
+    expect(checkExprSyntax('a === b')).toMatch(/unexpected/i); // === is not valid
+    expect(checkExprSyntax('foo(1)')).not.toBeNull(); // method/function call
+    expect(checkExprSyntax('a &&')).not.toBeNull(); // dangling operator
+  });
+
+  it('flags malformed PATH syntax (context-independent, deterministic crash)', () => {
+    // These throw in tokenizePath regardless of context, so they must be reported
+    // as syntax errors — not silently ignored like runtime type errors.
+    expect(checkExprSyntax('nodes.foo[')).toMatch(/unterminated \[/);
+    expect(checkExprSyntax('nodes.foo[bar]')).toMatch(/invalid index/);
+  });
+
+  it('does NOT flag valid expressions that merely resolve to undefined at eval', () => {
+    // The whole point of the parse-only check: a relational/arithmetic expr over a
+    // context path is well-formed even though it throws against an empty context.
+    expect(checkExprSyntax('count >= 3')).toBeNull();
+    expect(checkExprSyntax('a.b.c == true')).toBeNull();
+    expect(checkExprSyntax('nodes.impl.output.n + 1 > 2')).toBeNull();
+  });
+});
 
 describe('lookupPath', () => {
   it('reads nested fields and array indices', () => {

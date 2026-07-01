@@ -5,21 +5,25 @@
  * points to a real node. This catches the next class of "valid schema, broken
  * workflow" problems BEFORE a run (or before save), as structured findings:
  *
- *   errors (should block):
+ *   errors (unrunnable graph — hard-gated in the generation repair loop):
  *     - EXPR_SYNTAX        a cond/binding expression doesn't parse in the safe
- *                          expression language (e.g. `===`, method calls)
+ *                          expression language (e.g. `===`, method calls, or a
+ *                          malformed path like `nodes.foo[`)
  *     - NO_TERMINAL        no `terminate` node is reachable from `entry`
- *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
- *                          that doesn't exist
  *   warnings (advisory):
+ *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
+ *                          that doesn't exist (may reference a not-yet-added node)
  *     - UNREACHABLE        a node can't be reached from `entry`
  *     - NODE_CANT_TERMINATE a reachable node has no path to any `terminate`
  *     - UNKNOWN_STEP       a `step` is not a built-in (may be a custom registry)
  *     - MISSING_CONFIG     a required step config field is absent
  *
  * Pure + I/O-free so it runs identically in the worker (pre-run / repair loop),
- * the gateway (block on errors at save), and the web canvas (live lint).
- * DB-dependent ref checks (agent/mcp existence, image allowlist) live elsewhere
+ * the gateway, and the web canvas (live lint). Wiring differs by caller: the
+ * generation repair loop hard-gates on `errors`; the gateway SAVE path is
+ * ADVISORY — it surfaces all findings (errors and warnings) as non-blocking
+ * `warnings` so a work-in-progress draft is never rejected. DB-dependent ref
+ * checks (agent/mcp existence, image allowlist) live elsewhere
  * (`validateSpecRefs`, shell gating) and compose on top.
  */
 

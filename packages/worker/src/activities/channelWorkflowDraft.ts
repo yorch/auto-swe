@@ -53,9 +53,10 @@ export async function createChannelWorkflowDraft(
       teamId: input.teamId,
     });
     if (!persisted) {
-      // null = the spec contained shell nodes the channel path can't author.
+      // null = the spec contained shell/containerStep nodes the channel path
+      // can't author (name collisions are handled by suffix-retry, not null).
       console.warn(
-        `[channelAssistant] could not persist channel-authored draft for ${input.channelId} (shell nodes or name collision)`
+        `[channelAssistant] could not persist channel-authored draft for ${input.channelId} (shell/containerStep nodes)`
       );
       return null;
     }
