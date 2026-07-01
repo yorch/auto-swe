@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
 import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
@@ -22,6 +23,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   combineScores,
   decideGate,
@@ -29,7 +31,9 @@ import {
   type ScoreInput,
 } from '../lib/scorerCombination.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
+import type { GateName } from './qualityGates.js';
 import { runAgent } from './runAgent.js';
+import { runGateStandalone } from './standaloneGateRunner.js';
 
 /** Scorer kind → the EvalResult source it records under. */
 const SCORER_KIND_SOURCE: Record<EvalScorer['kind'], 'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY'> = {
@@ -79,10 +83,39 @@ async function evaluateScorer(
       return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, value };
     }
     case 'gate': {
-      // Node-level gate execution needs the run's workspace + the target diff
-      // applied; that is the integration seam (docs/evals-p2.md). Until wired,
-      // record a neutral skip so the node still produces a decomposable row.
-      return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+      if (!runId) {
+        return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+      }
+      try {
+        const run = await prisma.workflowRun.findUnique({
+          select: { workRequest: { select: { connectionId: true, externalTicketId: true } } },
+          where: { id: runId },
+        });
+        const { connectionId, externalTicketId } = run?.workRequest ?? {};
+        if (!connectionId || !externalTicketId) {
+          return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+        }
+        const repo = await prisma.connection.findUniqueOrThrow({ where: { id: connectionId } });
+        const defaults = await resolveWorkflowDefaults();
+        const branch = `${defaults.branchPrefix}/${externalTicketId}`;
+        const repoRef = toRepoRef(repo);
+        const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
+        const result = await runGateStandalone({
+          authedRepoUrl: authedCloneUrl,
+          branch,
+          command: scorer.command,
+          defaultBranch: repo.defaultBranch,
+          gate: scorer.gate as GateName,
+        });
+        return {
+          kind: 'gate',
+          passed: result.passed,
+          scorer: `gate:${scorer.gate}`,
+          value: result.passed ? 1 : 0,
+        };
+      } catch {
+        return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+      }
     }
   }
 }
