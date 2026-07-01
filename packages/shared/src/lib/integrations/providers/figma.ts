@@ -163,18 +163,21 @@ export class FigmaProvider implements FigmaDesignProvider {
       let truncated = false;
 
       if (ref.nodeIds.length > 0) {
-        const ids = ref.nodeIds.slice(0, maxNodes).map(encodeURIComponent).join(',');
+        const requested = ref.nodeIds.slice(0, maxNodes);
+        const ids = requested.map(encodeURIComponent).join(',');
         const resp = await this.request<FigmaNodesResponse>(
           `/files/${encodeURIComponent(ref.fileKey)}/nodes?ids=${ids}`
         );
         fileName = resp.name;
-        for (const id of ref.nodeIds.slice(0, maxNodes)) {
+        for (const id of requested) {
           const doc = resp.nodes?.[id]?.document;
           if (doc) {
             documents.push(doc);
           }
         }
-        if (ref.nodeIds.length > maxNodes) {
+        // Truncated if we capped the id list, or if the response omitted some
+        // requested nodes (e.g. a deleted/inaccessible node id).
+        if (ref.nodeIds.length > maxNodes || documents.length < requested.length) {
           truncated = true;
         }
       } else {
@@ -208,14 +211,15 @@ export class FigmaProvider implements FigmaDesignProvider {
       // commonly 403 — never let it sink the summary).
       const variableTokens = await this.fetchVariables(ref.fileKey).catch(() => []);
 
+      // Node-derived color/typography tokens come first: they are tied to the
+      // referenced frames and must not be crowded out of the cap by a large
+      // Enterprise variable set.
+      const nodeTokens = [...tokens.entries()].map(([name, value]) => ({ name, value }));
       return {
         fileKey: ref.fileKey,
         fileName,
         nodes,
-        tokens: [
-          ...variableTokens,
-          ...[...tokens.entries()].map(([name, value]) => ({ name, value })),
-        ].slice(0, TOKEN_CAP),
+        tokens: [...nodeTokens, ...variableTokens].slice(0, TOKEN_CAP),
         truncated: truncated || undefined,
         url: ref.url,
       };

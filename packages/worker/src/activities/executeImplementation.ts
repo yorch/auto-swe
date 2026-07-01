@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import {
   resolveIssueTrackerConfig,
@@ -30,33 +31,17 @@ import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
-// Compact shape of the Figma design summary stored on ContextSnapshot.rawDesign
-// (see FigmaDesignSummary in @auto-swe/shared). Kept local to avoid a
-// cross-package subpath import for a read-only projection.
-interface DesignNodeSummary {
-  name?: string;
-  type?: string;
-  childNames?: string[];
-  texts?: string[];
-}
-interface DesignSummary {
-  fileName?: string;
-  url?: string;
-  nodes?: DesignNodeSummary[];
-  tokens?: { name: string; value: string }[];
-  truncated?: boolean;
-}
-
 /**
- * Render the stored Figma design summary into a compact prompt block. Returns
- * '' when there is no usable design context. Bounded so it can never blow the
+ * Render the stored Figma design summary (a `FigmaDesignSummary[]` written by
+ * the gateway's design enrichment) into a compact prompt block. Returns '' when
+ * there is no usable design context. Bounded so it can never blow the
  * implementer's context budget regardless of design size.
  */
 function formatDesignContext(rawDesign: unknown): string {
   if (!Array.isArray(rawDesign) || rawDesign.length === 0) {
     return '';
   }
-  const summaries = rawDesign as DesignSummary[];
+  const summaries = rawDesign as FigmaDesignSummary[];
   const lines: string[] = [];
   for (const s of summaries.slice(0, 3)) {
     lines.push(`### ${s.fileName ?? 'Figma design'}${s.url ? ` (${s.url})` : ''}`);

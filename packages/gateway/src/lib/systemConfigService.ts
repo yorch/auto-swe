@@ -1,10 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
-import {
-  createFigmaDesignProvider,
-  createKnowledgeBaseProvider,
-} from '@auto-swe/shared/lib/integrations/registry';
+import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
 import {
   resolveFigmaConfig,
   resolveGitHubConfig,
@@ -1051,10 +1048,6 @@ export async function testFigmaConnection(): Promise<{ detail: string; ok: boole
     });
     if (!res.ok) {
       return { detail: `Figma API returned ${res.status}.`, ok: false };
-    }
-    // Touch the provider factory so a misconfiguration surfaces here too.
-    if (!createFigmaDesignProvider(config)) {
-      return { detail: 'Figma provider could not be constructed.', ok: false };
     }
     return { detail: 'Figma connection successful.', ok: true };
   } catch (err) {

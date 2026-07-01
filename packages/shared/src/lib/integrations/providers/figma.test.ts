@@ -85,6 +85,38 @@ describe('FigmaProvider.fetchDesignSummary', () => {
     expect(firstCall[1].headers['X-Figma-Token']).toBe('figd_test');
   });
 
+  it('flags truncated when the response omits a requested node', async () => {
+    const nodesBody = {
+      name: 'F',
+      // '9:9' was requested but is absent from the response (deleted node).
+      nodes: { '1:1': { document: { id: '1:1', name: 'Root', type: 'FRAME' } } },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => nodesBody,
+        ok: true,
+        status: 200,
+        text: async () => '',
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ meta: { variables: {} } }),
+        ok: true,
+        status: 200,
+        text: async () => '',
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = new FigmaProvider(config);
+    const summary = await provider.fetchDesignSummary({
+      fileKey: 'KEY',
+      nodeIds: ['1:1', '9:9'],
+      url: 'https://www.figma.com/file/KEY/x?node-id=1-1',
+    });
+    expect(summary?.nodes).toHaveLength(1);
+    expect(summary?.truncated).toBe(true);
+  });
+
   it('returns null (never throws) on an API error', async () => {
     vi.stubGlobal('fetch', mockFetchOnce({ err: 'forbidden' }, false, 403));
     const provider = new FigmaProvider(config);

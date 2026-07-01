@@ -46,6 +46,20 @@ describe('extractFigmaRefs', () => {
     expect(refs[0].nodeIds).toEqual([]);
   });
 
+  it('captures node-id from a slug-less URL (key immediately followed by ?query)', () => {
+    const refs = extractFigmaRefs('https://www.figma.com/design/AbC123?node-id=45-6');
+    expect(refs).toHaveLength(1);
+    expect(refs[0].fileKey).toBe('AbC123');
+    expect(refs[0].nodeIds).toEqual(['45:6']);
+  });
+
+  it('does not throw on a malformed percent-encoded node-id', () => {
+    expect(() => extractFigmaRefs('https://www.figma.com/file/K/x?node-id=100%')).not.toThrow();
+    const refs = extractFigmaRefs('https://www.figma.com/file/K/x?node-id=100%');
+    expect(refs[0].fileKey).toBe('K');
+    expect(refs[0].nodeIds).toEqual(['100%']);
+  });
+
   it('deduplicates by file key, merging node ids', () => {
     const refs = extractFigmaRefs(
       [
