@@ -236,6 +236,34 @@ register({
 });
 
 register({
+  category: 'agent',
+  // systemPrompt overrides the decomposition planner prompt for this node.
+  // costHint.role is a rough palette estimate; the activity runs on the channel's
+  // channelAssistant model, whose opus-class default `reviewer` approximates (the
+  // cheaper `planner` price would materially under-estimate it).
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'reviewer', tokensIn: 2000, tokensOut: 800 },
+  description:
+    'Decompose a general channel task into 1..N independent subtasks. Returns { subtasks, subtaskCount }; returns a single subtask (the whole task) for cohesive work.',
+  label: 'Plan channel task',
+  name: 'planChannelTask',
+});
+
+register({
+  category: 'agent',
+  // systemPrompt overrides the SYNTHESIS prompt (the per-subtask branch runs use
+  // the channel agent's own configured prompt). costHint.role is a rough palette
+  // estimate; the activity runs on the channel's channelAssistant model, whose
+  // opus-class default `reviewer` approximates.
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'reviewer', tokensIn: 8000, tokensOut: 4000 },
+  description:
+    'Run each planned subtask through the channel assistant (bounded concurrency) and synthesize the partial answers into one reply. Returns { text }.',
+  label: 'Run channel subtasks',
+  name: 'runChannelSubtasks',
+});
+
+register({
   category: 'vcs',
   configFields: [
     {

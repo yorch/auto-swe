@@ -21,6 +21,8 @@ import type { ModelBackedAgentKey } from './types.js';
  *     so they need both `implementer` and `securityReview`.
  *   - `runReviewNetwork`'s three sub-reviewers all bind the `reviewer` model.
  *   - `planDecomposition` binds `planner`.
+ *   - `planChannelTask` + `runChannelSubtasks` (general-route decomposition) both
+ *     run the channel's `channelAssistant` model (planner/subtask/synthesis calls).
  *
  * Worked example: a template whose steps are `executeImplementation` →
  * `runReviewNetwork` → `runLint` → `createOrUpdatePullRequest`. `requiredAgentKeys()`
@@ -36,8 +38,10 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]
   executeGateFixImplementation: ['implementer', 'securityReview'],
   executeImplementation: ['implementer', 'securityReview'],
   executeReviewFixImplementation: ['implementer', 'securityReview'],
+  planChannelTask: ['channelAssistant'],
   planDecomposition: ['planner'],
   resolveMergeConflict: ['implementer'],
+  runChannelSubtasks: ['channelAssistant'],
   runReviewNetwork: ['reviewer'],
   validateContext: ['validateContext'],
 };

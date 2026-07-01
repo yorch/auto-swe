@@ -63,6 +63,7 @@ const agentActivities = proxyActivities<
     | 'executeReviewFixImplementation'
     | 'executeGateFixImplementation'
     | 'planDecomposition'
+    | 'runChannelSubtasks'
     | 'runReviewNetwork'
   >
 >({
@@ -177,8 +178,11 @@ const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMe
 });
 
 // P2: declarative agent node. Tool-free single-shot agent run; same retry shape
-// as the other LLM activities.
-const agentNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentNode'>>({
+// as the other LLM activities. `planChannelTask` (general-route decomposition
+// planner) is the same shape — a single-shot structured LLM call.
+const agentNodeActivities = proxyActivities<
+  Pick<typeof activitiesType, 'runAgentNode' | 'planChannelTask'>
+>({
   heartbeatTimeout: '2m',
   retry: {
     backoffCoefficient: 2,
@@ -657,6 +661,29 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'planDecomposition',
     ({ request, config }) =>
       agentActivities.planDecomposition(request, config.systemPrompt as string | undefined),
+  ],
+  [
+    // General-route decomposition planner. `task` binds from request.description;
+    // thread the run's channelId so the planner resolves the CHANNEL model tier.
+    'planChannelTask',
+    ({ request, config, inputs }) =>
+      agentNodeActivities.planChannelTask({
+        task: (inputs.task as string | undefined) ?? request.description,
+        ...(request.channelId ? { channelId: request.channelId } : {}),
+        ...(config.systemPrompt ? { systemPrompt: config.systemPrompt as string } : {}),
+      }),
+  ],
+  [
+    // Decompose path: run each planned subtask + synthesize (long-running, so it
+    // rides the agent proxy). `subtasks` binds from the planner's output.
+    'runChannelSubtasks',
+    ({ request, config, inputs }) =>
+      agentActivities.runChannelSubtasks({
+        subtasks: (inputs.subtasks as { title: string; description: string }[] | undefined) ?? [],
+        task: (inputs.task as string | undefined) ?? request.description,
+        ...(request.channelId ? { channelId: request.channelId } : {}),
+        ...(config.systemPrompt ? { systemPrompt: config.systemPrompt as string } : {}),
+      }),
   ],
   [
     'mergeBranches',

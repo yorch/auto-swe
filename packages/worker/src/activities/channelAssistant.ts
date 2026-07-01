@@ -13,6 +13,11 @@ import {
   writeChannelMemory,
 } from '../lib/channelMemory.js';
 import { applyPersona, resolvePersonaPrompt } from '../lib/channelPersona.js';
+import {
+  DELEGATE_TOOL_PROMPT_NOTE,
+  FOLLOWUP_INTENT_PROMPT_NOTE,
+  GENERATE_WORKFLOW_TOOL_PROMPT_NOTE,
+} from '../lib/channelTurnPrompts.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -103,28 +108,6 @@ const DelegateTaskOutputSchema = z.object({
 });
 
 /**
- * System-prompt note appended for the assistant turn: tells the agent it can
- * launch a durable background task via `delegateTask` for genuine multi-step
- * work, versus answering inline for quick questions.
- */
-const DELEGATE_TOOL_PROMPT_NOTE = [
-  '',
-  'You have a `delegateTask` tool. Use it ONLY when the user is asking you to ',
-  'carry out a genuine multi-step task (e.g. "investigate X and summarise", ',
-  '"draft the migration plan", "build Y") rather than answer a quick question. ',
-  'When you call it, a durable background run is launched that works the task ',
-  'and reports back in this thread — so your own reply should be a brief ',
-  'acknowledgement ("On it — I\'ll follow up here."). For quick questions, just ',
-  'answer directly and do NOT call the tool. Set route="code" only when the task ',
-  'requires editing a repository / opening a pull request; otherwise route="general". ',
-  'For a code task, if the user named a specific repository, pass it as `repoHint` ',
-  '(e.g. "payments-api" or "acme/payments-api"); leave it unset if no repo was named. ',
-  'If the user explicitly asks to defer the task to a specific future time (e.g. ',
-  '"tomorrow at 9am", "next Monday", "in 2 hours"), pass an ISO 8601 UTC timestamp as ',
-  '`runAt` (e.g. "2026-06-26T09:00:00Z"). Leave `runAt` unset for immediate execution.',
-].join('');
-
-/**
  * Build the `delegateTask` Mastra tool. Calling it RECORDS the structured intent
  * into `onDelegate` (a closure the activity owns) and returns a short
  * confirmation — the actual run launch happens in the workflow after the turn.
@@ -174,22 +157,6 @@ const GenerateWorkflowOutputSchema = z.object({
   note: z.string(),
   queued: z.boolean(),
 });
-
-/**
- * System-prompt note for the `generateWorkflow` tool: tells the agent to use it
- * when the user wants to CREATE a reusable workflow/automation (a saved template)
- * rather than run a one-off task (`delegateTask`) or answer a question.
- */
-const GENERATE_WORKFLOW_TOOL_PROMPT_NOTE = [
-  '',
-  'You also have a `generateWorkflow` tool. Use it ONLY when the user asks you to ',
-  'CREATE / SET UP a reusable workflow, automation, or pipeline (a saved template ',
-  'they can run repeatedly) — e.g. "create a workflow that runs the implementer then ',
-  'opens a PR", "set up an automation for…". This generates the workflow and saves it ',
-  'as a DRAFT for a human to review and activate; your own reply should briefly say so ',
-  '("I\'ve drafted that workflow — review and activate it in the Workflow library."). ',
-  'Do NOT use it for a one-off task (use `delegateTask`) or a quick question.',
-].join('');
 
 /**
  * Build the `generateWorkflow` Mastra tool. Like `delegateTask` it only RECORDS
@@ -437,21 +404,6 @@ export async function runChannelAgentTurn(
 /** Gap H intent gate: a reply beginning with the word `skip` (case-insensitive)
  *  is the "not addressed to me" sentinel for a follow-up continuation turn. */
 const FOLLOWUP_SKIP_SENTINEL = /^skip\b/i;
-
-/**
- * Gap H intent gate: prompt note appended ONLY for a follow-up continuation turn
- * (a plain thread reply, no re-`@mention`). Tells the agent to stay out of a
- * conversation that isn't directed at it, using the same SKIP convention as the
- * ambient/reactive paths so the workflow can suppress the reply.
- */
-const FOLLOWUP_INTENT_PROMPT_NOTE = [
-  '',
-  'You are continuing a thread you were recently active in, WITHOUT being directly ',
-  '@mentioned again. Only respond if the latest message is plausibly addressed to ',
-  'you (a follow-up question to you, or something you can clearly help with). If the ',
-  'teammates are talking among themselves and the latest message is NOT for you, do ',
-  'NOT butt in — reply with exactly: SKIP',
-].join('');
 
 export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput): Promise<{
   reply: string;

@@ -150,11 +150,33 @@ launches a **durable, thread-bound workflow run**.
   (`{route, title, description, repoHint?}`) instead of (or alongside) a reply, and
   `ChannelAssistantWorkflow` starts a child `RunnableWorkflow`.
 - **Two routes:** **general** runs the seeded GLOBAL **"Channel Task"** template
-  (a repo-less `agent` node — `agentRef: 'channelAssistant'`); **code** resolves the
+  (repo-less; conditional decomposition — see below); **code** resolves the
   channel's `git_repo` Connection (`resolveChannelRepo`: repo-hint match, else the
   team's sole repo) and runs the team's default **SWE** template (real implement →
   review → PR in a Docker workspace). The code route falls back to the general route
   when no repo resolves unambiguously.
+- **General-route decomposition (conditional).** The "Channel Task" spec is
+  `plan → cond → {single agent | composite}`. A `planChannelTask` step decides
+  whether the task splits into independent parts — biased AGAINST splitting, so a
+  cohesive task returns ONE subtask and the `cond` (`nodes.plan.output.subtaskCount
+  > 1`) routes to the single `channelAssistant` agent node (behaviourally the same
+  as before, plus one cheap planning call). A genuinely parallelizable task (2–4
+  subtasks) routes to the `runChannelSubtasks` step, which runs one `channelAssistant`
+  pass per subtask with bounded concurrency (`BRANCH_CONCURRENCY = 3`) and then
+  synthesizes the partial answers into one reply. The fan runs inside that activity
+  rather than as engine `fanOut` nodes because the interpreter can't surface a branch
+  agent's free-text output to a join (branch outputs land under prefixed node ids);
+  each subtask + the synthesis are still individual traced `runAgent` LLM calls, so
+  their cost accrues to the channel ledger and shows in the run trace. Resilient:
+  `planChannelTask` never throws (any failure → one subtask), a failed subtask
+  contributes no part, a single surviving part skips synthesis, and a failed
+  synthesis falls back to joining the parts. `finalizeChannelTaskRun` reads
+  `nodes.composite.output.text` (decompose path) falling back to `nodes.task.output.text`
+  (single path). Both step nodes expose a `systemPrompt` override (planner prompt /
+  synthesis prompt). Files: `packages/worker/src/activities/channelTaskPlan.ts`
+  (`planChannelTask`, `runChannelSubtasks`), prompts in
+  `@auto-swe/shared/lib/agentPrompts` (`CHANNEL_TASK_PLANNER_PROMPT`,
+  `CHANNEL_TASK_SYNTHESIZER_PROMPT`), spec in `syncBuiltins.ts` (`CHANNEL_TASK_SPEC`).
 - **Thread binding:** the run's workflow id is deterministic —
   `chantask-<channelId>-<threadTs>` (`channelTaskWorkflowId` in
   `@auto-swe/shared/lib/channelTask`, shared by worker + gateway). The id is
@@ -492,9 +514,6 @@ a `trace →` link to the full `/runs/<id>` tool-call sequence. Team-scoped read
   into the most-relevant thread (rather than the channel root) is a refinement.
 - **Per-stage progress posts** back into the task thread (the run is already
   observable in `/runs`; richer in-thread "working on X" updates are a polish item).
-- **Richer general-route decomposition** — the general "Channel Task" template is a
-  single agent node today; a `planDecomposition` + `fanOut` spec would let general
-  tasks break into stages like the code route's SWE template can.
 - **A true hard budget cap** (pre-flight cost reservation) — not achievable for
   post-hoc LLM cost; the current gate is a Serializable-transaction read whose
   guarantee is "at most one in-flight turn can overshoot."
@@ -526,6 +545,8 @@ a `trace →` link to the full `/runs/<id>` tool-call sequence. Team-scoped read
   `packages/worker/src/activities/channelAssistant.ts`,
   `packages/worker/src/activities/channelReactive.ts` (Gap A reactive, §10),
   `packages/worker/src/activities/channelTask.ts` (autonomous task launch, §8),
+  `packages/worker/src/activities/channelTaskPlan.ts` (general-route decomposition: `planChannelTask` + `runChannelSubtasks`, §8),
+  `packages/worker/src/lib/channelTurnPrompts.ts` (turn-hint prompt notes),
   `packages/worker/src/activities/channelOpenItems.ts` (Gap C open-item sweep, §11),
   `packages/worker/src/activities/consolidateChannelMemory.ts` (Gap F, §9),
   `packages/worker/src/activities/passiveIngestChannelMemory.ts` (passive ingestion, §9),

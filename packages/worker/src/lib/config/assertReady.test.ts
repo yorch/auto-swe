@@ -27,6 +27,8 @@ const ALL_MODEL_BACKED_AGENT_KEYS = [
   'securityReview',
   'validateContext',
   'commitToMemory',
+  // General-route channel-task decomposition steps require the channel agent.
+  'channelAssistant',
 ];
 
 beforeEach(() => {
