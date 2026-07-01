@@ -2,8 +2,13 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
-import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import { extractFigmaRefs } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import {
+  createFigmaDesignProvider,
+  createKnowledgeBaseProvider,
+} from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveFigmaConfig,
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
   resolveWorkflowDefaults,
@@ -115,6 +120,73 @@ async function enrichWithTicketData(
     fastify.log.warn(
       { err, ticketId: args.externalTicketId, workRequestId: args.workRequestId },
       'Ticket tracker enrichment failed; continuing without rawTicketData'
+    );
+  }
+}
+
+/**
+ * Best-effort design enrichment: when the Figma connector is enabled and the
+ * work request (its description or the already-seeded ticket data) references a
+ * Figma file/node, fetch a compact design summary and seed
+ * `ContextSnapshot.rawDesign`. Runs after `enrichWithTicketData` so it can read
+ * `rawTicketData` and so the two never race on the same snapshot row; the upsert
+ * touches only `rawDesign`, never clobbering ticket/documentation fields.
+ *
+ * Never throws and never blocks submission.
+ */
+const MAX_FIGMA_REFS = 3;
+
+async function enrichWithDesignData(
+  fastify: FastifyInstance,
+  args: { description: string; workRequestId: string }
+): Promise<void> {
+  try {
+    const figma = await resolveFigmaConfig();
+    if (!figma.enabled || !figma.apiToken) {
+      return;
+    }
+
+    const snapshot = await fastify.prisma.contextSnapshot.findUnique({
+      where: { workRequestId: args.workRequestId },
+    });
+    const ticketText = snapshot?.rawTicketData ? JSON.stringify(snapshot.rawTicketData) : '';
+    const refs = extractFigmaRefs(`${args.description}\n${ticketText}`).slice(0, MAX_FIGMA_REFS);
+    if (refs.length === 0) {
+      return;
+    }
+
+    const provider = createFigmaDesignProvider(figma);
+    if (!provider) {
+      return;
+    }
+
+    const settled = await Promise.allSettled(
+      refs.map((ref) => provider.fetchDesignSummary(ref, { log: fastify.log }))
+    );
+    const summaries = settled
+      .filter(
+        (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof provider.fetchDesignSummary>>> =>
+          r.status === 'fulfilled'
+      )
+      .map((r) => r.value)
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+
+    if (summaries.length === 0) {
+      return;
+    }
+
+    await fastify.prisma.contextSnapshot.upsert({
+      create: {
+        rawDesign: summaries as unknown as Prisma.InputJsonValue,
+        workRequestId: args.workRequestId,
+      },
+      update: { rawDesign: summaries as unknown as Prisma.InputJsonValue },
+      where: { workRequestId: args.workRequestId },
+    });
+  } catch (err) {
+    fastify.log.warn(
+      { err, workRequestId: args.workRequestId },
+      'Figma design enrichment failed; continuing without rawDesign'
     );
   }
 }
@@ -505,6 +577,13 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       await enrichWithTicketData(fastify, {
         externalTicketId,
         repo: { organizationName: repo.organizationName, repoName: repo.repoName },
+        workRequestId: workRequest.id,
+      });
+
+      // Best-effort: seed the snapshot with a compact Figma design summary when
+      // the request references a Figma file/node. Runs after ticket enrichment.
+      await enrichWithDesignData(fastify, {
+        description,
         workRequestId: workRequest.id,
       });
 

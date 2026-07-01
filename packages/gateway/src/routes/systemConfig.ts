@@ -9,6 +9,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   detectJiraFields,
+  getFigmaConfig,
   getGitHubConfig,
   getGoogleOAuthConfig,
   getIssueTrackerConfig,
@@ -18,6 +19,7 @@ import {
   listConfigAuditEntries,
   SYSTEM_CONFIG_IDS,
   testDecryptSecrets,
+  testFigmaConnection,
   testGitHubConnection,
   testIssueTrackerConnection,
   testKnowledgeBaseConnection,
@@ -25,6 +27,7 @@ import {
   testStorageConnection,
   updateConsolidationConfig,
   updateEvalScheduleConfig,
+  updateFigmaConfig,
   updateGitHubConfig,
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
@@ -171,6 +174,12 @@ const KnowledgeBasePutBody = z.object({
   maxPages: z.number().int().min(1).max(50).nullable().optional(),
   provider: z.enum(['confluence', 'notion']).nullable().optional(),
   spaces: z.array(z.string().min(1).max(200)).max(20).optional(),
+});
+
+const FigmaPutBody = z.object({
+  apiToken: z.string().min(1).max(500).optional(),
+  enabled: z.boolean().optional(),
+  maxNodes: z.number().int().min(1).max(50).nullable().optional(),
 });
 
 // ─── route plugin ─────────────────────────────────────────────────────────────
@@ -396,6 +405,35 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/knowledge-base/test',
     { schema: { response: { 200: z.any() } } },
     async (_req, reply) => reply.send(await testKnowledgeBaseConnection())
+  );
+
+  // ── Figma (design source) ────────────────────────────────────────────────────
+
+  f.get('/config/figma', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await getFigmaConfig(prisma))
+  );
+
+  f.put(
+    '/config/figma',
+    { schema: { body: FigmaPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      const result = await updateFigmaConfig(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          entityId: SYSTEM_CONFIG_IDS.figma,
+          entityType: 'FigmaConfig',
+        });
+      }
+      return reply.send({ data: result.data });
+    }
+  );
+
+  f.post('/config/figma/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
+    reply.send(await testFigmaConnection())
   );
 
   // ── Config audit log ─────────────────────────────────────────────────────────

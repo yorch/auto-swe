@@ -4,6 +4,7 @@ import { API_CONTRACT_STABILITY_SKILL } from './apiContractStability.js';
 import { ASYNC_SAFETY_SKILL } from './asyncSafety.js';
 import { CONFIGURATION_OVER_HARDCODING_SKILL } from './configurationOverHardcoding.js';
 import { CONTEXT_AMBIGUITY_RESOLUTION_SKILL } from './contextAmbiguityResolution.js';
+import { DESIGN_FIDELITY_SKILL } from './designFidelity.js';
 import { DOMAIN_LOGIC_INTEGRITY_SKILL } from './domainLogicIntegrity.js';
 import { ERROR_PATH_COVERAGE_SKILL } from './errorPathCoverage.js';
 import { FOLLOW_EXISTING_PATTERNS_SKILL } from './followExistingPatterns.js';
@@ -51,6 +52,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   MINIMAL_SURFACE_AREA_SKILL,
   CONFIGURATION_OVER_HARDCODING_SKILL,
   ROLLBACK_FIRST_PLANNING_SKILL,
+  DESIGN_FIDELITY_SKILL,
   // Reviewer skills (shared role)
   REVIEW_FOCUS_SECURITY_SKILL,
   MIGRATION_SAFETY_REVIEW_SKILL,
@@ -76,6 +78,7 @@ export {
   ASYNC_SAFETY_SKILL,
   CONFIGURATION_OVER_HARDCODING_SKILL,
   CONTEXT_AMBIGUITY_RESOLUTION_SKILL,
+  DESIGN_FIDELITY_SKILL,
   DOMAIN_LOGIC_INTEGRITY_SKILL,
   ERROR_PATH_COVERAGE_SKILL,
   FOLLOW_EXISTING_PATTERNS_SKILL,

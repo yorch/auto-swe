@@ -32,6 +32,7 @@
     "./lib/integrations/registry": "./dist/lib/integrations/registry.js",
     "./lib/integrations/issueTracker": "./dist/lib/integrations/issueTracker.js",
     "./lib/integrations/knowledgeBase": "./dist/lib/integrations/knowledgeBase.js",
+    "./lib/integrations/figmaDesign": "./dist/lib/integrations/figmaDesign.js",
     "./lib/integrations/providers/jira": "./dist/lib/integrations/providers/jira.js",
     "./lib/integrations/providers/confluence": "./dist/lib/integrations/providers/confluence.js",
     "./lib/integrations/providers/linear": "./dist/lib/integrations/providers/linear.js",

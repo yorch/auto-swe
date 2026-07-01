@@ -1,8 +1,12 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
-import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
 import {
+  createFigmaDesignProvider,
+  createKnowledgeBaseProvider,
+} from '@auto-swe/shared/lib/integrations/registry';
+import {
+  resolveFigmaConfig,
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
@@ -28,6 +32,7 @@ import type { FastifyBaseLogger } from 'fastify';
 // Used as entityId in ConfigAuditLog (which requires a UUID PK) since the
 // config tables use the string 'default' as their PK.
 export const SYSTEM_CONFIG_IDS = {
+  figma: '00000000-0000-0000-0001-000000000008',
   github: '00000000-0000-0000-0001-000000000001',
   googleOAuth: '00000000-0000-0000-0001-000000000005',
   knowledgeBase: '00000000-0000-0000-0001-000000000007',
@@ -953,6 +958,105 @@ export async function testKnowledgeBaseConnection(): Promise<{ detail: string; o
     }
     await kbProvider.searchPages('', config.spaces?.slice(0, 1) ?? []);
     return { detail: `${config.provider} connection successful.`, ok: true };
+  } catch (err) {
+    return {
+      detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+      ok: false,
+    };
+  }
+}
+
+// ─── Figma (design source) ─────────────────────────────────────────────────────
+
+type FigmaConfigRow = NonNullable<Awaited<ReturnType<PrismaClient['figmaConfig']['findUnique']>>>;
+
+export type FigmaConfigInput = {
+  apiToken?: string;
+  enabled?: boolean;
+  maxNodes?: number | null;
+};
+
+function figmaData(row: FigmaConfigRow | null) {
+  return {
+    apiToken: maskedSecret(row?.apiTokenLastFour),
+    enabled: row?.enabled ?? false,
+    maxNodes: row?.maxNodes ?? null,
+  };
+}
+
+export async function getFigmaConfig(prisma: PrismaClient) {
+  const row = await prisma.figmaConfig.findUnique({ where: { id: 'default' } });
+  return {
+    data: figmaData(row),
+    sources: {
+      apiToken: src(!!row?.apiTokenCiphertext, 'FIGMA_API_TOKEN'),
+    },
+  };
+}
+
+export async function updateFigmaConfig(
+  prisma: PrismaClient,
+  body: FigmaConfigInput
+): Promise<ConfigUpdateResult> {
+  const { apiToken, enabled, maxNodes } = body;
+
+  const existing = await prisma.figmaConfig.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  if (enabled !== undefined) {
+    data.enabled = enabled;
+  }
+  if (maxNodes !== undefined) {
+    data.maxNodes = maxNodes;
+  }
+
+  sealInto(data, 'apiToken', apiToken);
+
+  const row = await prisma.figmaConfig.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  const changedFields = changedKeys([
+    ['enabled', enabled],
+    ['maxNodes', maxNodes],
+    ['apiToken', apiToken],
+  ]);
+
+  return {
+    auditAfterJson: {
+      changedFields,
+      enabled: row.enabled,
+      maxNodes: row.maxNodes,
+    },
+    changedFields,
+    data: figmaData(row),
+    existed: !!existing,
+  };
+}
+
+export async function testFigmaConnection(): Promise<{ detail: string; ok: boolean }> {
+  const config = await resolveFigmaConfig();
+  if (!config.enabled) {
+    return { detail: 'Figma connector is disabled.', ok: false };
+  }
+  if (!config.apiToken) {
+    return { detail: 'Figma connector missing API token.', ok: false };
+  }
+  try {
+    const res = await fetch('https://api.figma.com/v1/me', {
+      headers: { 'X-Figma-Token': config.apiToken },
+      method: 'GET',
+    });
+    if (!res.ok) {
+      return { detail: `Figma API returned ${res.status}.`, ok: false };
+    }
+    // Touch the provider factory so a misconfiguration surfaces here too.
+    if (!createFigmaDesignProvider(config)) {
+      return { detail: 'Figma provider could not be constructed.', ok: false };
+    }
+    return { detail: 'Figma connection successful.', ok: true };
   } catch (err) {
     return {
       detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,

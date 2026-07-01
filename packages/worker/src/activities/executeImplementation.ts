@@ -30,6 +30,61 @@ import { createWorkspace, shellQuote } from './workspace.js';
 
 const MAX_TDD_ITERATIONS = 5;
 
+// Compact shape of the Figma design summary stored on ContextSnapshot.rawDesign
+// (see FigmaDesignSummary in @auto-swe/shared). Kept local to avoid a
+// cross-package subpath import for a read-only projection.
+interface DesignNodeSummary {
+  name?: string;
+  type?: string;
+  childNames?: string[];
+  texts?: string[];
+}
+interface DesignSummary {
+  fileName?: string;
+  url?: string;
+  nodes?: DesignNodeSummary[];
+  tokens?: { name: string; value: string }[];
+  truncated?: boolean;
+}
+
+/**
+ * Render the stored Figma design summary into a compact prompt block. Returns
+ * '' when there is no usable design context. Bounded so it can never blow the
+ * implementer's context budget regardless of design size.
+ */
+function formatDesignContext(rawDesign: unknown): string {
+  if (!Array.isArray(rawDesign) || rawDesign.length === 0) {
+    return '';
+  }
+  const summaries = rawDesign as DesignSummary[];
+  const lines: string[] = [];
+  for (const s of summaries.slice(0, 3)) {
+    lines.push(`### ${s.fileName ?? 'Figma design'}${s.url ? ` (${s.url})` : ''}`);
+    for (const node of (s.nodes ?? []).slice(0, 8)) {
+      const children =
+        node.childNames && node.childNames.length > 0
+          ? ` — children: ${node.childNames.slice(0, 12).join(', ')}`
+          : '';
+      lines.push(`- **${node.name ?? 'node'}** (${node.type ?? 'NODE'})${children}`);
+      const texts = (node.texts ?? []).slice(0, 8);
+      if (texts.length > 0) {
+        lines.push(`  text: ${texts.map((t) => JSON.stringify(t)).join(', ')}`);
+      }
+    }
+    const tokens = (s.tokens ?? []).slice(0, 24);
+    if (tokens.length > 0) {
+      lines.push(`tokens: ${tokens.map((t) => `${t.name}=${t.value}`).join('; ')}`);
+    }
+    if (s.truncated) {
+      lines.push('(design summary truncated)');
+    }
+  }
+  if (lines.length === 0) {
+    return '';
+  }
+  return `\n\n## Referenced Figma Design\nMatch the implementation to this design — see the *design-fidelity* skill.\n${lines.join('\n')}`;
+}
+
 /**
  * Run the implementer agent for a work request.
  *
@@ -117,6 +172,26 @@ export async function executeImplementation(
 
     heartbeat('lessons retrieved');
 
+    // Design context (P1): when the work request's snapshot carries a Figma
+    // design summary, surface a compact description so the implementer can match
+    // it. Best-effort — a read failure must not block implementation.
+    let designContext = '';
+    try {
+      const snapshot = await prisma.contextSnapshot.findUnique({
+        select: { rawDesign: true },
+        where: { workRequestId: request.workRequestId },
+      });
+      designContext = formatDesignContext(snapshot?.rawDesign);
+      if (designContext) {
+        tracer.addActivityEvent({
+          name: 'design.context_loaded',
+          outputJson: { chars: designContext.length },
+        });
+      }
+    } catch {
+      // Design context is optional — never block implementation on it.
+    }
+
     // Fire-and-forget tracker sync — never blocks implementation
     resolveIssueTrackerConfig()
       .then((trackerConfig) =>
@@ -143,7 +218,7 @@ export async function executeImplementation(
     );
 
     const llmSystemPrompt =
-      systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext;
+      systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext + designContext;
 
     // TDD loop
     for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
