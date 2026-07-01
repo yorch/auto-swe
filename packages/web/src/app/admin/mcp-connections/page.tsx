@@ -7,6 +7,7 @@ import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import {
   type McpConnectionRow,
@@ -139,20 +140,22 @@ export default function AdminMcpConnectionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">MCP Connections</h2>
-          <p className="mt-1 text-sm text-paper-400">
+      <PageHeader
+        actions={
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New Connection
+          </Button>
+        }
+        subtitle={
+          <>
             MCP servers (http/https) that an Agent can bind tools from. Attach one to an Agent via
             its <code className="text-paper-300">mcpConnectionId</code> and add{' '}
             <code className="text-paper-300">mcp</code> to its tool keys; the server&apos;s tools
             then load at run time alongside the agent&apos;s built-in tools.
-          </p>
-        </div>
-        <Button onClick={() => setNewOpen(true)} variant="primary">
-          + New Connection
-        </Button>
-      </div>
+          </>
+        }
+        title="MCP Connections"
+      />
 
       {isLoading ? (
         <LoadingState />

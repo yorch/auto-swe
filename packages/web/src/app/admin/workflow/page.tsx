@@ -1,8 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Textarea } from '@/components/ui/Textarea';
 import {
   triggerConsolidationNow,
   useConsolidationConfig,
@@ -111,16 +117,13 @@ export default function AdminWorkflowPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Admin — Workflow defaults</h2>
-        <p className="mt-1 text-sm text-paper-400">
-          System-wide defaults applied to every new work request. Per-team overrides take precedence
-          when set.
-        </p>
-      </div>
+      <PageHeader
+        subtitle="System-wide defaults applied to every new work request. Per-team overrides take precedence when set."
+        title="Admin — Workflow defaults"
+      />
 
       {isLoading ? (
-        <p className="text-sm text-paper-400">Loading…</p>
+        <LoadingState message="Loading…" />
       ) : (
         <>
           <form className="space-y-6" onSubmit={handleSubmit}>
@@ -129,61 +132,38 @@ export default function AdminWorkflowPage() {
                 <CardTitle eyebrow="Git &amp; PR">Branch and pull request templates</CardTitle>
               </CardHeader>
               <div className="space-y-4">
-                <div>
-                  <label
-                    className="mb-1 block text-xs uppercase text-paper-500"
-                    htmlFor="branch-prefix"
-                  >
-                    Branch prefix
-                  </label>
-                  <input
-                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                <FieldWrapper
+                  hint={`Branches are created as ${branchPrefix || 'auto'}/<ticketId>.`}
+                  id="branch-prefix"
+                  label="Branch prefix"
+                >
+                  <Input
                     id="branch-prefix"
                     onChange={(e) => setBranchPrefix(e.target.value)}
                     placeholder="auto"
                     value={branchPrefix}
                   />
-                  <p className="mt-1 text-[11px] text-paper-500">
-                    Branches are created as{' '}
-                    <span className="font-mono">
-                      {branchPrefix || 'auto'}/{'<ticketId>'}
-                    </span>
-                    .
-                  </p>
-                </div>
+                </FieldWrapper>
 
-                <div>
-                  <label
-                    className="mb-1 block text-xs uppercase text-paper-500"
-                    htmlFor="pr-title-template"
-                  >
-                    PR title template
-                  </label>
-                  <input
-                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                <FieldWrapper
+                  hint="Available variables: {{ticketId}}, {{description}}."
+                  id="pr-title-template"
+                  label="PR title template"
+                >
+                  <Input
                     id="pr-title-template"
                     onChange={(e) => setPrTitleTemplate(e.target.value)}
                     placeholder="[auto-swe] {{ticketId}}"
                     value={prTitleTemplate}
                   />
-                  <p className="mt-1 text-[11px] text-paper-500">
-                    Available variables: <span className="font-mono">{'{{ticketId}}'}</span>,{' '}
-                    <span className="font-mono">{'{{description}}'}</span>.
-                  </p>
-                </div>
+                </FieldWrapper>
 
-                <div>
-                  <label
-                    className="mb-1 block text-xs uppercase text-paper-500"
-                    htmlFor="pr-body-template"
-                  >
-                    PR body template
-                    <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-paper-600">
-                      (leave blank to use system default)
-                    </span>
-                  </label>
-                  <textarea
-                    className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                <FieldWrapper
+                  hint="Available variables: {{ticketId}}, {{description}}, {{prUrl}}. Leave blank to use system default."
+                  id="pr-body-template"
+                  label="PR body template"
+                >
+                  <Textarea
                     id="pr-body-template"
                     onChange={(e) => setPrBodyTemplate(e.target.value)}
                     placeholder={
@@ -192,12 +172,7 @@ export default function AdminWorkflowPage() {
                     rows={6}
                     value={prBodyTemplate}
                   />
-                  <p className="mt-1 text-[11px] text-paper-500">
-                    Available variables: <span className="font-mono">{'{{ticketId}}'}</span>,{' '}
-                    <span className="font-mono">{'{{description}}'}</span>,{' '}
-                    <span className="font-mono">{'{{prUrl}}'}</span>.
-                  </p>
-                </div>
+                </FieldWrapper>
               </div>
             </Card>
 
@@ -205,28 +180,22 @@ export default function AdminWorkflowPage() {
               <CardHeader>
                 <CardTitle eyebrow="Teams">Default team</CardTitle>
               </CardHeader>
-              <div>
-                <label
-                  className="mb-1 block text-xs uppercase text-paper-500"
-                  htmlFor="default-team-slug"
-                >
-                  Default team slug
-                </label>
-                <input
-                  className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+              <FieldWrapper
+                hint="Work requests without an explicit team are assigned to this team."
+                id="default-team-slug"
+                label="Default team slug"
+              >
+                <Input
                   id="default-team-slug"
                   onChange={(e) => setDefaultTeamSlug(e.target.value)}
                   placeholder="default"
                   value={defaultTeamSlug}
                 />
-                <p className="mt-1 text-[11px] text-paper-500">
-                  Work requests without an explicit team are assigned to this team.
-                </p>
-              </div>
+              </FieldWrapper>
             </Card>
 
-            {saved && <p className="text-sm text-emerald-400">Settings saved.</p>}
-            {error && <p className="text-sm text-brick-400">{error}</p>}
+            {saved && <Alert variant="success">Settings saved.</Alert>}
+            {error && <Alert variant="error">{error}</Alert>}
 
             <div className="flex justify-end">
               <Button disabled={update.isPending} type="submit" variant="primary">
@@ -236,16 +205,14 @@ export default function AdminWorkflowPage() {
           </form>
 
           {/* ── Lesson Consolidation Schedule ── */}
-          <div className="mt-8">
-            <h3 className="text-lg font-semibold">Lesson consolidation</h3>
-            <p className="mt-1 text-sm text-paper-400">
-              Periodically merges similar agent lessons using a Temporal Schedule. Runs for every
-              repository that has consolidation enabled.
-            </p>
-          </div>
+          <SectionHeader
+            className="mt-8"
+            hint="periodically merges similar agent lessons"
+            title="Lesson consolidation"
+          />
 
           {consolidationLoading ? (
-            <p className="text-sm text-paper-400">Loading…</p>
+            <LoadingState message="Loading…" />
           ) : (
             <form className="space-y-6" onSubmit={handleConsolidationSubmit}>
               <Card>
@@ -277,36 +244,26 @@ export default function AdminWorkflowPage() {
                     )}
                   </div>
 
-                  <div>
-                    <label
-                      className="mb-1 block text-xs uppercase text-paper-500"
-                      htmlFor="consolidation-cron"
-                    >
-                      Cron expression
-                    </label>
-                    <input
-                      className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                  <FieldWrapper
+                    hint="Standard 5-field cron. Default 0 3 * * 0 = Sundays at 03:00 UTC."
+                    id="consolidation-cron"
+                    label="Cron expression"
+                  >
+                    <Input
                       id="consolidation-cron"
                       onChange={(e) => setConsolidationCron(e.target.value)}
                       placeholder="0 3 * * 0"
                       value={consolidationCron}
                     />
-                    <p className="mt-1 text-[11px] text-paper-500">
-                      Standard 5-field cron. Default <span className="font-mono">0 3 * * 0</span> =
-                      Sundays at 03:00 UTC.
-                    </p>
-                  </div>
+                  </FieldWrapper>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label
-                        className="mb-1 block text-xs uppercase text-paper-500"
-                        htmlFor="consolidation-min-cluster"
-                      >
-                        Min cluster size
-                      </label>
-                      <input
-                        className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                    <FieldWrapper
+                      hint="Clusters smaller than this are skipped."
+                      id="consolidation-min-cluster"
+                      label="Min cluster size"
+                    >
+                      <Input
                         id="consolidation-min-cluster"
                         max={20}
                         min={2}
@@ -314,20 +271,14 @@ export default function AdminWorkflowPage() {
                         type="number"
                         value={consolidationMinClusterSize}
                       />
-                      <p className="mt-1 text-[11px] text-paper-500">
-                        Clusters smaller than this are skipped.
-                      </p>
-                    </div>
+                    </FieldWrapper>
 
-                    <div>
-                      <label
-                        className="mb-1 block text-xs uppercase text-paper-500"
-                        htmlFor="consolidation-threshold"
-                      >
-                        Similarity threshold
-                      </label>
-                      <input
-                        className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
+                    <FieldWrapper
+                      hint="Cosine similarity (0.5–1.0). Higher = tighter clusters."
+                      id="consolidation-threshold"
+                      label="Similarity threshold"
+                    >
+                      <Input
                         id="consolidation-threshold"
                         max={1}
                         min={0.5}
@@ -338,18 +289,15 @@ export default function AdminWorkflowPage() {
                         type="number"
                         value={consolidationSimilarityThreshold}
                       />
-                      <p className="mt-1 text-[11px] text-paper-500">
-                        Cosine similarity (0.5–1.0). Higher = tighter clusters.
-                      </p>
-                    </div>
+                    </FieldWrapper>
                   </div>
                 </div>
               </Card>
 
               {consolidationSaved && (
-                <p className="text-sm text-emerald-400">Consolidation schedule saved and synced.</p>
+                <Alert variant="success">Consolidation schedule saved and synced.</Alert>
               )}
-              {consolidationError && <p className="text-sm text-brick-400">{consolidationError}</p>}
+              {consolidationError && <Alert variant="error">{consolidationError}</Alert>}
 
               <div className="flex items-center justify-end gap-3">
                 <Button

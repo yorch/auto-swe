@@ -11,6 +11,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
@@ -345,21 +346,11 @@ function WebhookCard({
 }) {
   const regenerate = useRegenerateWebhook(template.id);
   const revoke = useRevokeWebhook(template.id);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const webhookUrl = template.webhookToken
     ? `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/${template.webhookToken}`
     : null;
-
-  const handleCopy = async () => {
-    if (!webhookUrl) {
-      return;
-    }
-    await navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
 
   const handleRegenerate = async () => {
     setError(null);
@@ -389,9 +380,7 @@ function WebhookCard({
             <code className="flex-1 truncate rounded bg-ink-800 px-2 py-1 font-mono text-[10px] text-paper-300">
               {webhookUrl}
             </code>
-            <Button onClick={handleCopy} size="sm" variant="ghost">
-              {copied ? 'Copied!' : 'Copy'}
-            </Button>
+            <CopyButton value={webhookUrl} />
           </div>
           {canManage && (
             <div className="flex gap-2">

@@ -6,29 +6,22 @@ import {
   CartesianGrid,
   Legend,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import {
-  AXIS_LINE,
-  AXIS_TICK,
+  AXIS_COMMON_PROPS,
+  CHART_HEIGHT,
+  ChartTooltip,
   EmptyChart,
+  formatDateLabel,
   GRID_STROKE,
   LEGEND_STYLE,
-  TOOLTIP_ITEM_STYLE,
-  TOOLTIP_LABEL_STYLE,
-  TOOLTIP_STYLE,
 } from './chartChrome';
 import { TREND_COLORS } from './colors';
 
 interface Props {
   data: { date: string; completed: number; failed: number; active: number }[];
-}
-
-function formatDateLabel(label: unknown) {
-  const d = new Date(`${String(label)}T00:00:00`);
-  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 
 export function WorkflowsOverTimeChart({ data }: Props) {
@@ -37,24 +30,17 @@ export function WorkflowsOverTimeChart({ data }: Props) {
   }
 
   return (
-    <ResponsiveContainer height={280} width="100%">
+    <ResponsiveContainer height={CHART_HEIGHT} width="100%">
       <AreaChart data={data}>
         <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
         <XAxis
-          axisLine={AXIS_LINE}
           dataKey="date"
           interval="preserveStartEnd"
-          tick={AXIS_TICK}
           tickFormatter={formatDateLabel}
-          tickLine={AXIS_LINE}
+          {...AXIS_COMMON_PROPS}
         />
-        <YAxis allowDecimals={false} axisLine={AXIS_LINE} tick={AXIS_TICK} tickLine={AXIS_LINE} />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          itemStyle={TOOLTIP_ITEM_STYLE}
-          labelFormatter={formatDateLabel}
-          labelStyle={TOOLTIP_LABEL_STYLE}
-        />
+        <YAxis allowDecimals={false} {...AXIS_COMMON_PROPS} />
+        <ChartTooltip labelFormatter={formatDateLabel} />
         <Legend wrapperStyle={LEGEND_STYLE} />
         <Area
           dataKey="completed"

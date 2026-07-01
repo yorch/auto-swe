@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -172,14 +173,14 @@ export default function SettingsPage() {
         <SectionHeader hint="link / unlink sign-in providers" number="02" title="Linked accounts" />
 
         {error && (
-          <div className="mb-4 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-            ! {error}
-          </div>
+          <Alert className="mb-4" variant="error">
+            {error}
+          </Alert>
         )}
         {info && (
-          <div className="mb-4 rounded-[9px] border border-moss-400/40 bg-moss-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-moss-400">
-            ✓ {info}
-          </div>
+          <Alert className="mb-4" variant="success">
+            {info}
+          </Alert>
         )}
 
         <Card variant="inset">

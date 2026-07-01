@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
   type LessonRepoStats,
@@ -96,13 +97,10 @@ export default function AdminLessonsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Admin — Lessons</h2>
-        <p className="mt-1 text-sm text-paper-400">
-          Agent lessons captured from completed workflows. Consolidation merges semantically similar
-          lessons to reduce redundancy.
-        </p>
-      </div>
+      <PageHeader
+        subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
+        title="Admin — Lessons"
+      />
 
       {/* Summary stats */}
       <div className="grid grid-cols-3 gap-4">

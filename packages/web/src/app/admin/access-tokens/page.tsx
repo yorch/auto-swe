@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useWorkflows';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
@@ -47,18 +49,16 @@ export default function AdminAccessTokensPage() {
   const pruneAudit = useAdminPruneShellAudit(90);
   const [pruneResult, setPruneResult] = useState<{ deleted: number } | null>(null);
   const [pruneError, setPruneError] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [pruneConfirmOpen, setPruneConfirmOpen] = useState(false);
 
-  const handleRevoke = (id: string, name: string) => {
-    if (!window.confirm(`Revoke token "${name}"? This cannot be undone.`)) {
-      return;
+  const confirmRevoke = () => {
+    if (revokeTarget) {
+      revokeToken.mutate(revokeTarget.id);
     }
-    revokeToken.mutate(id);
   };
 
   const handlePrune = async () => {
-    if (!window.confirm('Delete shell-audit rows older than 90 days? This cannot be undone.')) {
-      return;
-    }
     setPruneError(null);
     setPruneResult(null);
     try {
@@ -76,12 +76,7 @@ export default function AdminAccessTokensPage() {
   ).length;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500">
-        <span className="pulse-dot mr-3 inline-block h-1.5 w-1.5 rounded-full bg-ember-400" />
-        loading tokens…
-      </div>
-    );
+    return <LoadingState message="loading tokens…" />;
   }
 
   return (
@@ -106,7 +101,7 @@ export default function AdminAccessTokensPage() {
             )}
             <Button
               disabled={pruneAudit.isPending}
-              onClick={handlePrune}
+              onClick={() => setPruneConfirmOpen(true)}
               size="sm"
               variant="secondary"
             >
@@ -169,7 +164,7 @@ export default function AdminAccessTokensPage() {
                         {!t.revokedAt && (
                           <Button
                             disabled={revokeToken.isPending}
-                            onClick={() => handleRevoke(t.id, t.name)}
+                            onClick={() => setRevokeTarget({ id: t.id, name: t.name })}
                             size="sm"
                             variant="danger"
                           >
@@ -185,6 +180,25 @@ export default function AdminAccessTokensPage() {
           )}
         </Card>
       </section>
+
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message={`Revoke token "${revokeTarget?.name}"? This cannot be undone.`}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={confirmRevoke}
+        open={revokeTarget !== null}
+        title="Revoke access token"
+      />
+      <ConfirmModal
+        confirmLabel="Prune"
+        dangerous
+        message="Delete shell-audit rows older than 90 days? This cannot be undone."
+        onClose={() => setPruneConfirmOpen(false)}
+        onConfirm={handlePrune}
+        open={pruneConfirmOpen}
+        title="Prune shell audit"
+      />
     </div>
   );
 }

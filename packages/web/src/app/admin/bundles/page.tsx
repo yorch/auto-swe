@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
 
 export default function AdminBundlesPage() {
@@ -49,18 +51,20 @@ export default function AdminBundlesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Bundles</h2>
-        <p className="mt-1 text-sm text-paper-400">
-          Distribute library content (Agents, Skills, scanner patterns, Templates) across
-          deployments. Install seeds a <strong>managed base layer</strong>; your team/template
-          overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
-          installs as <code className="text-paper-300">VERIFIED</code>, otherwise{' '}
-          <code className="text-paper-300">UNVERIFIED</code> (community).
-        </p>
-      </div>
+      <PageHeader
+        subtitle={
+          <>
+            Distribute library content (Agents, Skills, scanner patterns, Templates) across
+            deployments. Install seeds a <strong>managed base layer</strong>; your team/template
+            overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
+            installs as <code className="text-paper-300">VERIFIED</code>, otherwise{' '}
+            <code className="text-paper-300">UNVERIFIED</code> (community).
+          </>
+        }
+        title="Bundles"
+      />
 
-      {error && <p className="text-xs text-brick-400">{error}</p>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       <Card>
         <CardHeader>

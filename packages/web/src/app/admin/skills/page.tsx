@@ -2,12 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { api } from '@/lib/api';
 
 interface Skill {
@@ -207,26 +210,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             )}
           </FieldWrapper>
           <FieldWrapper label="Active">
-            <label className="flex cursor-pointer items-center gap-2">
-              <button
-                className={`h-5 w-10 rounded-full transition-colors ${
-                  form.isActive ? 'bg-ember-400' : 'bg-ink-500'
-                }`}
-                onClick={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
-                type="button"
-              >
-                <span
-                  className={`block h-4 w-4 translate-x-0.5 rounded-full bg-paper-100 transition-transform ${
-                    form.isActive ? 'translate-x-[1.375rem]' : ''
-                  }`}
-                />
-              </button>
-              <span className="text-sm text-paper-400">
-                {form.isActive ? 'Enabled' : 'Disabled'}
-              </span>
-            </label>
+            <ToggleSwitch
+              checked={form.isActive}
+              label={form.isActive ? 'Enabled' : 'Disabled'}
+              onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+            />
           </FieldWrapper>
-          {error && <p className="text-xs text-brick-400">{error}</p>}
+          {error && <Alert variant="error">{error}</Alert>}
           <div className="flex justify-end gap-2 pt-2">
             <Button onClick={cancelEdit} type="button" variant="ghost">
               Cancel
@@ -348,7 +338,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
             value={form.promptText}
           />
         </FieldWrapper>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button onClick={onClose} type="button" variant="ghost">
             Cancel
@@ -391,7 +381,7 @@ function DeleteConfirmModal({ skill, onClose }: { skill: Skill | null; onClose: 
         <p className="text-sm text-paper-400">
           This will remove the skill and all its assignments. This cannot be undone.
         </p>
-        {error && <p className="text-xs text-brick-400">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} variant="ghost">
             Cancel
@@ -467,19 +457,15 @@ export default function AdminSkillsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Skill Library</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Reusable prompt-fragment instructions injected into an agent&apos;s system prompt.
-            Assigned to agent roles at any scope. Tool access control is managed separately via
-            Agent Tool Access.
-          </p>
-        </div>
-        <Button onClick={() => setNewOpen(true)} variant="primary">
-          + New Skill
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setNewOpen(true)} variant="primary">
+            + New Skill
+          </Button>
+        }
+        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Assigned to agent roles at any scope. Tool access control is managed separately via Agent Tool Access."
+        title="Skill Library"
+      />
 
       <Card>
         <CardHeader>
@@ -533,21 +519,11 @@ export default function AdminSkillsPage() {
                   </td>
                   <td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</td>
                   <td className="py-2 pr-4">
-                    <button
-                      className={`h-5 w-10 rounded-full transition-colors ${
-                        skill.isActive ? 'bg-ember-400' : 'bg-ink-500'
-                      }`}
+                    <ToggleSwitch
+                      checked={skill.isActive}
                       disabled={update.isPending}
-                      onClick={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
-                      title={skill.isActive ? 'Disable' : 'Enable'}
-                      type="button"
-                    >
-                      <span
-                        className={`block h-4 w-4 translate-x-0.5 rounded-full bg-paper-100 transition-transform ${
-                          skill.isActive ? 'translate-x-[1.375rem]' : ''
-                        }`}
-                      />
-                    </button>
+                      onChange={() => update.mutate({ id: skill.id, isActive: !skill.isActive })}
+                    />
                   </td>
                   <td className="py-2 text-right">
                     <div className="flex items-center justify-end gap-2">

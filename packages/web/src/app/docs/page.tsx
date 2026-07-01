@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { listDocs } from '@/lib/docs';
 
 export const dynamic = 'force-static';
@@ -13,12 +14,10 @@ export default async function DocsIndexPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Documentation</h2>
-        <p className="text-sm text-paper-400 mt-1">
-          Architecture, implementation, and design references for auto-swe.
-        </p>
-      </div>
+      <PageHeader
+        subtitle="Architecture, implementation, and design references for auto-swe."
+        title="Documentation"
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {docs.map((doc) => (
           <Link

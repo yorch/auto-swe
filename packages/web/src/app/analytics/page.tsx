@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { useGlobalAnalytics } from '@/hooks/useWorkflows';
 import { formatPercent } from '@/lib/utils';
@@ -129,28 +130,30 @@ export default function GlobalAnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Platform Analytics</h2>
-        <div className="flex gap-1 bg-ink-800 rounded-md p-1">
-          {WINDOWS.map((w) => (
-            <button
-              className={`px-3 py-1 text-sm rounded transition-colors ${
-                windowDays === w.days
-                  ? 'bg-ink-600 text-paper-100'
-                  : 'text-paper-400 hover:text-paper-200'
-              }`}
-              key={w.days}
-              onClick={() => {
-                setWindowDays(w.days);
-                setPage(0);
-              }}
-              type="button"
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        actions={
+          <div className="flex gap-1 bg-ink-800 rounded-md p-1">
+            {WINDOWS.map((w) => (
+              <button
+                className={`px-3 py-1 text-sm rounded transition-colors ${
+                  windowDays === w.days
+                    ? 'bg-ink-600 text-paper-100'
+                    : 'text-paper-400 hover:text-paper-200'
+                }`}
+                key={w.days}
+                onClick={() => {
+                  setWindowDays(w.days);
+                  setPage(0);
+                }}
+                type="button"
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        }
+        title="Platform Analytics"
+      />
 
       {isLoading || !data ? (
         <LoadingState />

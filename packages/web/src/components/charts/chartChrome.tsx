@@ -1,4 +1,6 @@
 /** Shared Recharts styling tokens for the Workshop Telemetry palette. */
+import type { ComponentProps } from 'react';
+import { Tooltip } from 'recharts';
 
 export const AXIS_TICK = {
   fill: '#a8a395', // paper-400
@@ -13,6 +15,23 @@ export const AXIS_LINE = {
 };
 
 export const GRID_STROKE = '#1f2530'; // ink-600
+
+/** Shared axisLine/tick/tickLine props for a value (numeric) axis. */
+export const AXIS_COMMON_PROPS = {
+  axisLine: AXIS_LINE,
+  tick: AXIS_TICK,
+  tickLine: AXIS_LINE,
+};
+
+export const TOOLTIP_CURSOR_FILL = '#171c26'; // ink-700
+
+export const CHART_HEIGHT = 280;
+
+/** Formats a `YYYY-MM-DD` date label as e.g. "3 Jun" for axis ticks/tooltips. */
+export function formatDateLabel(label: unknown) {
+  const d = new Date(`${String(label)}T00:00:00`);
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+}
 
 export const TOOLTIP_STYLE: React.CSSProperties = {
   background: '#0b0e13', // ink-900
@@ -44,6 +63,20 @@ export const LEGEND_STYLE: React.CSSProperties = {
   letterSpacing: '0.12em',
   textTransform: 'uppercase',
 };
+
+/** Tooltip with the shared Workshop Telemetry content/item/label styling baked in. */
+export function ChartTooltip(
+  props: Omit<ComponentProps<typeof Tooltip>, 'contentStyle' | 'itemStyle' | 'labelStyle'>
+) {
+  return (
+    <Tooltip
+      contentStyle={TOOLTIP_STYLE}
+      itemStyle={TOOLTIP_ITEM_STYLE}
+      labelStyle={TOOLTIP_LABEL_STYLE}
+      {...props}
+    />
+  );
+}
 
 export function EmptyChart({ label = 'no data' }: { label?: string }) {
   return (

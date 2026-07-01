@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuthStore } from '@/stores/authStore';
@@ -87,14 +88,14 @@ function ResetPasswordInner() {
         </p>
 
         {!token && (
-          <div className="mb-4 rounded-[9px] border border-amber-400/40 bg-amber-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-amber-400">
-            ! no reset token in the url — request a fresh link from the login page
-          </div>
+          <Alert className="mb-4" variant="warning">
+            no reset token in the url — request a fresh link from the login page
+          </Alert>
         )}
         {error && (
-          <div className="mb-4 rounded-[9px] border border-brick-400/40 bg-brick-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-brick-400">
-            ! {error}
-          </div>
+          <Alert className="mb-4" variant="error">
+            {error}
+          </Alert>
         )}
 
         <form className="space-y-5" onSubmit={handleSubmit}>

@@ -7,6 +7,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -1205,18 +1206,15 @@ export default function AdminSlackChannelsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold">Slack Channels</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Registered Slack channels that channel-assistant workflows respond in. Each channel is
-            scoped to a team and can override agent key, ambient scheduling, and monthly spend caps.
-          </p>
-        </div>
-        <Button onClick={() => setCreateOpen(true)} variant="primary">
-          + Register Channel
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setCreateOpen(true)} variant="primary">
+            + Register Channel
+          </Button>
+        }
+        subtitle="Registered Slack channels that channel-assistant workflows respond in. Each channel is scoped to a team and can override agent key, ambient scheduling, and monthly spend caps."
+        title="Slack Channels"
+      />
 
       {isLoading ? (
         <LoadingState />
