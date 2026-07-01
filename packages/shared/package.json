@@ -16,6 +16,7 @@
     "./lib/crypto": "./dist/lib/crypto.js",
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
+    "./lib/canary": "./dist/lib/canary.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/billing": "./dist/lib/billing.js",
     "./lib/channelTask": "./dist/lib/channelTask.js",

@@ -21,6 +21,10 @@ export interface CreateWorkflowRunInput {
   templateId: string;
   templateVersion: number;
   workRequestId?: string;
+  /// Evals P2 canary: when set, this agent key is pinned to candidateVersion
+  /// for the life of the run, and the run is tagged isCanary=true.
+  canaryAgentKey?: string;
+  canaryVersion?: number;
 }
 
 /**
@@ -58,12 +62,22 @@ export async function createWorkflowRun(
     agentVersions[a.key] = Math.max(agentVersions[a.key] ?? 0, a.version);
   }
 
+  // Evals P2 canary: override the candidate agent's pinned version so
+  // resolveAgent routes this run to the candidate arm.
+  const canaryAgentKey = input.canaryAgentKey;
+  const canaryVersion = input.canaryVersion;
+  const isCanary = !!(canaryAgentKey && canaryVersion != null);
+  if (isCanary && canaryAgentKey != null && canaryVersion != null) {
+    agentVersions[canaryAgentKey] = canaryVersion;
+  }
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec + agentVersions snapshot across Temporal retries.
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
+      isCanary,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,

@@ -275,6 +275,8 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
 
   // 1. Materialize the run row + parsed spec snapshot.
   const runInfo = await stateActivities.createWorkflowRun({
+    canaryAgentKey: input.request.canaryAgentKey,
+    canaryVersion: input.request.canaryVersion,
     templateId: input.templateId,
     templateVersion: input.templateVersion,
     workflowId,

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { shouldRouteToCanary } from '@auto-swe/shared/lib/canary';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { extractFigmaRefs } from '@auto-swe/shared/lib/integrations/figmaDesign';
@@ -8,6 +9,7 @@ import {
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
 import {
+  resolveCanaryConfig,
   resolveFigmaConfig,
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
@@ -469,6 +471,29 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // the workflow needs the ID but the DB write happens after workflow start.
       const workRequestId = crypto.randomUUID();
 
+      // Canary routing: deterministically route a fraction of runs to a candidate
+      // agent version. Non-fatal — a config failure never blocks submission.
+      let canaryAgentKey: string | undefined;
+      let canaryVersion: number | undefined;
+      try {
+        const canaryCfg = await resolveCanaryConfig();
+        if (
+          canaryCfg.enabled &&
+          canaryCfg.agentKey &&
+          canaryCfg.candidateVersion != null &&
+          shouldRouteToCanary(workRequestId, {
+            agentKey: canaryCfg.agentKey,
+            candidateVersion: canaryCfg.candidateVersion,
+            percent: canaryCfg.percent,
+          })
+        ) {
+          canaryAgentKey = canaryCfg.agentKey;
+          canaryVersion = canaryCfg.candidateVersion;
+        }
+      } catch {
+        // non-fatal: canary config failure never blocks submission
+      }
+
       // Resolve which workflow template to run. Team-scoped default wins; falls
       // back to the global teamId=null template seeded by `yarn db:seed`.
       // A/B experiments are honored via deterministic bucketing on externalTicketId.
@@ -524,6 +549,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: repo.id,
         requestPayload: JSON.stringify(request.body),
         workRequestId,
+        ...(canaryAgentKey ? { canaryAgentKey, canaryVersion } : {}),
       };
       try {
         await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
@@ -672,6 +698,29 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Canary routing for re-runs: same determinism — same workRequestId
+      // → same canary arm. Non-fatal.
+      let retryCanaryAgentKey: string | undefined;
+      let retryCanaryVersion: number | undefined;
+      try {
+        const canaryCfg = await resolveCanaryConfig();
+        if (
+          canaryCfg.enabled &&
+          canaryCfg.agentKey &&
+          canaryCfg.candidateVersion != null &&
+          shouldRouteToCanary(workRequest.id, {
+            agentKey: canaryCfg.agentKey,
+            candidateVersion: canaryCfg.candidateVersion,
+            percent: canaryCfg.percent,
+          })
+        ) {
+          retryCanaryAgentKey = canaryCfg.agentKey;
+          retryCanaryVersion = canaryCfg.candidateVersion;
+        }
+      } catch {
+        // non-fatal: canary config failure never blocks submission
+      }
+
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],
         description: workRequest.description,
@@ -679,6 +728,9 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: repo.id,
         requestPayload: workRequest.requestPayload,
         workRequestId: workRequest.id,
+        ...(retryCanaryAgentKey
+          ? { canaryAgentKey: retryCanaryAgentKey, canaryVersion: retryCanaryVersion }
+          : {}),
       };
       try {
         await fastify.temporal.startRunnableWorkflow(allocated.workflowId, {

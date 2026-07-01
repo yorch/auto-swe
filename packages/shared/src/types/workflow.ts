@@ -49,6 +49,11 @@ export interface RepoWorkRequest {
   /// (per-channel tools/MCP/model) and the run's cost accrues to that channel's
   /// monthly budget. Only set for channel-launched task runs.
   channelId?: string;
+  /// Evals P2 canary routing: when set, the named agent key is pinned to this
+  /// candidate version for the life of the run. Set by the gateway work-request
+  /// submit path when canary config is enabled and the run hashes into the arm.
+  canaryAgentKey?: string;
+  canaryVersion?: number;
 }
 
 export interface CodeSecurityFinding {

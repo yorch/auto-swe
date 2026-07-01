@@ -441,6 +441,7 @@ CREATE TABLE "workflow_runs" (
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
+    "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
@@ -767,6 +768,10 @@ CREATE TABLE "workflow_defaults" (
     "revalidation_enabled" BOOLEAN NOT NULL DEFAULT false,
     "revalidation_cron" TEXT NOT NULL DEFAULT '0 5 * * 0',
     "revalidation_dataset_slug" TEXT,
+    "canary_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "canary_agent_key" TEXT,
+    "canary_candidate_version" INTEGER,
+    "canary_percent" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")

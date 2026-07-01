@@ -445,6 +445,25 @@ export async function resolveRevalidationConfig(
   };
 }
 
+// ─── Canary routing ───────────────────────────────────────────────────────────
+
+export interface CanaryConfig {
+  enabled: boolean;
+  agentKey: string | null;
+  candidateVersion: number | null;
+  percent: number;
+}
+
+export async function resolveCanaryConfig(_opts?: ResolveOpts): Promise<CanaryConfig> {
+  const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
+  return {
+    agentKey: row?.canaryAgentKey ?? null,
+    candidateVersion: row?.canaryCandidateVersion ?? null,
+    enabled: row?.canaryEnabled ?? false,
+    percent: row?.canaryPercent ?? 0,
+  };
+}
+
 // ─── Issue tracker ────────────────────────────────────────────────────────────
 
 export type TrackerProvider = 'jira' | 'linear' | 'github';

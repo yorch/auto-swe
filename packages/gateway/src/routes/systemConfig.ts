@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
+  resolveCanaryConfig,
   resolveConsolidationConfig,
   resolveEvalScheduleConfig,
   resolveRevalidationConfig,
@@ -26,6 +27,7 @@ import {
   testKnowledgeBaseConnection,
   testSlackConnection,
   testStorageConnection,
+  updateCanaryConfig,
   updateConsolidationConfig,
   updateEvalScheduleConfig,
   updateFigmaConfig,
@@ -158,6 +160,19 @@ const RevalidationPutBody = z.object({
     .nullable()
     .optional(),
   enabled: z.boolean().optional(),
+});
+
+const CanaryPutBody = z.object({
+  agentKey: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z][a-zA-Z0-9]*$/)
+    .nullable()
+    .optional(),
+  candidateVersion: z.number().int().min(1).nullable().optional(),
+  enabled: z.boolean().optional(),
+  percent: z.number().min(0).max(1).optional(),
 });
 
 const GoogleOAuthPutBody = z.object({
@@ -558,6 +573,23 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (_req, reply) => {
       await fastify.temporal.triggerRevalidationNow();
       return reply.send({ data: { triggered: true } });
+    }
+  );
+
+  // ── Canary routing ────────────────────────────────────────────────────────────
+
+  f.get('/config/canary', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const config = await resolveCanaryConfig();
+    return reply.send({ data: config });
+  });
+
+  f.put(
+    '/config/canary',
+    { schema: { body: CanaryPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      await updateCanaryConfig(prisma, req.body);
+      const config = await resolveCanaryConfig();
+      return reply.send({ data: config });
     }
   );
 
