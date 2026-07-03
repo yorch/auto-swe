@@ -70,6 +70,26 @@ async function start() {
   // Raw body for HMAC webhook verification (opt-in per route)
   await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
 
+  // Accept HTML form posts (application/x-www-form-urlencoded) everywhere —
+  // without this Fastify 415s them before any handler runs, which is how the
+  // better-auth social sign-in buttons silently broke. The Slack routes
+  // (slash commands, interactivity) rely on this parser too.
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      try {
+        const out: Record<string, string> = {};
+        for (const [k, v] of new URLSearchParams(body as string)) {
+          out[k] = v;
+        }
+        done(null, out);
+      } catch (err) {
+        done(err as Error);
+      }
+    }
+  );
+
   await app.register(cookie);
 
   // Rate limiting — auth routes use stricter per-route limits (see auth.ts)
@@ -133,8 +153,23 @@ async function start() {
         // successful /sign-out it'll clear the cookie in the response, and
         // we want to invalidate our in-memory cache for that token regardless.
         const sessionCookieBefore = extractSessionCookieValue(request.headers);
+        // Fastify has already parsed the body (JSON or, via the app-level
+        // parser, an urlencoded form) into an object — re-serialize it as
+        // JSON and label it as such so better-auth sees one canonical shape
+        // no matter how the browser sent it. A text/plain body arrives as a
+        // string and passes through untouched. content-length is a forbidden
+        // fetch header — the Request constructor recomputes it from the body.
+        let body: string | undefined;
+        if (request.body !== undefined && request.body !== null) {
+          if (typeof request.body === 'string') {
+            body = request.body;
+          } else {
+            body = JSON.stringify(request.body);
+            headers.set('content-type', 'application/json');
+          }
+        }
         const req = new Request(url.toString(), {
-          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+          ...(body !== undefined ? { body } : {}),
           headers,
           method: request.method,
         });

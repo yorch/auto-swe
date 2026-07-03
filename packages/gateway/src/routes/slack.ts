@@ -110,10 +110,13 @@ interface SlackInteractivePayload {
 export const slackRoutes: FastifyPluginAsync = async (fastify) => {
   // Slack delivers slash commands + interactive payloads as
   // application/x-www-form-urlencoded — register a scoped parser so the routes
-  // below see `request.body` as an object. fastify-raw-body has already captured
-  // the bytes for signature verification (`runFirst: true` in the plugin config).
-  // `try/catch` because plugin-scope contentTypeParser registration can throw on
-  // duplicate registration; safe to ignore in that case.
+  // below see `request.body` as an object even when this plugin is mounted
+  // standalone (as the tests do). fastify-raw-body has already captured the
+  // bytes for signature verification (`runFirst: true` in the plugin config).
+  // In the full gateway, index.ts registers an app-level parser with the same
+  // Record<string, string> shape, so this duplicate registration throws
+  // FST_ERR_CTP_ALREADY_PRESENT — caught and ignored; the app-level parser
+  // serves these routes.
   try {
     fastify.addContentTypeParser(
       'application/x-www-form-urlencoded',
