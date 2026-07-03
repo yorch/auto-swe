@@ -190,6 +190,22 @@ function LoginPageInner() {
     }
   };
 
+  const handleSocialSignIn = async (provider: 'github' | 'google') => {
+    setError('');
+    setInfo('');
+    setLoading(true);
+    try {
+      // Navigates to the provider on success, so `loading` stays set until
+      // the page unloads. It also disables both social buttons for the
+      // duration of the fetch — a double-click would mint two OAuth states
+      // and the second's state cookie would break the first's callback.
+      await signInWithProvider(provider);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : `Could not start ${provider} sign-in`);
+      setLoading(false);
+    }
+  };
+
   const handleMagicLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -348,8 +364,9 @@ function LoginPageInner() {
             <div className="mb-6 space-y-2">
               {providers.github && (
                 <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
-                  onClick={() => signInWithProvider('github')}
+                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
+                  disabled={loading}
+                  onClick={() => handleSocialSignIn('github')}
                   type="button"
                 >
                   <span aria-hidden>◐</span>
@@ -358,8 +375,9 @@ function LoginPageInner() {
               )}
               {providers.google && (
                 <button
-                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
-                  onClick={() => signInWithProvider('google')}
+                  className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400 disabled:pointer-events-none disabled:opacity-50"
+                  disabled={loading}
+                  onClick={() => handleSocialSignIn('google')}
                   type="button"
                 >
                   <span aria-hidden>◑</span>

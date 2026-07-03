@@ -50,6 +50,7 @@ const SOCIAL_PROVIDERS: Provider[] = [
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const linkProvider = useAuthStore((s) => s.linkProvider);
   const [providers, setProviders] = useState<ProviderFlags>({
     github: false,
     google: false,
@@ -84,26 +85,18 @@ export default function SettingsPage() {
 
   const linkedIds = new Set(linked.map((a) => a.providerId));
 
-  const handleLink = (provider: 'github' | 'google') => {
+  const handleLink = async (provider: 'github' | 'google') => {
     setBusy(provider);
     setError(null);
     setInfo(null);
-    // better-auth's `link-social` mirrors the sign-in form shape. After the
-    // OAuth round-trip the user lands back at callbackURL with the new
-    // Account row already attached.
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${API_BASE}/api/auth/link-social`;
-    const providerInput = document.createElement('input');
-    providerInput.name = 'provider';
-    providerInput.value = provider;
-    form.appendChild(providerInput);
-    const callbackInput = document.createElement('input');
-    callbackInput.name = 'callbackURL';
-    callbackInput.value = `${window.location.origin}/settings`;
-    form.appendChild(callbackInput);
-    document.body.appendChild(form);
-    form.submit();
+    try {
+      // Navigates to the provider on success, so `busy` stays set until the
+      // page unloads (the button remains disabled).
+      await linkProvider(provider);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'link failed');
+      setBusy(null);
+    }
   };
 
   const handleUnlink = async (providerId: string, accountId: string) => {

@@ -25,10 +25,17 @@ interface AuthState {
    *  is minted; instead the gateway authenticates every subsequent API
    *  call by reading the session cookie via credentials: 'include'. */
   hydrateFromSession: () => Promise<boolean>;
-  /** Kick off the OAuth dance for the given provider. The browser navigates
-   *  away to the provider's auth screen and returns via the callback URL
-   *  (which lands back on /login → hydrateFromSession). */
-  signInWithProvider: (provider: 'github' | 'google') => void;
+  /** Kick off the OAuth dance for the given provider. better-auth's
+   *  `sign-in/social` returns `{ url, redirect: true }` — we navigate the
+   *  browser to that provider auth URL; the round-trip lands back on
+   *  /login?bridge=1 → hydrateFromSession. Throws on failure so the login
+   *  page can surface the error. */
+  signInWithProvider: (provider: 'github' | 'google') => Promise<void>;
+  /** Link an additional OAuth provider to the signed-in account. Same
+   *  fetch-then-navigate dance as signInWithProvider, against better-auth's
+   *  `link-social`; the round-trip lands back on /settings with the new
+   *  Account row attached. Throws on failure. */
+  linkProvider: (provider: 'github' | 'google') => Promise<void>;
   /** Request a magic link be emailed to `email`. In dev (and on transport
    *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
@@ -93,8 +100,9 @@ interface BetterAuthSessionResponse {
  * error handling into one place: (1) gateway-unreachable network failures get
  * a friendly message naming the API_BASE, (2) non-2xx responses surface the
  * server's `message` field, (3) the caller's `fallback` is used otherwise.
+ * Returns the parsed response body (null when it isn't JSON).
  */
-async function betterAuthPost(path: string, body: unknown, fallback: string): Promise<void> {
+async function betterAuthPost(path: string, body: unknown, fallback: string): Promise<unknown> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -111,6 +119,31 @@ async function betterAuthPost(path: string, body: unknown, fallback: string): Pr
     const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(errBody?.message ?? fallback);
   }
+  return res.json().catch(() => null);
+}
+
+/**
+ * POST to a better-auth OAuth endpoint that answers `{ url, redirect: true }`
+ * (the social sign-in / account-link shape) and navigate the browser to the
+ * returned provider URL. better-auth responds with JSON, not a 302 — the
+ * client is expected to perform the navigation itself. `callbackPath` is
+ * where the OAuth round-trip lands back on this app.
+ */
+async function betterAuthRedirect(
+  path: string,
+  provider: 'github' | 'google',
+  callbackPath: string,
+  fallback: string
+): Promise<void> {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const body = { callbackURL: `${window.location.origin}${callbackPath}`, provider };
+  const data = (await betterAuthPost(path, body, fallback)) as { url?: string } | null;
+  if (!data?.url) {
+    throw new Error(fallback);
+  }
+  window.location.href = data.url;
 }
 
 async function fetchBetterAuthSession(): Promise<AuthState['user']> {
@@ -186,6 +219,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   isAuthenticated: false,
 
+  linkProvider: async (provider) =>
+    betterAuthRedirect(
+      '/api/auth/link-social',
+      provider,
+      '/settings',
+      `Could not link ${provider} account`
+    ),
+
   login: async (email, password) => {
     let res: Response;
     try {
@@ -256,24 +297,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     );
   },
 
-  signInWithProvider: (provider) => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    const callbackURL = `${window.location.origin}/login?bridge=1`;
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${API_BASE}/api/auth/sign-in/social`;
-    const providerInput = document.createElement('input');
-    providerInput.name = 'provider';
-    providerInput.value = provider;
-    form.appendChild(providerInput);
-    const callbackInput = document.createElement('input');
-    callbackInput.name = 'callbackURL';
-    callbackInput.value = callbackURL;
-    form.appendChild(callbackInput);
-    document.body.appendChild(form);
-    form.submit();
-  },
+  signInWithProvider: async (provider) =>
+    betterAuthRedirect(
+      '/api/auth/sign-in/social',
+      provider,
+      '/login?bridge=1',
+      `Could not start ${provider} sign-in`
+    ),
   user: null,
 }));

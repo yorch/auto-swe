@@ -47,7 +47,8 @@ export function GitHubTab() {
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
-  const githubOauthCallback = `${API_BASE}/api/auth/github/callback`;
+  // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
+  const githubOauthCallback = `${API_BASE}/api/auth/callback/github`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -411,7 +412,9 @@ export function GitHubTab() {
               <CopyButton value={githubOauthCallback} />
             </div>
             <p className="text-[11px] text-paper-600">
-              Add this as the Authorization callback URL in your GitHub OAuth App settings.
+              Add this as the Authorization callback URL in your GitHub OAuth App settings. The host
+              must match the gateway&apos;s BETTER_AUTH_URL — better-auth builds its redirect_uri
+              from that value.
             </p>
           </div>
         </div>

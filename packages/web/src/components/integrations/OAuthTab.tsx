@@ -23,7 +23,8 @@ export function OAuthTab() {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
 
-  const googleOauthCallback = `${API_BASE}/api/auth/google/callback`;
+  // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
+  const googleOauthCallback = `${API_BASE}/api/auth/callback/google`;
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
@@ -108,6 +109,8 @@ export function OAuthTab() {
             </div>
             <p className="text-[11px] text-paper-600">
               Add this as an Authorized redirect URI in your Google Cloud OAuth 2.0 Client settings.
+              The host must match the gateway&apos;s BETTER_AUTH_URL — better-auth builds its
+              redirect_uri from that value.
             </p>
           </div>
         </div>
