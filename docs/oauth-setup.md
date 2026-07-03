@@ -2,7 +2,7 @@
 
 Step-by-step for wiring **GitHub** and **Google** sign-in via better-auth. Magic-link works out of the box and needs no provider registration.
 
-Both providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/admin/integrations → OAuth tab`, restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
+Both providers follow the same shape: register an OAuth app on the provider's developer console, copy the client id + secret into the admin dashboard at `/admin/integrations` (GitHub credentials on the **GitHub tab**, Google credentials on the **OAuth tab**), restart the gateway, and the buttons appear on `/login` automatically. The login page reads `GET /api/v1/auth/providers` at load time and only renders buttons for providers whose credentials are present (in the DB or env).
 
 > **Env var fallback.** `GITHUB_CLIENT_ID/SECRET` and `GOOGLE_CLIENT_ID/SECRET` are still accepted as environment variables for backwards compatibility, but the admin UI is the preferred path. If both are set, the DB row wins.
 
@@ -30,9 +30,9 @@ Both providers follow the same shape: register an OAuth app on the provider's de
 
 ### 2. Add credentials via the admin UI
 
-1. Sign in as admin and go to `/admin/integrations → OAuth tab`.
-2. Enter the **GitHub OAuth Client ID** and **GitHub OAuth Client Secret**.
-3. Click **Save**.
+1. Sign in as admin and go to `/admin/integrations → GitHub tab`.
+2. Enter the **OAuth App Client ID** and **OAuth App Client Secret** (in the OAuth section of the GitHub tab — not the GitHub App fields, which are for repo access).
+3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
 
 > **Alternative (env var).** You can still set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.env` — the gateway reads them as a fallback when no DB row exists. The admin UI is preferred for production deployments.
 
@@ -46,7 +46,7 @@ yarn dev:gateway     # or yarn dev to bounce everything
 
 The UI shows a yellow "restart required" banner after saving to remind you.
 
-Refresh the login page. The **Continue with GitHub** button should now appear. Click it, authorize on GitHub, and you'll be returned to `/login?bridge=1` with a fresh better-auth session that's auto-exchanged for a JWT.
+Refresh the login page. The **Continue with GitHub** button should now appear. Click it, authorize on GitHub, and you'll be returned to `/login?bridge=1` with a fresh better-auth session cookie — subsequent API calls authenticate via that session.
 
 ### Production-only extras
 
@@ -102,7 +102,7 @@ Refresh the login page. The **Continue with GitHub** button should now appear. C
 
 1. Sign in as admin and go to `/admin/integrations → OAuth tab`.
 2. Enter the **Google OAuth Client ID** and **Google OAuth Client Secret**.
-3. Click **Save**.
+3. Click **Save**. The tab also displays the exact callback URL to register, with a copy button.
 
 > **Alternative (env var).** `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env` still work as a fallback.
 
@@ -131,7 +131,7 @@ Before flipping a deployment from dev to prod, confirm:
 | `BETTER_AUTH_URL` matches the deployed URL | Required — used as the OAuth callback base                               |
 | `BETTER_AUTH_SECRET` set, ≥ 32 chars       | Required — gateway throws at boot otherwise                              |
 | `JWT_SECRET` (or key pair) set             | Required — gateway throws at boot otherwise                              |
-| GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → OAuth` or env var. |
+| GitHub OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → GitHub` or env var. |
 | Google OAuth credentials configured        | Optional — button hides when absent. Set via `/admin/integrations → OAuth` or env var. |
 | `RESEND_API_KEY` + `AUTH_FROM_EMAIL`       | Required if you want magic-link emails sent for real (else stdout-only)  |
 | OAuth callbacks point at the prod URL      | GitHub + Google consoles must list the right callback URL                |
@@ -154,7 +154,7 @@ Hit `GET /api/v1/auth/providers` directly:
 curl http://localhost:8080/api/v1/auth/providers
 ```
 
-You should see `{"github":true,"google":true,"magicLink":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/admin/integrations → OAuth` tab, then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect).
+You should see `{"github":true,"google":true,"magicLink":true}` for the providers whose credentials are configured. If a provider shows `false`, the gateway didn't pick up its credentials — confirm they're saved in `/admin/integrations` (GitHub tab for GitHub, OAuth tab for Google), then restart `yarn dev:gateway` (a restart is always required for OAuth credential changes to take effect).
 
 **"Access blocked: this app's request is invalid" (Google)**
 Usually the consent screen is incomplete (missing support email, missing scopes, etc.) — finish the OAuth consent screen flow in step 2 above.
