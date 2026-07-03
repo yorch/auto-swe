@@ -190,6 +190,18 @@ function LoginPageInner() {
     }
   };
 
+  const handleSocialSignIn = async (provider: 'github' | 'google') => {
+    setError('');
+    setInfo('');
+    try {
+      await signInWithProvider(provider);
+      // On success the browser navigates away to the provider — no further
+      // state updates needed here.
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : `Could not start ${provider} sign-in`);
+    }
+  };
+
   const handleMagicLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -349,7 +361,7 @@ function LoginPageInner() {
               {providers.github && (
                 <button
                   className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
-                  onClick={() => signInWithProvider('github')}
+                  onClick={() => handleSocialSignIn('github')}
                   type="button"
                 >
                   <span aria-hidden>◐</span>
@@ -359,7 +371,7 @@ function LoginPageInner() {
               {providers.google && (
                 <button
                   className="group flex w-full items-center justify-center gap-2 rounded-lg border border-ink-500 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-200 transition-colors hover:border-ember-400 hover:text-ember-400"
-                  onClick={() => signInWithProvider('google')}
+                  onClick={() => handleSocialSignIn('google')}
                   type="button"
                 >
                   <span aria-hidden>◑</span>

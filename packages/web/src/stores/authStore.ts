@@ -25,10 +25,12 @@ interface AuthState {
    *  is minted; instead the gateway authenticates every subsequent API
    *  call by reading the session cookie via credentials: 'include'. */
   hydrateFromSession: () => Promise<boolean>;
-  /** Kick off the OAuth dance for the given provider. The browser navigates
-   *  away to the provider's auth screen and returns via the callback URL
-   *  (which lands back on /login → hydrateFromSession). */
-  signInWithProvider: (provider: 'github' | 'google') => void;
+  /** Kick off the OAuth dance for the given provider. better-auth's
+   *  `sign-in/social` returns `{ url, redirect: true }` — we navigate the
+   *  browser to that provider auth URL; the round-trip lands back on
+   *  /login?bridge=1 → hydrateFromSession. Throws on failure so the login
+   *  page can surface the error. */
+  signInWithProvider: (provider: 'github' | 'google') => Promise<void>;
   /** Request a magic link be emailed to `email`. In dev (and on transport
    *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
@@ -256,24 +258,38 @@ export const useAuthStore = create<AuthState>((set) => ({
     );
   },
 
-  signInWithProvider: (provider) => {
+  signInWithProvider: async (provider) => {
     if (typeof window === 'undefined') {
       return;
     }
-    const callbackURL = `${window.location.origin}/login?bridge=1`;
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${API_BASE}/api/auth/sign-in/social`;
-    const providerInput = document.createElement('input');
-    providerInput.name = 'provider';
-    providerInput.value = provider;
-    form.appendChild(providerInput);
-    const callbackInput = document.createElement('input');
-    callbackInput.name = 'callbackURL';
-    callbackInput.value = callbackURL;
-    form.appendChild(callbackInput);
-    document.body.appendChild(form);
-    form.submit();
+    // JSON fetch, not a form POST: the gateway only parses application/json
+    // bodies on /api/auth/*, and better-auth answers with JSON rather than a
+    // 302 — the client is expected to perform the navigation itself.
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
+        body: JSON.stringify({
+          callbackURL: `${window.location.origin}/login?bridge=1`,
+          provider,
+        }),
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    } catch (err) {
+      throw new Error(
+        gatewayUnreachableMessage(err, API_BASE) ?? `Could not start ${provider} sign-in`
+      );
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(body?.message ?? `Could not start ${provider} sign-in`);
+    }
+    const data = (await res.json().catch(() => null)) as { url?: string } | null;
+    if (!data?.url) {
+      throw new Error(`${provider} sign-in did not return a redirect URL`);
+    }
+    window.location.href = data.url;
   },
   user: null,
 }));
