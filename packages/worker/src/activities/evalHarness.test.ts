@@ -2,9 +2,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { type EvalCaseRow, type HarnessDeps, runEvalHarness } from './evalHarness.js';
 
 const cases: EvalCaseRow[] = [
-  { baselineSha: 's1', goldenTest: 'yarn test', id: 'c1', repoUrl: 'r1', tags: ['repo:a'] },
-  { baselineSha: 's2', goldenTest: 'yarn test', id: 'c2', repoUrl: 'r2', tags: ['repo:a'] },
-  { baselineSha: 's3', goldenTest: 'yarn test', id: 'c3', repoUrl: 'r3', tags: ['repo:b'] },
+  {
+    baselineSha: 's1',
+    goldenTest: 'yarn test',
+    id: 'c1',
+    input: { description: 'x' },
+    repoUrl: 'r1',
+    tags: ['repo:a'],
+  },
+  {
+    baselineSha: 's2',
+    goldenTest: 'yarn test',
+    id: 'c2',
+    input: { description: 'x' },
+    repoUrl: 'r2',
+    tags: ['repo:a'],
+  },
+  {
+    baselineSha: 's3',
+    goldenTest: 'yarn test',
+    id: 'c3',
+    input: { description: 'x' },
+    repoUrl: 'r3',
+    tags: ['repo:b'],
+  },
 ];
 
 function deps(over: Partial<HarnessDeps> = {}): HarnessDeps & {

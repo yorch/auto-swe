@@ -15,8 +15,16 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { createImplementerAgent } from '../agents/implementer.js';
+import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
+import { parseAgentRef } from '../lib/config/agentRef.js';
+import { resolveAgent } from '../lib/config/agentResolver.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import type { ResolveCtx } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
+import { type LanguageModel, resolveModel } from '../lib/models.js';
+import { createWorkspace, type Workspace } from './workspace.js';
 
 export interface EvalCaseRow {
   id: string;
@@ -24,6 +32,7 @@ export interface EvalCaseRow {
   baselineSha: string;
   goldenTest: string;
   tags: string[];
+  input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
 }
 
 export interface HarnessInput {
@@ -48,7 +57,14 @@ async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
   // Quarantined cases (stale references — P3 re-validation) are excluded from the
   // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons.
   return prisma.evalCase.findMany({
-    select: { baselineSha: true, goldenTest: true, id: true, repoUrl: true, tags: true },
+    select: {
+      baselineSha: true,
+      goldenTest: true,
+      id: true,
+      input: true,
+      repoUrl: true,
+      tags: true,
+    },
     where: { datasetId, quarantined: false },
   });
 }
@@ -62,20 +78,82 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
     .catch(() => undefined);
 }
 
+const MAX_EVAL_ITERATIONS = 3;
+
 /**
- * The real per-case runner. NOTE: generating the candidate's diff by running the
- * implementer for `ref` is the remaining integration seam (docs/evals-p1.md
- * WS4). It is intentionally NOT faked: scoring the fixture's tree for both arms
- * would make every delta 0 and report a permanent "no regression" — the §9
- * false-confidence failure mode. So this throws until the agent-diff step is
- * wired; the harness activity marks the run FAILED rather than silently passing.
+ * Runs the implementer at the agent version specified by `ref` against the
+ * frozen fixture, then checks `goldenTest`. Returns 1 when the golden test
+ * passes within MAX_EVAL_ITERATIONS, 0 otherwise (including any error).
+ *
+ * `ref` format: `"<agentKey>"` (float to latest active) or
+ * `"<agentKey>@<version>"` (pin exact version). The version pin flows into
+ * model, system prompt, skills, and tool selection via `resolveAgent`.
  */
-export async function runCaseDefault(_caseRow: EvalCaseRow, _ref: string): Promise<0 | 1> {
-  throw new Error(
-    'eval harness: agent-diff generation is not yet wired (docs/evals-p1.md WS4); ' +
-      'a real candidate-vs-baseline run requires running the implementer per case. ' +
-      'Refusing to score the fixture tree for both arms (would report a false "no regression").'
-  );
+export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise<0 | 1> {
+  const parsed = parseAgentRef(ref);
+  const ctx: ResolveCtx =
+    parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {};
+
+  let workspace: Workspace | undefined;
+  let closeMcp: (() => Promise<void>) | undefined;
+  try {
+    workspace = await createWorkspace(
+      caseRow.repoUrl,
+      'eval-candidate',
+      'main',
+      'node:24-alpine',
+      caseRow.baselineSha
+    );
+
+    const resolved = await resolveAgent(parsed.key, ctx);
+    const model: LanguageModel = resolveModel(
+      resolved.model.spec,
+      resolved.model.apiKey,
+      resolved.model.apiBase
+    );
+    const mcpServerRef = await resolveAgentMcpUrl(parsed.key, ctx);
+    const built = await createImplementerAgent(
+      workspace,
+      undefined,
+      resolved.toolKeys,
+      resolved.skills,
+      { mcpServerRef },
+      model
+    );
+    closeMcp = built.closeMcp;
+
+    const basePrompt = resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT;
+    const systemPrompt = built.promptSuffix ? `${basePrompt}\n\n${built.promptSuffix}` : basePrompt;
+    const taskDescription =
+      typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input);
+
+    let lastTestOutput = '';
+    for (let i = 0; i < MAX_EVAL_ITERATIONS; i++) {
+      const userMessage = JSON.stringify({
+        description: taskDescription,
+        iteration: i,
+        ...(i > 0 ? { previousTestOutput: lastTestOutput.slice(-4000) } : {}),
+      });
+      await built.agent.generate(
+        [
+          { content: systemPrompt, role: 'system' as const },
+          { content: userMessage, role: 'user' as const },
+        ],
+        { toolChoice: 'auto' as const }
+      );
+      const gt = await workspace.execCapture(caseRow.goldenTest);
+      lastTestOutput = gt.stdout ?? '';
+      if (gt.exitCode === 0) {
+        return 1;
+      }
+    }
+    return 0;
+  } catch {
+    return 0;
+  } finally {
+    await closeMcp?.();
+    await workspace?.destroy();
+  }
 }
 
 /**

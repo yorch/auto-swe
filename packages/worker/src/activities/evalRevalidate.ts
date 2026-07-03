@@ -62,6 +62,7 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
       baselineSha: true,
       goldenTest: true,
       id: true,
+      input: true,
       quarantined: true,
       repoUrl: true,
       tags: true,

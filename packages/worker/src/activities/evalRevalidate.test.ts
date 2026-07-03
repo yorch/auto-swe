@@ -5,6 +5,7 @@ const c = (over: Partial<RevalCaseRow>): RevalCaseRow => ({
   baselineSha: 's',
   goldenTest: 'yarn test',
   id: 'c',
+  input: null,
   quarantined: false,
   repoUrl: 'r',
   tags: [],
