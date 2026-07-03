@@ -47,7 +47,8 @@ export function GitHubTab() {
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
-  const githubOauthCallback = `${API_BASE}/api/auth/github/callback`;
+  // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
+  const githubOauthCallback = `${API_BASE}/api/auth/callback/github`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

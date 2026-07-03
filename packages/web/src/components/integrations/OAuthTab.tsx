@@ -23,7 +23,8 @@ export function OAuthTab() {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
 
-  const googleOauthCallback = `${API_BASE}/api/auth/google/callback`;
+  // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
+  const googleOauthCallback = `${API_BASE}/api/auth/callback/google`;
 
   const [saved, setSaved] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
