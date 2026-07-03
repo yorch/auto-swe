@@ -50,6 +50,7 @@ const SOCIAL_PROVIDERS: Provider[] = [
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const linkProvider = useAuthStore((s) => s.linkProvider);
   const [providers, setProviders] = useState<ProviderFlags>({
     github: false,
     google: false,
@@ -88,30 +89,10 @@ export default function SettingsPage() {
     setBusy(provider);
     setError(null);
     setInfo(null);
-    // better-auth's `link-social` mirrors the sign-in/social shape: a JSON
-    // POST answered with `{ url, redirect: true }` — the client navigates to
-    // the provider's auth URL. After the OAuth round-trip the user lands back
-    // at callbackURL with the new Account row already attached.
     try {
-      const res = await fetch(`${API_BASE}/api/auth/link-social`, {
-        body: JSON.stringify({
-          callbackURL: `${window.location.origin}/settings`,
-          provider,
-        }),
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(errBody?.message ?? `link failed (${res.status})`);
-      }
-      const data = (await res.json().catch(() => null)) as { url?: string } | null;
-      if (!data?.url) {
-        throw new Error(`${provider} link did not return a redirect URL`);
-      }
-      window.location.href = data.url;
-      // Navigating away — leave `busy` set so the button stays disabled.
+      // Navigates to the provider on success, so `busy` stays set until the
+      // page unloads (the button remains disabled).
+      await linkProvider(provider);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'link failed');
       setBusy(null);

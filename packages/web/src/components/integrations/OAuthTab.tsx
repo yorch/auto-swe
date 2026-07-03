@@ -109,6 +109,8 @@ export function OAuthTab() {
             </div>
             <p className="text-[11px] text-paper-600">
               Add this as an Authorized redirect URI in your Google Cloud OAuth 2.0 Client settings.
+              The host must match the gateway&apos;s BETTER_AUTH_URL — better-auth builds its
+              redirect_uri from that value.
             </p>
           </div>
         </div>

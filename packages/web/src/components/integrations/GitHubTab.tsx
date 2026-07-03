@@ -412,7 +412,9 @@ export function GitHubTab() {
               <CopyButton value={githubOauthCallback} />
             </div>
             <p className="text-[11px] text-paper-600">
-              Add this as the Authorization callback URL in your GitHub OAuth App settings.
+              Add this as the Authorization callback URL in your GitHub OAuth App settings. The host
+              must match the gateway&apos;s BETTER_AUTH_URL — better-auth builds its redirect_uri
+              from that value.
             </p>
           </div>
         </div>

@@ -31,6 +31,11 @@ interface AuthState {
    *  /login?bridge=1 → hydrateFromSession. Throws on failure so the login
    *  page can surface the error. */
   signInWithProvider: (provider: 'github' | 'google') => Promise<void>;
+  /** Link an additional OAuth provider to the signed-in account. Same
+   *  fetch-then-navigate dance as signInWithProvider, against better-auth's
+   *  `link-social`; the round-trip lands back on /settings with the new
+   *  Account row attached. Throws on failure. */
+  linkProvider: (provider: 'github' | 'google') => Promise<void>;
   /** Request a magic link be emailed to `email`. In dev (and on transport
    *  failures) the link is logged to gateway stdout. */
   requestMagicLink: (email: string) => Promise<void>;
@@ -95,8 +100,9 @@ interface BetterAuthSessionResponse {
  * error handling into one place: (1) gateway-unreachable network failures get
  * a friendly message naming the API_BASE, (2) non-2xx responses surface the
  * server's `message` field, (3) the caller's `fallback` is used otherwise.
+ * Returns the parsed response body (null when it isn't JSON).
  */
-async function betterAuthPost(path: string, body: unknown, fallback: string): Promise<void> {
+async function betterAuthPost(path: string, body: unknown, fallback: string): Promise<unknown> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -113,6 +119,31 @@ async function betterAuthPost(path: string, body: unknown, fallback: string): Pr
     const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
     throw new Error(errBody?.message ?? fallback);
   }
+  return res.json().catch(() => null);
+}
+
+/**
+ * POST to a better-auth OAuth endpoint that answers `{ url, redirect: true }`
+ * (the social sign-in / account-link shape) and navigate the browser to the
+ * returned provider URL. better-auth responds with JSON, not a 302 — the
+ * client is expected to perform the navigation itself. `callbackPath` is
+ * where the OAuth round-trip lands back on this app.
+ */
+async function betterAuthRedirect(
+  path: string,
+  provider: 'github' | 'google',
+  callbackPath: string,
+  fallback: string
+): Promise<void> {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const body = { callbackURL: `${window.location.origin}${callbackPath}`, provider };
+  const data = (await betterAuthPost(path, body, fallback)) as { url?: string } | null;
+  if (!data?.url) {
+    throw new Error(fallback);
+  }
+  window.location.href = data.url;
 }
 
 async function fetchBetterAuthSession(): Promise<AuthState['user']> {
@@ -188,6 +219,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   isAuthenticated: false,
 
+  linkProvider: async (provider) =>
+    betterAuthRedirect(
+      '/api/auth/link-social',
+      provider,
+      '/settings',
+      `Could not link ${provider} account`
+    ),
+
   login: async (email, password) => {
     let res: Response;
     try {
@@ -258,38 +297,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     );
   },
 
-  signInWithProvider: async (provider) => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    // JSON fetch, not a form POST: the gateway only parses application/json
-    // bodies on /api/auth/*, and better-auth answers with JSON rather than a
-    // 302 — the client is expected to perform the navigation itself.
-    let res: Response;
-    try {
-      res = await fetch(`${API_BASE}/api/auth/sign-in/social`, {
-        body: JSON.stringify({
-          callbackURL: `${window.location.origin}/login?bridge=1`,
-          provider,
-        }),
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        method: 'POST',
-      });
-    } catch (err) {
-      throw new Error(
-        gatewayUnreachableMessage(err, API_BASE) ?? `Could not start ${provider} sign-in`
-      );
-    }
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      throw new Error(body?.message ?? `Could not start ${provider} sign-in`);
-    }
-    const data = (await res.json().catch(() => null)) as { url?: string } | null;
-    if (!data?.url) {
-      throw new Error(`${provider} sign-in did not return a redirect URL`);
-    }
-    window.location.href = data.url;
-  },
+  signInWithProvider: async (provider) =>
+    betterAuthRedirect(
+      '/api/auth/sign-in/social',
+      provider,
+      '/login?bridge=1',
+      `Could not start ${provider} sign-in`
+    ),
   user: null,
 }));
