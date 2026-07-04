@@ -377,13 +377,14 @@ export async function executeImplementation(
     await closeMcp?.();
     await persistActivityTrace(tracer, 'implementer');
     if (baseSha) {
+      // Best-effort — the baseline SHA is an optional historical-replay aid. One
+      // try/catch guards both the synchronous currentWorkflowId() read and the
+      // async update.
       try {
-        await prisma.workflowRun
-          .update({
-            data: { baselineSha: baseSha },
-            where: { workflowId: currentWorkflowId() },
-          })
-          .catch(() => undefined);
+        await prisma.workflowRun.update({
+          data: { baselineSha: baseSha },
+          where: { workflowId: currentWorkflowId() },
+        });
       } catch {
         // non-fatal
       }

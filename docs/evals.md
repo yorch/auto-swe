@@ -33,12 +33,18 @@ data.
 > `executeImplementation`, stored on `WorkflowRun.baselineSha`, returned in `CodeResult.baseSha`;
 > (4) **node-level gate execution** — `runGateStandalone` wired into `runEvalNode` for `'gate'`
 > scorer kind: resolves SCM clone URL from the run's connection + ticket branch, checks out the
-> workspace, executes the gate command, returns scored `{ passed, value }`;
+> **candidate's already-pushed branch** (`existingBranch` clone, not a fresh branch off
+> `defaultBranch`) on the repo's `executorImage`, executes the gate command, returns scored
+> `{ passed, value }`. As a **floor** scorer it **fails safe**: any non-executable path (no linked
+> run, missing connection/ticket, clone/exec error) records `passed:false` — never a silent pass that
+> would green-light unverified code (RFC §9);
 > (5) **`runCaseDefault` harness** with agent-library version-pin semantics — `candidateRef` /
 > `baselineRef` are `"key@version"` strings; `resolveAgent(key, ctx)` with `agentVersions` pin +
-> explicit `resolveModel` + `createImplementerAgent(..., modelOverride)` + TDD loop up to 5 iterations
-> scoring `goldenTest` exit-code 0/1. End-to-end verification of every Temporal/Docker/LLM path
-> needs the full infra stack running.
+> explicit `resolveModel` + `createImplementerAgent(..., modelOverride)` + TDD loop up to 3 iterations
+> (stdout+stderr fed back per iteration) scoring `goldenTest` exit-code → `0/1`. Infrastructure errors
+> (Docker/agent/model/MCP) **throw** (marking the `EvalRun` FAILED) rather than scoring a false `0`,
+> so infra noise never poisons the regression verdict (RFC §9). End-to-end verification of every
+> Temporal/Docker/LLM path needs the full infra stack running.
 > This doc establishes the vision, the conceptual grounding, and a phased build plan
 > sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
 > methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision

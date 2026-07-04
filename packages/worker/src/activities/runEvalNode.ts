@@ -83,8 +83,20 @@ async function evaluateScorer(
       return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, value };
     }
     case 'gate': {
+      // A `gate` is a floor scorer: it must PASS for the candidate to be
+      // accepted. When the gate cannot actually verify the candidate (no linked
+      // run, missing connection/ticket, clone/exec failure) it must FAIL SAFE —
+      // recording it as a pass would silently green-light unverified code, the
+      // exact false-confidence failure mode the eval system exists to prevent
+      // (RFC §9). So every non-executable path returns passed:false.
+      const gateFailed: ScoreInput = {
+        kind: 'gate',
+        passed: false,
+        scorer: `gate:${scorer.gate}`,
+        value: 0,
+      };
       if (!runId) {
-        return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+        return gateFailed;
       }
       try {
         const run = await prisma.workflowRun.findUnique({
@@ -93,7 +105,7 @@ async function evaluateScorer(
         });
         const { connectionId, externalTicketId } = run?.workRequest ?? {};
         if (!connectionId || !externalTicketId) {
-          return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+          return gateFailed;
         }
         const repo = await prisma.connection.findUniqueOrThrow({ where: { id: connectionId } });
         const defaults = await resolveWorkflowDefaults();
@@ -105,7 +117,11 @@ async function evaluateScorer(
           branch,
           command: scorer.command,
           defaultBranch: repo.defaultBranch,
+          // Score the candidate's already-pushed branch (not a fresh branch cut
+          // from defaultBranch), on the repo's configured toolchain image.
+          existingBranch: true,
           gate: scorer.gate as GateName,
+          image: repo.executorImage ?? undefined,
         });
         return {
           kind: 'gate',
@@ -114,7 +130,7 @@ async function evaluateScorer(
           value: result.passed ? 1 : 0,
         };
       } catch {
-        return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+        return gateFailed;
       }
     }
   }

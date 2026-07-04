@@ -64,10 +64,9 @@ export async function createWorkflowRun(
 
   // Evals P2 canary: override the candidate agent's pinned version so
   // resolveAgent routes this run to the candidate arm.
-  const canaryAgentKey = input.canaryAgentKey;
-  const canaryVersion = input.canaryVersion;
+  const { canaryAgentKey, canaryVersion } = input;
   const isCanary = !!(canaryAgentKey && canaryVersion != null);
-  if (isCanary && canaryAgentKey != null && canaryVersion != null) {
+  if (canaryAgentKey && canaryVersion != null) {
     agentVersions[canaryAgentKey] = canaryVersion;
   }
 

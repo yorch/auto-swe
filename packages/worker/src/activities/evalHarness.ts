@@ -10,8 +10,10 @@
  * The per-case execution (provision a fixture at its pinned SHA, run the
  * candidate/baseline implementer, run the golden test) is the expensive
  * Docker + LLM boundary — it is injected as `deps.runCase` so this orchestration
- * is deterministic and unit-testable. `runCaseDefault` (the real path) is the
- * remaining agent-diff seam and currently throws rather than fake a comparison.
+ * is deterministic and unit-testable. `runCaseDefault` (the real path) provisions
+ * the fixture, runs the version-pinned implementer in a TDD loop, and scores the
+ * golden test; infrastructure errors throw (marking the run FAILED) rather than
+ * scoring a false 0.
  */
 
 import { prisma } from '@auto-swe/shared/db';
@@ -83,7 +85,15 @@ const MAX_EVAL_ITERATIONS = 3;
 /**
  * Runs the implementer at the agent version specified by `ref` against the
  * frozen fixture, then checks `goldenTest`. Returns 1 when the golden test
- * passes within MAX_EVAL_ITERATIONS, 0 otherwise (including any error).
+ * passes within MAX_EVAL_ITERATIONS, 0 when it consistently fails.
+ *
+ * A `0` means a genuine floor failure (the agent's code did not make the golden
+ * test pass). Infrastructure/config errors — Docker provisioning, agent/model
+ * resolution, MCP, LLM transport — are NOT scored as 0: they THROW so the
+ * harness marks the whole EvalRun FAILED rather than silently recording a false
+ * regression (or, if both arms fail symmetrically, a false "no regression").
+ * This is the RFC §9 rule: report infra failures separately from quality
+ * failures, never let them poison the headline metric.
  *
  * `ref` format: `"<agentKey>"` (float to latest active) or
  * `"<agentKey>@<version>"` (pin exact version). The version pin flows into
@@ -142,13 +152,14 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
         { toolChoice: 'auto' as const }
       );
       const gt = await workspace.execCapture(caseRow.goldenTest);
-      lastTestOutput = gt.stdout ?? '';
+      // Feed both streams back — test/lint runners print failure detail (stack
+      // traces, assertion diffs, compiler errors) to stderr, so stdout alone
+      // gives the next iteration an empty repair signal.
+      lastTestOutput = [gt.stdout, gt.stderr].filter(Boolean).join('\n');
       if (gt.exitCode === 0) {
         return 1;
       }
     }
-    return 0;
-  } catch {
     return 0;
   } finally {
     await closeMcp?.();

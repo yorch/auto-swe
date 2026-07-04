@@ -585,8 +585,32 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.put(
     '/config/canary',
-    { schema: { body: CanaryPutBody, response: { 200: z.any() } } },
+    { schema: { body: CanaryPutBody, response: { 200: z.any(), 400: z.any() } } },
     async (req, reply) => {
+      // Guard against pinning a nonexistent/inactive agent version: createWorkflowRun
+      // writes agentVersions[agentKey]=candidateVersion verbatim, so a bad version
+      // makes resolveAgent throw ConfigMissingError on every routed run. Validate the
+      // *effective* config (current row merged with this partial update) before writing.
+      const current = await resolveCanaryConfig();
+      const agentKey = req.body.agentKey !== undefined ? req.body.agentKey : current.agentKey;
+      const candidateVersion =
+        req.body.candidateVersion !== undefined
+          ? req.body.candidateVersion
+          : current.candidateVersion;
+      if (agentKey && candidateVersion != null) {
+        const agent = await prisma.agent.findFirst({
+          select: { id: true },
+          where: { isActive: true, key: agentKey, version: candidateVersion },
+        });
+        if (!agent) {
+          return reply.status(400).send({
+            error: {
+              code: 'CANARY_VERSION_NOT_FOUND',
+              message: `No active agent '${agentKey}' at version ${candidateVersion}`,
+            },
+          });
+        }
+      }
       await updateCanaryConfig(prisma, req.body);
       const config = await resolveCanaryConfig();
       return reply.send({ data: config });
