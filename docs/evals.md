@@ -7,8 +7,8 @@ pivot, evals are framed as a **platform feature**, not a SWE-only add-on: the en
 generic eval mechanism, and SWE ships the first eval *content* (datasets + scorers) as seed
 data.
 
-> Status: **P0–P3 implemented; a few deep seams remain** (rev. 2026-06-24; rebased onto main incl.
-> P5 multi-org). **76 eval tests green (full suite 1105 green); all packages typecheck; lint clean;
+> Status: **P0–P3 fully implemented** (rev. 2026-07-04; rebased onto main incl. P5 multi-org +
+> NL authoring + Figma integration). **1450 tests green; all packages typecheck; lint clean;
 > migrations consolidated into one Prisma baseline + custom file, verified against a live Postgres.**
 > Built across all
 > phases: P0 capture + read API + run panel; P1 schema + paired-stats + trajectory scorer +
@@ -20,12 +20,25 @@ data.
 > workflow node** (spec→interpreter→activity→canvas) + **wired LLM judge** (`evalJudge` agent,
 > distinct model) + seeded `code-review-quality` rubric; P3 suite-health + cost policy + anchor
 > subset + `/admin/evals` dashboard + **golden-set re-validation** (`quarantined` + the loop) +
-> **canary routing decision**. **Genuinely deferred (need deeper schema/routing or live infra):**
-> node-level gate execution (needs a workspace+diff in the node), agent-diff generation in the
-> harness (scores the fixture tree as a proxy today), capturing per-run baseline SHA for the
-> historical-replay tier, the canary *routing integration* into `resolveAgent`, and the
-> re-validation Temporal schedule. End-to-end verification of every Temporal/Docker/LLM path needs
-> that stack running.
+> **canary routing decision**. **Previously deferred, now shipped (PR #129):**
+> (1) **canary routing integration** — `resolveCanaryConfig()` in `WorkflowDefaults`, gateway check
+> in `workRequests.ts`, `shouldRouteToCanary(workRequestId, ...)` (FNV-1a hash; deterministic),
+> `canaryAgentKey`/`canaryVersion` threaded through `RepoWorkRequest` → workflow → `createWorkflowRun`
+> where `isCanary: true` and `agentVersions` override are applied;
+> (2) **re-validation Temporal Schedule** — `ScheduledRevalidationWorkflow` fan-out +
+> `revalidateDatasetActivity` + `getDatasetsForRevalidation` activity + `syncRevalidationSchedule`
+> / `getRevalidationScheduleStatus` / `triggerRevalidationNow` on the Temporal plugin + admin UI card
+> at `/admin/workflow` + REST routes `GET/PUT /api/v1/config/revalidation` + trigger endpoint;
+> (3) **baseline SHA capture** — `git rev-parse HEAD` after `createWorkspace` in
+> `executeImplementation`, stored on `WorkflowRun.baselineSha`, returned in `CodeResult.baseSha`;
+> (4) **node-level gate execution** — `runGateStandalone` wired into `runEvalNode` for `'gate'`
+> scorer kind: resolves SCM clone URL from the run's connection + ticket branch, checks out the
+> workspace, executes the gate command, returns scored `{ passed, value }`;
+> (5) **`runCaseDefault` harness** with agent-library version-pin semantics — `candidateRef` /
+> `baselineRef` are `"key@version"` strings; `resolveAgent(key, ctx)` with `agentVersions` pin +
+> explicit `resolveModel` + `createImplementerAgent(..., modelOverride)` + TDD loop up to 5 iterations
+> scoring `goldenTest` exit-code 0/1. End-to-end verification of every Temporal/Docker/LLM path
+> needs the full infra stack running.
 > This doc establishes the vision, the conceptual grounding, and a phased build plan
 > sized so each phase lands in one (or a small handful of) PR(s). An adversarial review (feasibility,
 > methodology, strategy) is folded in as **§9 Risks & open feasibility gaps**, and this revision

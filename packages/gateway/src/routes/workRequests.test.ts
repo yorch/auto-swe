@@ -146,13 +146,13 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
-      getWorkflowAuthorJobStatus: async () => ({ phase: 'generating', status: 'running' }),
       getRevalidationScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
         nextRunAt: null,
         paused: false,
       }),
+      getWorkflowAuthorJobStatus: async () => ({ phase: 'generating', status: 'running' }),
       getWorkRequestScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,

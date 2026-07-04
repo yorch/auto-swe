@@ -444,6 +444,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    async getRevalidationScheduleStatus(): Promise<RevalidationScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        const lastAction = desc.info.recentActions.at(-1);
+        return {
+          exists: true,
+          lastRunAt: lastAction ? lastAction.takenAt.toISOString() : null,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+      }
+    },
+
     async getWorkflowAuthorJobStatus(workflowId: string): Promise<WorkflowAuthorJobStatus> {
       const handle = client.workflow.getHandle(workflowId);
       let desc: Awaited<ReturnType<typeof handle.describe>>;
@@ -513,23 +530,6 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
       return { code, message, status: 'failed' };
-    },
-
-    async getRevalidationScheduleStatus(): Promise<RevalidationScheduleStatus> {
-      try {
-        const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
-        const desc = await handle.describe();
-        const nextTimes = desc.info.nextActionTimes;
-        const lastAction = desc.info.recentActions.at(-1);
-        return {
-          exists: true,
-          lastRunAt: lastAction ? lastAction.takenAt.toISOString() : null,
-          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
-          paused: desc.state.paused,
-        };
-      } catch {
-        return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
-      }
     },
 
     async getWorkRequestScheduleStatus(scheduleRowId: string): Promise<WorkRequestScheduleStatus> {
