@@ -50,7 +50,7 @@
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "DATABASE_URL=dummy prisma generate && tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "prisma": "prisma"
