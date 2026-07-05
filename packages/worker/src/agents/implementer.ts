@@ -15,7 +15,7 @@ import {
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getErrorMessage } from '../lib/errors.js';
-import { getModel } from '../lib/models.js';
+import { getModel, type LanguageModel } from '../lib/models.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { scanShellCommand } from '../lib/shellCommandScanner.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
@@ -71,7 +71,8 @@ export async function createImplementerAgent(
   tracer?: AgentTracer,
   tools?: string[] | null,
   skills?: ResolvedSkill[],
-  options?: ImplementerAgentOptions
+  options?: ImplementerAgentOptions,
+  modelOverride?: LanguageModel
 ): Promise<{
   agent: Agent;
   mastra: Mastra;
@@ -359,7 +360,7 @@ export async function createImplementerAgent(
     // instructions is overridden per-call via system message; set to empty string
     // so the constructor does not inject stale static content.
     instructions: '',
-    model: await getModel('implementer'),
+    model: modelOverride ?? (await getModel('implementer')),
     name: 'implementer',
     // Built-in tool keys always win over MCP tool keys on collision —
     // a remote server must not be able to shadow bash/readFile/writeFile.

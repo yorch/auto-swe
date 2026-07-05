@@ -32,6 +32,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialScope.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/canary',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/canary.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/systemConfig',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/systemConfig.ts'),
       },

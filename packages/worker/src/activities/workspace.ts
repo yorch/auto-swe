@@ -42,7 +42,15 @@ export async function createWorkspace(
    * by construction regardless of where `defaultBranch` has moved. When unset,
    * the cheap shallow clone at `defaultBranch` HEAD is used (the normal path).
    */
-  checkoutSha?: string
+  checkoutSha?: string,
+  /**
+   * When true, `branch` is an existing remote branch to check out directly
+   * (shallow-clone `-b <branch>`), rather than a new working branch to cut from
+   * `defaultBranch` HEAD. Used by the node-level eval gate, which must score the
+   * candidate's already-pushed branch — not a fresh branch off main. Ignored
+   * when `checkoutSha` is set (the pinned-fixture path takes precedence).
+   */
+  existingBranch?: boolean
 ): Promise<Workspace> {
   if (!DOCKER_IMAGE_REF_RE.test(image)) {
     throw new Error(`Invalid Docker image name: ${image}`);
@@ -86,6 +94,13 @@ export async function createWorkspace(
       await rootExec(`git clone ${shellQuote(authedRepoUrl)} /workspace/target-repo`);
       await rootExec(
         `cd /workspace/target-repo && git checkout -b ${shellQuote(branch)} ${shellQuote(checkoutSha)}`
+      );
+    } else if (existingBranch) {
+      // Check out an existing remote branch directly (the eval-gate path), so
+      // the workspace holds the candidate's pushed code rather than a fresh
+      // branch cut from defaultBranch HEAD.
+      await rootExec(
+        `git clone --depth=50 -b ${shellQuote(branch)} ${shellQuote(authedRepoUrl)} /workspace/target-repo`
       );
     } else {
       await rootExec(

@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
 import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
@@ -22,6 +23,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   combineScores,
   decideGate,
@@ -29,7 +31,9 @@ import {
   type ScoreInput,
 } from '../lib/scorerCombination.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
+import type { GateName } from './qualityGates.js';
 import { runAgent } from './runAgent.js';
+import { runGateStandalone } from './standaloneGateRunner.js';
 
 /** Scorer kind → the EvalResult source it records under. */
 const SCORER_KIND_SOURCE: Record<EvalScorer['kind'], 'GATE' | 'ASSERT' | 'JUDGE' | 'TRAJECTORY'> = {
@@ -79,10 +83,55 @@ async function evaluateScorer(
       return { kind: 'judge', scorer: `judge:${scorer.rubricRef}`, value };
     }
     case 'gate': {
-      // Node-level gate execution needs the run's workspace + the target diff
-      // applied; that is the integration seam (docs/evals-p2.md). Until wired,
-      // record a neutral skip so the node still produces a decomposable row.
-      return { kind: 'gate', passed: true, scorer: `gate:${scorer.gate}`, value: 1 };
+      // A `gate` is a floor scorer: it must PASS for the candidate to be
+      // accepted. When the gate cannot actually verify the candidate (no linked
+      // run, missing connection/ticket, clone/exec failure) it must FAIL SAFE —
+      // recording it as a pass would silently green-light unverified code, the
+      // exact false-confidence failure mode the eval system exists to prevent
+      // (RFC §9). So every non-executable path returns passed:false.
+      const gateFailed: ScoreInput = {
+        kind: 'gate',
+        passed: false,
+        scorer: `gate:${scorer.gate}`,
+        value: 0,
+      };
+      if (!runId) {
+        return gateFailed;
+      }
+      try {
+        const run = await prisma.workflowRun.findUnique({
+          select: { workRequest: { select: { connectionId: true, externalTicketId: true } } },
+          where: { id: runId },
+        });
+        const { connectionId, externalTicketId } = run?.workRequest ?? {};
+        if (!connectionId || !externalTicketId) {
+          return gateFailed;
+        }
+        const repo = await prisma.connection.findUniqueOrThrow({ where: { id: connectionId } });
+        const defaults = await resolveWorkflowDefaults();
+        const branch = `${defaults.branchPrefix}/${externalTicketId}`;
+        const repoRef = toRepoRef(repo);
+        const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
+        const result = await runGateStandalone({
+          authedRepoUrl: authedCloneUrl,
+          branch,
+          command: scorer.command,
+          defaultBranch: repo.defaultBranch,
+          // Score the candidate's already-pushed branch (not a fresh branch cut
+          // from defaultBranch), on the repo's configured toolchain image.
+          existingBranch: true,
+          gate: scorer.gate as GateName,
+          image: repo.executorImage ?? undefined,
+        });
+        return {
+          kind: 'gate',
+          passed: result.passed,
+          scorer: `gate:${scorer.gate}`,
+          value: result.passed ? 1 : 0,
+        };
+      } catch {
+        return gateFailed;
+      }
     }
   }
 }

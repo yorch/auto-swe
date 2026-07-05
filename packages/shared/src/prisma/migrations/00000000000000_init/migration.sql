@@ -441,12 +441,14 @@ CREATE TABLE "workflow_runs" (
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
+    "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
     "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "tokens_input_total" INTEGER NOT NULL DEFAULT 0,
     "tokens_output_total" INTEGER NOT NULL DEFAULT 0,
+    "baseline_sha" TEXT,
 
     CONSTRAINT "workflow_runs_pkey" PRIMARY KEY ("id")
 );
@@ -763,6 +765,13 @@ CREATE TABLE "workflow_defaults" (
     "eval_schedule_dataset_slug" TEXT NOT NULL DEFAULT 'swe-implementer-golden',
     "eval_schedule_candidate_ref" TEXT NOT NULL DEFAULT 'main',
     "eval_schedule_baseline_ref" TEXT NOT NULL DEFAULT 'last-release',
+    "revalidation_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "revalidation_cron" TEXT NOT NULL DEFAULT '0 5 * * 0',
+    "revalidation_dataset_slug" TEXT,
+    "canary_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "canary_agent_key" TEXT,
+    "canary_candidate_version" INTEGER,
+    "canary_percent" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "workflow_defaults_pkey" PRIMARY KEY ("id")

@@ -17,6 +17,11 @@ export interface StandaloneGateInput {
   defaultBranch: string;
   /** Pin the fixture to an exact commit (frozen-benchmark determinism). */
   checkoutSha?: string;
+  /**
+   * When true, `branch` is an existing remote branch to check out directly (the
+   * node-level eval-gate path) rather than a new branch cut from defaultBranch.
+   */
+  existingBranch?: boolean;
   gate: GateName;
   /** Command override; falls back to the gate's built-in default. */
   command?: string;
@@ -44,7 +49,8 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     input.branch,
     input.defaultBranch,
     input.image ?? 'node:24-alpine',
-    input.checkoutSha
+    input.checkoutSha,
+    input.existingBranch
   );
   try {
     const result = await workspace.execCapture(command, { timeoutMs: input.timeoutMs });

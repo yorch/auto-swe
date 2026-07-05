@@ -7,6 +7,7 @@ import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import {
   resolveConsolidationConfig,
   resolveEvalScheduleConfig,
+  resolveRevalidationConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -116,6 +117,12 @@ async function start() {
   resolveEvalScheduleConfig()
     .then((cfg) => app.temporal.syncEvalSchedule(cfg))
     .catch((err) => app.log.warn({ err }, 'eval schedule sync failed at startup'));
+
+  // Same for the eval re-validation Temporal Schedule (golden-set staleness check).
+  // Off by default — needs seeded EvalDatasets + a Docker-capable worker.
+  resolveRevalidationConfig()
+    .then((cfg) => app.temporal.syncRevalidationSchedule(cfg))
+    .catch((err) => app.log.warn({ err }, 'revalidation schedule sync failed at startup'));
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so

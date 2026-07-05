@@ -49,6 +49,11 @@ export interface RepoWorkRequest {
   /// (per-channel tools/MCP/model) and the run's cost accrues to that channel's
   /// monthly budget. Only set for channel-launched task runs.
   channelId?: string;
+  /// Evals P2 canary routing: when set, the named agent key is pinned to this
+  /// candidate version for the life of the run. Set by the gateway work-request
+  /// submit path when canary config is enabled and the run hashes into the arm.
+  canaryAgentKey?: string;
+  canaryVersion?: number;
 }
 
 export interface CodeSecurityFinding {
@@ -67,6 +72,9 @@ export interface CodeResult {
    * backwards compatibility with context snapshots persisted before it existed.
    */
   repoId?: string;
+  /** The defaultBranch HEAD SHA at workspace creation time (before agent edits).
+   * Stored best-effort; empty string when capture failed. */
+  baseSha?: string;
   codeSecurityFindings?: CodeSecurityFinding[];
   diff: string;
   filesChanged: FileChange[];
@@ -283,4 +291,26 @@ export interface ScheduledConsolidationRepoResult {
 export interface ScheduledConsolidationResult {
   reposProcessed: number;
   repoResults: ScheduledConsolidationRepoResult[];
+}
+
+// ── Eval golden-set re-validation schedule ──
+
+/** Mirrors RevalidateResult from evalRevalidate activity. */
+export interface RevalidateResult {
+  checked: number;
+  /** Newly quarantined this run (were passing, now stale). */
+  quarantined: number;
+  /** Restored this run (were quarantined, now pass again). */
+  restored: number;
+}
+
+/** Input for the system-wide scheduled re-validation workflow. */
+export interface ScheduledRevalidationInput {
+  /** Optional slug substring to filter which datasets are re-validated. */
+  datasetSlug?: string;
+}
+
+export interface ScheduledRevalidationResult {
+  datasetsProcessed: number;
+  caseResults: { datasetId: string; result: RevalidateResult | { error: string } }[];
 }

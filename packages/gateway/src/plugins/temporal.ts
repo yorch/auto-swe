@@ -5,6 +5,7 @@ import type {
   RepoWorkRequest,
   ScheduledConsolidationInput,
   ScheduledEvalInput,
+  ScheduledRevalidationInput,
 } from '@auto-swe/shared/types/workflow';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
@@ -20,6 +21,7 @@ import fp from 'fastify-plugin';
 
 export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
+export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -119,6 +121,19 @@ export type WorkflowAuthorJobStatus =
     }
   | { status: 'failed'; code: string; message: string };
 
+export interface RevalidationScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+  datasetSlug?: string | null;
+}
+
+export interface RevalidationScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -178,6 +193,9 @@ declare module 'fastify' {
       syncEvalSchedule: (config: EvalScheduleConfig) => Promise<void>;
       getEvalScheduleStatus: () => Promise<EvalScheduleStatus>;
       triggerEvalNow: () => Promise<void>;
+      syncRevalidationSchedule: (config: RevalidationScheduleConfig) => Promise<void>;
+      getRevalidationScheduleStatus: () => Promise<RevalidationScheduleStatus>;
+      triggerRevalidationNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
@@ -204,6 +222,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledConsolidationWorkflow',
+    };
+  }
+
+  // Re-validation schedule action: starts ScheduledRevalidationWorkflow, which
+  // re-runs each EvalCase's reference against current repo state to detect stale cases.
+  function makeRevalidationScheduleAction(input: ScheduledRevalidationInput) {
+    return {
+      args: [input],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledRevalidationWorkflow',
     };
   }
 
@@ -401,6 +430,23 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     async getEvalScheduleStatus(): Promise<EvalScheduleStatus> {
       try {
         const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+        const desc = await handle.describe();
+        const nextTimes = desc.info.nextActionTimes;
+        const lastAction = desc.info.recentActions.at(-1);
+        return {
+          exists: true,
+          lastRunAt: lastAction ? lastAction.takenAt.toISOString() : null,
+          nextRunAt: nextTimes.length > 0 ? nextTimes[0].toISOString() : null,
+          paused: desc.state.paused,
+        };
+      } catch {
+        return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+      }
+    },
+
+    async getRevalidationScheduleStatus(): Promise<RevalidationScheduleStatus> {
+      try {
+        const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
         const desc = await handle.describe();
         const nextTimes = desc.info.nextActionTimes;
         const lastAction = desc.info.recentActions.at(-1);
@@ -649,6 +695,19 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
+    // ── Re-validation schedule (one system-wide Temporal Schedule) ──
+
+    async syncRevalidationSchedule(config: RevalidationScheduleConfig): Promise<void> {
+      const input: ScheduledRevalidationInput = {
+        datasetSlug: config.datasetSlug ?? undefined,
+      };
+      await upsertSchedule(REVALIDATION_SCHEDULE_ID, {
+        action: makeRevalidationScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
     async syncWorkRequestSchedule(input: WorkRequestScheduleInput): Promise<void> {
       await upsertSchedule(workRequestScheduleId(input.scheduleRowId), {
         action: makeWorkRequestScheduleAction(input),
@@ -664,6 +723,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
 
     async triggerEvalNow(): Promise<void> {
       const handle = schedules.getHandle(EVAL_SCHEDULE_ID);
+      await handle.trigger(ScheduleOverlapPolicy.SKIP);
+    },
+
+    async triggerRevalidationNow(): Promise<void> {
+      const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
       await handle.trigger(ScheduleOverlapPolicy.SKIP);
     },
 

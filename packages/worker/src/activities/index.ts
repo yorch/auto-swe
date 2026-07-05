@@ -99,6 +99,8 @@ export type {
   GenerateWorkflowSpecResult,
 } from './generateWorkflowSpec.js';
 export { generateWorkflowSpec } from './generateWorkflowSpec.js';
+export type { DatasetForRevalidation } from './getDatasetsForRevalidation.js';
+export { getDatasetsForRevalidation } from './getDatasetsForRevalidation.js';
 export type { RepoForConsolidation } from './getReposForConsolidation.js';
 export { getReposForConsolidation } from './getReposForConsolidation.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';

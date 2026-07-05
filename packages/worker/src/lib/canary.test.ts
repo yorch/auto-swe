@@ -1,5 +1,9 @@
+import {
+  type CanaryConfig,
+  hashUnitInterval,
+  shouldRouteToCanary,
+} from '@auto-swe/shared/lib/canary';
 import { describe, expect, it } from 'vitest';
-import { type CanaryConfig, hashUnitInterval, shouldRouteToCanary } from './canary.js';
 
 const cfg = (percent: number): CanaryConfig => ({
   agentKey: 'implementer',

@@ -835,6 +835,14 @@ model WorkflowRun {
   /// (cutting a new version) does not change an in-flight run. Null for runs
   /// created before this column existed (they resolve the latest version).
   agentVersions     Json?             @map("agent_versions")
+  /// True when this run was routed to the canary arm (evals P2 canary).
+  /// Used to split EvalResult rows for canary vs control comparison.
+  isCanary          Boolean           @default(false) @map("is_canary")
+  /// The defaultBranch HEAD SHA captured at workspace creation time (before agent
+  /// edits). Used by the P3 historical-replay tier to replay a run deterministically
+  /// against the original repo state. Null for runs created before this field existed
+  /// or when capture failed.
+  baselineSha       String?           @map("baseline_sha")
   status            WorkflowRunStatus @default(RUNNING)
   startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz
@@ -1367,6 +1375,21 @@ model WorkflowDefaults {
   evalScheduleDatasetSlug String  @default("swe-implementer-golden") @map("eval_schedule_dataset_slug")
   evalScheduleCandidateRef String @default("main") @map("eval_schedule_candidate_ref")
   evalScheduleBaselineRef  String @default("last-release") @map("eval_schedule_baseline_ref")
+
+  // Eval golden-set re-validation schedule. The gateway reads these on startup
+  // and on PUT /api/v1/admin/config/revalidation. Disabled by default — needs seeded
+  // EvalDatasets and a Docker-capable worker.
+  revalidationEnabled     Boolean  @default(false) @map("revalidation_enabled")
+  revalidationCron        String   @default("0 5 * * 0") @map("revalidation_cron")
+  revalidationDatasetSlug String?  @map("revalidation_dataset_slug")
+
+  // Production canary: routes a configured fraction of work-requests to a
+  // candidate agent version for fast per-change A/B comparison (evals P2).
+  // Disabled by default.
+  canaryEnabled          Boolean @default(false) @map("canary_enabled")
+  canaryAgentKey         String? @map("canary_agent_key")
+  canaryCandidateVersion Int?    @map("canary_candidate_version")
+  canaryPercent          Float   @default(0) @map("canary_percent")
 
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

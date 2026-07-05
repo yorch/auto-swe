@@ -3,11 +3,20 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the DB singleton (systemConfigService takes prisma as an argument, but
-// the route module imports prisma at the module level for workout-defaults writes).
-vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+// the route module imports prisma at the module level for workout-defaults writes
+// and the canary-version existence check).
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { agent: { findFirst: vi.fn(async () => null) } },
+}));
 
 // Mock systemConfig resolvers used inside routes and service helpers.
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveCanaryConfig: vi.fn(async () => ({
+    agentKey: null,
+    candidateVersion: null,
+    enabled: false,
+    percent: 0,
+  })),
   resolveConsolidationConfig: vi.fn(async () => ({
     consolidationCron: '0 3 * * 0',
     consolidationEnabled: false,
@@ -19,6 +28,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     candidateRef: 'main',
     cronExpression: '0 7 * * *',
     datasetSlug: 'swe-implementer-golden',
+    enabled: false,
+  })),
+  resolveRevalidationConfig: vi.fn(async () => ({
+    cronExpression: '0 6 * * 1',
+    datasetSlug: null,
     enabled: false,
   })),
   resolveWorkflowDefaults: vi.fn(async () => ({
@@ -57,21 +71,28 @@ vi.mock('../lib/systemConfigService.js', () => ({
   testKnowledgeBaseConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testSlackConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testStorageConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
+  updateCanaryConfig: vi.fn(async () => {}),
   updateConsolidationConfig: vi.fn(async () => {}),
   updateEvalScheduleConfig: vi.fn(async () => {}),
   updateGitHubConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateGoogleOAuthConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateIssueTrackerConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateKnowledgeBaseConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
+  updateRevalidationScheduleConfig: vi.fn(async () => {}),
   updateSlackConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateStorageConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   writeSystemConfigAudit: vi.fn(async () => {}),
 }));
 
-import { detectJiraFields } from '../lib/systemConfigService.js';
+import { prisma } from '@auto-swe/shared/db';
+import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
+import { detectJiraFields, updateCanaryConfig } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
 
 const detectJiraFieldsMock = vi.mocked(detectJiraFields);
+const findAgentMock = vi.mocked(prisma.agent.findFirst);
+const resolveCanaryConfigMock = vi.mocked(resolveCanaryConfig);
+const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -211,6 +232,50 @@ describe('eval-schedule config', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(app.temporal.triggerEvalNow).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+});
+
+describe('PUT /config/canary', () => {
+  it('rejects a candidateVersion that has no active agent', async () => {
+    resolveCanaryConfigMock.mockResolvedValue({
+      agentKey: null,
+      candidateVersion: null,
+      enabled: false,
+      percent: 0,
+    });
+    findAgentMock.mockResolvedValue(null);
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { agentKey: 'implementer', candidateVersion: 9, enabled: true },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/canary',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('CANARY_VERSION_NOT_FOUND');
+    // The bad config must not be persisted.
+    expect(updateCanaryConfigMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('accepts a candidateVersion backed by an active agent', async () => {
+    resolveCanaryConfigMock.mockResolvedValue({
+      agentKey: null,
+      candidateVersion: null,
+      enabled: false,
+      percent: 0,
+    });
+    findAgentMock.mockResolvedValue({ id: 'agent-1' } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { agentKey: 'implementer', candidateVersion: 2, enabled: true },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/canary',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateCanaryConfigMock).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

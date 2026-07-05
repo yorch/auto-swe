@@ -110,6 +110,15 @@ export async function executeImplementation(
   // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
   let closeMcp: (() => Promise<void>) | undefined;
 
+  // Capture the base commit SHA (defaultBranch HEAD at workspace creation time)
+  // for the optional historical-replay tier — stored best-effort on WorkflowRun.
+  let baseSha: string | undefined;
+  try {
+    baseSha = (await workspace.exec('git rev-parse HEAD')).trim();
+  } catch {
+    // non-fatal — omit if workspace exec fails
+  }
+
   try {
     heartbeat('workspace provisioned');
 
@@ -354,6 +363,7 @@ export async function executeImplementation(
     }
 
     return {
+      baseSha,
       branch,
       codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,
@@ -366,6 +376,19 @@ export async function executeImplementation(
   } finally {
     await closeMcp?.();
     await persistActivityTrace(tracer, 'implementer');
+    if (baseSha) {
+      // Best-effort — the baseline SHA is an optional historical-replay aid. One
+      // try/catch guards both the synchronous currentWorkflowId() read and the
+      // async update.
+      try {
+        await prisma.workflowRun.update({
+          data: { baselineSha: baseSha },
+          where: { workflowId: currentWorkflowId() },
+        });
+      } catch {
+        // non-fatal
+      }
+    }
     await workspace.destroy();
   }
 }

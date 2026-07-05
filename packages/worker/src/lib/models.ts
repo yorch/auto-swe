@@ -10,7 +10,7 @@ import { parseProviderModelSpec } from './providerUtils.js';
 // All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
 // derive the type from the existing anthropic provider so we don't take a hard
 // dependency on @ai-sdk/provider (the type-only package is a transitive dep).
-type LanguageModel = ReturnType<typeof anthropic>;
+export type LanguageModel = ReturnType<typeof anthropic>;
 
 export type ModelBackedAgentKey = ConfigModelBackedAgentKey;
 

@@ -1,7 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
+  resolveCanaryConfig,
   resolveConsolidationConfig,
   resolveEvalScheduleConfig,
+  resolveRevalidationConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -25,6 +27,7 @@ import {
   testKnowledgeBaseConnection,
   testSlackConnection,
   testStorageConnection,
+  updateCanaryConfig,
   updateConsolidationConfig,
   updateEvalScheduleConfig,
   updateFigmaConfig,
@@ -32,6 +35,7 @@ import {
   updateGoogleOAuthConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
+  updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
   writeSystemConfigAudit,
@@ -139,6 +143,36 @@ const EvalSchedulePutBody = z.object({
     .regex(/^[a-z0-9_-]+$/)
     .optional(),
   enabled: z.boolean().optional(),
+});
+
+const RevalidationPutBody = z.object({
+  cronExpression: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^(\S+\s+){4}\S+$/, 'must be a valid 5-field cron expression (e.g. "0 5 * * 0")')
+    .optional(),
+  datasetSlug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9_-]+$/)
+    .nullable()
+    .optional(),
+  enabled: z.boolean().optional(),
+});
+
+const CanaryPutBody = z.object({
+  agentKey: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z][a-zA-Z0-9]*$/)
+    .nullable()
+    .optional(),
+  candidateVersion: z.number().int().min(1).nullable().optional(),
+  enabled: z.boolean().optional(),
+  percent: z.number().min(0).max(1).optional(),
 });
 
 const GoogleOAuthPutBody = z.object({
@@ -509,6 +543,77 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (_req, reply) => {
       await fastify.temporal.triggerEvalNow();
       return reply.send({ data: { triggered: true } });
+    }
+  );
+
+  // ── Re-validation schedule ───────────────────────────────────────────────────
+
+  f.get('/config/revalidation', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const config = await resolveRevalidationConfig();
+    const status = await fastify.temporal.getRevalidationScheduleStatus();
+    return reply.send({ data: { ...config, schedule: status } });
+  });
+
+  f.put(
+    '/config/revalidation',
+    { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
+    async (req, reply) => {
+      await updateRevalidationScheduleConfig(prisma, req.body);
+
+      const config = await resolveRevalidationConfig();
+      await fastify.temporal.syncRevalidationSchedule(config);
+      const status = await fastify.temporal.getRevalidationScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
+
+  f.post(
+    '/config/revalidation/trigger',
+    { schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      await fastify.temporal.triggerRevalidationNow();
+      return reply.send({ data: { triggered: true } });
+    }
+  );
+
+  // ── Canary routing ────────────────────────────────────────────────────────────
+
+  f.get('/config/canary', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
+    const config = await resolveCanaryConfig();
+    return reply.send({ data: config });
+  });
+
+  f.put(
+    '/config/canary',
+    { schema: { body: CanaryPutBody, response: { 200: z.any(), 400: z.any() } } },
+    async (req, reply) => {
+      // Guard against pinning a nonexistent/inactive agent version: createWorkflowRun
+      // writes agentVersions[agentKey]=candidateVersion verbatim, so a bad version
+      // makes resolveAgent throw ConfigMissingError on every routed run. Validate the
+      // *effective* config (current row merged with this partial update) before writing.
+      const current = await resolveCanaryConfig();
+      const agentKey = req.body.agentKey !== undefined ? req.body.agentKey : current.agentKey;
+      const candidateVersion =
+        req.body.candidateVersion !== undefined
+          ? req.body.candidateVersion
+          : current.candidateVersion;
+      if (agentKey && candidateVersion != null) {
+        const agent = await prisma.agent.findFirst({
+          select: { id: true },
+          where: { isActive: true, key: agentKey, version: candidateVersion },
+        });
+        if (!agent) {
+          return reply.status(400).send({
+            error: {
+              code: 'CANARY_VERSION_NOT_FOUND',
+              message: `No active agent '${agentKey}' at version ${candidateVersion}`,
+            },
+          });
+        }
+      }
+      await updateCanaryConfig(prisma, req.body);
+      const config = await resolveCanaryConfig();
+      return reply.send({ data: config });
     }
   );
 
