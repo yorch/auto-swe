@@ -177,7 +177,7 @@ By its own 9-phase build history, auto-swe is **feature-complete rather than asp
 
 - **Shipped-vs-planned matrix:** [STATUS.md](../STATUS.md)
 - **Design rationale (39 architecture decisions):** [configurable-workflows.md](./configurable-workflows.md)
-- **Known follow-ups:** DAG keyboard navigation (a11y); resolver-memory not yet wired into `commitToMemory`; IP-direct shell-egress blocking; wildcard egress entries informational-only. MCP tool integration is end-to-end — `mcp` Connection, binding in all implementer activities + generic agent node (P2/WS3), `mcp` workflow node (P2/WS4), and canvas authoring (P2/WS5) are all shipped. See [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in).
+- **Known follow-ups:** keyboard traversal in the interactive template *editor* (`TemplateEditor`) — the read-only run/diff DAG viewer (`WorkflowDag`) now supports arrow-key edge traversal, Home-to-entry, Enter-to-open, and per-node screen-reader labels, but the editor still relies on React Flow's native keyboard behavior. **Deliberate limitations** (see §7, not defects): IP-direct shell egress is unfiltered (DNS-only) and wildcard egress entries are informational-only — both would require an in-path egress proxy/resolver, out of scope for the current DNS/`/etc/hosts` mechanism. (Resolver- and shell-step memory *are* wired into `commitToMemory` via `recordLessonBackground` and covered by tests — an earlier "not yet wired" note was stale.) MCP tool integration is end-to-end — `mcp` Connection, binding in all implementer activities + generic agent node (P2/WS3), `mcp` workflow node (P2/WS4), and canvas authoring (P2/WS5) are all shipped. See [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in).
 
 ---
 

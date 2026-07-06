@@ -277,7 +277,7 @@ Phase 3.5 additions:
 
 - **Activity cancellation.** Block-mode wastes the tail end of in-flight branches because the dispatcher doesn't expose Temporal cancellation scopes. Wiring `CancellationScope.cancel()` into the dispatcher's `dispatchStep` would let block-mode actually abort in-flight LLM calls, but it'd also surface as a new failure category callers need to handle.
 - **Per-branch quality gates.** The example spec still only runs the implementer per subtask before merging. Teams will want lint/typecheck/tests per branch before any merge — that's a spec-level change, not a runtime one, but worth a follow-up example.
-- **Resolver memory.** A successful conflict resolution is exactly the kind of outcome `commitToMemory` should capture (`failureType: 'MERGE_CONFLICT'` already exists in `MEMORY_SUMMARIZER_PROMPT`), but the wiring from the resolver activity into the memory pipeline is not yet there.
+- **Resolver memory.** ~~not yet wired~~ **Shipped** — `resolveMergeConflict` calls `recordLessonBackground({ failureType: 'MERGE_CONFLICT', … })` on a successful resolve (`decomposition.ts`), covered by tests in `decomposition.test.ts` (fires once on success, not at all on failure).
 
 ---
 
@@ -297,7 +297,7 @@ Phase 3.5 additions:
   - `templates/[id]/runs/page.tsx` — paginated run history with duration + work-request preview.
   - `runs/[id]/page.tsx` — live DAG viewer. TanStack Query polls every 3s while the run is `RUNNING`, 30s otherwise. Per-node status overlay (left edge strip + status text) computed by collapsing fan-out branch prefixes (`fanId[i]/subNode`) onto the parent DAG nodes. Click-to-inspect surfaces every attempt + outputs + error per node.
 - **DAG layout.** `packages/web/src/lib/workflowLayout.ts` — initially shipped as a pure custom layered layout (longest-path BFS rank assignment + index-within-rank); subsequently reimplemented on top of `dagre` once the canvas editor was added. Tolerates back-edges (cond loops, fan-out join) without infinite recursion. Outputs positioned nodes + typed edges for both `WorkflowDag` (read-only React Flow canvas) and `TemplateEditor` (drag-edit React Flow canvas).
-- **DAG renderer.** `packages/web/src/components/workflow/WorkflowDag.tsx` — read-only React Flow canvas used by the run viewer and diff pages. Cubic-bezier edges with kind-coloured strokes (onTrue green / onFalse red / onTimeout amber / subgraph purple / join teal / next slate). Accessible: each node is a focusable button with `role` / `tabIndex` / `onKeyDown` for Enter+Space activation.
+- **DAG renderer.** `packages/web/src/components/workflow/WorkflowDag.tsx` — read-only React Flow canvas used by the run viewer and diff pages. Cubic-bezier edges with kind-coloured strokes (onTrue green / onFalse red / onTimeout amber / subgraph purple / join teal / next slate). Accessible: React Flow makes each node's wrapper tab-focusable with a descriptive `ariaLabel` (set in `specToFlow`), a keyboard-focus ring, and the container implements arrow-key edge traversal + Home/Enter (see the A11y note below).
 - **Hooks.** New TanStack Query hooks in `useWorkflows.ts`: `useWorkflowTemplates`, `useWorkflowTemplate`, `useWorkflowTemplateVersion`, `useTemplateRuns`, `useWorkflowRun` (status-aware refetch interval), `useStepRegistry` (5min stale), `useCreateWorkflowVersion`, `usePromoteWorkflowVersion`, `useUpdateWorkflowTemplate`.
 - **Shared API types.** `packages/shared/src/types/api.ts` — `WorkflowTemplateSummary` / `WorkflowTemplateDetail` / `WorkflowTemplateVersionSummary` / `WorkflowTemplateVersionDetail` / `WorkflowRunSummary` / `WorkflowRunDetail` / `WorkflowStepRecord` / `StepRegistryEntry` + body types for the create/patch/promote endpoints.
 - **Sidebar nav.** Existing `/workflows` link is now labelled "Active Runs" (still points at `ActiveWorkflow` rows); new "Templates" link points at `/templates`.
@@ -335,7 +335,7 @@ The phase-4 plan originally put templates at `/workflows`, but `/workflows` alre
 - **Canvas drag-edit.** ~~Done~~ — `TemplateEditor` ships a full React Flow canvas with drag-to-create, drag-to-connect, and schema-aware node inspector. The JSON textarea remains accessible via the **JSON** toggle as an escape hatch. Remaining inspector gaps: `onFail` policy (block/warn/retry) on step and shell nodes; `fanOut` advanced fields (`concurrency`, `onBranchFail`, `exports`, `pluck`); step/shell `inputs` binding map; shell advanced options (`network`, `memory`, `cpus`).
 - **Recent-run cost averages.** The estimate is static (from `costHint`s). Phase 5 analytics should fold in observed token usage from `workflow_runs` so the displayed number tracks reality per template.
 - **Version diff.** Selecting a non-active version shows the spec but not a diff vs. active. A side-by-side textual diff (or DAG-level node/edge diff highlighting) would close the loop.
-- **A11y.** SVG nodes are focusable buttons, but the DAG itself has no keyboard navigation between nodes. Worth wiring an arrow-key traversal in phase 5 once the editor grows.
+- **A11y.** ~~no keyboard navigation between nodes~~ **Shipped for the read-only viewer** — `WorkflowDag` implements arrow-key edge traversal (→/↓ next, ←/↑ prev), `Home` to the entry node, and `Enter`/`Space` to open the anchored node in the inspector, anchored on the focused node (falling back to the selected one). Pure traversal logic lives in `dagKeyboardNav.ts` (unit-tested); each node carries a descriptive `ariaLabel`. **Follow-up:** the interactive `TemplateEditor` still uses React Flow's native keyboard behavior (arrow = nudge position) rather than edge traversal.
 
 ### Files touched (recap)
 
@@ -428,7 +428,7 @@ Phase 6 additions:
 
 - **Egress filtering.** ~~Done~~ — `Team.egressAllowlist` (hostname array) stored in DB, manageable via `GET/PUT /api/v1/teams/:id/egress-allowlist`. DNS-based filtering via `--dns=127.0.0.2` + per-hostname `--add-host` entries. Wildcard entries are informational; IP-direct connections bypass DNS filtering (out of scope for the spec runtime — see decision #30).
 - **Audit retention.** ~~Done~~ — `POST /api/v1/admin/shell-audit/prune?days=N` deletes rows older than N days (default 90). Exposed as a button on the `/admin/access-tokens` dashboard page alongside the token list.
-- **Shell-step memory.** Successful shell-step outcomes (especially ones that fix a gate) are the kind of thing `commitToMemory` could capture, but the activity doesn't yet hook into the memory pipeline. Same shape as the phase-3.5 resolver-memory follow-up.
+- **Shell-step memory.** ~~doesn't yet hook in~~ **Shipped** — `shellStep.ts` calls `recordLessonBackground` on successful shell-step outcomes, the same best-effort hook as the resolver-memory path.
 
 ---
 
