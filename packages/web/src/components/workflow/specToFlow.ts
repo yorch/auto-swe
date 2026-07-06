@@ -79,18 +79,33 @@ export function specToFlow(
 ): { nodes: RFNode<DagNodeData>[]; edges: RFEdge[] } {
   const layout = layoutSpec(spec);
 
-  const nodes: RFNode<DagNodeData>[] = layout.nodes.map((n) => ({
-    data: {
-      diff: opts.diffMarkers?.[n.id],
-      editable: opts.editable ?? false,
-      node: n.node,
-      status: opts.statuses?.byNodeId[n.id],
-      subLabel: subLabelFor(n.node),
-    },
-    id: n.id,
-    position: { x: n.x, y: n.y },
-    type: 'dag',
-  }));
+  const nodes: RFNode<DagNodeData>[] = layout.nodes.map((n) => {
+    const subLabel = subLabelFor(n.node);
+    const status = opts.statuses?.byNodeId[n.id];
+    // Descriptive label for React Flow's focusable node wrapper, so keyboard /
+    // screen-reader traversal announces "<type> node <id>[, <subLabel>][,
+    // status <status>]" instead of React Flow's generic default.
+    const ariaLabel = [
+      `${n.node.type} node ${n.id}`,
+      subLabel,
+      status ? `status ${status.status.toLowerCase()}` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    return {
+      ariaLabel,
+      data: {
+        diff: opts.diffMarkers?.[n.id],
+        editable: opts.editable ?? false,
+        node: n.node,
+        status,
+        subLabel,
+      },
+      id: n.id,
+      position: { x: n.x, y: n.y },
+      type: 'dag',
+    };
+  });
 
   const edges: RFEdge[] = layout.edges.map((e) => {
     const color = EDGE_STROKE[e.kind];

@@ -29,7 +29,14 @@ import {
   useNodesState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useEffect, useMemo } from 'react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from 'react';
+import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { specToFlow } from './specToFlow';
 
@@ -79,9 +86,69 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
     [nodes, selectedNodeId]
   );
 
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
+  // selection (React Flow tags each wrapper with `data-id`).
+  const focusNodeEl = useCallback((id: string) => {
+    const el = containerRef.current?.querySelector<HTMLElement>(
+      `.react-flow__node[data-id="${CSS.escape(id)}"]`
+    );
+    el?.focus();
+  }, []);
+
+  // Keyboard graph traversal: arrows walk the edges, Home jumps to the entry
+  // node, Enter/Space opens the anchored node in the inspector. The anchor is
+  // the currently focused node (falling back to the selected one), so a
+  // keyboard/screen-reader user can traverse the DAG without a pointer.
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      const focusedId =
+        (document.activeElement as HTMLElement | null)
+          ?.closest?.('.react-flow__node')
+          ?.getAttribute('data-id') ?? null;
+      const anchor = focusedId ?? selectedNodeId ?? null;
+
+      const move = (direction: NavDirection) => {
+        const target = adjacentNodeId(anchor, direction, nodes, edges);
+        if (target) {
+          e.preventDefault();
+          onSelect?.(target);
+          focusNodeEl(target);
+        }
+      };
+
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          move('next');
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          move('prev');
+          break;
+        case 'Home':
+          move('first');
+          break;
+        case 'Enter':
+        case ' ':
+          if (anchor) {
+            e.preventDefault();
+            onSelect?.(anchor);
+          }
+          break;
+      }
+    },
+    [nodes, edges, selectedNodeId, onSelect, focusNodeEl]
+  );
+
   return (
     <div
+      aria-label="Workflow graph. Use arrow keys to move between steps, Enter to open a step, Home to jump to the start."
       className="relative rounded-sm border border-ink-600 bg-ink-900"
+      onKeyDown={onKeyDown}
+      ref={containerRef}
+      role="application"
       style={{ height: height ?? 480 }}
     >
       <ReactFlow

@@ -372,3 +372,11 @@
 .react-flow__minimap-mask {
   fill: rgba(14, 17, 26, 0.85);
 }
+/* Keyboard-focus ring on a node wrapper (React Flow makes nodes tabbable) so
+   arrow-key DAG traversal is visible before selection lands. */
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--color-ember-400);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
