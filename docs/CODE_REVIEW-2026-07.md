@@ -5,6 +5,15 @@
 > was independently verified against the source (file:line cited). This document
 > is a snapshot, not a live tracker — treat the code as authoritative where it
 > has since diverged. Companion to the earlier `docs/REPO_REVIEW.md` (2026-06-09).
+>
+> **Remediation status:** all findings below were remediated in the same PR as
+> this document (commit `54c1492` + simplify pass `f0e5b4f`), except where a
+> deliberate follow-up is noted: the workspace container keeps network egress
+> (a full egress firewall to block the `169.254.169.254` metadata IP needs a
+> custom bridge network / `NET_ADMIN` and is left as follow-up), and the SSRF
+> guard now rejects self-hosted tracker/KB/Figma connectors on internal/`.local`
+> addresses (a per-connector allowlist would restore those without reopening the
+> SSRF hole). See the PR description for the full mapping.
 
 ## Method
 
