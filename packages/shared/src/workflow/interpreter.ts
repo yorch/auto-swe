@@ -26,6 +26,19 @@ import type {
 } from './spec.js';
 
 /**
+ * Node types dispatched through runRetryable, which records its own
+ * per-attempt FAILED rows — the walk catch must not double-record.
+ */
+const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
+  'step',
+  'shell',
+  'agent',
+  'mcp',
+  'eval',
+  'containerStep',
+]);
+
+/**
  * A cancellation scope passed into `dispatchStep` / `dispatchShell`. Workflow
  * runtimes that support cooperative cancellation (Temporal) wrap each activity
  * call in a scope and expose `cancel()` here; the fan-out walker calls it on
@@ -356,9 +369,10 @@ async function walk(
         }
       }
     } catch (err) {
-      // step + shell nodes already record their own per-attempt FAILED rows
-      // (so workflow_steps table reflects each retry). Don't double-record.
-      if (node.type !== 'step' && node.type !== 'shell') {
+      // Nodes dispatched through runRetryable (step, shell, agent, mcp, eval,
+      // containerStep) already record their own per-attempt FAILED rows via the
+      // runRetryable try/catch. Don't double-record.
+      if (!SELF_RECORDING_NODE_TYPES.has(node.type)) {
         await safeRecord(dispatcher, {
           error: err instanceof Error ? err.message : String(err),
           nodeId: recordingId,
@@ -732,9 +746,9 @@ async function runRetryable(args: {
         nodeId,
         status: 'FAILED',
       });
-      if (attempt < maxAttempts) {
-      }
-      // Fall through to terminal handling.
+      // Retries happen via the enclosing for-loop: if attempt < maxAttempts,
+      // the loop continues to the next iteration; otherwise fall through to
+      // terminal onFail handling.
     }
   }
 

@@ -12,6 +12,8 @@ const ConsolidateBody = z.object({
 
 const LessonListQuery = z.object({
   includeConsolidated: z.coerce.boolean().default(false),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 const LessonSearchQuery = z.object({
@@ -33,7 +35,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeConsolidated } = request.query;
+      const { includeConsolidated, limit, offset } = request.query;
 
       const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
@@ -45,24 +47,28 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         ...(!includeConsolidated && { consolidatedAt: null }),
       };
 
-      const lessons = await fastify.prisma.memoryItem.findMany({
-        orderBy: { createdAt: 'desc' },
-        select: {
-          consolidatedAt: true,
-          createdAt: true,
-          failureType: true,
-          id: true,
-          lessonSummary: true,
-          metadata: true,
-          rationale: true,
-          repository: { select: { id: true, organizationName: true, repoName: true } },
-          workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
-        },
-        take: 100,
-        where,
-      });
+      const [lessons, total] = await Promise.all([
+        fastify.prisma.memoryItem.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            consolidatedAt: true,
+            createdAt: true,
+            failureType: true,
+            id: true,
+            lessonSummary: true,
+            metadata: true,
+            rationale: true,
+            repository: { select: { id: true, organizationName: true, repoName: true } },
+            workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+          },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.memoryItem.count({ where }),
+      ]);
 
-      return { data: lessons };
+      return { data: lessons, meta: { limit, offset, total } };
     }
   );
 
@@ -151,34 +157,54 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/v1/lessons/stats — Per-repo aggregate stats (ADMIN only)
+  //
+  // Aggregated in the DB via groupBy rather than loading every MemoryItem row
+  // per repo — a repo with a long history of lessons would otherwise pull its
+  // entire memory_items table into gateway memory just to count rows.
   app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const repos = await fastify.prisma.connection.findMany({
-      orderBy: [{ organizationName: 'asc' }, { repoName: 'asc' }],
-      select: {
-        id: true,
-        memoryItems: {
-          orderBy: { consolidatedAt: 'desc' },
-          select: { consolidatedAt: true },
-        },
-        organizationName: true,
-        repoName: true,
-      },
-    });
+    const [totalGroups, activeGroups] = await Promise.all([
+      fastify.prisma.memoryItem.groupBy({
+        _count: { _all: true },
+        _max: { consolidatedAt: true },
+        by: ['repoId'],
+        where: { repoId: { not: null } },
+      }),
+      fastify.prisma.memoryItem.groupBy({
+        _count: { _all: true },
+        by: ['repoId'],
+        where: { consolidatedAt: null, repoId: { not: null } },
+      }),
+    ]);
 
-    const data = repos.map((repo) => {
-      const activeCount = repo.memoryItems.filter((l) => l.consolidatedAt === null).length;
-      const consolidatedCount = repo.memoryItems.filter((l) => l.consolidatedAt !== null).length;
-      const lastConsolidated = repo.memoryItems.find((l) => l.consolidatedAt !== null);
-      return {
-        activeCount,
-        consolidatedCount,
-        id: repo.id,
-        lastConsolidatedAt: lastConsolidated?.consolidatedAt ?? null,
-        organizationName: repo.organizationName,
-        repoName: repo.repoName,
-        totalCount: repo.memoryItems.length,
-      };
+    const repoIds = totalGroups.map((g) => g.repoId).filter((id): id is string => id !== null);
+    const repos = await fastify.prisma.connection.findMany({
+      select: { id: true, organizationName: true, repoName: true },
+      where: { id: { in: repoIds } },
     });
+    const repoById = new Map(repos.map((r) => [r.id, r]));
+    const activeCountByRepoId = new Map(activeGroups.map((g) => [g.repoId, g._count._all]));
+
+    const data = totalGroups
+      .filter((g): g is typeof g & { repoId: string } => g.repoId !== null)
+      .map((g) => {
+        const repo = repoById.get(g.repoId);
+        const totalCount = g._count._all;
+        const activeCount = activeCountByRepoId.get(g.repoId) ?? 0;
+        return {
+          activeCount,
+          consolidatedCount: totalCount - activeCount,
+          id: g.repoId,
+          lastConsolidatedAt: g._max.consolidatedAt,
+          organizationName: repo?.organizationName ?? null,
+          repoName: repo?.repoName ?? null,
+          totalCount,
+        };
+      })
+      .sort(
+        (a, b) =>
+          (a.organizationName ?? '').localeCompare(b.organizationName ?? '') ||
+          (a.repoName ?? '').localeCompare(b.repoName ?? '')
+      );
 
     return { data };
   });

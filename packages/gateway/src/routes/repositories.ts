@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateRepoSchema = z.object({
@@ -19,6 +20,11 @@ const CreateRepoSchema = z.object({
   repoName: z.string().min(1).optional(),
   teamId: z.string().uuid(),
   type: z.string().default('git_repo'),
+});
+
+const ListReposQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
@@ -105,9 +111,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: ListReposQuery },
     },
     async (request) => {
       const user = requireUser(request);
+      const { limit, offset } = request.query;
       const where: Prisma.ConnectionWhereInput = {
         isActive: true,
         ...(user.role !== 'ADMIN' && {
@@ -115,16 +123,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
 
-      const repos = await fastify.prisma.connection.findMany({
-        include: {
-          _count: { select: { activeWorkflows: true } },
-          team: { select: { id: true, name: true, slug: true } },
-        },
-        orderBy: { repoName: 'asc' },
-        where,
-      });
+      const [repos, total] = await Promise.all([
+        fastify.prisma.connection.findMany({
+          include: {
+            _count: { select: { activeWorkflows: true } },
+            team: { select: { id: true, name: true, slug: true } },
+          },
+          orderBy: { repoName: 'asc' },
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.connection.count({ where }),
+      ]);
 
-      return { data: repos };
+      return { data: repos, meta: { limit, offset, total } };
     }
   );
 
@@ -176,18 +189,33 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const repo = await fastify.prisma.connection.create({
-        data: {
-          config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
-          name: name ?? null,
-          organizationName: organizationName ?? null,
-          repoName: repoName ?? null,
-          teamId,
-          type: type ?? 'git_repo',
-          ...rest,
-        },
-        include: { team: { select: { id: true, name: true, slug: true } } },
-      });
+      // The findFirst check above is a friendly pre-check, not a guarantee —
+      // it can't stop two concurrent onboard requests from racing past it. The
+      // partial unique index on (organizationName, repoName) for git_repo
+      // connections is the real guard; catch its violation here and translate
+      // it to the same 409 rather than a raw 500.
+      let repo: Awaited<ReturnType<typeof fastify.prisma.connection.create>>;
+      try {
+        repo = await fastify.prisma.connection.create({
+          data: {
+            config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+            name: name ?? null,
+            organizationName: organizationName ?? null,
+            repoName: repoName ?? null,
+            teamId,
+            type: type ?? 'git_repo',
+            ...rest,
+          },
+          include: { team: { select: { id: true, name: true, slug: true } } },
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return reply.status(409).send({
+            error: { code: 'REPO_EXISTS', message: 'Repository already onboarded' },
+          });
+        }
+        throw err;
+      }
 
       return reply.status(201).send({ data: repo });
     }

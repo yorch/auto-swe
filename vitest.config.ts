@@ -56,6 +56,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ssrfGuard',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/inputSchema',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/inputSchema.ts'),
       },
@@ -150,6 +154,7 @@ export default defineConfig({
       exclude: ['**/*.test.ts', '**/prisma/migrations/**'],
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
+      thresholds: { branches: 4, functions: 2, lines: 5, statements: 5 },
     },
     // Some modules (e.g. @auto-swe/shared/db) construct a PrismaClient at import
     // time and require DATABASE_URL to be set. PrismaClient connects lazily, so a

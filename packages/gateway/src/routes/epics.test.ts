@@ -5,8 +5,10 @@ import { epicRoutes, parseRepoIdsFromPayload } from './epics.js';
 
 // ── Fixtures ──
 
-const REPO_A = '00000000-0000-4000-8000-00000000000a'; // team-1 (user-1 is a member)
-const REPO_B = '00000000-0000-4000-8000-00000000000b'; // team-2 (user-1 is NOT a member)
+const REPO_A = '00000000-0000-4000-8000-00000000000a'; // team-1 (user-1 is a member), org-1
+const REPO_B = '00000000-0000-4000-8000-00000000000b'; // team-2 (user-1 is NOT a member), org-1
+const REPO_C = '00000000-0000-4000-8000-00000000000c'; // team-3 (user-1 IS a member), org-3 (not an org member)
+const REPO_D = '00000000-0000-4000-8000-00000000000d'; // team-4 (user-1 is a member), org-4 (over budget)
 
 interface RepoFixture {
   id: string;
@@ -14,6 +16,8 @@ interface RepoFixture {
   repoName: string;
   isActive: boolean;
   memberIds: string[];
+  orgId: string;
+  monthlyBudgetUsdCents: number | null;
 }
 
 interface ActiveWorkflowFixture {
@@ -31,17 +35,48 @@ const repoFixtures: RepoFixture[] = [
     id: REPO_A,
     isActive: true,
     memberIds: ['user-1'],
+    monthlyBudgetUsdCents: null,
     organizationName: 'org',
+    orgId: 'org-1',
     repoName: 'alpha',
   },
   {
     id: REPO_B,
     isActive: true,
     memberIds: [],
+    monthlyBudgetUsdCents: null,
     organizationName: 'org',
+    orgId: 'org-1',
     repoName: 'beta',
   },
+  {
+    id: REPO_C,
+    isActive: true,
+    memberIds: ['user-1'],
+    monthlyBudgetUsdCents: null,
+    organizationName: 'org',
+    orgId: 'org-3',
+    repoName: 'gamma',
+  },
+  {
+    id: REPO_D,
+    isActive: true,
+    memberIds: ['user-1'],
+    monthlyBudgetUsdCents: 1000,
+    organizationName: 'org',
+    orgId: 'org-4',
+    repoName: 'delta',
+  },
 ];
+
+// org-1 and org-4 have user-1 as an org member; org-3 does not (non-member test).
+const orgMembershipFixtures: Record<string, string[]> = {
+  'org-1': ['user-1'],
+  'org-4': ['user-1'],
+};
+
+// Keyed by `${orgId}:${yearMonth}` — populated per-test for the budget check.
+let orgMonthlyUsageFixtures: Record<string, { costUsdAccrued: number }> = {};
 
 describe('epic routes', () => {
   const app = Fastify();
@@ -118,8 +153,27 @@ describe('epic routes', () => {
               repoName: r.repoName,
               team: {
                 memberships: r.memberIds.includes(currentSub) ? [{ userId: currentSub }] : [],
+                organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },
+                orgId: r.orgId,
               },
             }));
+        },
+      },
+      organizationMembership: {
+        findUnique: async (args: {
+          where: { userId_orgId: { orgId: string; userId: string } };
+        }) => {
+          const { orgId, userId } = args.where.userId_orgId;
+          return (orgMembershipFixtures[orgId] ?? []).includes(userId) ? { orgId, userId } : null;
+        },
+      },
+      orgMonthlyUsage: {
+        findUnique: async (args: {
+          where: { orgId_yearMonth: { orgId: string; yearMonth: string } };
+        }) => {
+          const { orgId } = args.where.orgId_yearMonth;
+          const usage = orgMonthlyUsageFixtures[orgId];
+          return usage ? { costUsdAccrued: usage.costUsdAccrued } : null;
         },
       },
       runInput: {
@@ -159,6 +213,7 @@ describe('epic routes', () => {
     epicStartShouldConflict = false;
     startedEpicIds.length = 0;
     createdWorkRequests.length = 0;
+    orgMonthlyUsageFixtures = {};
   });
 
   const auth = { authorization: 'Bearer test-token' };
@@ -250,6 +305,37 @@ describe('epic routes', () => {
       });
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error.code).toBe('EPIC_ALREADY_EXISTS');
+      expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    it('returns 403 for a non-admin who is not a member of the repo org (P5)', async () => {
+      // user-1 is on repo C's team, but not a member of org-3.
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_C] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.payload);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toBe('You are not a member of this organization');
+      expect(startedEpicIds).toHaveLength(0);
+      expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    it('returns 402 when the repo org has exceeded its monthly budget cap (P5)', async () => {
+      // org-4 caps at 1000 cents ($10); accrued usage of $10.50 exceeds it.
+      orgMonthlyUsageFixtures['org-4'] = { costUsdAccrued: 10.5 };
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_D] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(402);
+      expect(JSON.parse(res.payload).error.code).toBe('ORG_BUDGET_EXCEEDED');
+      expect(startedEpicIds).toHaveLength(0);
       expect(createdWorkRequests).toHaveLength(0);
     });
   });

@@ -217,6 +217,8 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 A **skill** is a named prompt fragment (`promptText`) injected into an agent's system message. Skills control *how* an agent reasons — they do not grant new capabilities. Each skill has:
 
+Skills are an intentionally **global, ADMIN-curated library** — the `Skill` table carries no `teamId`/`orgId`/tenant column, and creation (`POST /api/v1/admin/skills`) and edits are ADMIN-only routes. Tenant isolation is enforced one layer up: which Agents (themselves tenant-scoped) reference a skill via `skillRefs`, not by row ownership on `Skill` itself.
+
 | Field | Purpose |
 |---|---|
 | `name` | Kebab-case identifier (e.g. `test-first`) |

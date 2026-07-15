@@ -161,10 +161,18 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // DB update is the authoritative record; fail the request if it rejects.
       // Temporal cancel is best-effort: the workflow's CancelledFailure handler
       // will also write CANCELLED, so a transient Temporal blip isn't fatal.
-      await fastify.prisma.workflowRun.update({
+      // Guard the update with a status=RUNNING predicate so a race against a
+      // concurrent terminal-state write (e.g. the workflow finishing between
+      // the findFirst above and this update) can't clobber a completed run.
+      const { count } = await fastify.prisma.workflowRun.updateMany({
         data: { endedAt: new Date(), status: 'CANCELLED' },
-        where: { id: run.id },
+        where: { id: run.id, status: 'RUNNING' },
       });
+      if (count === 0) {
+        return reply.status(409).send({
+          error: { code: 'RUN_NOT_RUNNING', message: 'Run reached a terminal state before cancel' },
+        });
+      }
       fastify.temporal.cancelWorkflow(run.workflowId).catch((err: unknown) => {
         request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel signal failed');
       });
@@ -253,8 +261,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: run.templateId,
           templateName: run.template.name,
           templateVersion: run.templateVersion,
-          tokensInputTotal: run.tokensInputTotal,
-          tokensOutputTotal: run.tokensOutputTotal,
+          tokensInputTotal: Number(run.tokensInputTotal),
+          tokensOutputTotal: Number(run.tokensOutputTotal),
           traces: traces.map((t) => ({
             agentKey: t.agentKey,
             attempt: t.attempt,

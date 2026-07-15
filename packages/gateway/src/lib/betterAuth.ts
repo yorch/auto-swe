@@ -315,10 +315,18 @@ function buildAuth() {
     // via GitHub and then signs in with Google (same verified email) ends up
     // attached to the existing User row instead of creating a duplicate.
     // Trusted providers skip the explicit-link-confirmation step.
+    //
+    // `email-password` is deliberately excluded: it is not OAuth-verified, so
+    // trusting it would let an attacker who merely knows a victim's email
+    // address sign up with a password under that address and auto-link onto
+    // the victim's existing User row (which may have been created via a
+    // verified GitHub/Google sign-in) — effectively an account-takeover via
+    // credential planting. OAuth-to-OAuth linking (github <-> google) is
+    // still trusted since both legs are provider-verified.
     account: {
       accountLinking: {
         enabled: true,
-        trustedProviders: ['github', 'google', 'email-password'],
+        trustedProviders: ['github', 'google'],
       },
     },
     // Cookies on the gateway need to be readable by the browser running on
@@ -378,7 +386,17 @@ function buildAuth() {
       autoSignIn: true,
       enabled: true,
       minPasswordLength: 8,
-      requireEmailVerification: false,
+      // Defense-in-depth alongside the `trustedProviders` change above: an
+      // unverified email+password credential can no longer be created and
+      // immediately treated as equivalent to a verified OAuth identity. This
+      // requires a working email-delivery transport in the deployment (SMTP
+      // or Resend — see `deliverMagicLink`/`deliverPasswordReset` above); a
+      // deployment with no transport configured falls back to logging the
+      // link to stdout, which is dev-only and not a substitute for real
+      // delivery in production. This is boot-time config read once by
+      // `buildAuth()` — a gateway restart is required for a change here to
+      // take effect.
+      requireEmailVerification: true,
       // Reuse the same multi-transport delivery we use for magic links —
       // SMTP > Resend > console fallback. The user receives a tokenised
       // reset URL pointing at the web app's /reset-password page.

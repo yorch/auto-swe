@@ -75,14 +75,6 @@ function clearAllAuthCookies(): void {
   document.cookie = `${COOKIE_SESSION_MARKER}=; path=/; max-age=0`;
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
-  const parts = token.split('.');
-  if (parts.length !== 3) {
-    throw new Error('Malformed JWT: expected 3 segments');
-  }
-  return JSON.parse(atob(parts[1]));
-}
-
 /** Shape of the relevant subset of better-auth's get-session response. */
 interface BetterAuthSessionResponse {
   session?: { id: string; expiresAt: string };
@@ -178,25 +170,13 @@ async function fetchBetterAuthSession(): Promise<AuthState['user']> {
 
 export const useAuthStore = create<AuthState>((set) => ({
   checkAuth: async () => {
-    // Path 1: valid JWT in localStorage → trust it (matches legacy behaviour
-    // and avoids a network round-trip on app load when the user just
-    // refreshed mid-session).
-    const token = api.getToken();
-    if (token) {
-      try {
-        const payload = decodeJwtPayload(token);
-        if ((payload.exp as number) * 1000 > Date.now()) {
-          set({ isAuthenticated: true, user: payload as AuthState['user'] });
-          return;
-        }
-      } catch {
-        /* fall through to the session probe */
-      }
-      api.clearToken();
-    }
+    // The in-memory access token never survives a page reload, so there's no
+    // local JWT left to trust on load — clear any stale legacy cookie/
+    // localStorage remnants and go straight to the session probe below.
+    api.clearToken();
 
-    // Path 2: probe the gateway for a better-auth session. credentials:
-    // 'include' sends the cross-origin session cookie if one exists.
+    // Probe the gateway for a better-auth session. credentials: 'include'
+    // sends the cross-origin session cookie if one exists.
     const user = await fetchBetterAuthSession();
     if (user) {
       setSessionMarkerCookie();

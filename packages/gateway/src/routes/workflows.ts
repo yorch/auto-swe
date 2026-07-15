@@ -11,6 +11,22 @@ const ListWorkflowsQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+// The token counters are `BigInt` in the DB (they can exceed Int32 on large
+// runs). Fastify's JSON serializer throws on a bare BigInt, so coerce the two
+// columns to Number before returning a raw ActiveWorkflow row.
+function serializeWorkflow<T extends { tokensInputUsed: bigint; tokensOutputUsed: bigint }>(
+  workflow: T
+): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed'> & {
+  tokensInputUsed: number;
+  tokensOutputUsed: number;
+} {
+  return {
+    ...workflow,
+    tokensInputUsed: Number(workflow.tokensInputUsed),
+    tokensOutputUsed: Number(workflow.tokensOutputUsed),
+  };
+}
+
 export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -43,7 +59,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         fastify.prisma.activeWorkflow.count({ where }),
       ]);
-      return { data: workflows, meta: { limit, offset, total } };
+      return { data: workflows.map(serializeWorkflow), meta: { limit, offset, total } };
     }
   );
 
@@ -74,7 +90,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-      return { data: workflow };
+      return { data: serializeWorkflow(workflow) };
     }
   );
 };

@@ -324,7 +324,7 @@ export async function executeImplementation(
       : `auto: implement ${request.externalTicketId}`;
     await workspace.exec('git add -A');
     await workspace.exec(`git commit -m ${shellQuote(commitSummary)}`);
-    await workspace.exec(`git push origin ${shellQuote(branch)}`);
+    await workspace.gitAuthed(`push origin ${shellQuote(branch)}`);
 
     // Collect results
     const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);

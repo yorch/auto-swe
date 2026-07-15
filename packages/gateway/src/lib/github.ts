@@ -62,10 +62,47 @@ function mapRepo(r: RawRepo): GitHubRepoInfo {
   };
 }
 
+/** Page size used by every paginated GitHub REST call in this module. */
+const PER_PAGE = 100;
+/** Hard cap on pages fetched per call — bounds worst-case request fan-out. */
+const MAX_PAGES = 5;
+
+/**
+ * Fetch up to `MAX_PAGES` pages (`per_page=PER_PAGE`) from a paginated GitHub
+ * REST list endpoint, stopping as soon as a page returns fewer than
+ * `PER_PAGE` items (no more pages left). `urlForPage` builds the request URL
+ * for a given 1-indexed page; `extractItems` pulls the items array out of the
+ * (possibly wrapped) JSON body.
+ */
+async function fetchAllPages<T>(
+  urlForPage: (page: number) => string,
+  headers: Record<string, string>,
+  extractItems: (body: unknown) => T[],
+  errorContext: string
+): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await fetch(urlForPage(page), {
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      throw new Error(`GitHub API error ${res.status} ${errorContext}`);
+    }
+    const pageItems = extractItems(await res.json());
+    items.push(...pageItems);
+    if (pageItems.length < PER_PAGE) {
+      break;
+    }
+  }
+  return items;
+}
+
 /**
  * List repositories accessible to the configured GitHub integration.
  * Uses installation repositories endpoint for GitHub App auth, or
- * user repos endpoint for PAT auth. Returns up to 100 repos.
+ * user repos endpoint for PAT auth. Paginates up to `MAX_PAGES` pages of
+ * `PER_PAGE` repos each — up to 500 repos.
  */
 export async function listGitHubRepos(): Promise<GitHubRepoInfo[]> {
   const config = await resolveGitHubConfig();
@@ -84,23 +121,20 @@ export async function listGitHubRepos(): Promise<GitHubRepoInfo[]> {
   const useApp = authMode === 'app' || (authMode === 'auto' && appConfigured);
 
   if (useApp) {
-    const res = await fetch(`${config.apiUrl}/installation/repositories?per_page=100`, {
+    const repos = await fetchAllPages<RawRepo>(
+      (page) => `${config.apiUrl}/installation/repositories?per_page=${PER_PAGE}&page=${page}`,
       headers,
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      throw new Error(`GitHub API error ${res.status} listing installation repositories`);
-    }
-    const data = (await res.json()) as { repositories: RawRepo[] };
-    return data.repositories.map(mapRepo);
+      (body) => (body as { repositories: RawRepo[] }).repositories,
+      'listing installation repositories'
+    );
+    return repos.map(mapRepo);
   }
 
-  const res = await fetch(`${config.apiUrl}/user/repos?type=all&per_page=100&sort=updated`, {
+  const repos = await fetchAllPages<RawRepo>(
+    (page) => `${config.apiUrl}/user/repos?type=all&per_page=${PER_PAGE}&sort=updated&page=${page}`,
     headers,
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub API error ${res.status} listing user repositories`);
-  }
-  return ((await res.json()) as RawRepo[]).map(mapRepo);
+    (body) => body as RawRepo[],
+    'listing user repositories'
+  );
+  return repos.map(mapRepo);
 }

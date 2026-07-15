@@ -1,6 +1,14 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { isUniqueConstraintError } from './prismaErrors.js';
+
+// Re-exported for back-compat: existing tests (and any other importers) reach
+// the SSRF guard via `credentialService.js`. The canonical implementation now
+// lives in `@auto-swe/shared/lib/ssrfGuard` so every operator-URL call site
+// (mcp Connections, connector base URLs, bundle install-from-URL, worker MCP
+// refs) shares one definition.
+export { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 
 /**
  * Provider-credential service: redaction, SSRF-guarded probing, and the
@@ -46,86 +54,6 @@ export function redactCredential(row: {
 }
 
 const PROBE_TIMEOUT_MS = 5_000;
-
-/// Detects IPv4-mapped IPv6 addresses and returns the embedded IPv4 in
-/// dotted-quad. Accepts both human-friendly (`::ffff:127.0.0.1`) and the
-/// Node-normalised hex form (`::ffff:7f00:1`). Returns null for anything
-/// else so the caller can fall through to its normal IPv6 checks.
-function extractIpv4FromMapped(host: string): string | null {
-  const m1 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
-  if (m1) {
-    return m1[1];
-  }
-  const m2 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (m2) {
-    const hi = Number.parseInt(m2[1], 16);
-    const lo = Number.parseInt(m2[2], 16);
-    if (Number.isFinite(hi) && Number.isFinite(lo)) {
-      return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-    }
-  }
-  return null;
-}
-
-/// Rejects URLs that would let the gateway be used as an SSRF proxy: anything
-/// that isn't https://, anything resolving to a loopback / link-local / RFC1918
-/// host. We resolve at hostname-text level only (no DNS lookup) — the goal is
-/// blocking the obvious accidents, not stopping a determined attacker who can
-/// register a public hostname pointing at internal IPs. (For that we'd need
-/// per-environment outbound-network policy at the OS/container level.)
-/// Exported only so unit tests can exercise the SSRF guard without spinning
-/// up the whole Fastify app. Internal API — not stable.
-export function isSafeProbeUrl(
-  apiBase: string
-): { ok: true; url: URL } | { ok: false; reason: string } {
-  let url: URL;
-  try {
-    url = new URL(apiBase);
-  } catch {
-    return { ok: false, reason: 'invalid URL' };
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    return { ok: false, reason: `protocol '${url.protocol}' not allowed` };
-  }
-  const rawHost = url.hostname.toLowerCase();
-  // Node's URL parser keeps surrounding brackets on IPv6 hostnames
-  // (e.g. `http://[::1]/` → hostname='[::1]'). Strip them so the string
-  // / regex checks below match the bare address — otherwise `host === '::1'`
-  // never triggers and an SSRF probe slips through to IPv6 loopback.
-  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
-
-  // Loopback / link-local / unspecified / IPv6 ::1 — text-level checks.
-  if (
-    host === 'localhost' ||
-    host === '0.0.0.0' ||
-    host === '::' ||
-    host === '::1' ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal')
-  ) {
-    return { ok: false, reason: `host '${host}' is internal` };
-  }
-
-  // IPv4-mapped IPv6: Node renders '::ffff:127.0.0.1' canonically as
-  // '::ffff:7f00:1'. Pull the embedded IPv4 in either form so it gets
-  // routed through the same private-network checks as a bare IPv4.
-  const ipv4FromMapped = extractIpv4FromMapped(host);
-  const effective = ipv4FromMapped ?? host;
-
-  // RFC 1918 IPv4 + link-local + AWS metadata + IPv6 ULA + IPv6 link-local.
-  if (
-    /^127\./.test(effective) ||
-    /^10\./.test(effective) ||
-    /^192\.168\./.test(effective) ||
-    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(effective) ||
-    /^169\.254\./.test(effective) ||
-    /^fc[0-9a-f]{2}:/.test(effective) ||
-    /^fe[89ab][0-9a-f]:/.test(effective)
-  ) {
-    return { ok: false, reason: `host '${host}' is on a private network` };
-  }
-  return { ok: true, url };
-}
 
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all

@@ -163,8 +163,8 @@ export async function finalizeWorkflowRun(
   });
   const workflows = run?.workRequest?.activeWorkflows ?? [];
   let costUsdAccrued = workflows.reduce((sum, aw) => sum + aw.costUsdAccrued, 0);
-  let tokensInputTotal = workflows.reduce((sum, aw) => sum + aw.tokensInputUsed, 0);
-  let tokensOutputTotal = workflows.reduce((sum, aw) => sum + aw.tokensOutputUsed, 0);
+  let tokensInputTotal = workflows.reduce((sum, aw) => sum + Number(aw.tokensInputUsed), 0);
+  let tokensOutputTotal = workflows.reduce((sum, aw) => sum + Number(aw.tokensOutputUsed), 0);
 
   // Repo-less runs (e.g. a general Channel Task) have no ActiveWorkflow ledger
   // row, so `recordLlmUsage` never accrued run-level cost/tokens there — the only
@@ -248,44 +248,53 @@ export async function finalizeWorkflowRun(
     });
   }
 
-  // Channel-task runs own their terminal in-thread report (finalizeChannelTaskRun
-  // below — opt-in-independent, exactly one message). Skip the generic
-  // run-complete notification for them: the CODE route resolves a real
-  // team-via-connection, so notifySlackRunComplete would otherwise post a SECOND,
-  // redundant completion message into the SAME thread (double-post). For ordinary
-  // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
-  const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
-  if (!channelTaskPayload) {
-    await notifySlackRunComplete({ runId, status });
-  }
+  // Retry-guard: Temporal activities can be retried. The three side effects below
+  // (Slack notifications + channel task finalization + tracker sync) are
+  // non-idempotent. Only fire them on the first finalize; subsequent retries see
+  // alreadyFinalized=true and skip these best-effort notification/accrual steps.
+  if (!alreadyFinalized) {
+    // Channel-task runs own their terminal in-thread report (finalizeChannelTaskRun
+    // below — opt-in-independent, exactly one message). Skip the generic
+    // run-complete notification for them: the CODE route resolves a real
+    // team-via-connection, so notifySlackRunComplete would otherwise post a SECOND,
+    // redundant completion message into the SAME thread (double-post). For ordinary
+    // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
+    const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
+    if (!channelTaskPayload) {
+      await notifySlackRunComplete({ runId, status });
+    }
 
-  // Channel assistant (Phase A): for a channel-launched task run, (a) accrue its
-  // cost to the channel's monthly budget (from the run's AgentTrace rows; for the
-  // code route that is a SEPARATE ledger from the OrgMonthlyUsage the connection
-  // path already billed — different tables, not a double-count) and (b) report
-  // the result back into the originating thread REGARDLESS of the team success
-  // opt-in (these runs are user-requested in-thread). Both best-effort. We pass the
-  // already-summed trace cost (general route) + the in-hand contextSnapshot so it
-  // re-reads neither.
-  await finalizeChannelTaskRun(runId, status, run?.workRequest, channelTaskPayload, {
-    contextSnapshot,
-    traceCostUsd: channelTraceCostUsd,
-  });
+    // Channel assistant (Phase A): for a channel-launched task run, (a) accrue its
+    // cost to the channel's monthly budget (from the run's AgentTrace rows; for the
+    // code route that is a SEPARATE ledger from the OrgMonthlyUsage the connection
+    // path already billed — different tables, not a double-count) and (b) report
+    // the result back into the originating thread REGARDLESS of the team success
+    // opt-in (these runs are user-requested in-thread). Both best-effort. We pass the
+    // already-summed trace cost (general route) + the in-hand contextSnapshot so it
+    // re-reads neither.
+    await finalizeChannelTaskRun(runId, status, run?.workRequest, channelTaskPayload, {
+      contextSnapshot,
+      traceCostUsd: channelTraceCostUsd,
+    });
 
-  // Best-effort tracker sync on workflow terminal status.
-  const externalTicketId = run?.workRequest?.externalTicketId;
-  if (externalTicketId && (status === 'SUCCESS' || status === 'FAILED' || status === 'TIMED_OUT')) {
-    const trackerConfig = await resolveIssueTrackerConfig();
-    await syncTrackerOnEvent(
-      status === 'SUCCESS'
-        ? { issueId: externalTicketId, type: 'workflow_completed' }
-        : {
-            issueId: externalTicketId,
-            summary: `Workflow ended with status: ${status}`,
-            type: 'workflow_failed',
-          },
-      trackerConfig
-    ).catch(() => null);
+    // Best-effort tracker sync on workflow terminal status.
+    const externalTicketId = run?.workRequest?.externalTicketId;
+    if (
+      externalTicketId &&
+      (status === 'SUCCESS' || status === 'FAILED' || status === 'TIMED_OUT')
+    ) {
+      const trackerConfig = await resolveIssueTrackerConfig();
+      await syncTrackerOnEvent(
+        status === 'SUCCESS'
+          ? { issueId: externalTicketId, type: 'workflow_completed' }
+          : {
+              issueId: externalTicketId,
+              summary: `Workflow ended with status: ${status}`,
+              type: 'workflow_failed',
+            },
+        trackerConfig
+      ).catch(() => null);
+    }
   }
 }
 

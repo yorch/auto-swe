@@ -57,7 +57,7 @@
 | Component             | Technology                             | Version                |
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=24.0.0               |
-| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.16.0                 |
+| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.17.0                 |
 | Language              | TypeScript                             | 6.0.3                  |
 | HTTP Framework        | Fastify                                | 5.8.5                  |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |

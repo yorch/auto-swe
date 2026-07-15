@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { assertOrgAccess, currentYearMonth } from '../lib/orgAccess.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
@@ -84,6 +85,10 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 select: { userId: true },
                 where: { userId: user.sub },
               },
+              organization: {
+                select: { id: true, monthlyBudgetUsdCents: true },
+              },
+              orgId: true,
             },
           },
         },
@@ -116,6 +121,39 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 .join(', ')}`,
             },
           });
+        }
+      }
+
+      // Org access + budget check (P5), applied per distinct org across the
+      // selected repos — mirrors the single-repo work-request route, but an
+      // epic can fan out across repos owned by more than one org.
+      const orgs = new Map<string, number | null>();
+      for (const r of repos) {
+        const orgId = r.team.orgId;
+        if (orgId && !orgs.has(orgId)) {
+          orgs.set(orgId, r.team.organization?.monthlyBudgetUsdCents ?? null);
+        }
+      }
+      for (const [orgId, budgetCap] of orgs) {
+        if (user.role !== 'ADMIN') {
+          const hasAccess = await assertOrgAccess(fastify.prisma, user, orgId, reply);
+          if (!hasAccess) {
+            return;
+          }
+        }
+        if (budgetCap != null) {
+          const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
+            where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
+          });
+          const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
+          if (spentCents >= budgetCap) {
+            return reply.status(402).send({
+              error: {
+                code: 'ORG_BUDGET_EXCEEDED',
+                message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
+              },
+            });
+          }
         }
       }
 

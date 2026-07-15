@@ -1,3 +1,4 @@
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -40,6 +41,12 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, teamId, url } = request.body;
+      const safety = isSafeProbeUrl(url);
+      if (!safety.ok) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
+      }
       const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
       if (!team?.isActive) {
         return reply

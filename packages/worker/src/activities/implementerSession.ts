@@ -104,7 +104,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // push fast-forwards. (Previously only the gate-fix path did this; the
     // CI/review fix paths operated on a stale tree.)
     try {
-      await workspace.exec(`git fetch origin ${shellQuote(previousCodeResult.branch)}`);
+      await workspace.gitAuthed(`fetch origin ${shellQuote(previousCodeResult.branch)}`);
       await workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
     } catch {
       // Branch may not exist remotely yet; proceed against the local clone.
@@ -228,7 +228,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     await workspace.exec(
       `git diff --cached --quiet || git commit -m ${shellQuote(input.commitMessage)}`
     );
-    await workspace.exec(`git push origin ${shellQuote(previousCodeResult.branch)}`);
+    await workspace.gitAuthed(`push origin ${shellQuote(previousCodeResult.branch)}`);
 
     const diff = await workspace.exec(`git diff origin/${repo.defaultBranch}`);
     const headSha = (await workspace.exec('git rev-parse HEAD')).trim();

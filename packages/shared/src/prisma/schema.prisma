@@ -105,8 +105,10 @@ model ActiveWorkflow {
   currentStatus      String      @map("current_status")
   assignedBranch     String?     @map("assigned_branch")
   budgetTier         String      @default("STANDARD") @map("budget_tier")
-  tokensInputUsed    Int         @default(0) @map("tokens_input_used")
-  tokensOutputUsed   Int         @default(0) @map("tokens_output_used")
+  /// BigInt: a long-lived ActiveWorkflow row's cumulative token usage can
+  /// exceed the INT32 ceiling.
+  tokensInputUsed    BigInt      @default(0) @map("tokens_input_used")
+  tokensOutputUsed   BigInt      @default(0) @map("tokens_output_used")
   costUsdAccrued     Float       @default(0) @map("cost_usd_accrued")
   updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -143,7 +145,9 @@ model MemoryItem {
   channelId      String?                      @map("channel_id") @db.Uuid
   channel        SlackChannel?                @relation(fields: [channelId], references: [id], onDelete: SetNull)
   teamId         String?                      @map("team_id") @db.Uuid
+  team           Team?                        @relation("TeamMemoryItems", fields: [teamId], references: [id], onDelete: Cascade)
   orgId          String?                      @map("org_id") @db.Uuid
+  org            Organization?                @relation("OrgMemoryItems", fields: [orgId], references: [id], onDelete: Cascade)
   /// WorkflowRun that produced this lesson. Null on rows written before this
   /// column existed. Enables lineage queries: "which run created this lesson?"
   workflowRunId  String?                      @map("workflow_run_id") @db.Uuid
@@ -174,6 +178,8 @@ model MemoryItem {
   @@index([channelId, consolidatedAt])
   @@index([teamId, consolidatedAt])
   @@index([orgId, consolidatedAt])
+  @@index([workflowId])
+  @@index([workflowRunId])
   @@map("memory_items")
 }
 
@@ -192,6 +198,10 @@ model ContextSnapshot {
   @@map("context_snapshots")
 }
 
+// A partial unique index on (repoId, prNumber) WHERE prNumber IS NOT NULL lives
+// in raw SQL in migrations/00000000000002_review_2026_07_integrity/migration.sql
+// — Prisma's schema DSL can't express a partial `@@unique`, so it isn't
+// modeled here (same pattern as the 0001 `connections_git_repo_org_repo_uidx`).
 model PullRequest {
   id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId String?         @map("workflow_id") @db.Uuid
@@ -275,6 +285,7 @@ model Connection {
   scheduledWorkRequests ScheduledWorkRequest[]
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
 
+  @@index([teamId])
   @@map("connections")
 }
 
@@ -299,6 +310,7 @@ model Organization {
   monthlyUsages       OrgMonthlyUsage[]
   slackWorkspaces     SlackWorkspace[]
   slackChannels       SlackChannel[]
+  memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
 
   @@map("organizations")
 }
@@ -341,6 +353,7 @@ model Team {
   providerCredentials ProviderCredential[]
   agents              Agent[]
   slackChannels       SlackChannel[]
+  memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
 
   @@index([orgId])
   @@map("teams")
@@ -746,6 +759,9 @@ model RunInput {
   workflowRuns          WorkflowRun[]
   scheduledWorkRequests ScheduledWorkRequest[]
 
+  @@index([connectionId])
+  @@index([requestedById])
+  @@index([externalTicketId])
   @@map("run_inputs")
 }
 
@@ -791,6 +807,9 @@ model ScheduledWorkRequest {
   updatedAt            DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([repoId])
+  @@index([templateId])
+  @@index([createdById])
+  @@index([workRequestId])
   @@map("scheduled_work_requests")
 }
 
@@ -852,11 +871,13 @@ model WorkflowRun {
   /// if `ActiveWorkflow.costUsdAccrued` is later re-shaped).
   costUsdAccrued    Float             @default(0) @map("cost_usd_accrued")
   /// Total input tokens consumed across all agent activities in this run.
-  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
-  tokensInputTotal  Int               @default(0) @map("tokens_input_total")
+  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`. BigInt: a
+  /// long-running run's cumulative token count can exceed the INT32 ceiling.
+  tokensInputTotal  BigInt            @default(0) @map("tokens_input_total")
   /// Total output tokens consumed across all agent activities in this run.
-  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`.
-  tokensOutputTotal Int               @default(0) @map("tokens_output_total")
+  /// Populated by `finalizeWorkflowRun` alongside `costUsdAccrued`. BigInt: a
+  /// long-running run's cumulative token count can exceed the INT32 ceiling.
+  tokensOutputTotal BigInt            @default(0) @map("tokens_output_total")
 
   steps       WorkflowStep[]
   artifacts   WorkflowArtifact[]
@@ -1198,6 +1219,8 @@ model ProviderCredential {
 
   @@index([provider, scope, teamId])
   @@index([provider, scope, orgId])
+  @@index([teamId])
+  @@index([orgId])
   @@map("provider_credentials")
 }
 
@@ -1519,9 +1542,16 @@ model ConfigAuditLog {
 }
 
 /// A reusable prompt-fragment skill injected into an agent's system prompt.
-/// Skills are assigned to agent roles at GLOBAL / TEAM / WORKFLOW_TEMPLATE
-/// scope via AgentSkillAssignment rows (same cascade model as ModelRoleConfig).
-/// Tool access control is handled separately via AgentToolConfig.
+/// Skills are assigned to Agents via `AgentSkillRef` (P1.5 — the legacy
+/// per-scope AgentSkillAssignment/AgentToolConfig tables were retired; see
+/// `agentResolver.ts`). Tool access is a separate concern (`Agent.toolKeys`).
+///
+/// (D8) Intentionally global, not tenant-scoped: there is no `teamId`/`orgId`
+/// column here by design. The library is a single ADMIN-curated set — creation
+/// (`POST /api/v1/admin/skills`) and updates are ADMIN-only routes; tenant
+/// isolation happens one layer up, via which Agents (which ARE tenant-scoped)
+/// reference a given skill through `skillRefs`, not via row ownership on Skill
+/// itself.
 model Skill {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
@@ -1575,6 +1605,10 @@ model ScannerPattern {
 /// `WHERE scope = …`). `version` is
 /// bumped on base edits; the active row is the highest `version` with
 /// `isActive` at a scope, and runs snapshot the resolved version (P1 WS3).
+/// A CHECK constraint enforcing the scope/discriminator-column invariant
+/// (`agents_scope_keys_check`, mirroring `provider_credentials_scope_keys_check`)
+/// lives in raw SQL in
+/// migrations/00000000000002_review_2026_07_integrity/migration.sql.
 model Agent {
   id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key                String
@@ -1626,6 +1660,10 @@ model Agent {
   @@index([scope, orgId])
   @@index([scope, channelId])
   @@index([scope, workflowTemplateId])
+  @@index([teamId])
+  @@index([orgId])
+  @@index([channelId])
+  @@index([workflowTemplateId])
   @@map("agents")
 }
 

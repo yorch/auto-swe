@@ -148,12 +148,18 @@ interface AggregatedChecks {
   failingLogsUrl?: string;
 }
 
+/** Page size + page cap for the check-runs listing below. */
+const CHECK_RUNS_PER_PAGE = 100;
+const CHECK_RUNS_MAX_PAGES = 5;
+
 /**
  * Aggregate all check runs for a commit. A PR typically has several check
  * runs (lint, test, build, third-party apps); signaling the workflow on the
  * first completed run would resume it on a partial result. Returns null when
- * aggregation is unavailable (no PAT configured, API error) — callers fall
- * back to legacy per-run signaling rather than stranding the workflow.
+ * aggregation is unavailable (no PAT configured, API error, or the run count
+ * exceeds what `CHECK_RUNS_MAX_PAGES` pages can cover) — callers fall back to
+ * legacy per-run signaling rather than stranding the workflow or computing
+ * "complete" from a truncated view.
  */
 async function aggregateCheckRuns(
   apiUrl: string,
@@ -165,38 +171,53 @@ async function aggregateCheckRuns(
   if (!token) {
     return null;
   }
+  type RawCheckRun = { status: string; conclusion: string | null; html_url: string };
+  const runs: RawCheckRun[] = [];
+  let totalCount = 0;
   try {
-    const res = await fetch(
-      `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=100`,
-      {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-          Authorization: `Bearer ${token}`,
-        },
+    for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+      const res = await fetch(
+        `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`,
+        {
+          headers: {
+            Accept: 'application/vnd.github.v3+json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      if (!res.ok) {
+        return null;
       }
-    );
-    if (!res.ok) {
-      return null;
+      const body = (await res.json()) as {
+        total_count?: number;
+        check_runs?: RawCheckRun[];
+      };
+      totalCount = body.total_count ?? body.check_runs?.length ?? 0;
+      runs.push(...(body.check_runs ?? []));
+      if (runs.length >= totalCount) {
+        break;
+      }
     }
-    const body = (await res.json()) as {
-      check_runs?: Array<{ status: string; conclusion: string | null; html_url: string }>;
-    };
-    const runs = body.check_runs ?? [];
-    if (runs.length === 0) {
-      return null;
-    }
-    const complete = runs.every((r) => r.status === 'completed');
-    const failing = runs.find(
-      (r) => r.status === 'completed' && !NON_FAILING_CONCLUSIONS.has(r.conclusion ?? '')
-    );
-    return {
-      complete,
-      passed: !failing,
-      ...(failing ? { failingLogsUrl: failing.html_url } : {}),
-    };
   } catch {
     return null;
   }
+  if (runs.length === 0) {
+    return null;
+  }
+  if (runs.length < totalCount) {
+    // Truncated after CHECK_RUNS_MAX_PAGES pages — a partial view can't be
+    // trusted to compute "complete"; fall back to legacy per-run signaling.
+    return null;
+  }
+  const complete = runs.every((r) => r.status === 'completed');
+  const failing = runs.find(
+    (r) => r.status === 'completed' && !NON_FAILING_CONCLUSIONS.has(r.conclusion ?? '')
+  );
+  return {
+    complete,
+    passed: !failing,
+    ...(failing ? { failingLogsUrl: failing.html_url } : {}),
+  };
 }
 
 const TriggerParams = z.object({ token: z.string().min(1) });
@@ -392,20 +413,32 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // Batch-update CI status in a single transaction to avoid N+1 queries
-      await fastify.prisma.$transaction(
+      // Batch-update CI status in a single transaction to avoid N+1 queries.
+      // The `ciStatus: { not: newStatus }` predicate is an idempotency guard:
+      // a redelivered webhook for a status the PR already has updates zero
+      // rows, so it can't re-signal a workflow that has already moved past
+      // its CI-wait step.
+      const newStatus = passed ? 'PASSED' : 'FAILED';
+      const updateCounts = await fastify.prisma.$transaction(
         pullRequests.map((pr: (typeof pullRequests)[number]) =>
-          fastify.prisma.pullRequest.update({
-            data: { ciStatus: passed ? 'PASSED' : 'FAILED' },
-            where: { id: pr.id },
+          fastify.prisma.pullRequest.updateMany({
+            data: { ciStatus: newStatus },
+            where: { ciStatus: { not: newStatus }, id: pr.id },
           })
         )
       );
+      const transitioned = pullRequests.filter((_, i) => updateCounts[i].count === 1);
+
+      if (transitioned.length === 0) {
+        return {
+          data: { conclusion, ignored: true, reason: 'CI status unchanged (duplicate delivery)' },
+        };
+      }
 
       // Signal all affected Temporal workflows in parallel
       const signaled: string[] = [];
       const signalPromises: Promise<unknown>[] = [];
-      for (const pr of pullRequests) {
+      for (const pr of transitioned) {
         if (pr.workflow) {
           const wfId = pr.workflow.temporalWorkflowId;
           signaled.push(wfId);
@@ -423,7 +456,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Best-effort tracker sync on CI result.
       const trackerConfig = await resolveIssueTrackerConfig();
-      for (const pr of pullRequests) {
+      for (const pr of transitioned) {
         const ticketId = pr.workflow?.workRequest?.externalTicketId;
         if (ticketId) {
           await syncTrackerOnEvent(
@@ -553,20 +586,23 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: z.object({}).passthrough() },
     },
     async (request, reply) => {
-      // 1. Verify HMAC-SHA256 signature (if webhookSecret is configured)
+      // 1. Verify HMAC-SHA256 signature — fail closed. No configured secret
+      // means the webhook can't be authenticated at all, so (mirroring /git
+      // and /ci) it is rejected rather than silently accepted.
       const config = await resolveIssueTrackerConfig();
-      if (config.webhookSecret) {
-        const signature = request.headers['x-hub-signature-256'] as string | undefined;
-        if (!signature) {
-          return reply.code(401).send({ error: 'Missing signature' });
-        }
-        const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
-        if (!rawBody) {
-          return reply.code(401).send({ error: 'Missing raw body' });
-        }
-        if (!verifyGitHubSignature(rawBody, signature, config.webhookSecret)) {
-          return reply.code(401).send({ error: 'Invalid signature' });
-        }
+      if (!config.webhookSecret) {
+        return reply.code(401).send({ error: 'Jira webhook secret not configured' });
+      }
+      const signature = request.headers['x-hub-signature-256'] as string | undefined;
+      if (!signature) {
+        return reply.code(401).send({ error: 'Missing signature' });
+      }
+      const rawBody = (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody;
+      if (!rawBody) {
+        return reply.code(401).send({ error: 'Missing raw body' });
+      }
+      if (!verifyGitHubSignature(rawBody, signature, config.webhookSecret)) {
+        return reply.code(401).send({ error: 'Invalid signature' });
       }
 
       // 2. Parse the Jira webhook payload
@@ -609,16 +645,63 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const defaultTemplate = await prisma.workflowTemplate.findFirst({
         where: { isDefault: true, status: 'ACTIVE' },
       });
+      if (!defaultTemplate || defaultTemplate.activeVersion == null) {
+        return reply.code(200).send({ reason: 'no active default template', skipped: true });
+      }
+      const templateVersion = defaultTemplate.activeVersion;
+
+      const requestPayload = JSON.stringify({ source: 'jira_webhook', summary, ticketId });
+      const workRequestId = crypto.randomUUID();
+      // Deterministic Temporal workflow ID keyed by ticket so a redelivered
+      // transition webhook collides on WorkflowExecutionAlreadyStartedError
+      // instead of starting a second run — this makes the auto-trigger a
+      // once-ever action per ticket. Re-triggering the same ticket after
+      // completion requires resubmission via the authenticated path (POST
+      // /work-requests or /webhooks/:token), which always allocates a fresh
+      // workflow ID; this is deliberate.
+      const temporalWorkflowId = `jira-${ticketId}`;
+
+      // Start Temporal FIRST so a crash between here and the DB writes below
+      // never orphans a RunInput with no backing workflow.
+      try {
+        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+          request: {
+            budgetTier: 'STANDARD',
+            description: summary,
+            externalTicketId: ticketId,
+            repoId: defaultRepo.id,
+            requestPayload,
+            workRequestId,
+          },
+          templateId: defaultTemplate.id,
+          templateVersion,
+        });
+      } catch (err: unknown) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply.code(200).send({ duplicate: true, ok: true, ticketId });
+        }
+        throw err;
+      }
 
       await prisma.runInput.create({
         data: {
           connectionId: defaultRepo.id,
           description: summary,
           externalTicketId: ticketId,
-          requestPayload: JSON.stringify({ source: 'jira_webhook', summary, ticketId }),
-          ...(defaultTemplate
-            ? { templateId: defaultTemplate.id, templateVersion: defaultTemplate.activeVersion }
-            : {}),
+          id: workRequestId,
+          requestPayload,
+          templateId: defaultTemplate.id,
+          templateVersion,
+        },
+      });
+
+      await prisma.activeWorkflow.create({
+        data: {
+          budgetTier: 'STANDARD',
+          currentStatus: 'IMPLEMENTING',
+          repoId: defaultRepo.id,
+          temporalWorkflowId,
+          workRequestId,
         },
       });
 

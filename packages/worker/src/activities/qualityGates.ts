@@ -161,7 +161,7 @@ async function provisionGateWorkspace(
   // If the remote branch doesn't exist yet (e.g. gate runs before first
   // push), the reset will fail and the implementer's local copy stays.
   try {
-    await workspace.exec(`git fetch origin ${shellQuote(branch)}`);
+    await workspace.gitAuthed(`fetch origin ${shellQuote(branch)}`);
     await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
   } catch {
     // Gate runs against the local branch starting at defaultBranch.

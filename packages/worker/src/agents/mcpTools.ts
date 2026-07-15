@@ -19,6 +19,7 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
@@ -83,6 +84,13 @@ export function parseMcpServerRef(mcpServerRef: string): URL | null {
   // http(s) only — no stdio: a `command` server definition would let a DB
   // column drive arbitrary command execution on the worker host.
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
+  // Defense-in-depth: the gateway's `/mcp-connections` create route already
+  // rejects unsafe URLs (SSRF guard) at write time, but re-check here too —
+  // this is the worker's last line of defense against a private/loopback/
+  // link-local target reaching an MCP server connection.
+  if (!isSafeProbeUrl(mcpServerRef).ok) {
     return null;
   }
   return url;

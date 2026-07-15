@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -27,7 +27,7 @@ export function SubmitWorkRequestModal({
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const { data: allRepos = [] } = useRepositories();
-  const repos = allRepos.filter((r) => !r.type || r.type === 'git_repo');
+  const repos = useMemo(() => allRepos.filter((r) => !r.type || r.type === 'git_repo'), [allRepos]);
   const mutation = useCreateWorkRequest();
 
   const [externalTicketId, setExternalTicketId] = useState('');
@@ -53,12 +53,14 @@ export function SubmitWorkRequestModal({
     if (!open) {
       return;
     }
-    setRepoId(defaultRepoId ?? repos[0]?.id ?? '');
+    // Seed only when nothing is selected — never clobber a user's choice.
+    setRepoId((cur) => cur || defaultRepoId || repos[0]?.id || '');
   }, [open, defaultRepoId, repos]);
 
   function reset() {
     setExternalTicketId('');
     setDescription('');
+    setRepoId('');
     setBudgetTier('STANDARD');
     setError(null);
     mutation.reset();

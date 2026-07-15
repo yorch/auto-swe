@@ -13,12 +13,26 @@ export interface Workspace {
    * code themselves rather than relying on exec's throw-on-error semantics.
    */
   execCapture: (command: string, options?: { timeoutMs?: number }) => Promise<CapturedExec>;
+  /**
+   * Run a git subcommand (e.g. `push origin main`) against `origin` with the
+   * clone credential injected for this call only via `-c http.extraheader`,
+   * rather than a persisted `origin` URL. The credential is never written to
+   * `.git/config` — see the scrub in `createWorkspace` after clone.
+   */
+  gitAuthed: (subcommand: string) => Promise<string>;
   destroy: () => Promise<void>;
 }
 
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
+
+// Resource caps applied to every workspace container: bound worst-case memory/CPU
+// usage from a runaway agent-driven build/test process, and cap process count to
+// blunt fork-bomb-style failures.
+const WORKSPACE_MEMORY = '4g';
+const WORKSPACE_CPUS = 2;
+const WORKSPACE_PIDS_LIMIT = 512;
 
 /**
  * Provision an ephemeral Docker workspace with the repo cloned at the default
@@ -56,6 +70,27 @@ export async function createWorkspace(
     throw new Error(`Invalid Docker image name: ${image}`);
   }
 
+  // Extract the embedded credential from the authed clone URL (if any) so it
+  // can be injected per-call via `git -c http.extraheader` instead of being
+  // persisted in the cloned repo's `.git/config` as the `origin` remote URL —
+  // see the `git remote set-url` scrub below and `gitAuthed` on the returned
+  // Workspace. Backward compatible: a plain (unauthenticated) URL just falls
+  // through with no auth header.
+  let cleanUrl = authedRepoUrl;
+  let gitAuthHeader: string | undefined;
+  try {
+    const u = new URL(authedRepoUrl);
+    if (u.password) {
+      const token = decodeURIComponent(u.password);
+      gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+      u.username = '';
+      u.password = '';
+      cleanUrl = u.toString();
+    }
+  } catch {
+    /* non-URL — leave as-is, no auth header */
+  }
+
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
 
@@ -64,8 +99,27 @@ export async function createWorkspace(
   // depend on Docker's embedded forwarder, which intermittently times out when
   // the host's upstream DNS is briefly unreachable (e.g. VPN/hotspot/sleep) and
   // breaks long-running git operations like clone/push mid-job.
+  //
+  // Hardening notes (unlike the locked-down `ephemeralContainer` runner, this
+  // workspace intentionally keeps default bridge networking and omits
+  // `--read-only`/`--tmpfs`: the implementer agent needs outbound git
+  // clone/push + `npm install` and writes freely to its own container layer
+  // for the duration of the run):
+  //  - `--memory`/`--cpus`/`--pids-limit` bound a runaway agent-driven build
+  //    or test process instead of letting it exhaust the host.
+  //  - `--cap-drop=ALL` + `--security-opt=no-new-privileges` remove Linux
+  //    capabilities and privilege-escalation the workspace never needs.
+  //  - `--add-host` blackholes the *hostname* form of the GCP metadata
+  //    endpoint (`metadata.google.internal`/`metadata.gke.internal`) so an
+  //    agent can't trivially exfiltrate the host's cloud credentials through
+  //    it. This does NOT block the metadata service's link-local IP
+  //    (169.254.169.254) directly — an agent could still reach it by IP. A
+  //    full egress firewall (a custom bridge network blackholing
+  //    169.254.0.0/16 at the network layer) is a documented follow-up; it
+  //    needs `NET_ADMIN` inside the container to set up, which conflicts with
+  //    `--cap-drop=ALL` here, so it isn't attempted in this pass.
   await execShellAsync(
-    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 -- ${shellQuote(image)} sleep infinity`,
+    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${WORKSPACE_MEMORY} --cpus=${WORKSPACE_CPUS} --pids-limit=${WORKSPACE_PIDS_LIMIT} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(image)} sleep infinity`,
     { heartbeatLabel: 'workspace: starting container' }
   );
 
@@ -108,6 +162,16 @@ export async function createWorkspace(
       );
       await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
     }
+
+    // Scrub the credential out of the persisted `origin` remote URL — `git
+    // clone` bakes whatever URL it was given (including the embedded token)
+    // into `.git/config`, where it would sit in plaintext for the rest of the
+    // container's life and leak into any `git remote -v`/`cat .git/config`
+    // an agent runs. Network git ops going forward use `workspace.gitAuthed`,
+    // which injects the credential per-call instead.
+    await rootExec(
+      `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
+    );
   } catch (err) {
     try {
       await execShellAsync(`docker rm -f ${containerName}`);
@@ -116,6 +180,15 @@ export async function createWorkspace(
     }
     throw err;
   }
+
+  // Builds a git invocation with the credential injected via
+  // `-c http.extraheader` for this call only — never written to disk. When
+  // the source URL carried no credential (`gitAuthHeader` unset), this is
+  // just a plain `git <subcmd>` against the scrubbed `origin` remote.
+  const gitAuthedArgs = (subcmd: string) =>
+    gitAuthHeader
+      ? `git -c http.extraheader=${shellQuote(gitAuthHeader)} ${subcmd}`
+      : `git ${subcmd}`;
 
   return {
     containerId: containerName,
@@ -136,6 +209,11 @@ export async function createWorkspace(
         'docker',
         ['exec', '-w', '/workspace/target-repo', containerName, 'sh', '-c', command],
         { heartbeatLabel: 'workspace: exec (capture)', timeoutMs: options?.timeoutMs ?? 600_000 }
+      ),
+    gitAuthed: (subcommand: string) =>
+      execShellAsync(
+        `docker exec ${containerName} sh -c ${shellQuote(`cd /workspace/target-repo && ${gitAuthedArgs(subcommand)}`)}`,
+        { heartbeatLabel: 'workspace: git' }
       ),
   };
 }
