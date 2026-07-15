@@ -42,6 +42,24 @@ export interface ResolvedFigmaConfig {
   maxNodes?: number;
 }
 
+/**
+ * Run a connector base URL through the shared SSRF guard, logging + returning
+ * `false` on rejection so the caller can fail closed (`return null`) with a
+ * consistent warn message across every provider factory below.
+ */
+function checkBaseUrlSafety(
+  baseUrl: string,
+  label: string,
+  opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
+): boolean {
+  const safety = isSafeProbeUrl(baseUrl);
+  if (!safety.ok) {
+    opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);
+    return false;
+  }
+  return true;
+}
+
 export function createIssueTrackerProvider(
   config: ResolvedIssueTrackerConfig,
   opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
@@ -54,12 +72,7 @@ export function createIssueTrackerProvider(
       if (!config.baseUrl || !config.email) {
         return null;
       }
-      const safety = isSafeProbeUrl(config.baseUrl);
-      if (!safety.ok) {
-        opts?.log?.warn(
-          { baseUrl: config.baseUrl, reason: safety.reason },
-          'Jira baseUrl rejected by SSRF guard'
-        );
+      if (!checkBaseUrlSafety(config.baseUrl, 'Jira', opts)) {
         return null;
       }
       const client = new AtlassianClient({
@@ -81,15 +94,8 @@ export function createIssueTrackerProvider(
       return new LinearProvider(config.apiToken, { log: opts?.log });
     }
     case 'github': {
-      if (config.baseUrl) {
-        const safety = isSafeProbeUrl(config.baseUrl);
-        if (!safety.ok) {
-          opts?.log?.warn(
-            { baseUrl: config.baseUrl, reason: safety.reason },
-            'GitHub Issues baseUrl rejected by SSRF guard'
-          );
-          return null;
-        }
+      if (config.baseUrl && !checkBaseUrlSafety(config.baseUrl, 'GitHub Issues', opts)) {
+        return null;
       }
       return new GitHubIssuesProvider({
         apiToken: config.apiToken,
@@ -114,12 +120,7 @@ export function createKnowledgeBaseProvider(
       if (!config.baseUrl || !config.email) {
         return null;
       }
-      const safety = isSafeProbeUrl(config.baseUrl);
-      if (!safety.ok) {
-        opts?.log?.warn(
-          { baseUrl: config.baseUrl, reason: safety.reason },
-          'Confluence baseUrl rejected by SSRF guard'
-        );
+      if (!checkBaseUrlSafety(config.baseUrl, 'Confluence', opts)) {
         return null;
       }
       const client = new AtlassianClient({
@@ -147,12 +148,7 @@ export function createFigmaDesignProvider(
   // FIGMA_API_BASE_URL is a fixed constant today (not operator-configurable),
   // but run it through the same guard as every other connector base URL for
   // consistency and to fail safe if it ever becomes configurable.
-  const safety = isSafeProbeUrl(FIGMA_API_BASE_URL);
-  if (!safety.ok) {
-    opts?.log?.warn(
-      { baseUrl: FIGMA_API_BASE_URL, reason: safety.reason },
-      'Figma base URL rejected by SSRF guard'
-    );
+  if (!checkBaseUrlSafety(FIGMA_API_BASE_URL, 'Figma', opts)) {
     return null;
   }
   return new FigmaProvider(config);

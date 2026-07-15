@@ -632,19 +632,17 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const fields = issue.fields as Record<string, unknown> | undefined;
       const summary = (fields?.summary as string | undefined) ?? ticketId;
-      const defaultRepo = await prisma.connection.findFirst({
-        where: { isActive: true, type: 'git_repo' },
-      });
+      // Resolve the default repo + workflow template in parallel — they're
+      // independent lookups, so the RunInput is processable without paying two
+      // sequential round trips. Use the module-level `prisma` (the singleton) for
+      // consistency with the rest of this handler — `fastify.prisma` is the same.
+      const [defaultRepo, defaultTemplate] = await Promise.all([
+        prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
+        prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),
+      ]);
       if (!defaultRepo) {
         return reply.code(200).send({ reason: 'no active repos', skipped: true });
       }
-
-      // Resolve the default workflow template so the RunInput is processable.
-      // Use the module-level `prisma` (the singleton) for consistency with the
-      // rest of this handler — `fastify.prisma` is the same instance.
-      const defaultTemplate = await prisma.workflowTemplate.findFirst({
-        where: { isDefault: true, status: 'ACTIVE' },
-      });
       if (!defaultTemplate || defaultTemplate.activeVersion == null) {
         return reply.code(200).send({ reason: 'no active default template', skipped: true });
       }

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { assertOrgAccess, currentYearMonth } from '../lib/orgAccess.js';
+import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
@@ -141,19 +141,8 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             return;
           }
         }
-        if (budgetCap != null) {
-          const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
-            where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
-          });
-          const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
-          if (spentCents >= budgetCap) {
-            return reply.status(402).send({
-              error: {
-                code: 'ORG_BUDGET_EXCEEDED',
-                message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
-              },
-            });
-          }
+        if (!(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
+          return;
         }
       }
 
