@@ -199,7 +199,7 @@ model ContextSnapshot {
 }
 
 // A partial unique index on (repoId, prNumber) WHERE prNumber IS NOT NULL lives
-// in raw SQL in migrations/00000000000002_review_2026_07_integrity/migration.sql
+// in raw SQL in migrations/00000000000001_custom_constraints_and_indexes/migration.sql
 // — Prisma's schema DSL can't express a partial `@@unique`, so it isn't
 // modeled here (same pattern as the 0001 `connections_git_repo_org_repo_uidx`).
 model PullRequest {
@@ -1608,7 +1608,7 @@ model ScannerPattern {
 /// A CHECK constraint enforcing the scope/discriminator-column invariant
 /// (`agents_scope_keys_check`, mirroring `provider_credentials_scope_keys_check`)
 /// lives in raw SQL in
-/// migrations/00000000000002_review_2026_07_integrity/migration.sql.
+/// migrations/00000000000001_custom_constraints_and_indexes/migration.sql.
 model Agent {
   id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key                String
