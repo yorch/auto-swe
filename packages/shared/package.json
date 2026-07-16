@@ -33,6 +33,7 @@
     "./lib/integrations/atlassianClient": "./dist/lib/integrations/atlassianClient.js",
     "./lib/integrations/registry": "./dist/lib/integrations/registry.js",
     "./lib/integrations/issueTracker": "./dist/lib/integrations/issueTracker.js",
+    "./lib/scannerCache": "./dist/lib/scannerCache.js",
     "./lib/integrations/knowledgeBase": "./dist/lib/integrations/knowledgeBase.js",
     "./lib/integrations/figmaDesign": "./dist/lib/integrations/figmaDesign.js",
     "./lib/integrations/providers/jira": "./dist/lib/integrations/providers/jira.js",

@@ -22,6 +22,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -327,9 +328,7 @@ const CreateWorkRequestSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
-const ListWorkRequestsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+const ListWorkRequestsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Substring match on the external ticket ID. */
   ticket: z.string().max(200).optional(),
 });

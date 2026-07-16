@@ -11,6 +11,7 @@ import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
 import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ const PassiveIngestOutputSchema = z.object({
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PASSIVE_INGEST_LIMIT = 50;
-const DEDUP_THRESHOLD = 0.85;
+const DEDUP_THRESHOLD = DEFAULT_MEMORY_DEDUP_THRESHOLD;
 
 // ── Activity ─────────────────────────────────────────────────────────────────
 

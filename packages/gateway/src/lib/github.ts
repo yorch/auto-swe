@@ -62,10 +62,13 @@ function mapRepo(r: RawRepo): GitHubRepoInfo {
   };
 }
 
-/** Page size used by every paginated GitHub REST call in this module. */
-const PER_PAGE = 100;
-/** Hard cap on pages fetched per call — bounds worst-case request fan-out. */
-const MAX_PAGES = 5;
+/** Page size used by every paginated GitHub REST call in this module.
+ *  Exported so other gateway code (e.g. the webhooks check-runs listing)
+ *  reuses the same page size instead of redeclaring it. */
+export const GITHUB_PER_PAGE = 100;
+/** Hard cap on pages fetched per call — bounds worst-case request fan-out.
+ *  Exported for the same reason as {@link GITHUB_PER_PAGE}. */
+export const GITHUB_MAX_PAGES = 5;
 
 /**
  * Fetch up to `MAX_PAGES` pages (`per_page=PER_PAGE`) from a paginated GitHub
@@ -81,7 +84,7 @@ async function fetchAllPages<T>(
   errorContext: string
 ): Promise<T[]> {
   const items: T[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; page <= GITHUB_MAX_PAGES; page++) {
     const res = await fetch(urlForPage(page), {
       headers,
       signal: AbortSignal.timeout(15_000),
@@ -91,7 +94,7 @@ async function fetchAllPages<T>(
     }
     const pageItems = extractItems(await res.json());
     items.push(...pageItems);
-    if (pageItems.length < PER_PAGE) {
+    if (pageItems.length < GITHUB_PER_PAGE) {
       break;
     }
   }
@@ -122,7 +125,8 @@ export async function listGitHubRepos(): Promise<GitHubRepoInfo[]> {
 
   if (useApp) {
     const repos = await fetchAllPages<RawRepo>(
-      (page) => `${config.apiUrl}/installation/repositories?per_page=${PER_PAGE}&page=${page}`,
+      (page) =>
+        `${config.apiUrl}/installation/repositories?per_page=${GITHUB_PER_PAGE}&page=${page}`,
       headers,
       (body) => (body as { repositories: RawRepo[] }).repositories,
       'listing installation repositories'
@@ -131,7 +135,8 @@ export async function listGitHubRepos(): Promise<GitHubRepoInfo[]> {
   }
 
   const repos = await fetchAllPages<RawRepo>(
-    (page) => `${config.apiUrl}/user/repos?type=all&per_page=${PER_PAGE}&sort=updated&page=${page}`,
+    (page) =>
+      `${config.apiUrl}/user/repos?type=all&per_page=${GITHUB_PER_PAGE}&sort=updated&page=${page}`,
     headers,
     (body) => body as RawRepo[],
     'listing user repositories'

@@ -13,6 +13,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
+import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -47,7 +48,11 @@ interface RawLesson {
 export async function consolidateLessons(
   input: ConsolidateLessonsInput
 ): Promise<ConsolidateLessonsResult> {
-  const { repoId, minClusterSize = 3, similarityThreshold = 0.85 } = input;
+  const {
+    repoId,
+    minClusterSize = 3,
+    similarityThreshold = DEFAULT_MEMORY_DEDUP_THRESHOLD,
+  } = input;
 
   // Fetch all active lessons with their raw embeddings.
   // Prisma cannot model vector columns, so we use raw SQL.

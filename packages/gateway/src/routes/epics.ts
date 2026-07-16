@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
@@ -13,10 +14,7 @@ const CreateEpicSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1),
 });
 
-const ListEpicsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+const ListEpicsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
 
 const EpicParams = z.object({
   workflowId: z.string().min(1),

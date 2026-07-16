@@ -198,8 +198,11 @@ export interface RBACOptions {
 /** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
  * 32 bytes of base64url entropy (~43 chars). Anything starting with this
  * prefix bypasses JWT verification and hashes through PersonalAccessToken
- * instead. JWTs continue to round-trip the existing RS256/HS256 path. */
-const PAT_PREFIX = 'ats_';
+ * instead. JWTs continue to round-trip the existing RS256/HS256 path.
+ *
+ * Canonical home for this constant — `routes/tokens.ts` (which mints the
+ * tokens) imports it from here so the mint and verify paths can never drift. */
+export const PAT_PREFIX = 'ats_';
 
 class PatAuthError extends Error {
   readonly code: 'TOKEN_INVALID' | 'TOKEN_EXPIRED';
@@ -248,7 +251,10 @@ async function verifyPatPayload(request: FastifyRequest, token: string): Promise
  *
  *  Memory bound: SESSION_CACHE_MAX entries, evicted FIFO when full. At ~150
  *  bytes per entry this caps the cache at well under 1 MB. */
-const SESSION_CACHE_TTL_MS = 60_000;
+// Session-revocation lag window: a revoked session can still authenticate for
+// up to this long. Env-overridable (deploy-time knob); defaults unchanged at
+// 60s. `Number(x) || default` also falls through on NaN, which is fine here.
+const SESSION_CACHE_TTL_MS = Number(process.env.SESSION_CACHE_TTL_MS) || 60_000;
 const SESSION_CACHE_MAX = 2000;
 const sessionPayloadCache = new Map<string, { payload: JwtPayload; expiresAt: number }>();
 

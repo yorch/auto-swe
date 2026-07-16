@@ -10,6 +10,7 @@ import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,9 @@ export async function consolidateChannelMemory(
   // Effective params: per-channel override ?? caller input ?? built-in default.
   const minClusterSize = channel?.consolidationMinClusterSize ?? input.minClusterSize ?? 3;
   const similarityThreshold =
-    channel?.consolidationSimilarityThreshold ?? input.similarityThreshold ?? 0.85;
+    channel?.consolidationSimilarityThreshold ??
+    input.similarityThreshold ??
+    DEFAULT_MEMORY_DEDUP_THRESHOLD;
 
   // Budget gate: skip consolidation entirely when the channel is over its monthly
   // cap, so an exhausted channel doesn't keep spending on every ambient fire.

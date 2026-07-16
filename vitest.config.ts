@@ -60,6 +60,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/scannerCache',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/scannerCache.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/inputSchema',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/inputSchema.ts'),
       },

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -22,10 +23,7 @@ const CreateRepoSchema = z.object({
   type: z.string().default('git_repo'),
 });
 
-const ListReposQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(500).default(200),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
 

@@ -10,7 +10,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { verifyGitHubSignature } from '../lib/github.js';
+import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { postSlackMessage } from '../lib/slack.js';
 import { getErrorName } from '../plugins/auth.js';
 
@@ -148,16 +148,12 @@ interface AggregatedChecks {
   failingLogsUrl?: string;
 }
 
-/** Page size + page cap for the check-runs listing below. */
-const CHECK_RUNS_PER_PAGE = 100;
-const CHECK_RUNS_MAX_PAGES = 5;
-
 /**
  * Aggregate all check runs for a commit. A PR typically has several check
  * runs (lint, test, build, third-party apps); signaling the workflow on the
  * first completed run would resume it on a partial result. Returns null when
  * aggregation is unavailable (no PAT configured, API error, or the run count
- * exceeds what `CHECK_RUNS_MAX_PAGES` pages can cover) — callers fall back to
+ * exceeds what `GITHUB_MAX_PAGES` pages can cover) — callers fall back to
  * legacy per-run signaling rather than stranding the workflow or computing
  * "complete" from a truncated view.
  */
@@ -175,9 +171,9 @@ async function aggregateCheckRuns(
   const runs: RawCheckRun[] = [];
   let totalCount = 0;
   try {
-    for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+    for (let page = 1; page <= GITHUB_MAX_PAGES; page++) {
       const res = await fetch(
-        `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`,
+        `${apiUrl}/repos/${org}/${repoName}/commits/${headSha}/check-runs?per_page=${GITHUB_PER_PAGE}&page=${page}`,
         {
           headers: {
             Accept: 'application/vnd.github.v3+json',
@@ -205,7 +201,7 @@ async function aggregateCheckRuns(
     return null;
   }
   if (runs.length < totalCount) {
-    // Truncated after CHECK_RUNS_MAX_PAGES pages — a partial view can't be
+    // Truncated after GITHUB_MAX_PAGES pages — a partial view can't be
     // trusted to compute "complete"; fall back to legacy per-run signaling.
     return null;
   }

@@ -2,6 +2,7 @@ import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ConsolidateBody = z.object({
@@ -10,10 +11,8 @@ const ConsolidateBody = z.object({
   similarityThreshold: z.number().min(0.5).max(1).optional(),
 });
 
-const LessonListQuery = z.object({
+const LessonListQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 }).extend({
   includeConsolidated: z.coerce.boolean().default(false),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
 });
 
 const LessonSearchQuery = z.object({

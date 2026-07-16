@@ -1,15 +1,12 @@
 import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
+import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 // Default high enough that the dashboard's KPI view covers recent history,
 // but bounded — the table only grows and this endpoint is polled every 10s.
-const ListWorkflowsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(500).default(200),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+const ListWorkflowsQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 });
 
 // The token counters are `BigInt` in the DB (they can exceed Int32 on large
 // runs). Fastify's JSON serializer throws on a bare BigInt, so coerce the two

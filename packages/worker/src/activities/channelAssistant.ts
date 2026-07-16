@@ -29,6 +29,7 @@ import {
   type SlackThreadMessage,
   updateSlackMessage,
 } from '../lib/slackNotify.js';
+import { SKIP_SENTINEL } from './channelConstants.js';
 import { runAgent } from './runAgent.js';
 
 /** Fallback when a channel row has no explicit agent key (should never happen — the
@@ -436,10 +437,6 @@ export async function runChannelAgentTurn(
  * inside {@link runAgent}; the channel-monthly accrual below is an independent,
  * channel-scoped ledger used purely for the per-channel cap.
  */
-/** Gap H intent gate: a reply beginning with the word `skip` (case-insensitive)
- *  is the "not addressed to me" sentinel for a follow-up continuation turn. */
-const FOLLOWUP_SKIP_SENTINEL = /^skip\b/i;
-
 export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput): Promise<{
   reply: string;
   delegate?: DelegateIntent;
@@ -576,7 +573,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   // (and didn't fire a tool) is suppressed — the cost already happened (budget
   // bounds it) but nothing is posted, so the assistant doesn't inject itself into
   // human-to-human chatter. Accrue the cost first so the budget still sees it.
-  if (input.followup && !delegate && !generate && !refine && FOLLOWUP_SKIP_SENTINEL.test(reply)) {
+  if (input.followup && !delegate && !generate && !refine && SKIP_SENTINEL.test(reply)) {
     await accrueChannelUsage(input.channelId, costUsd);
     return { reply: '', suppressed: true };
   }

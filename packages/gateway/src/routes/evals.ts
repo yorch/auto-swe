@@ -21,6 +21,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
 
@@ -86,10 +87,8 @@ const StartRunBody = z.object({
   datasetId: z.string().uuid(),
 });
 
-const ResultsQuery = z.object({
+const ResultsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   evalRunId: z.string().uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
   runId: z.string().uuid().optional(),
   scorer: z.string().max(200).optional(),
   source: z.enum(['GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JUDGE', 'TRAJECTORY']).optional(),

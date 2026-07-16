@@ -16,7 +16,10 @@ import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
  * the host and re-check the address. Adequate as a first guard for an
  * ADMIN-gated route; tighten if this is ever exposed more broadly.
  */
-const DEFAULT_MAX_BYTES = 5_000_000;
+// Bundle install-from-URL size cap. Env-overridable (deploy-time knob);
+// defaults unchanged at 5 MB. `Number(x) || default` also falls through on
+// NaN, which is fine here.
+const DEFAULT_MAX_BYTES = Number(process.env.BUNDLE_MAX_BYTES) || 5_000_000;
 const MAX_REDIRECTS = 5;
 
 /** Throws if the URL isn't http(s) or targets a private/loopback/link-local/

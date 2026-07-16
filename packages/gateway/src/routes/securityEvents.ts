@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth } from '../plugins/auth.js';
 
 export type SecurityEventType =
@@ -59,9 +60,7 @@ function classifyEvent(trace: {
   return 'CODE_SECURITY';
 }
 
-const ListQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   runId: z.string().uuid().optional(),
   type: z
     .enum([

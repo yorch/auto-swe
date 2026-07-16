@@ -12,6 +12,7 @@ import {
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
+import { SKIP_SENTINEL } from './channelConstants.js';
 
 /** Input for the reactive-interjection activity (mirrors the workflow arg). */
 export interface ChannelReactiveInput {
@@ -39,9 +40,6 @@ const REACTIVE_COOLDOWN_MS = 10 * 60 * 1000;
 
 /** Below this length an "interjection" is a trivial ack not worth posting. */
 const MIN_INTERJECTION_LENGTH = 12;
-
-/** A reply beginning with the word `skip` (case-insensitive) is the skip sentinel. */
-const SKIP_SENTINEL = /^skip\b/i;
 
 /** Per-message char cap when building the transcript (defensive against a huge paste). */
 const MAX_MESSAGE_CHARS = 500;
