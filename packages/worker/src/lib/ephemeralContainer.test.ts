@@ -89,6 +89,54 @@ describe('buildDockerArgs', () => {
     const wIdx = args.indexOf('-w');
     expect(args[wIdx + 1]).toBe('/workspace/repo');
   });
+
+  it('rejects a negative or non-finite cpus value', () => {
+    expect(() => buildDockerArgs({ ...BASE, cpus: -1 }, 'name')).toThrow(/Invalid cpus/);
+    expect(() => buildDockerArgs({ ...BASE, cpus: Number.NaN }, 'name')).toThrow(/Invalid cpus/);
+    expect(() => buildDockerArgs({ ...BASE, cpus: Number.POSITIVE_INFINITY }, 'name')).toThrow(
+      /Invalid cpus/
+    );
+  });
+
+  it('accepts the cpus upper boundary of 8', () => {
+    const args = buildDockerArgs({ ...BASE, cpus: 8 }, 'name');
+    expect(args).toContain('--cpus=8');
+  });
+
+  it('rejects an image name that starts with a separator character', () => {
+    expect(() => buildDockerArgs({ ...BASE, image: '.evil/image' }, 'name')).toThrow(
+      /Invalid Docker image name/
+    );
+  });
+
+  it('adds --dns=127.0.0.2 for egress mode with a non-empty allowlist', () => {
+    const args = buildDockerArgs(
+      { ...BASE, egressAllowlist: ['registry.npmjs.org'], network: 'egress' },
+      'name'
+    );
+    expect(args).toContain('--dns=127.0.0.2');
+    expect(args).toContain('--network=bridge');
+  });
+
+  it('omits --dns when egress mode has no allowlist entries', () => {
+    const args = buildDockerArgs({ ...BASE, egressAllowlist: [], network: 'egress' }, 'name');
+    expect(args.some((a) => a.startsWith('--dns='))).toBe(false);
+  });
+
+  it('ignores egressAllowlist when network is the none default (no --dns leak)', () => {
+    const args = buildDockerArgs(
+      { ...BASE, egressAllowlist: ['registry.npmjs.org'], network: 'none' },
+      'name'
+    );
+    expect(args.some((a) => a.startsWith('--dns='))).toBe(false);
+    expect(args).toContain('--network=none');
+  });
+
+  it('accepts an absolute-path workspace mount', () => {
+    const args = buildDockerArgs({ ...BASE, workspaceMount: '/data/workspaces/w1' }, 'name');
+    const mountIdx = args.indexOf('-v');
+    expect(args[mountIdx + 1]).toBe('/data/workspaces/w1:/workspace:rw');
+  });
 });
 
 describe('buildSidecarDockerArgs', () => {
@@ -123,5 +171,48 @@ describe('buildSidecarDockerArgs', () => {
     expect(() => buildSidecarDockerArgs({ ...SIDE, port: 70000 }, 'name')).toThrow(
       /Invalid sidecar port/
     );
+  });
+
+  it('rejects a non-integer port', () => {
+    expect(() => buildSidecarDockerArgs({ ...SIDE, port: 8080.5 }, 'name')).toThrow(
+      /Invalid sidecar port/
+    );
+  });
+
+  it('applies the full lockdown flag set shared with buildDockerArgs', () => {
+    const args = buildSidecarDockerArgs(SIDE, 'sidecar-abc');
+    expect(args).toContain('--network=none');
+    expect(args).toContain('--memory=512m');
+    expect(args).toContain('--cpus=1');
+    expect(args).toContain('--pids-limit=256');
+    expect(args).toContain('--tmpfs=/tmp:size=64m,mode=1777');
+    expect(args).toContain('--security-opt=no-new-privileges');
+  });
+
+  it('switches to bridge networking and injects --dns for egress with an allowlist', () => {
+    const args = buildSidecarDockerArgs(
+      { ...SIDE, egressAllowlist: ['registry.npmjs.org'], network: 'egress' },
+      'name'
+    );
+    expect(args).toContain('--network=bridge');
+    expect(args).toContain('--dns=127.0.0.2');
+  });
+
+  it('rejects an invalid Docker image name (validation shared with buildDockerArgs)', () => {
+    expect(() => buildSidecarDockerArgs({ ...SIDE, image: '--privileged' }, 'name')).toThrow(
+      /Invalid Docker image name/
+    );
+  });
+
+  it('rejects an invalid workspace mount source (validation shared with buildDockerArgs)', () => {
+    expect(() => buildSidecarDockerArgs({ ...SIDE, workspaceMount: '-rm' }, 'name')).toThrow(
+      /Invalid workspace mount source/
+    );
+  });
+
+  it('honors custom memory and cpu caps', () => {
+    const args = buildSidecarDockerArgs({ ...SIDE, cpus: 4, memory: '2g' }, 'name');
+    expect(args).toContain('--memory=2g');
+    expect(args).toContain('--cpus=4');
   });
 });
