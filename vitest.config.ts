@@ -155,7 +155,16 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ['**/*.test.ts', '**/prisma/migrations/**'],
+      exclude: [
+        '**/*.test.ts',
+        '**/prisma/migrations/**',
+        // Generated Prisma client (~106k lines) — not hand-written, not unit-testable.
+        '**/generated/**',
+        '**/*.d.ts',
+        // Type-only barrels and entrypoints with no branching logic to cover.
+        '**/index.ts',
+        '**/prisma/seed.ts',
+      ],
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
       thresholds: { branches: 4, functions: 2, lines: 5, statements: 5 },
