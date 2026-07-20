@@ -71,9 +71,9 @@ export const GITHUB_PER_PAGE = 100;
 export const GITHUB_MAX_PAGES = 5;
 
 /**
- * Fetch up to `MAX_PAGES` pages (`per_page=PER_PAGE`) from a paginated GitHub
- * REST list endpoint, stopping as soon as a page returns fewer than
- * `PER_PAGE` items (no more pages left). `urlForPage` builds the request URL
+ * Fetch up to `GITHUB_MAX_PAGES` pages (`per_page=GITHUB_PER_PAGE`) from a
+ * paginated GitHub REST list endpoint, stopping as soon as a page returns fewer
+ * than `GITHUB_PER_PAGE` items (no more pages left). `urlForPage` builds the request URL
  * for a given 1-indexed page; `extractItems` pulls the items array out of the
  * (possibly wrapped) JSON body.
  */
@@ -104,8 +104,8 @@ async function fetchAllPages<T>(
 /**
  * List repositories accessible to the configured GitHub integration.
  * Uses installation repositories endpoint for GitHub App auth, or
- * user repos endpoint for PAT auth. Paginates up to `MAX_PAGES` pages of
- * `PER_PAGE` repos each — up to 500 repos.
+ * user repos endpoint for PAT auth. Paginates up to `GITHUB_MAX_PAGES` pages of
+ * `GITHUB_PER_PAGE` repos each — up to 500 repos.
  */
 export async function listGitHubRepos(): Promise<GitHubRepoInfo[]> {
   const config = await resolveGitHubConfig();
