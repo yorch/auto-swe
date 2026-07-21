@@ -660,6 +660,7 @@ type IssueTrackerConfigRow = NonNullable<
 >;
 
 export type IssueTrackerConfigInput = {
+  allowPrivateNetwork?: boolean;
   apiToken?: string;
   baseUrl?: string | null;
   defaultProjectKey?: string | null;
@@ -677,6 +678,7 @@ export type IssueTrackerConfigInput = {
 
 function issueTrackerData(row: IssueTrackerConfigRow | null) {
   return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
     apiToken: maskedSecret(row?.apiTokenLastFour),
     baseUrl: row?.baseUrl ?? null,
     defaultProjectKey: row?.defaultProjectKey ?? null,
@@ -711,6 +713,7 @@ export async function updateIssueTrackerConfig(
   body: IssueTrackerConfigInput
 ): Promise<ConfigUpdateResult> {
   const {
+    allowPrivateNetwork,
     apiToken,
     baseUrl,
     defaultProjectKey,
@@ -731,6 +734,9 @@ export async function updateIssueTrackerConfig(
   const data: Record<string, unknown> = {};
   if (provider !== undefined) {
     data.provider = provider;
+  }
+  if (allowPrivateNetwork !== undefined) {
+    data.allowPrivateNetwork = allowPrivateNetwork;
   }
   if (baseUrl !== undefined) {
     data.baseUrl = baseUrl;
@@ -790,10 +796,12 @@ export async function updateIssueTrackerConfig(
     // undefined to keep the audit log in sync with the write.
     ['webhookSecret', webhookSecret ?? undefined],
     ['webhookTriggerStatus', webhookTriggerStatus],
+    ['allowPrivateNetwork', allowPrivateNetwork],
   ]);
 
   return {
     auditAfterJson: {
+      allowPrivateNetwork: row.allowPrivateNetwork,
       baseUrl: row.baseUrl,
       changedFields,
       defaultProjectKey: row.defaultProjectKey,
@@ -844,6 +852,7 @@ type KnowledgeBaseConfigRow = NonNullable<
 >;
 
 export type KnowledgeBaseConfigInput = {
+  allowPrivateNetwork?: boolean;
   apiToken?: string;
   baseUrl?: string | null;
   email?: string | null;
@@ -855,6 +864,7 @@ export type KnowledgeBaseConfigInput = {
 
 function knowledgeBaseData(row: KnowledgeBaseConfigRow | null) {
   return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
     apiToken: maskedSecret(row?.apiTokenLastFour),
     baseUrl: row?.baseUrl ?? null,
     email: row?.email ?? null,
@@ -883,13 +893,17 @@ export async function updateKnowledgeBaseConfig(
   prisma: PrismaClient,
   body: KnowledgeBaseConfigInput
 ): Promise<ConfigUpdateResult> {
-  const { apiToken, baseUrl, email, enabled, maxPages, provider, spaces } = body;
+  const { allowPrivateNetwork, apiToken, baseUrl, email, enabled, maxPages, provider, spaces } =
+    body;
 
   const existing = await prisma.knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
 
   const data: Record<string, unknown> = {};
   if (provider !== undefined) {
     data.provider = provider;
+  }
+  if (allowPrivateNetwork !== undefined) {
+    data.allowPrivateNetwork = allowPrivateNetwork;
   }
   if (enabled !== undefined) {
     data.enabled = enabled;
@@ -923,10 +937,12 @@ export async function updateKnowledgeBaseConfig(
     ['spaces', spaces],
     ['maxPages', maxPages],
     ['apiToken', apiToken],
+    ['allowPrivateNetwork', allowPrivateNetwork],
   ]);
 
   return {
     auditAfterJson: {
+      allowPrivateNetwork: row.allowPrivateNetwork,
       baseUrl: row.baseUrl,
       changedFields,
       email: row.email,

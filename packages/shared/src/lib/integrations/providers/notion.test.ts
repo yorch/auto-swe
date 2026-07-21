@@ -3,6 +3,7 @@ import type { ResolvedKnowledgeBaseConfig } from '../registry.js';
 import { NotionKnowledgeBaseProvider } from './notion.js';
 
 const config: ResolvedKnowledgeBaseConfig = {
+  allowPrivateNetwork: false,
   apiToken: 'secret_test_token',
   baseUrl: null,
   email: null,

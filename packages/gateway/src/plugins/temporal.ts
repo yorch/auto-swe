@@ -669,10 +669,11 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     },
 
     async syncConsolidationSchedule(config: ConsolidationScheduleConfig): Promise<void> {
-      const input: ScheduledConsolidationInput = {
-        minClusterSize: config.minClusterSize,
-        similarityThreshold: config.similarityThreshold,
-      };
+      // Empty input: `consolidateLessons` resolves minClusterSize/similarityThreshold
+      // from `resolveConsolidationConfig()` itself on each fire, so the schedule's
+      // static input no longer needs to carry them — an admin's config edit applies
+      // on the next fire without re-syncing the schedule.
+      const input: ScheduledConsolidationInput = {};
       await upsertSchedule(CONSOLIDATION_SCHEDULE_ID, {
         action: makeScheduleAction(input),
         cronExpression: config.cronExpression,

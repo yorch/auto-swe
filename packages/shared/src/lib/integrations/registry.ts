@@ -24,6 +24,7 @@ export interface ResolvedIssueTrackerConfig {
   defaultProjectKey?: string;
   webhookSecret?: string;
   webhookTriggerStatus?: string;
+  allowPrivateNetwork: boolean;
 }
 
 export interface ResolvedKnowledgeBaseConfig {
@@ -34,6 +35,7 @@ export interface ResolvedKnowledgeBaseConfig {
   apiToken: string | null;
   spaces: string[];
   maxPages?: number;
+  allowPrivateNetwork: boolean;
 }
 
 export interface ResolvedFigmaConfig {
@@ -46,14 +48,28 @@ export interface ResolvedFigmaConfig {
  * Run a connector base URL through the shared SSRF guard, logging + returning
  * `false` on rejection so the caller can fail closed (`return null`) with a
  * consistent warn message across every provider factory below.
+ *
+ * `allowPrivate` is the per-connector operator opt-in (`allowPrivateNetwork`
+ * on `IssueTrackerConfig` / `KnowledgeBaseConfig`) for legitimate self-hosted
+ * instances on internal/`.local`/private-IP base URLs. When set, the guard's
+ * rejection is bypassed — but the bypass itself is logged (at warn level, the
+ * only level this shared logger shape exposes) so it stays auditable.
  */
 function checkBaseUrlSafety(
   baseUrl: string,
   label: string,
+  allowPrivate: boolean,
   opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
 ): boolean {
   const safety = isSafeProbeUrl(baseUrl);
   if (!safety.ok) {
+    if (allowPrivate) {
+      opts?.log?.warn(
+        { baseUrl, reason: safety.reason },
+        `${label} baseUrl is on a private network but permitted by explicit allowPrivateNetwork opt-in`
+      );
+      return true;
+    }
     opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);
     return false;
   }
@@ -72,7 +88,7 @@ export function createIssueTrackerProvider(
       if (!config.baseUrl || !config.email) {
         return null;
       }
-      if (!checkBaseUrlSafety(config.baseUrl, 'Jira', opts)) {
+      if (!checkBaseUrlSafety(config.baseUrl, 'Jira', config.allowPrivateNetwork, opts)) {
         return null;
       }
       const client = new AtlassianClient({
@@ -94,7 +110,10 @@ export function createIssueTrackerProvider(
       return new LinearProvider(config.apiToken, { log: opts?.log });
     }
     case 'github': {
-      if (config.baseUrl && !checkBaseUrlSafety(config.baseUrl, 'GitHub Issues', opts)) {
+      if (
+        config.baseUrl &&
+        !checkBaseUrlSafety(config.baseUrl, 'GitHub Issues', config.allowPrivateNetwork, opts)
+      ) {
         return null;
       }
       return new GitHubIssuesProvider({
@@ -120,7 +139,7 @@ export function createKnowledgeBaseProvider(
       if (!config.baseUrl || !config.email) {
         return null;
       }
-      if (!checkBaseUrlSafety(config.baseUrl, 'Confluence', opts)) {
+      if (!checkBaseUrlSafety(config.baseUrl, 'Confluence', config.allowPrivateNetwork, opts)) {
         return null;
       }
       const client = new AtlassianClient({
@@ -148,7 +167,7 @@ export function createFigmaDesignProvider(
   // FIGMA_API_BASE_URL is a fixed constant today (not operator-configurable),
   // but run it through the same guard as every other connector base URL for
   // consistency and to fail safe if it ever becomes configurable.
-  if (!checkBaseUrlSafety(FIGMA_API_BASE_URL, 'Figma', opts)) {
+  if (!checkBaseUrlSafety(FIGMA_API_BASE_URL, 'Figma', false, opts)) {
     return null;
   }
   return new FigmaProvider(config);

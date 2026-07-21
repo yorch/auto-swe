@@ -372,6 +372,7 @@ describe('POST /api/v1/work-requests', () => {
     existingWorkflows = [];
     snapshotUpserts.length = 0;
     resolveIssueTrackerConfigMock.mockResolvedValueOnce({
+      allowPrivateNetwork: false,
       apiToken: 'tok',
       baseUrl: 'https://acme.atlassian.net',
       email: 'bot@acme.com',
@@ -415,6 +416,7 @@ describe('POST /api/v1/work-requests', () => {
     existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2' }];
     snapshotUpserts.length = 0;
     resolveIssueTrackerConfigMock.mockResolvedValueOnce({
+      allowPrivateNetwork: false,
       apiToken: 'tok',
       baseUrl: 'https://acme.atlassian.net',
       email: 'bot@acme.com',

@@ -181,6 +181,7 @@ const GoogleOAuthPutBody = z.object({
 });
 
 const IssueTrackerPutBody = z.object({
+  allowPrivateNetwork: z.boolean().optional(),
   apiToken: z.string().min(1).max(500).optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   defaultProjectKey: z.string().max(100).nullable().optional(),
@@ -201,6 +202,7 @@ const IssueTrackerTestBody = z.object({
 });
 
 const KnowledgeBasePutBody = z.object({
+  allowPrivateNetwork: z.boolean().optional(),
   apiToken: z.string().min(1).max(500).optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
   email: z.string().max(320).nullable().optional(),

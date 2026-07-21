@@ -42,6 +42,7 @@ export function KnowledgeBaseTab() {
   const [provider, setProvider] = useState<'' | 'disabled' | KnowledgeBaseProvider>('');
   const [enabled, setEnabled] = useState<boolean | undefined>(undefined);
   const [baseUrl, setBaseUrl] = useState('');
+  const [allowPrivateNetwork, setAllowPrivateNetwork] = useState<boolean | undefined>(undefined);
   const [email, setEmail] = useState('');
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
@@ -78,6 +79,9 @@ export function KnowledgeBaseTab() {
     }
     if (baseUrl) {
       body.baseUrl = baseUrl;
+    }
+    if (allowPrivateNetwork !== undefined) {
+      body.allowPrivateNetwork = allowPrivateNetwork;
     }
     if (email) {
       body.email = email;
@@ -210,6 +214,25 @@ export function KnowledgeBaseTab() {
               placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
               value={baseUrl}
             />
+          </div>
+          <div>
+            <div className="flex items-center gap-3">
+              <input
+                checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+                className="h-4 w-4 accent-ember-400"
+                id="kb-allow-private-network"
+                onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
+                type="checkbox"
+              />
+              <label className="text-sm text-paper-300" htmlFor="kb-allow-private-network">
+                Allow private/internal network base URL
+              </label>
+            </div>
+            <p className="mt-1 text-[11px] text-paper-600">
+              Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>/private-IP
+              base URLs. Only enable this for a trusted self-hosted instance you control — it
+              reopens the server to requests against your internal network for this connector.
+            </p>
           </div>
           {effectiveProvider === 'confluence' && (
             <div>

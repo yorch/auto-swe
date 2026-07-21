@@ -11,6 +11,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 const jiraConfig: ResolvedIssueTrackerConfig = {
+  allowPrivateNetwork: false,
   apiToken: 'jira-token',
   baseUrl: 'https://acme.atlassian.net',
   email: 'bot@acme.com',
@@ -18,6 +19,7 @@ const jiraConfig: ResolvedIssueTrackerConfig = {
 };
 
 const linearConfig: ResolvedIssueTrackerConfig = {
+  allowPrivateNetwork: false,
   apiToken: 'lin_api_key',
   baseUrl: null,
   email: null,
@@ -25,6 +27,7 @@ const linearConfig: ResolvedIssueTrackerConfig = {
 };
 
 const githubConfig: ResolvedIssueTrackerConfig = {
+  allowPrivateNetwork: false,
   apiToken: 'ghp_token',
   baseUrl: null,
   email: null,
@@ -205,7 +208,10 @@ describe('fetchTicket — failure policy', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     expect(
-      await fetchTicket({ apiToken: null, baseUrl: null, email: null, provider: null }, 'PROJ-1')
+      await fetchTicket(
+        { allowPrivateNetwork: false, apiToken: null, baseUrl: null, email: null, provider: null },
+        'PROJ-1'
+      )
     ).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });

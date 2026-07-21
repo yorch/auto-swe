@@ -499,6 +499,7 @@ export async function resolveIssueTrackerConfig(
   const provider = asTrackerProvider(row?.provider ?? process.env.TRACKER_PROVIDER);
 
   return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
     apiToken,
     baseUrl: row?.baseUrl ?? process.env.TRACKER_BASE_URL ?? null,
     defaultProjectKey: row?.defaultProjectKey ?? undefined,
@@ -550,6 +551,7 @@ export async function resolveKnowledgeBaseConfig(
     : [];
 
   return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
     apiToken,
     baseUrl: row?.baseUrl ?? process.env.KB_BASE_URL ?? null,
     email: row?.email ?? process.env.KB_EMAIL ?? null,

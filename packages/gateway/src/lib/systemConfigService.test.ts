@@ -583,6 +583,25 @@ describe('systemConfigService', () => {
       expect(sentData).not.toHaveProperty('webhookSecretCiphertext');
       expect(result.changedFields).not.toContain('webhookSecret');
     });
+
+    it('allowPrivateNetwork round-trips on update and is returned by get', async () => {
+      mockPrisma.issueTrackerConfig.findUnique.mockResolvedValueOnce(null);
+      const result = await updateIssueTrackerConfig(prisma, { allowPrivateNetwork: true });
+      const sentData = mockPrisma.issueTrackerConfig.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData.allowPrivateNetwork).toBe(true);
+      expect(result.changedFields).toContain('allowPrivateNetwork');
+      expect(result.data.allowPrivateNetwork).toBe(true);
+
+      mockPrisma.issueTrackerConfig.findUnique.mockResolvedValueOnce({
+        allowPrivateNetwork: true,
+        provider: 'jira',
+      });
+      const getResult = await getIssueTrackerConfig(prisma);
+      expect(getResult.data.allowPrivateNetwork).toBe(true);
+    });
   });
 
   // ─── Knowledge base config ──────────────────────────────────────────────
@@ -611,6 +630,25 @@ describe('systemConfigService', () => {
       const result = await getKnowledgeBaseConfig(prisma);
       expect(result.data.spaces).toEqual([]);
       expect(result.sources.spaces).toBeNull();
+    });
+
+    it('allowPrivateNetwork round-trips on update and is returned by get', async () => {
+      mockPrisma.knowledgeBaseConfig.findUnique.mockResolvedValueOnce(null);
+      const result = await updateKnowledgeBaseConfig(prisma, { allowPrivateNetwork: true });
+      const sentData = mockPrisma.knowledgeBaseConfig.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData.allowPrivateNetwork).toBe(true);
+      expect(result.changedFields).toContain('allowPrivateNetwork');
+      expect(result.data.allowPrivateNetwork).toBe(true);
+
+      mockPrisma.knowledgeBaseConfig.findUnique.mockResolvedValueOnce({
+        allowPrivateNetwork: true,
+        provider: 'confluence',
+      });
+      const getResult = await getKnowledgeBaseConfig(prisma);
+      expect(getResult.data.allowPrivateNetwork).toBe(true);
     });
   });
 

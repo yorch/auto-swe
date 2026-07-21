@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateUserSchema = z.object({
   email: z.string().email(),
@@ -243,6 +243,30 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({
           error: { code: 'USER_NOT_FOUND', message: 'User not found' },
         });
+      }
+
+      // Prevent an admin from locking themselves (and potentially every
+      // admin) out: self-deactivation and self-demotion are blocked, but
+      // other self-edits (email, slackId) and edits to other users pass
+      // through unaffected.
+      const actor = requireUser(request);
+      if (actor.sub === request.params.id) {
+        if (request.body.isActive === false) {
+          return reply.status(400).send({
+            error: {
+              code: 'CANNOT_SELF_DEACTIVATE',
+              message: 'You cannot deactivate your own account.',
+            },
+          });
+        }
+        if (request.body.role !== undefined && request.body.role !== 'ADMIN') {
+          return reply.status(400).send({
+            error: {
+              code: 'CANNOT_SELF_DEMOTE',
+              message: 'You cannot remove your own admin role.',
+            },
+          });
+        }
       }
 
       // Guard slackId uniqueness on reassignment (see POST handler note).

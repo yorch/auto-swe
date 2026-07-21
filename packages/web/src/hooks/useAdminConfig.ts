@@ -245,6 +245,7 @@ export interface IssueTrackerConfig {
   defaultProjectKey: string | null;
   webhookSecret: MaskedField | null;
   webhookTriggerStatus: string | null;
+  allowPrivateNetwork: boolean;
 }
 
 export interface IssueTrackerConfigInput {
@@ -259,6 +260,7 @@ export interface IssueTrackerConfigInput {
   defaultProjectKey?: string | null;
   webhookSecret?: string;
   webhookTriggerStatus?: string | null;
+  allowPrivateNetwork?: boolean;
 }
 
 export function useIssueTrackerConfig() {
@@ -313,6 +315,7 @@ export interface KnowledgeBaseConfig {
   apiToken: MaskedField | null;
   spaces: string[];
   maxPages: number | null;
+  allowPrivateNetwork: boolean;
 }
 
 export interface KnowledgeBaseConfigInput {
@@ -323,6 +326,7 @@ export interface KnowledgeBaseConfigInput {
   apiToken?: string;
   spaces?: string[];
   maxPages?: number | null;
+  allowPrivateNetwork?: boolean;
 }
 
 export function useKnowledgeBaseConfig() {
