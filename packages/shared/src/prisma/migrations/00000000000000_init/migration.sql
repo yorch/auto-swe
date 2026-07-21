@@ -826,6 +826,7 @@ CREATE TABLE "issue_tracker_config" (
     "webhook_secret_key_version" INTEGER,
     "webhook_secret_last_four" TEXT,
     "webhook_trigger_status" TEXT,
+    "allow_private_network" BOOLEAN NOT NULL DEFAULT false,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "issue_tracker_config_pkey" PRIMARY KEY ("id")
@@ -845,6 +846,7 @@ CREATE TABLE "knowledge_base_config" (
     "email" TEXT,
     "spaces" TEXT[],
     "max_pages" INTEGER DEFAULT 5,
+    "allow_private_network" BOOLEAN NOT NULL DEFAULT false,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "knowledge_base_config_pkey" PRIMARY KEY ("id")
