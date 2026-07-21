@@ -55,6 +55,18 @@ describe('buildMetadataBlockArgs', () => {
     expect(cmd).toContain('blackhole fd00:ec2::254/128'); // IPv6 IMDS
   });
 
+  it('verifies a blackhole route actually landed and exits non-zero otherwise', () => {
+    // Guards against a silent no-op: if the runtime's `ip` lacks blackhole
+    // support the adds fail quietly, so the sidecar must fail loudly (non-zero
+    // exit → caller logs a warning) rather than report false success.
+    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
+    expect(cmd).toContain('grep -q blackhole');
+    expect(cmd).toContain('exit 1');
+    // The IPv4 IMDS adds must NOT be individually `|| true`'d (that would mask
+    // the failure the verify step is meant to catch).
+    expect(cmd).not.toContain('169.254.169.254/32 2>/dev/null || true');
+  });
+
   it('shell-quotes the sidecar image argument', () => {
     const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
     expect(cmd).toContain(shellQuote('alpine:3.20'));

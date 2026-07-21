@@ -70,11 +70,19 @@ const METADATA_BLOCK_IMAGE = 'alpine:3.20';
  * daemon available in CI or this sandbox to exercise it end-to-end.
  */
 export function buildMetadataBlockArgs(containerName: string, image: string): string {
+  // Install the IPv4 IMDS blackholes, then VERIFY at least one landed: if the
+  // runtime's `ip` applet doesn't support `blackhole` routes, the adds fail
+  // silently and this control would otherwise be a no-op with no signal. The
+  // final `grep`/`exit 1` makes that case surface as a non-zero exit, which the
+  // caller's try/catch logs as a warning instead of a false success. The IPv6
+  // add stays soft (a netns without IPv6 legitimately can't add it, and IMDS is
+  // IPv4), so it isn't part of the success check.
   const routeCmd = [
-    'ip route add blackhole 169.254.169.254/32 2>/dev/null || true',
-    'ip route add blackhole 169.254.170.2/32 2>/dev/null || true',
+    'ip route add blackhole 169.254.169.254/32 2>/dev/null',
+    'ip route add blackhole 169.254.170.2/32 2>/dev/null',
     'ip -6 route add blackhole fd00:ec2::254/128 2>/dev/null || true',
-    'true',
+    'ip route show 2>/dev/null | grep -q blackhole || ' +
+      '{ echo "metadata block: no blackhole route installed (ip may lack blackhole support)" >&2; exit 1; }',
   ].join('; ');
   return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
 }
