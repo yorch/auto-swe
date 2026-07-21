@@ -167,10 +167,10 @@ export default defineConfig({
       ],
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
-      // Floors set a few points below the measured coverage of hand-written
-      // code (lines ~58%, branches ~53%, functions ~49%) so a regression fails
+      // Floors set a couple points below the measured coverage of hand-written
+      // code (lines ~59%, branches ~53%, functions ~49%) so a regression fails
       // CI without the buffer being brittle. Ratchet upward as coverage grows.
-      thresholds: { branches: 50, functions: 46, lines: 55, statements: 55 },
+      thresholds: { branches: 51, functions: 47, lines: 57, statements: 57 },
     },
     // Some modules (e.g. @auto-swe/shared/db) construct a PrismaClient at import
     // time and require DATABASE_URL to be set. PrismaClient connects lazily, so a

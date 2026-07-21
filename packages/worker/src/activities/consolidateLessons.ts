@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import type {
   ConsolidateLessonsInput,
   ConsolidateLessonsResult,
@@ -13,7 +14,6 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
-import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -48,11 +48,14 @@ interface RawLesson {
 export async function consolidateLessons(
   input: ConsolidateLessonsInput
 ): Promise<ConsolidateLessonsResult> {
-  const {
-    repoId,
-    minClusterSize = 3,
-    similarityThreshold = DEFAULT_MEMORY_DEDUP_THRESHOLD,
-  } = input;
+  const { repoId } = input;
+
+  // DB config is the per-run fallback (mirrors `consolidateChannelMemory`'s
+  // channel-override ?? input ?? default pattern) — so an admin's config edit
+  // applies on the next scheduled fire without re-syncing the Temporal Schedule.
+  const resolved = await resolveConsolidationConfig();
+  const minClusterSize = input.minClusterSize ?? resolved.minClusterSize;
+  const similarityThreshold = input.similarityThreshold ?? resolved.similarityThreshold;
 
   // Fetch all active lessons with their raw embeddings.
   // Prisma cannot model vector columns, so we use raw SQL.

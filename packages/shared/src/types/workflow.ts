@@ -266,8 +266,15 @@ export interface ConsolidateLessonsResult {
 
 /** Input for the system-wide scheduled consolidation workflow. */
 export interface ScheduledConsolidationInput {
-  minClusterSize: number;
-  similarityThreshold: number;
+  /**
+   * Optional overrides. When omitted, the `consolidateLessons` activity resolves
+   * the current values from `resolveConsolidationConfig()` (workflow_defaults) at
+   * run time, so an admin's config edit applies on the next fire without needing
+   * the Temporal Schedule's static input to be re-synced — mirroring how the
+   * channel-memory consolidation reads its per-channel overrides per run.
+   */
+  minClusterSize?: number;
+  similarityThreshold?: number;
 }
 
 /**

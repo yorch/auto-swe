@@ -194,9 +194,9 @@ GitHub, Slack, artifact storage, issue-tracker connector, workflow defaults, and
 | `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
 | `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
-| `/admin/integrations → Tracker` | issue-tracker connector (Jira / Linear / GitHub Issues): provider, base URL, API token, Jira email — a read-only fetch at work-request submit time populates `ContextSnapshot.rawTicketData`; failures never block submission | `resolveTrackerConfig()` |
+| `/admin/integrations → Tracker` | issue-tracker connector (Jira / Linear / GitHub Issues): provider, base URL, API token, Jira email, `allowPrivateNetwork` (explicit opt-in for a self-hosted base URL on a private/internal address — otherwise the SSRF guard rejects it) — a read-only fetch at work-request submit time populates `ContextSnapshot.rawTicketData`; failures never block submission | `resolveTrackerConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
-| `/admin/integrations → Knowledge Base` | knowledge-base connector (Confluence / Notion): provider, base URL, API token, email — injected as context at work-request submit time | `resolveKnowledgeBaseConfig()` |
+| `/admin/integrations → Knowledge Base` | knowledge-base connector (Confluence / Notion): provider, base URL, API token, email, `allowPrivateNetwork` (opt-in for a self-hosted internal base URL, same SSRF-guard rationale as Tracker) — injected as context at work-request submit time | `resolveKnowledgeBaseConfig()` |
 | `/admin/integrations → Figma` | Figma design connector (read-only): enable flag, API token, max-nodes cap — when a work request references a Figma file/node, a compact design summary is fetched at submit time into `ContextSnapshot.rawDesign`; failures never block submission. (Agent-time reads instead go through an `mcp` Connection to Figma's Dev Mode endpoint.) | `resolveFigmaConfig()` |
 | `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule, eval-regression schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` / `resolveEvalScheduleConfig()` |
 

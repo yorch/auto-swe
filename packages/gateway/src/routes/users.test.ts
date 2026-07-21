@@ -527,5 +527,127 @@ describe('userRoutes', () => {
       expect(res.statusCode).toBe(403);
       expect(ctx.mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
+
+    describe('admin self-mutation guard', () => {
+      it('returns 400 CANNOT_SELF_DEACTIVATE when an admin deactivates their own account', async () => {
+        ctx.authState.sub = USER_ID;
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('CANNOT_SELF_DEACTIVATE');
+        expect(ctx.mockPrisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 CANNOT_SELF_DEMOTE when an admin removes their own admin role', async () => {
+        ctx.authState.sub = USER_ID;
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { role: 'ENGINEER' },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('CANNOT_SELF_DEMOTE');
+        expect(ctx.mockPrisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('allows an admin to re-affirm their own ADMIN role', async () => {
+        ctx.authState.sub = USER_ID;
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'admin@example.com',
+          id: USER_ID,
+          isActive: true,
+          role: 'ADMIN',
+          slackId: null,
+        });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { role: 'ADMIN' },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
+      });
+
+      it('allows an admin to edit their own email', async () => {
+        ctx.authState.sub = USER_ID;
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'new@x.com',
+          id: USER_ID,
+          isActive: true,
+          role: 'ADMIN',
+          slackId: null,
+        });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { email: 'new@x.com' },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
+      });
+
+      it('allows an admin to deactivate a different user', async () => {
+        ctx.authState.sub = 'admin-1';
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: false,
+          role: 'ENGINEER',
+          slackId: null,
+        });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
+      });
+
+      it('allows an admin to demote a different user', async () => {
+        ctx.authState.sub = 'admin-1';
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: true,
+          role: 'ENGINEER',
+          slackId: null,
+        });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { role: 'ENGINEER' },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(ctx.mockPrisma.user.update).toHaveBeenCalled();
+      });
+    });
   });
 });

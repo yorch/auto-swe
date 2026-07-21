@@ -34,6 +34,51 @@ const WORKSPACE_MEMORY = '4g';
 const WORKSPACE_CPUS = 2;
 const WORKSPACE_PIDS_LIMIT = 512;
 
+// Cloud metadata-IP egress block (deferred follow-up to the `--add-host`
+// hardening below): can be disabled per-deployment with
+// `WORKSPACE_BLOCK_METADATA=false` if it misbehaves on a given Docker runtime
+// (e.g. `--network container:` unsupported). Default ON.
+const BLOCK_METADATA = process.env.WORKSPACE_BLOCK_METADATA !== 'false';
+
+// Small, well-known image with busybox `ip` — used only for the short-lived
+// route-install sidecar in `buildMetadataBlockArgs`, never for the workspace
+// itself.
+const METADATA_BLOCK_IMAGE = 'alpine:3.20';
+
+/**
+ * Build the `docker run` invocation for the short-lived metadata-block sidecar.
+ *
+ * Why a sidecar rather than doing this in the workspace container itself: the
+ * workspace runs with `--cap-drop=ALL` (see `createWorkspace` below) so it has
+ * no `NET_ADMIN` and cannot install routes on its own network stack. Instead,
+ * a *separate*, throwaway container joins the workspace's network namespace
+ * via `--network container:<containerName>` with `NET_ADMIN` added just long
+ * enough to install blackhole routes for the cloud metadata IPs, then exits
+ * (`--rm`). The routes live in the shared netns and persist after the sidecar
+ * is gone, so the long-lived agent-controlled workspace container never holds
+ * `NET_ADMIN` itself.
+ *
+ * Blocked addresses: `169.254.169.254` (AWS/GCP/Azure IMDS), `169.254.170.2`
+ * (ECS task metadata endpoint), `fd00:ec2::254` (IPv6 IMDS). Each `ip route
+ * add` is `|| true`'d so a route that already exists (or an `ip -6` on a
+ * netns without IPv6) doesn't fail the whole sidecar.
+ *
+ * Pure and side-effect-free — returns the command string for the caller to
+ * exec, so it's unit-testable without a Docker daemon. The route-install
+ * behavior itself (does the workspace actually lose IMDS reachability
+ * afterward?) still requires a real-Docker smoke test; there is no Docker
+ * daemon available in CI or this sandbox to exercise it end-to-end.
+ */
+export function buildMetadataBlockArgs(containerName: string, image: string): string {
+  const routeCmd = [
+    'ip route add blackhole 169.254.169.254/32 2>/dev/null || true',
+    'ip route add blackhole 169.254.170.2/32 2>/dev/null || true',
+    'ip -6 route add blackhole fd00:ec2::254/128 2>/dev/null || true',
+    'true',
+  ].join('; ');
+  return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
+}
+
 /**
  * Provision an ephemeral Docker workspace with the repo cloned at the default
  * branch and a fresh local branch checked out. `authedRepoUrl` must already
@@ -113,15 +158,41 @@ export async function createWorkspace(
   //    endpoint (`metadata.google.internal`/`metadata.gke.internal`) so an
   //    agent can't trivially exfiltrate the host's cloud credentials through
   //    it. This does NOT block the metadata service's link-local IP
-  //    (169.254.169.254) directly — an agent could still reach it by IP. A
-  //    full egress firewall (a custom bridge network blackholing
-  //    169.254.0.0/16 at the network layer) is a documented follow-up; it
-  //    needs `NET_ADMIN` inside the container to set up, which conflicts with
-  //    `--cap-drop=ALL` here, so it isn't attempted in this pass.
+  //    (169.254.169.254) directly — an agent could still reach it by IP.
+  //    That gap is closed below via a short-lived privileged sidecar (see
+  //    `buildMetadataBlockArgs`) run right after this container starts, since
+  //    installing the route here would need `NET_ADMIN`, which conflicts
+  //    with `--cap-drop=ALL`.
   await execShellAsync(
     `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${WORKSPACE_MEMORY} --cpus=${WORKSPACE_CPUS} --pids-limit=${WORKSPACE_PIDS_LIMIT} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(image)} sleep infinity`,
     { heartbeatLabel: 'workspace: starting container' }
   );
+
+  // Cloud metadata-IP egress block (deferred follow-up, now implemented): run
+  // a throwaway sidecar that shares this container's network namespace to
+  // install blackhole routes for the metadata IPs — see `buildMetadataBlockArgs`
+  // for the full rationale. Best-effort and non-fatal: a failure here (e.g. an
+  // unsupported `--network container:` mode on some Docker runtime) must not
+  // break every workspace run, especially since the primary IMDS
+  // credential-exfil vector — leaking the *host's* cloud credentials pulled
+  // from the metadata service — is already mitigated by the credential
+  // scrubbing elsewhere in this function. This path has no daemon available to
+  // smoke-test in CI/this sandbox; it still needs a real-Docker validation
+  // pass before being relied on in production.
+  if (BLOCK_METADATA) {
+    try {
+      await execShellAsync(buildMetadataBlockArgs(containerName, METADATA_BLOCK_IMAGE), {
+        heartbeatLabel: 'workspace: blocking metadata-IP egress',
+      });
+    } catch (err) {
+      console.warn(
+        `workspace ${containerName}: metadata-IP egress block failed, continuing without it — ` +
+          `agent may be able to reach cloud metadata endpoints by IP: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+  }
 
   // Initial exec function (root of container)
   const rootExec = (command: string): Promise<string> =>

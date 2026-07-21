@@ -7,6 +7,14 @@ vi.mock('@auto-swe/shared/db', () => ({
     agent: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveConsolidationConfig: vi.fn().mockResolvedValue({
+    cronExpression: '0 3 * * 0',
+    enabled: true,
+    minClusterSize: 3,
+    similarityThreshold: 0.85,
+  }),
+}));
 vi.mock('../lib/embeddings.js', () => ({
   currentEmbeddingSpec: vi.fn(async () => 'openai/text-embedding-3-large'),
   generateEmbedding: vi.fn(),
@@ -39,6 +47,7 @@ vi.mock('@mastra/core/agent', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { Agent } from '@mastra/core/agent';
 import { generateEmbedding } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
@@ -48,6 +57,7 @@ const mockQueryRaw = vi.mocked(prisma.$queryRawUnsafe);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockGenerateEmbedding = vi.mocked(generateEmbedding);
 const mockGetModel = vi.mocked(getModel);
+const mockResolveConsolidationConfig = vi.mocked(resolveConsolidationConfig);
 const MockAgent = vi.mocked(Agent);
 
 // Unit vectors for predictable cosine similarity: same seed = similarity 1, different seed = 0.
@@ -219,5 +229,58 @@ describe('consolidateLessons', () => {
     // 7th positional arg to the INSERT is failureType (index 6) — index 5 is
     // the embedding_model spec added by EVOL-4.
     expect(capturedInsertArgs?.[6]).toBeNull();
+  });
+
+  it('falls back to resolveConsolidationConfig when input omits overrides', async () => {
+    mockResolveConsolidationConfig.mockResolvedValue({
+      cronExpression: '0 3 * * 0',
+      enabled: true,
+      minClusterSize: 2,
+      similarityThreshold: 0.5,
+    });
+    // Two rows with cosine similarity 0.6 (dot([1,0],[0.6,0.8]) = 0.6, both
+    // unit vectors): below the 0.85 built-in default threshold they wouldn't
+    // cluster, but the resolved 0.5 threshold (and minClusterSize 2) should
+    // let them cluster and qualify.
+    mockQueryRaw.mockResolvedValue([
+      { ...makeLessonRow('a', 'lesson a', 0), embeddingJson: JSON.stringify([1, 0]) },
+      { ...makeLessonRow('b', 'lesson b', 0), embeddingJson: JSON.stringify([0.6, 0.8]) },
+    ]);
+    makeSuccessGenerate();
+
+    const result = await consolidateLessons({ repoId: 'repo-1' });
+
+    expect(mockResolveConsolidationConfig).toHaveBeenCalledOnce();
+    expect(result.clustersConsolidated).toBe(1);
+    expect(result.lessonsConsolidated).toBe(2);
+  });
+
+  it('prefers explicit input overrides over the resolved DB config', async () => {
+    mockResolveConsolidationConfig.mockResolvedValue({
+      cronExpression: '0 3 * * 0',
+      enabled: true,
+      minClusterSize: 2,
+      similarityThreshold: 0.5,
+    });
+    // Only 2 rows — below the explicit input minClusterSize of 3, so the
+    // resolved DB minClusterSize of 2 must NOT be used.
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'lesson a', 0),
+      makeLessonRow('b', 'lesson b', 0),
+    ]);
+
+    const result = await consolidateLessons({
+      minClusterSize: 3,
+      repoId: 'repo-1',
+      similarityThreshold: 0.99,
+    });
+
+    expect(result).toEqual({
+      clustersConsolidated: 0,
+      clustersFound: 0,
+      lessonsConsolidated: 0,
+      lessonsCreated: 0,
+    });
+    expect(MockAgent).not.toHaveBeenCalled();
   });
 });

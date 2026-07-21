@@ -1469,6 +1469,11 @@ model IssueTrackerConfig {
   webhookSecretLastFour   String? @map("webhook_secret_last_four")
   webhookTriggerStatus    String? @map("webhook_trigger_status")
 
+  // SSRF guard opt-in: when true, a private/internal-network baseUrl is
+  // permitted for this connector instead of being rejected. See
+  // lib/integrations/registry.ts's checkBaseUrlSafety.
+  allowPrivateNetwork Boolean @default(false) @map("allow_private_network")
+
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("issue_tracker_config")
@@ -1494,6 +1499,11 @@ model KnowledgeBaseConfig {
   // Search config
   spaces   String[] // Confluence space keys or Notion database IDs to search
   maxPages Int?     @default(5) @map("max_pages")
+
+  // SSRF guard opt-in: when true, a private/internal-network baseUrl is
+  // permitted for this connector instead of being rejected. See
+  // lib/integrations/registry.ts's checkBaseUrlSafety.
+  allowPrivateNetwork Boolean @default(false) @map("allow_private_network")
 
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

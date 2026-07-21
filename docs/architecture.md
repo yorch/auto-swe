@@ -145,7 +145,7 @@ packages/
 | `src/activities/createOrUpdatePullRequest.ts` | GitHub PR create/update via Octokit; idempotent on branch |
 | `src/activities/templates.ts` | Fetches + resolves `WorkflowSpec` for a run (scope cascade + A/B routing) |
 | `src/activities/state.ts` | `updateDomainState`, `createWorkflowRun`, `recordWorkflowStep`, `finalizeWorkflowRun` |
-| `src/activities/workspace.ts` | DinD workspace helpers — `createWorkspace()` returns `{ exec, execCapture, gitAuthed, destroy }` + `shellQuote()`. The container runs hardened (`--cap-drop=ALL`, `--security-opt=no-new-privileges`, memory/cpu/pids caps; network + writable layer kept for git/npm); the clone credential is scrubbed from `.git/config` after clone and re-injected per-call via `gitAuthed` (`http.extraheader`) for push/fetch only |
+| `src/activities/workspace.ts` | DinD workspace helpers — `createWorkspace()` returns `{ exec, execCapture, gitAuthed, destroy }` + `shellQuote()`. The container runs hardened (`--cap-drop=ALL`, `--security-opt=no-new-privileges`, memory/cpu/pids caps; network + writable layer kept for git/npm); the clone credential is scrubbed from `.git/config` after clone and re-injected per-call via `gitAuthed` (`http.extraheader`) for push/fetch only. Cloud metadata IPs (169.254.169.254 / ECS / IPv6 IMDS) are blackholed via a short-lived `--cap-add=NET_ADMIN` sidecar that shares the workspace netns (`buildMetadataBlockArgs`) — best-effort, gated by `WORKSPACE_BLOCK_METADATA` (default on); needs a real-Docker smoke test |
 | `src/agents/implementer.ts` | Mastra `Agent` for code writing + TDD |
 | `src/agents/reviewNetwork.ts` | Three Mastra `Agent`s (Security Auditor, Domain Logic, Performance) |
 | `src/agents/plannerAgent.ts` | Mastra `Agent` for per-repo plan decomposition |
