@@ -54,9 +54,9 @@ describe('withCache', () => {
     // CI runners (we've seen unexplained intermittent failures under
     // Node 24 + fake-timer-driven cache tests).
     const fetcher = vi.fn().mockResolvedValueOnce('v1').mockResolvedValueOnce('v2');
-    await withCache('k', 10, fetcher);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    const r = await withCache('k', 10, fetcher);
+    await withCache('k', 50, fetcher);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const r = await withCache('k', 50, fetcher);
     expect(r).toBe('v2');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
@@ -110,12 +110,12 @@ describe('bounded cache (LRU + sweep)', () => {
 
     // Insert 10 entries with a tiny TTL.
     for (const k of Array.from({ length: 10 }, (_, i) => `k${i}`)) {
-      await withCache(k, 10, async () => k);
+      await withCache(k, 50, async () => k);
     }
     expect(_cacheSizeForTests()).toBe(10);
 
     // Wait past TTL.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // A fresh insert should sweep the 10 expired entries first.
     await withCache('fresh', 30_000, async () => 'fresh');

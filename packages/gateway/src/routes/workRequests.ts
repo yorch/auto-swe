@@ -21,7 +21,8 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
-import { assertOrgAccess, currentYearMonth } from '../lib/orgAccess.js';
+import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -327,9 +328,7 @@ const CreateWorkRequestSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
-const ListWorkRequestsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+const ListWorkRequestsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Substring match on the external ticket ID. */
   ticket: z.string().max(200).optional(),
 });
@@ -448,19 +447,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Org budget cap check (P5): reject if the org has exceeded its monthly cap.
       const budgetCap = repo.team.organization?.monthlyBudgetUsdCents;
-      if (budgetCap != null) {
-        const usage = await fastify.prisma.orgMonthlyUsage.findUnique({
-          where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
-        });
-        const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
-        if (spentCents >= budgetCap) {
-          return reply.status(402).send({
-            error: {
-              code: 'ORG_BUDGET_EXCEEDED',
-              message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
-            },
-          });
-        }
+      if (!(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
+        return;
       }
 
       // A SWE work request targets a git_repo connection (org/repo are nullable

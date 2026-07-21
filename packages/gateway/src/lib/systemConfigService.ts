@@ -784,7 +784,11 @@ export async function updateIssueTrackerConfig(
     ['epicIssueType', epicIssueType],
     ['storyIssueType', storyIssueType],
     ['defaultProjectKey', defaultProjectKey],
-    ['webhookSecret', webhookSecret],
+    // `webhookSecret` is a secret: `sealInto` above no-ops on a null/empty value
+    // (secrets are never cleared through this path), so a null must not be
+    // audited as "changed" when nothing was actually persisted. Normalize null →
+    // undefined to keep the audit log in sync with the write.
+    ['webhookSecret', webhookSecret ?? undefined],
     ['webhookTriggerStatus', webhookTriggerStatus],
   ]);
 

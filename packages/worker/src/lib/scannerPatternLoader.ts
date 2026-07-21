@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { SCANNER_PATTERN_CACHE_TTL_MS as CACHE_TTL_MS } from '@auto-swe/shared/lib/scannerCache';
 
 interface CachedEntry {
   label: string;
@@ -22,7 +23,6 @@ type PatternType =
 
 export function makePatternLoader(type: PatternType, logPrefix: string) {
   let cache: { entries: CachedEntry[]; fetchedAt: number } | null = null;
-  const CACHE_TTL_MS = 60_000;
 
   async function load(): Promise<CachedEntry[]> {
     const now = Date.now();

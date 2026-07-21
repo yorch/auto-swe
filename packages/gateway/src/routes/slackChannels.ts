@@ -794,8 +794,8 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           kind: (meta.kind as string) ?? 'mention',
           runId: run.id,
           status: run.status,
-          tokensInput: run.tokensInputTotal ?? 0,
-          tokensOutput: run.tokensOutputTotal ?? 0,
+          tokensInput: Number(run.tokensInputTotal ?? 0),
+          tokensOutput: Number(run.tokensOutputTotal ?? 0),
           userSlackId: (meta.userSlackId as string | null) ?? null,
           userText: (meta.userText as string | null) ?? null,
         };

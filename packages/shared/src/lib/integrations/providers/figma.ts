@@ -134,8 +134,13 @@ function summarizeNode(node: FigmaNode): {
 
 // ---- provider ----
 
+/** Figma REST API base — fixed (not operator-configurable); exported so the
+ *  registry factory can run it through the shared SSRF guard alongside the
+ *  other connector base URLs before constructing the provider. */
+export const FIGMA_API_BASE_URL = 'https://api.figma.com/v1';
+
 export class FigmaProvider implements FigmaDesignProvider {
-  private readonly baseUrl = 'https://api.figma.com/v1';
+  private readonly baseUrl = FIGMA_API_BASE_URL;
 
   constructor(private readonly config: ResolvedFigmaConfig) {}
 

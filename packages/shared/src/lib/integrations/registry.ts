@@ -1,9 +1,10 @@
+import { isSafeProbeUrl } from '../ssrfGuard.js';
 import { AtlassianClient } from './atlassianClient.js';
 import type { FigmaDesignProvider } from './figmaDesign.js';
 import type { IssueTrackerProvider } from './issueTracker.js';
 import type { KnowledgeBaseProvider } from './knowledgeBase.js';
 import { ConfluenceProvider } from './providers/confluence.js';
-import { FigmaProvider } from './providers/figma.js';
+import { FIGMA_API_BASE_URL, FigmaProvider } from './providers/figma.js';
 import { GitHubIssuesProvider } from './providers/githubIssues.js';
 import { JiraProvider } from './providers/jira.js';
 import { LinearProvider } from './providers/linear.js';
@@ -41,6 +42,24 @@ export interface ResolvedFigmaConfig {
   maxNodes?: number;
 }
 
+/**
+ * Run a connector base URL through the shared SSRF guard, logging + returning
+ * `false` on rejection so the caller can fail closed (`return null`) with a
+ * consistent warn message across every provider factory below.
+ */
+function checkBaseUrlSafety(
+  baseUrl: string,
+  label: string,
+  opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
+): boolean {
+  const safety = isSafeProbeUrl(baseUrl);
+  if (!safety.ok) {
+    opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);
+    return false;
+  }
+  return true;
+}
+
 export function createIssueTrackerProvider(
   config: ResolvedIssueTrackerConfig,
   opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
@@ -51,6 +70,9 @@ export function createIssueTrackerProvider(
   switch (config.provider) {
     case 'jira': {
       if (!config.baseUrl || !config.email) {
+        return null;
+      }
+      if (!checkBaseUrlSafety(config.baseUrl, 'Jira', opts)) {
         return null;
       }
       const client = new AtlassianClient({
@@ -72,6 +94,9 @@ export function createIssueTrackerProvider(
       return new LinearProvider(config.apiToken, { log: opts?.log });
     }
     case 'github': {
+      if (config.baseUrl && !checkBaseUrlSafety(config.baseUrl, 'GitHub Issues', opts)) {
+        return null;
+      }
       return new GitHubIssuesProvider({
         apiToken: config.apiToken,
         baseUrl: config.baseUrl ?? undefined,
@@ -95,6 +120,9 @@ export function createKnowledgeBaseProvider(
       if (!config.baseUrl || !config.email) {
         return null;
       }
+      if (!checkBaseUrlSafety(config.baseUrl, 'Confluence', opts)) {
+        return null;
+      }
       const client = new AtlassianClient({
         apiToken: config.apiToken,
         baseUrl: config.baseUrl,
@@ -110,8 +138,17 @@ export function createKnowledgeBaseProvider(
   }
 }
 
-export function createFigmaDesignProvider(config: ResolvedFigmaConfig): FigmaDesignProvider | null {
+export function createFigmaDesignProvider(
+  config: ResolvedFigmaConfig,
+  opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
+): FigmaDesignProvider | null {
   if (!config.enabled || !config.apiToken) {
+    return null;
+  }
+  // FIGMA_API_BASE_URL is a fixed constant today (not operator-configurable),
+  // but run it through the same guard as every other connector base URL for
+  // consistency and to fail safe if it ever becomes configurable.
+  if (!checkBaseUrlSafety(FIGMA_API_BASE_URL, 'Figma', opts)) {
     return null;
   }
   return new FigmaProvider(config);

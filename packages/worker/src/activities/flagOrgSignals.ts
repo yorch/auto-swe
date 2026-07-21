@@ -11,6 +11,7 @@ import {
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
+import { SKIP_SENTINEL } from './channelConstants.js';
 
 /** Input for the org-flagging activity (mirrors the workflow arg). */
 export interface FlagOrgSignalsInput {
@@ -47,9 +48,6 @@ const ORG_FLAG_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 hours
 
 /** Below this length a "flag" is a trivial reply not worth posting. */
 const MIN_FLAG_LENGTH = 12;
-
-/** A reply beginning with the word `skip` (case-insensitive) is the skip sentinel. */
-const SKIP_SENTINEL = /^skip\b/i;
 
 /** Cap per candidate summary in the prompt (defensive). */
 const MAX_SUMMARY_CHARS = 300;

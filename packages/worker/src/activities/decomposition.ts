@@ -330,13 +330,13 @@ async function provisionMergeWorkspace(
   const refs = [targetBranch, ...sourceBranches];
   const refList = refs.map((r) => shellQuote(r)).join(' ');
   try {
-    await workspace.exec(`git fetch origin ${refList}`);
+    await workspace.gitAuthed(`fetch origin ${refList}`);
     log.push(`fetched ${refs.join(', ')}`);
   } catch {
     log.push('batched fetch failed; retrying per-ref');
     for (const r of refs) {
       try {
-        await workspace.exec(`git fetch origin ${shellQuote(r)}`);
+        await workspace.gitAuthed(`fetch origin ${shellQuote(r)}`);
         log.push(`fetched ${r}`);
       } catch {
         log.push(`fetch ${r} failed (branch may not exist remotely)`);
@@ -359,7 +359,7 @@ async function pushAndCapture(
   targetBranch: string,
   log: string[]
 ): Promise<string> {
-  await workspace.exec(`git push origin ${shellQuote(targetBranch)}`);
+  await workspace.gitAuthed(`push origin ${shellQuote(targetBranch)}`);
   const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
   log.push(`pushed ${targetBranch} (head ${headSha})`);
   return headSha;

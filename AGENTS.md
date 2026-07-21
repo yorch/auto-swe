@@ -57,7 +57,7 @@
 | Component             | Technology                             | Version                |
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=24.0.0               |
-| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.16.0                 |
+| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.17.0                 |
 | Language              | TypeScript                             | 6.0.3                  |
 | HTTP Framework        | Fastify                                | 5.8.5                  |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
@@ -399,8 +399,10 @@ yarn db:migrate && yarn db:generate && yarn db:seed
 #  ↳ seeds the admin user, default team, sample repo, and default workflow
 #    template. Re-running `yarn workspace @auto-swe/shared exec prisma migrate reset`
 #    is the cleanest way to
-#    start over locally (migrations consolidate into a single init + the
-#    pgvector HNSW index migration; see packages/shared/src/prisma/migrations).
+#    start over locally (two migrations: a generated `init` baseline + a
+#    hand-written `custom_constraints_and_indexes` file for DDL the Prisma DSL
+#    can't express — CHECK constraints, partial unique indexes, the pgvector
+#    HNSW index, array NOT NULL, seeds; see packages/shared/src/prisma/migrations).
 
 # 4. Start gateway + web first (worker needs GitHub config in DB before starting)
 yarn dev:gateway         # Terminal 1 — http://localhost:8080

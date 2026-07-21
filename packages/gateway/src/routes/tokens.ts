@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { PAT_PREFIX, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
  * Phase-8 personal access tokens.
@@ -18,7 +18,6 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  */
 
 const PAT_BYTES = 32;
-const PAT_PREFIX = 'ats_';
 
 const CreateTokenBody = z.object({
   /** Days until expiry. Omit for non-expiring (max 365). */

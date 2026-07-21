@@ -36,11 +36,19 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 // Mutable per-test via jiraPrismaState.
 const jiraPrismaState = vi.hoisted(() => ({
   activeRepo: null as Record<string, unknown> | null,
+  activeWorkflowCreateCalls: [] as Record<string, unknown>[],
+  defaultTemplate: { activeVersion: 1, id: 'tpl-1' } as Record<string, unknown> | null,
   runInputCreateCalls: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    activeWorkflow: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        jiraPrismaState.activeWorkflowCreateCalls.push(args.data);
+        return { id: 'aw-1', ...args.data };
+      }),
+    },
     connection: {
       findFirst: vi.fn(async () => jiraPrismaState.activeRepo),
     },
@@ -51,7 +59,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       }),
     },
     workflowTemplate: {
-      findFirst: vi.fn(async () => ({ activeVersion: 1, id: 'tpl-1' })),
+      findFirst: vi.fn(async () => jiraPrismaState.defaultTemplate),
     },
   },
 }));
@@ -82,10 +90,18 @@ describe('webhook routes', () => {
   let trackedPr: Record<string, unknown> | null = null;
   let openPrs: Array<Record<string, unknown>> = [];
   const updateCalls: UpdateCall[] = [];
+  const updateManyCalls: UpdateCall[] = [];
+  // Per-call override for updateMany's returned `count` (index-aligned with
+  // updateManyCalls) — used to simulate the "already at this ciStatus" no-op
+  // path for the duplicate-delivery idempotency test. `null` means every call
+  // transitions (count: 1), matching a first-time delivery.
+  let updateManyResultCounts: number[] | null = null;
   const signalCalls: SignalCall[] = [];
   const evalCreateCalls: Array<Record<string, unknown>> = [];
   let workflowRunRow: { id: string } | null = null;
   let fetchMock: ReturnType<typeof vi.fn>;
+  let jiraStartShouldConflict = false;
+  const jiraStartCalls: Array<{ id: string; args: unknown }> = [];
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -107,6 +123,12 @@ describe('webhook routes', () => {
           updateCalls.push(args);
           return { id: args.where.id };
         },
+        updateMany: async (args: UpdateCall) => {
+          const idx = updateManyCalls.length;
+          updateManyCalls.push(args);
+          const count = updateManyResultCounts ? (updateManyResultCounts[idx] ?? 1) : 1;
+          return { count };
+        },
       },
       workflowRun: {
         findFirst: async () => workflowRunRow,
@@ -116,6 +138,14 @@ describe('webhook routes', () => {
     app.decorate('temporal', {
       signalWorkflow: async (workflowId: string, signalName: string, args: unknown[]) => {
         signalCalls.push({ args, signalName, workflowId });
+      },
+      startRunnableWorkflow: async (id: string, args: unknown) => {
+        if (jiraStartShouldConflict) {
+          const err = new Error('already started');
+          err.name = 'WorkflowExecutionAlreadyStartedError';
+          throw err;
+        }
+        jiraStartCalls.push({ args, id });
       },
     } as unknown as never);
 
@@ -129,6 +159,8 @@ describe('webhook routes', () => {
     trackedPr = null;
     openPrs = [];
     updateCalls.length = 0;
+    updateManyCalls.length = 0;
+    updateManyResultCounts = null;
     signalCalls.length = 0;
     evalCreateCalls.length = 0;
     workflowRunRow = null;
@@ -144,6 +176,10 @@ describe('webhook routes', () => {
     };
     jiraPrismaState.activeRepo = null;
     jiraPrismaState.runInputCreateCalls.length = 0;
+    jiraPrismaState.activeWorkflowCreateCalls.length = 0;
+    jiraPrismaState.defaultTemplate = { activeVersion: 1, id: 'tpl-1' };
+    jiraStartShouldConflict = false;
+    jiraStartCalls.length = 0;
     fetchMock = vi.fn(async () => {
       throw new Error('fetch not stubbed for this test');
     });
@@ -293,9 +329,13 @@ describe('webhook routes', () => {
     }
 
     function checkRunsResponse(
-      runs: Array<{ status: string; conclusion: string | null; html_url: string }>
+      runs: Array<{ status: string; conclusion: string | null; html_url: string }>,
+      totalCount?: number
     ) {
-      return { json: async () => ({ check_runs: runs }), ok: true };
+      return {
+        json: async () => ({ check_runs: runs, total_count: totalCount ?? runs.length }),
+        ok: true,
+      };
     }
 
     beforeEach(() => {
@@ -311,7 +351,9 @@ describe('webhook routes', () => {
         signaled: ['wf-ci-1'],
       });
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(updateCalls).toEqual([{ data: { ciStatus: 'FAILED' }, where: { id: 'pr-row-1' } }]);
+      expect(updateManyCalls).toEqual([
+        { data: { ciStatus: 'FAILED' }, where: { ciStatus: { not: 'FAILED' }, id: 'pr-row-1' } },
+      ]);
       expect(signalCalls).toEqual([
         {
           args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: false }],
@@ -319,6 +361,20 @@ describe('webhook routes', () => {
           workflowId: 'wf-ci-1',
         },
       ]);
+    });
+
+    it('is idempotent: a redelivered webhook whose ciStatus is unchanged signals nothing', async () => {
+      // count: 0 simulates the PR already sitting at ciStatus=FAILED.
+      updateManyResultCounts = [0];
+      const body = ciPayload('failure');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual({
+        conclusion: 'failure',
+        ignored: true,
+        reason: 'CI status unchanged (duplicate delivery)',
+      });
+      expect(signalCalls).toHaveLength(0);
     });
 
     it('defers (no signal) when a successful run has siblings still in progress', async () => {
@@ -338,7 +394,7 @@ describe('webhook routes', () => {
       });
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(fetchMock).toHaveBeenCalledWith(
-        `https://api.github.com/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100`,
+        `https://api.github.com/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100&page=1`,
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer gh-pat-token' }),
         })
@@ -362,7 +418,9 @@ describe('webhook routes', () => {
         conclusion: 'success',
         signaled: ['wf-ci-1'],
       });
-      expect(updateCalls).toEqual([{ data: { ciStatus: 'PASSED' }, where: { id: 'pr-row-1' } }]);
+      expect(updateManyCalls).toEqual([
+        { data: { ciStatus: 'PASSED' }, where: { ciStatus: { not: 'PASSED' }, id: 'pr-row-1' } },
+      ]);
       expect(signalCalls).toEqual([
         {
           args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: true }],
@@ -382,7 +440,9 @@ describe('webhook routes', () => {
       const body = ciPayload('success');
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
       expect(res.statusCode).toBe(200);
-      expect(updateCalls).toEqual([{ data: { ciStatus: 'FAILED' }, where: { id: 'pr-row-1' } }]);
+      expect(updateManyCalls).toEqual([
+        { data: { ciStatus: 'FAILED' }, where: { ciStatus: { not: 'FAILED' }, id: 'pr-row-1' } },
+      ]);
       expect(signalCalls).toEqual([
         {
           args: [{ logsUrl: 'https://x/runs/2-failed', passed: false }],
@@ -425,6 +485,72 @@ describe('webhook routes', () => {
       ]);
     });
 
+    it('paginates the check-runs listing across multiple pages when total_count exceeds one page', async () => {
+      const page1 = Array.from({ length: 100 }, (_, i) => ({
+        conclusion: 'success',
+        html_url: `https://x/runs/${i}`,
+        status: 'completed',
+      }));
+      const page2 = [
+        { conclusion: 'success', html_url: 'https://x/runs/100', status: 'completed' },
+        { conclusion: 'failure', html_url: 'https://x/runs/101-failed', status: 'completed' },
+      ];
+      fetchMock
+        .mockResolvedValueOnce(checkRunsResponse(page1, 102))
+        .mockResolvedValueOnce(checkRunsResponse(page2, 102));
+      const body = ciPayload('success');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('per_page=100&page=1'),
+        expect.anything()
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('per_page=100&page=2'),
+        expect.anything()
+      );
+      // The second page's failing run decides the aggregated outcome.
+      expect(updateManyCalls).toEqual([
+        { data: { ciStatus: 'FAILED' }, where: { ciStatus: { not: 'FAILED' }, id: 'pr-row-1' } },
+      ]);
+      expect(signalCalls).toEqual([
+        {
+          args: [{ logsUrl: 'https://x/runs/101-failed', passed: false }],
+          signalName: 'ciPipelineSignal',
+          workflowId: 'wf-ci-1',
+        },
+      ]);
+    });
+
+    it('falls back to per-run signaling when the run count is truncated past the page cap', async () => {
+      // total_count of 1000 can never be reached within 5 pages of 100, so
+      // aggregation gives up and the handler falls back to legacy signaling.
+      const fullPage = Array.from({ length: 100 }, (_, i) => ({
+        conclusion: 'success',
+        html_url: `https://x/runs/${i}`,
+        status: 'completed',
+      }));
+      fetchMock.mockResolvedValue(checkRunsResponse(fullPage, 1000));
+      const body = ciPayload('success');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(JSON.parse(res.payload).data).toEqual({
+        conclusion: 'success',
+        signaled: ['wf-ci-1'],
+      });
+      expect(signalCalls).toEqual([
+        {
+          args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: true }],
+          signalName: 'ciPipelineSignal',
+          workflowId: 'wf-ci-1',
+        },
+      ]);
+    });
+
     it('ignores check_run events when no tracked PR matches the commit', async () => {
       openPrs = [];
       const body = ciPayload('failure');
@@ -454,55 +580,100 @@ describe('webhook routes', () => {
       });
     }
 
-    it('skips non-transition payloads', async () => {
-      const res = await inject('/api/v1/webhooks/jira', JSON.stringify({}));
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
-      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
+    // Fail-closed posture requires a configured secret for every request in
+    // this block by default; the dedicated "fails closed" test below unsets it.
+    beforeEach(() => {
+      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
     });
 
-    it("skips when transition.to.name doesn't match webhookTriggerStatus", async () => {
-      const body = transitionPayload('In Progress');
-      const res = await inject('/api/v1/webhooks/jira', body);
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
-      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
-    });
-
-    it('creates a work request when transition matches', async () => {
-      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
-      const body = transitionPayload('Ready for Dev', 'PROJ-42');
-      const res = await inject('/api/v1/webhooks/jira', body);
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ ok: true, ticketId: 'PROJ-42' });
-      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(1);
-      expect(jiraPrismaState.runInputCreateCalls[0]).toMatchObject({
-        connectionId: 'conn-1',
-        externalTicketId: 'PROJ-42',
-      });
+    it('fails closed with 401 when no webhook secret is configured, even with a valid-looking signature', async () => {
+      state.jira = { ...state.jira, webhookSecret: null };
+      const body = transitionPayload('Ready for Dev');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload).error).toBe('Jira webhook secret not configured');
+      expect(jiraStartCalls).toHaveLength(0);
     });
 
     it('returns 401 when signature is required but missing', async () => {
-      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
       const res = await inject('/api/v1/webhooks/jira', JSON.stringify({}));
       expect(res.statusCode).toBe(401);
     });
 
     it('returns 401 when signature is wrong', async () => {
-      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
       const body = transitionPayload('Ready for Dev');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body, 'wrong-secret'));
       expect(res.statusCode).toBe(401);
     });
 
-    it('accepts a valid HMAC-SHA256 signature and creates the work request', async () => {
-      state.jira = { ...state.jira, webhookSecret: JIRA_SECRET };
+    it('skips non-transition payloads', async () => {
+      const body = JSON.stringify({});
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(jiraStartCalls).toHaveLength(0);
+    });
+
+    it("skips when transition.to.name doesn't match webhookTriggerStatus", async () => {
+      const body = transitionPayload('In Progress');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ skipped: true });
+      expect(jiraStartCalls).toHaveLength(0);
+    });
+
+    it('skips when there is no active default template', async () => {
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      jiraPrismaState.defaultTemplate = null;
+      const body = transitionPayload('Ready for Dev');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({
+        reason: 'no active default template',
+        skipped: true,
+      });
+      expect(jiraStartCalls).toHaveLength(0);
+    });
+
+    it('starts the workflow and records the RunInput + ActiveWorkflow on a valid signed transition', async () => {
       jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
       const body = transitionPayload('Ready for Dev', 'PROJ-99');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ ok: true, ticketId: 'PROJ-99' });
+
+      expect(jiraStartCalls).toHaveLength(1);
+      expect(jiraStartCalls[0].id).toBe('jira-PROJ-99');
+      expect(jiraStartCalls[0].args).toMatchObject({
+        request: expect.objectContaining({
+          externalTicketId: 'PROJ-99',
+          repoId: 'conn-1',
+        }),
+        templateId: 'tpl-1',
+        templateVersion: 1,
+      });
+
       expect(jiraPrismaState.runInputCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.runInputCreateCalls[0]).toMatchObject({
+        connectionId: 'conn-1',
+        externalTicketId: 'PROJ-99',
+      });
+      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.activeWorkflowCreateCalls[0]).toMatchObject({
+        repoId: 'conn-1',
+        temporalWorkflowId: 'jira-PROJ-99',
+      });
+    });
+
+    it('returns 200 duplicate without writing RunInput/ActiveWorkflow when the deterministic workflow already exists', async () => {
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      jiraStartShouldConflict = true;
+      const body = transitionPayload('Ready for Dev', 'PROJ-100');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-100' });
+      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
+      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(0);
     });
   });
 });

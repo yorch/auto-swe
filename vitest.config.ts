@@ -56,6 +56,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ssrfGuard',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/scannerCache',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/scannerCache.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/inputSchema',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/inputSchema.ts'),
       },
@@ -147,9 +155,22 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ['**/*.test.ts', '**/prisma/migrations/**'],
+      exclude: [
+        '**/*.test.ts',
+        '**/prisma/migrations/**',
+        // Generated Prisma client (~106k lines) — not hand-written, not unit-testable.
+        '**/generated/**',
+        '**/*.d.ts',
+        // Type-only barrels and entrypoints with no branching logic to cover.
+        '**/index.ts',
+        '**/prisma/seed.ts',
+      ],
       include: ['packages/*/src/**/*.ts'],
       provider: 'v8',
+      // Floors set a few points below the measured coverage of hand-written
+      // code (lines ~58%, branches ~53%, functions ~49%) so a regression fails
+      // CI without the buffer being brittle. Ratchet upward as coverage grows.
+      thresholds: { branches: 50, functions: 46, lines: 55, statements: 55 },
     },
     // Some modules (e.g. @auto-swe/shared/db) construct a PrismaClient at import
     // time and require DATABASE_URL to be set. PrismaClient connects lazily, so a

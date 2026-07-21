@@ -50,6 +50,12 @@ const execMock = vi.fn(async (cmd: string) => {
   }
   return '';
 });
+// Mirrors the real gitAuthed: injects a (fake) credential header per-call and
+// forwards to the same underlying exec recording/return-value logic above,
+// so existing `execMock`-based command matchers still apply to these calls.
+const gitAuthedMock = vi.fn((subcommand: string) =>
+  execMock(`git -c http.extraheader='AUTHORIZATION: basic redacted' ${subcommand}`)
+);
 const destroyMock = vi.fn(async () => {});
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => ({
@@ -57,6 +63,7 @@ vi.mock('./workspace.js', () => ({
     destroy: destroyMock,
     exec: execMock,
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+    gitAuthed: gitAuthedMock,
   })),
   shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
@@ -229,7 +236,10 @@ describe('runImplementerFixSession', () => {
     findRepo.mockResolvedValue(REPO as never);
     await runImplementerFixSession(input());
     const commands = execMock.mock.calls.map((c) => c[0]);
-    expect(commands.some((c) => c.startsWith('git fetch origin'))).toBe(true);
+    // fetch now goes through gitAuthed (credential injected per-call rather
+    // than a plain `git fetch`), so match on the subcommand rather than a
+    // literal `git fetch` prefix.
+    expect(commands.some((c) => c.includes('fetch origin'))).toBe(true);
     expect(commands.some((c) => c.startsWith('git reset --hard origin/'))).toBe(true);
   });
 

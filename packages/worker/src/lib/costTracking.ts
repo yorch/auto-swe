@@ -210,8 +210,8 @@ export async function recordLlmUsage(
           return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
         }
 
-        const newInput = workflow.tokensInputUsed + inputTokens;
-        const newOutput = workflow.tokensOutputUsed + outputTokens;
+        const newInput = Number(workflow.tokensInputUsed) + inputTokens;
+        const newOutput = Number(workflow.tokensOutputUsed) + outputTokens;
         // ARCH-8: cost is a Float column accumulated incrementally; round each
         // accumulation to micro-dollars so FP representation error can't drift
         // across thousands of increments. (A Decimal column was considered and

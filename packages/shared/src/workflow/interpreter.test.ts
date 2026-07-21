@@ -1544,4 +1544,29 @@ describe('agent node (P2)', () => {
       result: { done: true },
     });
   });
+
+  it('a throwing agent node records exactly ONE FAILED row (no double-record)', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent-error',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'done', type: 'agent', userMessage: 'analyze' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        runAgentNode: () => {
+          throw new Error('agent crashed');
+        },
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('agent crashed');
+    // Exactly one FAILED record for the agent node — runRetryable records it,
+    // walk's catch should not double-record it.
+    const agentFailures = records.filter((r) => r.nodeId === 'a' && r.status === 'FAILED');
+    expect(agentFailures).toHaveLength(1);
+  });
 });

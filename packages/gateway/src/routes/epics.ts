@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
+import { paginationQuery } from '../lib/pagination.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreateEpicSchema = z.object({
@@ -12,10 +14,7 @@ const CreateEpicSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1),
 });
 
-const ListEpicsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+const ListEpicsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
 
 const EpicParams = z.object({
   workflowId: z.string().min(1),
@@ -84,6 +83,10 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 select: { userId: true },
                 where: { userId: user.sub },
               },
+              organization: {
+                select: { id: true, monthlyBudgetUsdCents: true },
+              },
+              orgId: true,
             },
           },
         },
@@ -116,6 +119,28 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 .join(', ')}`,
             },
           });
+        }
+      }
+
+      // Org access + budget check (P5), applied per distinct org across the
+      // selected repos — mirrors the single-repo work-request route, but an
+      // epic can fan out across repos owned by more than one org.
+      const orgs = new Map<string, number | null>();
+      for (const r of repos) {
+        const orgId = r.team.orgId;
+        if (orgId && !orgs.has(orgId)) {
+          orgs.set(orgId, r.team.organization?.monthlyBudgetUsdCents ?? null);
+        }
+      }
+      for (const [orgId, budgetCap] of orgs) {
+        if (user.role !== 'ADMIN') {
+          const hasAccess = await assertOrgAccess(fastify.prisma, user, orgId, reply);
+          if (!hasAccess) {
+            return;
+          }
+        }
+        if (!(await assertOrgBudget(fastify.prisma, orgId, budgetCap, reply))) {
+          return;
         }
       }
 

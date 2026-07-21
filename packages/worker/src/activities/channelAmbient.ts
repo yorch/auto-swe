@@ -8,6 +8,7 @@ import {
   isChannelOverBudgetNow,
   runChannelAgentTurn,
 } from './channelAssistant.js';
+import { SKIP_SENTINEL } from './channelConstants.js';
 
 /** Input for the ambient digest activity (mirrors the workflow arg). */
 export interface ChannelAmbientInput {
@@ -16,13 +17,6 @@ export interface ChannelAmbientInput {
 
 /** Cap on how many recent memory items are injected into the digest prompt. */
 const MAX_DIGEST_MEMORY_ITEMS = 15;
-
-/**
- * Matches a reply that begins with the word `skip` (case-insensitive, after
- * trimming) — e.g. `SKIP`, `skip`, or a decorated `SKIP - nothing actionable`.
- * Any such reply is treated as the skip sentinel and is NOT posted.
- */
-const SKIP_SENTINEL = /^skip\b/i;
 
 /** Below this length a "digest" is a trivial acknowledgement not worth posting. */
 const MIN_DIGEST_LENGTH = 12;

@@ -128,10 +128,9 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
         title,
         url: page.url,
       };
-    } catch (err) {
-      if ((err as { status?: number }).status === 404) {
-        return null;
-      }
+    } catch {
+      // Best-effort: any failure (network, 404, parse) yields null so a
+      // knowledge-base miss never blocks the caller.
       return null;
     }
   }

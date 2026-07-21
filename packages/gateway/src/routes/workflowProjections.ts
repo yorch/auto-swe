@@ -7,12 +7,9 @@
  * wire shape stays in lockstep.
  */
 import type { EvalResultDto } from '@auto-swe/shared/types/api';
-import { z } from 'zod';
+import { paginationQuery } from '../lib/pagination.js';
 
-export const RunListPaginationQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
+export const RunListPaginationQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
 
 export interface RunWithWorkRequest {
   id: string;

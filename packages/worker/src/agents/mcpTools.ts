@@ -19,6 +19,7 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
@@ -74,18 +75,14 @@ export function isMcpToolEnabled(enabledTools?: string[] | null): boolean {
 
 /** Validates that an mcpServerRef is an http(s) URL. Returns the parsed URL or null. */
 export function parseMcpServerRef(mcpServerRef: string): URL | null {
-  let url: URL;
-  try {
-    url = new URL(mcpServerRef);
-  } catch {
-    return null;
-  }
-  // http(s) only — no stdio: a `command` server definition would let a DB
-  // column drive arbitrary command execution on the worker host.
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return null;
-  }
-  return url;
+  // `isSafeProbeUrl` parses the ref, enforces the http(s)-only scheme (no stdio:
+  // a `command` server would let a DB column drive arbitrary command execution on
+  // the worker host), and is our defense-in-depth SSRF guard: the gateway's
+  // `/mcp-connections` create route already rejects unsafe URLs at write time, but
+  // this is the worker's last line of defense against a private/loopback/link-local
+  // target reaching an MCP server connection. Reuse its parsed URL — no re-parse.
+  const safety = isSafeProbeUrl(mcpServerRef);
+  return safety.ok ? safety.url : null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {

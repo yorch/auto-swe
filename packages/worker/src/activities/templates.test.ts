@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveIssueTrackerConfig: async () => null,
   resolveSlackBotTokenForSlackChannel: async () => null,
   resolveSlackConfig: async () => ({
     botToken: null,
@@ -15,6 +16,16 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     prBodyTemplate: '',
     prTitleTemplate: '[auto-swe] {{ticketId}}',
   }),
+}));
+
+vi.mock('../lib/slackNotify.js', () => ({
+  notifySlackRunComplete: vi.fn(),
+  notifySlackStepFailure: vi.fn(),
+  postSlackThreadMessage: vi.fn(),
+}));
+
+vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
+  syncTrackerOnEvent: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -57,6 +68,8 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { notifySlackRunComplete } from '../lib/slackNotify.js';
 import {
   createWorkflowRun,
   finalizeWorkflowRun,
@@ -346,6 +359,39 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
     tx.mockReset();
     orgUpsert.mockReset();
+  });
+
+  it('skips notification + channel accrual + tracker sync on retry when already finalized', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const mockNotifySlack = vi.mocked(notifySlackRunComplete);
+    const mockTrackerSync = vi.mocked(syncTrackerOnEvent);
+    mockNotifySlack.mockClear();
+    mockTrackerSync.mockClear();
+    updateRun.mockClear();
+    findRun.mockResolvedValue({
+      endedAt: new Date(), // already finalized by a prior attempt
+      workflowId: 'eng-test-retry',
+      workRequest: {
+        activeWorkflows: [],
+        externalTicketId: 'JIRA-123',
+        payload: null, // not a channel task
+        slackChannelId: null,
+        slackMessageTs: null,
+      },
+    } as never);
+    updateRun.mockResolvedValue({} as never);
+
+    await finalizeWorkflowRun('run-already-done', 'SUCCESS');
+
+    // Denormalize + activeWorkflow update still run
+    expect(updateRun).toHaveBeenCalled();
+    // But the three side effects do NOT fire on retry
+    expect(mockNotifySlack).not.toHaveBeenCalled();
+    expect(mockTrackerSync).not.toHaveBeenCalled();
+
+    findRun.mockReset();
+    mockNotifySlack.mockReset();
+    mockTrackerSync.mockReset();
   });
 });
 

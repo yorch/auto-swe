@@ -11,7 +11,8 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
     metricReader: endpoint
       ? new PeriodicExportingMetricReader({
           exporter: new OTLPMetricExporter({ url: endpoint }),
-          exportIntervalMillis: 30_000,
+          // Standard OTel env-var convention; defaults to 30s when unset/invalid.
+          exportIntervalMillis: Number(process.env.OTEL_METRIC_EXPORT_INTERVAL) || 30_000,
         })
       : undefined,
     serviceName,

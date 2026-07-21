@@ -900,15 +900,6 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Toggling isDefault has team-wide side effects: ensure exactly one
-      // default per (teamId, isDefault=true).
-      if (request.body.isDefault === true) {
-        await fastify.prisma.workflowTemplate.updateMany({
-          data: { isDefault: false },
-          where: { id: { not: existing.id }, teamId: existing.teamId },
-        });
-      }
-
       // Experiment-config validation. Done at PATCH time (vs. a CHECK constraint)
       // because the rule depends on a sibling row (the version must exist for
       // this template) which Postgres can't express cheaply.
@@ -941,18 +932,33 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const { inputSchema: rawInputSchema, ...restBody } = request.body;
-      const updated = await fastify.prisma.workflowTemplate.update({
-        data: {
-          ...restBody,
-          ...(rawInputSchema !== undefined && {
-            inputSchema:
-              rawInputSchema != null
-                ? (rawInputSchema as unknown as Prisma.InputJsonValue)
-                : Prisma.DbNull,
-          }),
-        },
-        include: TEMPLATE_INCLUDE,
-        where: { id: existing.id },
+      const updateData: Prisma.WorkflowTemplateUpdateInput = {
+        ...restBody,
+        ...(rawInputSchema !== undefined && {
+          inputSchema:
+            rawInputSchema != null
+              ? (rawInputSchema as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
+        }),
+      };
+
+      // Toggling isDefault has team-wide side effects: ensure exactly one
+      // default per (teamId, isDefault=true). Clearing siblings and applying
+      // this update run in one transaction so a concurrent read can never
+      // observe a moment with zero (or more than one) default template for
+      // the team.
+      const updated: TemplateWithIncludes = await fastify.prisma.$transaction(async (tx) => {
+        if (request.body.isDefault === true) {
+          await tx.workflowTemplate.updateMany({
+            data: { isDefault: false },
+            where: { id: { not: existing.id }, teamId: existing.teamId },
+          });
+        }
+        return tx.workflowTemplate.update({
+          data: updateData,
+          include: TEMPLATE_INCLUDE,
+          where: { id: existing.id },
+        });
       });
       const lastRuns = await loadLastRuns(fastify, [updated.id]);
       return { data: projectTemplate(updated, lastRuns.get(updated.id)) };

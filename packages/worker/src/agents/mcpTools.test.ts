@@ -72,8 +72,8 @@ describe('isMcpToolEnabled', () => {
 // ── Ref validation (http(s) only — no stdio) ──
 
 describe('parseMcpServerRef', () => {
-  it('accepts http and https URLs', () => {
-    expect(parseMcpServerRef('http://localhost:8080/mcp')?.protocol).toBe('http:');
+  it('accepts http and https URLs to public hosts', () => {
+    expect(parseMcpServerRef('http://mcp-server.example.com:8080/mcp')?.protocol).toBe('http:');
     expect(parseMcpServerRef('https://mcp.example.com/sse')?.protocol).toBe('https:');
   });
 
@@ -82,6 +82,19 @@ describe('parseMcpServerRef', () => {
     expect(parseMcpServerRef('stdio:some-command')).toBeNull();
     expect(parseMcpServerRef('file:///etc/passwd')).toBeNull();
     expect(parseMcpServerRef('ws://example.com')).toBeNull();
+  });
+
+  // Defense-in-depth (G3): the gateway's `/mcp-connections` create route
+  // already rejects unsafe URLs at write time via the shared SSRF guard, but
+  // the worker re-checks so a private/loopback/link-local/metadata target
+  // can never reach an outbound MCP connection even if it slipped past the
+  // gateway (e.g. an older row written before the guard existed).
+  it('rejects loopback, private-network, and metadata hosts', () => {
+    expect(parseMcpServerRef('http://localhost:8080/mcp')).toBeNull();
+    expect(parseMcpServerRef('http://127.0.0.1/mcp')).toBeNull();
+    expect(parseMcpServerRef('http://10.0.0.5/mcp')).toBeNull();
+    expect(parseMcpServerRef('http://192.168.1.1/mcp')).toBeNull();
+    expect(parseMcpServerRef('http://169.254.169.254/mcp')).toBeNull();
   });
 });
 
@@ -116,7 +129,7 @@ describe('loadMcpTools — tool surfacing', () => {
       },
     });
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer);
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer);
 
     // keys are sanitized to provider-safe tool names
     expect(Object.keys(tools).sort()).toEqual(['mcp_searchDocs', 'mcp_search_docs']);
@@ -138,7 +151,7 @@ describe('loadMcpTools — tool surfacing', () => {
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer);
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer);
     const result = await exec(tools.mcp_searchDocs, { query: 'hello' });
 
     expect(result).toEqual({ echoed: { query: 'hello' } });
@@ -163,7 +176,7 @@ describe('loadMcpTools — tool surfacing', () => {
     });
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer);
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer);
     await expect(exec(tools.mcp_broken, {})).rejects.toThrow('boom');
 
     expect(tracer.addToolCall).toHaveBeenCalledWith(
@@ -181,7 +194,7 @@ describe('loadMcpTools — tool surfacing', () => {
     });
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer, {
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer, {
       callTimeoutMs: 20,
     });
     await expect(exec(tools.mcp_slow, {})).rejects.toThrow(/timed out after 20ms/);
@@ -197,7 +210,7 @@ describe('loadMcpTools — tool surfacing', () => {
       toolsets: { mcp: { t: makeServerTool(async () => ({})) } },
     });
 
-    const { close } = await loadMcpTools('http://localhost:9999/mcp');
+    const { close } = await loadMcpTools('http://mcp-server.example.com:9999/mcp');
     await close();
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
@@ -211,7 +224,7 @@ describe('loadMcpTools — connect failure isolation', () => {
     listToolsetsWithErrors.mockRejectedValue(new Error('ECONNREFUSED'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer);
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer);
 
     expect(tools).toEqual({});
     expect(tracer.addActivityEvent).toHaveBeenCalledWith(
@@ -233,7 +246,7 @@ describe('loadMcpTools — connect failure isolation', () => {
     });
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer);
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer);
 
     expect(tools).toEqual({});
     expect(tracer.addActivityEvent).toHaveBeenCalledWith(
@@ -250,7 +263,7 @@ describe('loadMcpTools — connect failure isolation', () => {
     listToolsetsWithErrors.mockImplementation(() => new Promise(() => {}));
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { tools } = await loadMcpTools('http://localhost:9999/mcp', tracer, {
+    const { tools } = await loadMcpTools('http://mcp-server.example.com:9999/mcp', tracer, {
       listTimeoutMs: 20,
     });
 
@@ -270,7 +283,7 @@ describe('loadMcpTools — connect failure isolation', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await expect(loadMcpTools('http://localhost:9999/mcp')).resolves.toEqual(
+    await expect(loadMcpTools('http://mcp-server.example.com:9999/mcp')).resolves.toEqual(
       expect.objectContaining({ tools: {} })
     );
     vi.mocked(console.error).mockRestore();

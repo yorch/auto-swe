@@ -43,3 +43,34 @@ export async function assertOrgAccess(
   }
   return true;
 }
+
+/**
+ * Assert that `orgId` has not exceeded its monthly budget cap. Sends a 402
+ * reply and returns `false` if the current month's accrued cost meets or
+ * exceeds `budgetCap`; returns `true` otherwise (including when `budgetCap`
+ * is `null`/`undefined`, meaning no cap is configured).
+ */
+export async function assertOrgBudget(
+  prisma: PrismaClient,
+  orgId: string,
+  budgetCap: number | null | undefined,
+  reply: FastifyReply
+): Promise<boolean> {
+  if (budgetCap == null) {
+    return true;
+  }
+  const usage = await prisma.orgMonthlyUsage.findUnique({
+    where: { orgId_yearMonth: { orgId, yearMonth: currentYearMonth() } },
+  });
+  const spentCents = Math.round(Number(usage?.costUsdAccrued ?? 0) * 100);
+  if (spentCents >= budgetCap) {
+    await reply.status(402).send({
+      error: {
+        code: 'ORG_BUDGET_EXCEEDED',
+        message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
+      },
+    });
+    return false;
+  }
+  return true;
+}

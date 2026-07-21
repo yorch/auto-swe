@@ -45,20 +45,30 @@ interface FakeWorkspace {
   destroy: () => void;
   exec: ReturnType<typeof vi.fn>;
   execCapture: () => never;
+  gitAuthed: ReturnType<typeof vi.fn>;
 }
+
+const execMock = vi.fn();
+// Mirrors the real gitAuthed: injects a (fake) credential header per-call and
+// forwards to the same underlying exec recording, so existing `exec`-based
+// mockImplementation matchers still control return values for these commands.
+const gitAuthedMock = vi.fn((subcommand: string) =>
+  execMock(`git -c http.extraheader='AUTHORIZATION: basic redacted' ${subcommand}`)
+);
 
 const fakeWorkspace: FakeWorkspace = {
   containerId: 'workspace-test',
   destroy: vi.fn(),
-  exec: vi.fn(),
+  exec: execMock,
   execCapture: () => {
     throw new Error('not used');
   },
+  gitAuthed: gitAuthedMock,
 };
 
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(() => fakeWorkspace),
-  shellQuote: (s: string) => `'${s}'`,
+  shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
 
 // Clone URL + token resolution moved from env-var/githubAuth call sites into
@@ -121,6 +131,7 @@ const mockedRecordLesson = vi.mocked(recordLessonBackground);
 afterEach(() => {
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
+  fakeWorkspace.gitAuthed.mockClear();
   (fakeWorkspace.destroy as ReturnType<typeof vi.fn>).mockReset();
   generateMock.mockReset();
   mockedRecordLesson.mockReset();
@@ -179,11 +190,14 @@ describe('mergeBranches', () => {
     expect(result.headSha).toBe('abc123');
 
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
-    expect(cmds.some((c) => c.includes('git fetch origin') && c.includes('auto/TICK-1/auth'))).toBe(
+    // fetch + push now go through gitAuthed (credential injected per-call
+    // rather than a plain `git fetch`/`git push`), so match on the
+    // subcommand + args rather than a literal `git fetch`/`git push` prefix.
+    expect(cmds.some((c) => c.includes('fetch origin') && c.includes('auto/TICK-1/auth'))).toBe(
       true
     );
     expect(cmds.some((c) => c.includes('git merge --no-ff'))).toBe(true);
-    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
+    expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
   });
 
   it('aborts on the first conflict, reports the branch, and skips the push', async () => {
@@ -225,7 +239,7 @@ describe('mergeBranches', () => {
       false
     );
     // No push on failure path.
-    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(false);
+    expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
   });
 });
 
@@ -274,7 +288,7 @@ describe('resolveMergeConflict', () => {
     expect(result.unmergedBranches).toEqual([]);
     expect(generateMock).not.toHaveBeenCalled();
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
-    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
+    expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
   });
 
   it('invokes the implementer agent on conflicts, then commits + pushes when resolved', async () => {
@@ -329,7 +343,7 @@ describe('resolveMergeConflict', () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     expect(cmds).toContain('git add -A');
-    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(true);
+    expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
   });
 
   it('coerces non-finite maxAttemptsPerBranch back to the default of 1', async () => {
@@ -493,6 +507,6 @@ describe('resolveMergeConflict', () => {
     expect(result.unmergedBranches).toEqual(['auto/TICK-1/db', 'auto/TICK-1/api']);
     // No push on failure.
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
-    expect(cmds.some((c) => c.startsWith('git push origin'))).toBe(false);
+    expect(cmds.some((c) => c.includes('push origin'))).toBe(false);
   });
 });

@@ -61,9 +61,17 @@ interface Props {
 const NODE_TYPES = { dag: DagNode };
 
 function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, height }: Props) {
+  // Poll refreshes hand us new object identities for `spec` / `statuses` /
+  // `diffMarkers` every 3-5s even when their content is unchanged. Keying the
+  // memo on serialized content (rather than identity) means a poll with no
+  // real change doesn't tear down and rebuild every React Flow node.
+  const specKey = JSON.stringify(spec);
+  const statusesKey = JSON.stringify(statuses?.byNodeId ?? null);
+  const diffKey = JSON.stringify(diffMarkers ?? null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on serialized content so identity-only poll changes don't rebuild the graph
   const initial = useMemo(
     () => specToFlow(spec, { diffMarkers, statuses }),
-    [spec, statuses, diffMarkers]
+    [specKey, statusesKey, diffKey]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
@@ -145,6 +153,11 @@ function InnerDag({ spec, statuses, diffMarkers, selectedNodeId, onSelect, heigh
   return (
     <div
       aria-label="Workflow graph. Use arrow keys to move between steps, Enter to open a step, Home to jump to the start."
+      // `role="application"` is intentional here — arrow-key navigation needs
+      // raw key events rather than the browser's default roving-tabindex
+      // behavior a `role="group"`/list would impose. Individual nodes carry
+      // their own descriptive `aria-label` (see specToFlow's `ariaLabel`).
+      aria-roledescription="workflow graph"
       className="relative rounded-sm border border-ink-600 bg-ink-900"
       onKeyDown={onKeyDown}
       ref={containerRef}

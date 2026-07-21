@@ -1,3 +1,4 @@
+import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -85,6 +86,14 @@ async function createCredentialAndAudit(
   input: Parameters<typeof createCredential>[1],
   messages: { conflict: (existingId: string) => string; conflictRace: string }
 ): Promise<unknown> {
+  if (input.apiBase) {
+    const safety = isSafeProbeUrl(input.apiBase);
+    if (!safety.ok) {
+      return reply.status(400).send({
+        error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
+      });
+    }
+  }
   const result = await createCredential(fastify.prisma, input);
   if (result.outcome === 'conflict') {
     return reply.status(409).send({
@@ -109,9 +118,18 @@ async function createCredentialAndAudit(
 async function updateCredentialAndAudit(
   fastify: FastifyInstance,
   actor: JwtPayload,
+  reply: import('fastify').FastifyReply,
   existing: Parameters<typeof redactCredential>[0],
   body: { apiBase?: string | null; apiKey?: string }
 ): Promise<unknown> {
+  if (body.apiBase) {
+    const safety = isSafeProbeUrl(body.apiBase);
+    if (!safety.ok) {
+      return reply.status(400).send({
+        error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
+      });
+    }
+  }
   const updated = await updateCredential(fastify.prisma, existing.id, body);
   await writeAuditLog(fastify, {
     action: 'UPDATE',
@@ -188,7 +206,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'NOT_FOUND', message: 'Credential not found' },
         });
       }
-      return updateCredentialAndAudit(fastify, actor, existing, request.body);
+      return updateCredentialAndAudit(fastify, actor, reply, existing, request.body);
     }
   );
 
@@ -398,7 +416,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
       }
-      return updateCredentialAndAudit(fastify, actor, existing, request.body);
+      return updateCredentialAndAudit(fastify, actor, reply, existing, request.body);
     }
   );
 
