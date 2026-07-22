@@ -164,7 +164,9 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
   `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
   agent — not just the implementer — can use MCP.
 - **Write-path:** admins manage `mcp` Connections at `/admin/mcp-connections` (gateway CRUD
-  `/api/v1/admin/mcp-connections`) and attach one to an Agent via the `mcpConnectionId` field on the
+  `/api/v1/admin/mcp-connections` — `POST` create, `PATCH :id` edit url/name/timeouts,
+  `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
+  override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
   Connection, and TEAM-scoped agents may only reference their own team's connection (tenancy).
 - **Guarding:** non-git connections are filtered out of the repo read/submit paths (GET
