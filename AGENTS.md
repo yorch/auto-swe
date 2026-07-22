@@ -198,9 +198,21 @@ GitHub, Slack, artifact storage, issue-tracker connector, workflow defaults, and
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
 | `/admin/integrations → Knowledge Base` | knowledge-base connector (Confluence / Notion): provider, base URL, API token, email, `allowPrivateNetwork` (opt-in for a self-hosted internal base URL, same SSRF-guard rationale as Tracker) — injected as context at work-request submit time | `resolveKnowledgeBaseConfig()` |
 | `/admin/integrations → Figma` | Figma design connector (read-only): enable flag, API token, max-nodes cap — when a work request references a Figma file/node, a compact design summary is fetched at submit time into `ContextSnapshot.rawDesign`; failures never block submission. (Agent-time reads instead go through an `mcp` Connection to Figma's Dev Mode endpoint.) | `resolveFigmaConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule, eval-regression schedule | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` / `resolveEvalScheduleConfig()` |
+| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule, eval-regression schedule, **Tier-2 resource & tuning defaults** (see below) | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` / `resolveEvalScheduleConfig()` |
 
 All eight tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
+
+**Tier-2 resource & tuning defaults (`WorkflowDefaults`):** `resolveWorkflowDefaults()` also returns a set of previously-hardcoded operational knobs, all DB-backed on the `WorkflowDefaults` singleton with the `row?.x ?? default` fallback (so an unconfigured deployment keeps the old constants). Managed at `/admin/workflow` → "Resource & tuning defaults (Tier 2)"; the worker reads them via the ~30 s config cache (`withCache`). They are **GLOBAL-scope only** (not part of the per-team/-template cascade):
+
+| Field(s) | Default | Consumed by |
+|---|---|---|
+| `budgetTiers` (6 columns → nested `{ tier: { inputTokens, outputTokens } }`) | small/medium/large token caps | `costTracking.ts` (`resolveBudgetTiers()`, falls back to `BUDGET_LIMITS`) |
+| `maxTddIterations` / `maxEvalIterations` | 5 / 3 | `executeImplementation.ts` TDD loop / `evalHarness.ts` `runCaseDefault` |
+| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` `createWorkspace` container caps + default base image (explicit `image` arg still wins) |
+| `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
+| `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
+
+Per-entity knobs (channel proactivity cooldowns on `SlackChannel`, MCP per-connection timeouts on the `mcp` `Connection`) were intentionally left out of this GLOBAL tier — they belong on their own rows and are tracked as deferred follow-ups.
 
 **Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
 
