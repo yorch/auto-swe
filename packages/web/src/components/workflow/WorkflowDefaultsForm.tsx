@@ -1,7 +1,6 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -15,6 +14,7 @@ import {
   type WorkflowDefaultsConfig,
   type WorkflowDefaultsInput,
 } from '@/hooks/useAdminConfig';
+import { useConfigForm } from '@/hooks/useConfigForm';
 
 // Flat form shape: one object instead of ~22 scalar useState hooks. Budgets are
 // nested on the read payload (`budgetTiers`) but flat on the PUT body, so we
@@ -160,40 +160,23 @@ function FieldGroup({ label, children }: { label: string; children: ReactNode })
 export function WorkflowDefaultsForm() {
   const { data, isLoading } = useWorkflowDefaultsConfig();
   const update = useUpdateWorkflowDefaultsConfig();
+  const { form, setField, submit, saved, error } = useConfigForm({
+    data,
+    initial: DEFAULTS,
+    mutateAsync: update.mutateAsync,
+    toBody,
+    toForm: fromResolved,
+  });
 
-  const [form, setForm] = useState<FormState>(DEFAULTS);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setField(key, value);
   const num = (key: NumericKey) => (v: number) => set(key, v);
-
-  // Seed form from loaded data (once it arrives).
-  useEffect(() => {
-    if (data) {
-      setForm(fromResolved(data));
-    }
-  }, [data]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaved(false);
-    try {
-      await update.mutateAsync(toBody(form));
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
-  };
 
   if (isLoading) {
     return <LoadingState message="Loading…" />;
   }
 
   return (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form className="space-y-6" onSubmit={submit}>
       <Card>
         <CardHeader>
           <CardTitle eyebrow="Git &amp; PR">Branch and pull request templates</CardTitle>

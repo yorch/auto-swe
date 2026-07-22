@@ -1,47 +1,57 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useCanaryConfig, useUpdateCanaryConfig } from '@/hooks/useAdminConfig';
+import {
+  type CanaryConfig,
+  type CanaryConfigInput,
+  useCanaryConfig,
+  useUpdateCanaryConfig,
+} from '@/hooks/useAdminConfig';
+import { useConfigForm } from '@/hooks/useConfigForm';
+
+interface CanaryFormState {
+  enabled: boolean;
+  agentKey: string;
+  candidateVersion: number;
+  percent: number;
+}
+
+const INITIAL: CanaryFormState = {
+  agentKey: '',
+  candidateVersion: 2,
+  enabled: false,
+  percent: 0,
+};
+
+function toForm(data: CanaryConfig): CanaryFormState {
+  return {
+    agentKey: data.agentKey ?? '',
+    candidateVersion: data.candidateVersion ?? 2,
+    enabled: data.enabled,
+    percent: data.percent ?? 0,
+  };
+}
+
+function toBody(form: CanaryFormState): CanaryConfigInput {
+  return {
+    agentKey: form.agentKey || null,
+    candidateVersion: form.candidateVersion || null,
+    enabled: form.enabled,
+    percent: form.percent,
+  };
+}
 
 export function CanaryForm() {
   const { data: canary, isLoading } = useCanaryConfig();
   const update = useUpdateCanaryConfig();
-
-  const [enabled, setEnabled] = useState(false);
-  const [agentKey, setAgentKey] = useState('');
-  const [candidateVersion, setCandidateVersion] = useState(2);
-  const [percent, setPercent] = useState(0);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!canary) {
-      return;
-    }
-    setEnabled(canary.enabled);
-    setAgentKey(canary.agentKey ?? '');
-    setCandidateVersion(canary.candidateVersion ?? 2);
-    setPercent(canary.percent ?? 0);
-  }, [canary]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaved(false);
-    try {
-      await update.mutateAsync({
-        agentKey: agentKey || null,
-        candidateVersion: candidateVersion || null,
-        enabled,
-        percent,
-      });
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
-  };
+  const { form, setField, submit, saved, error } = useConfigForm({
+    data: canary,
+    initial: INITIAL,
+    mutateAsync: update.mutateAsync,
+    toBody,
+    toForm,
+  });
 
   return (
     <>
@@ -57,7 +67,7 @@ export function CanaryForm() {
       {isLoading ? (
         <p className="text-sm text-paper-400">Loading…</p>
       ) : (
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
               <CardTitle eyebrow="A/B">Canary configuration</CardTitle>
@@ -65,10 +75,10 @@ export function CanaryForm() {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <input
-                  checked={enabled}
+                  checked={form.enabled}
                   className="h-4 w-4 accent-ember-400"
                   id="canary-enabled"
-                  onChange={(e) => setEnabled(e.target.checked)}
+                  onChange={(e) => setField('enabled', e.target.checked)}
                   type="checkbox"
                 />
                 <label className="text-sm" htmlFor="canary-enabled">
@@ -76,11 +86,11 @@ export function CanaryForm() {
                 </label>
               </div>
 
-              {enabled && agentKey && candidateVersion > 0 && (
+              {form.enabled && form.agentKey && form.candidateVersion > 0 && (
                 <p className="rounded-[9px] border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-                  Warning: {Math.round(percent * 100)}% of work-requests will be routed to{' '}
+                  Warning: {Math.round(form.percent * 100)}% of work-requests will be routed to{' '}
                   <span className="font-mono">
-                    {agentKey}@v{candidateVersion}
+                    {form.agentKey}@v{form.candidateVersion}
                   </span>{' '}
                   instead of the standard version.
                 </p>
@@ -97,9 +107,9 @@ export function CanaryForm() {
                   <input
                     className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="canary-agent-key"
-                    onChange={(e) => setAgentKey(e.target.value)}
+                    onChange={(e) => setField('agentKey', e.target.value)}
                     placeholder="implementer"
-                    value={agentKey}
+                    value={form.agentKey}
                   />
                   <p className="mt-1 text-[11px] text-paper-500">
                     Agent role under canary (e.g. <span className="font-mono">implementer</span>).
@@ -117,9 +127,9 @@ export function CanaryForm() {
                     className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="canary-version"
                     min={1}
-                    onChange={(e) => setCandidateVersion(Number(e.target.value))}
+                    onChange={(e) => setField('candidateVersion', Number(e.target.value))}
                     type="number"
-                    value={candidateVersion}
+                    value={form.candidateVersion}
                   />
                   <p className="mt-1 text-[11px] text-paper-500">
                     Agent library version number to route the canary arm to.
@@ -139,10 +149,10 @@ export function CanaryForm() {
                   id="canary-percent"
                   max={1}
                   min={0}
-                  onChange={(e) => setPercent(Number(e.target.value))}
+                  onChange={(e) => setField('percent', Number(e.target.value))}
                   step={0.01}
                   type="number"
-                  value={percent}
+                  value={form.percent}
                 />
                 <p className="mt-1 text-[11px] text-paper-500">
                   Fraction of work-requests routed to the candidate. 0 = off, 1 = all.

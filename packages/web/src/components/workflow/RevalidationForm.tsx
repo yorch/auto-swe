@@ -1,49 +1,57 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
+  type RevalidationConfig,
+  type RevalidationConfigInput,
   triggerRevalidationNow,
   useRevalidationConfig,
   useUpdateRevalidationConfig,
 } from '@/hooks/useAdminConfig';
+import { useConfigForm } from '@/hooks/useConfigForm';
+
+interface RevalidationFormState {
+  enabled: boolean;
+  cron: string;
+  datasetSlug: string;
+}
+
+const INITIAL: RevalidationFormState = {
+  cron: '0 5 * * 0',
+  datasetSlug: '',
+  enabled: false,
+};
+
+function toForm(data: RevalidationConfig): RevalidationFormState {
+  return {
+    cron: data.cronExpression,
+    datasetSlug: data.datasetSlug ?? '',
+    enabled: data.enabled,
+  };
+}
+
+function toBody(form: RevalidationFormState): RevalidationConfigInput {
+  return {
+    cronExpression: form.cron,
+    datasetSlug: form.datasetSlug || null,
+    enabled: form.enabled,
+  };
+}
 
 export function RevalidationForm() {
   const { data: revalidation, isLoading } = useRevalidationConfig();
   const update = useUpdateRevalidationConfig();
+  const { form, setField, submit, saved, error } = useConfigForm({
+    data: revalidation,
+    initial: INITIAL,
+    mutateAsync: update.mutateAsync,
+    toBody,
+    toForm,
+  });
 
-  const [enabled, setEnabled] = useState(false);
-  const [cron, setCron] = useState('0 5 * * 0');
-  const [datasetSlug, setDatasetSlug] = useState('');
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [triggering, setTriggering] = useState(false);
-
-  useEffect(() => {
-    if (!revalidation) {
-      return;
-    }
-    setEnabled(revalidation.enabled);
-    setCron(revalidation.cronExpression);
-    setDatasetSlug(revalidation.datasetSlug ?? '');
-  }, [revalidation]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaved(false);
-    try {
-      await update.mutateAsync({
-        cronExpression: cron,
-        datasetSlug: datasetSlug || null,
-        enabled,
-      });
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
-  };
 
   const handleTriggerNow = async () => {
     setTriggering(true);
@@ -68,7 +76,7 @@ export function RevalidationForm() {
       {isLoading ? (
         <p className="text-sm text-paper-400">Loading…</p>
       ) : (
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
               <CardTitle eyebrow="Schedule">Re-validation schedule</CardTitle>
@@ -77,10 +85,10 @@ export function RevalidationForm() {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <input
-                  checked={enabled}
+                  checked={form.enabled}
                   className="h-4 w-4 accent-ember-400"
                   id="revalidation-enabled"
-                  onChange={(e) => setEnabled(e.target.checked)}
+                  onChange={(e) => setField('enabled', e.target.checked)}
                   type="checkbox"
                 />
                 <label className="text-sm" htmlFor="revalidation-enabled">
@@ -109,9 +117,9 @@ export function RevalidationForm() {
                 <input
                   className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                   id="revalidation-cron"
-                  onChange={(e) => setCron(e.target.value)}
+                  onChange={(e) => setField('cron', e.target.value)}
                   placeholder="0 5 * * 0"
-                  value={cron}
+                  value={form.cron}
                 />
                 <p className="mt-1 text-[11px] text-paper-500">
                   Standard 5-field cron. Default <span className="font-mono">0 5 * * 0</span> =
@@ -132,9 +140,9 @@ export function RevalidationForm() {
                 <input
                   className="w-full rounded-[9px] border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                   id="revalidation-dataset-slug"
-                  onChange={(e) => setDatasetSlug(e.target.value)}
+                  onChange={(e) => setField('datasetSlug', e.target.value)}
                   placeholder="swe-implementer-golden"
-                  value={datasetSlug}
+                  value={form.datasetSlug}
                 />
                 <p className="mt-1 text-[11px] text-paper-500">
                   Optional substring match against dataset slug. Blank = all datasets.
