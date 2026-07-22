@@ -186,4 +186,65 @@ describe('mcpConnectionRoutes', () => {
     expect(res.statusCode).toBe(404);
     await app.close();
   });
+
+  it('updates name/url + timeouts, rebuilding config from the body', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.connection.findFirst.mockResolvedValue({
+      config: { callTimeoutMs: 60_000, url: 'https://old.example.com/mcp' },
+      id: ID,
+      name: 'old',
+      type: 'mcp',
+    });
+    mockPrisma.connection.update.mockResolvedValue({ id: ID, name: 'renamed', type: 'mcp' });
+    const res = await app.inject({
+      body: {
+        listTimeoutMs: 20_000,
+        name: 'renamed',
+        url: 'https://new.example.com/mcp',
+      },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/mcp-connections/${ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    // config is rebuilt from the body: the old callTimeoutMs is dropped (cleared)
+    // and the new listTimeoutMs is set.
+    expect(mockPrisma.connection.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          config: { listTimeoutMs: 20_000, url: 'https://new.example.com/mcp' },
+          name: 'renamed',
+        },
+        where: { id: ID },
+      })
+    );
+    await app.close();
+  });
+
+  it('404s updating an unknown mcp connection', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.connection.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      body: { name: 'x', url: 'https://mcp.example.com/mcp' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/mcp-connections/${ID}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(mockPrisma.connection.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('400s updating with a non-http(s) url', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.connection.findFirst.mockResolvedValue({ id: ID, name: 'old', type: 'mcp' });
+    const res = await app.inject({
+      body: { name: 'x', url: 'ftp://mcp.example.com' },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/mcp-connections/${ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
 });

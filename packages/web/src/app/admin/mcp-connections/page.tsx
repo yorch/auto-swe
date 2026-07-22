@@ -14,6 +14,7 @@ import {
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useMcpConnections,
+  useUpdateMcpConnection,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
@@ -125,6 +126,120 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   );
 }
 
+function EditMcpConnectionModal({
+  connection,
+  onClose,
+}: {
+  connection: McpConnectionRow | null;
+  onClose: () => void;
+}) {
+  const update = useUpdateMcpConnection();
+  const [error, setError] = useState<string | null>(null);
+
+  // Pre-fill from the row; keyed by connection id below so the form resets when a
+  // different row is opened. Timeouts render as their number or blank (= default).
+  const [form, setForm] = useState({
+    callTimeoutMs: connection?.config?.callTimeoutMs?.toString() ?? '',
+    listTimeoutMs: connection?.config?.listTimeoutMs?.toString() ?? '',
+    name: connection?.name ?? '',
+    url: connection?.config?.url ?? '',
+  });
+
+  if (!connection) {
+    return null;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!connection) {
+      return;
+    }
+    setError(null);
+    // Blank = null = clear the override (falls back to the default); undefined =
+    // a non-positive-integer entry we reject client-side.
+    const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
+    const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
+    if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
+      setError(
+        'Timeouts must be positive whole numbers of milliseconds, or blank to use the default'
+      );
+      return;
+    }
+    try {
+      await update.mutateAsync({
+        body: {
+          name: form.name,
+          url: form.url,
+          ...(listTimeoutMs !== null ? { listTimeoutMs } : {}),
+          ...(callTimeoutMs !== null ? { callTimeoutMs } : {}),
+        },
+        id: connection.id,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update connection');
+    }
+  }
+
+  return (
+    <Modal
+      eyebrow="Admin / MCP"
+      onClose={onClose}
+      open={!!connection}
+      title={`Edit "${connection.name}"`}
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <FieldWrapper label="Name">
+          <Input
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            required
+            value={form.name}
+          />
+        </FieldWrapper>
+        <FieldWrapper label="Server URL (http/https)">
+          <Input
+            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+            required
+            type="url"
+            value={form.url}
+          />
+        </FieldWrapper>
+        <div className="grid grid-cols-2 gap-4">
+          <FieldWrapper label="List timeout (ms)">
+            <Input
+              min={1}
+              onChange={(e) => setForm((f) => ({ ...f, listTimeoutMs: e.target.value }))}
+              placeholder="15000"
+              step={1}
+              type="number"
+              value={form.listTimeoutMs}
+            />
+          </FieldWrapper>
+          <FieldWrapper label="Call timeout (ms)">
+            <Input
+              min={1}
+              onChange={(e) => setForm((f) => ({ ...f, callTimeoutMs: e.target.value }))}
+              placeholder="60000"
+              step={1}
+              type="number"
+              value={form.callTimeoutMs}
+            />
+          </FieldWrapper>
+        </div>
+        {error && <p className="text-xs text-brick-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">
+            Cancel
+          </Button>
+          <Button disabled={update.isPending} type="submit" variant="primary">
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function DeleteMcpConnectionModal({
   connection,
   onClose,
@@ -175,6 +290,7 @@ function DeleteMcpConnectionModal({
 
 export default function AdminMcpConnectionsPage() {
   const [newOpen, setNewOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<McpConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);
   const { data: connections, isLoading } = useMcpConnections();
 
@@ -234,9 +350,14 @@ export default function AdminMcpConnectionsPage() {
                     </td>
                     <td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</td>
                     <td className="py-2 text-right">
-                      <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
-                        Delete
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
+                          Edit
+                        </Button>
+                        <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -247,6 +368,11 @@ export default function AdminMcpConnectionsPage() {
       )}
 
       <CreateMcpConnectionModal onClose={() => setNewOpen(false)} open={newOpen} />
+      <EditMcpConnectionModal
+        connection={editTarget}
+        key={editTarget?.id}
+        onClose={() => setEditTarget(null)}
+      />
       <DeleteMcpConnectionModal connection={deleteTarget} onClose={() => setDeleteTarget(null)} />
     </div>
   );
