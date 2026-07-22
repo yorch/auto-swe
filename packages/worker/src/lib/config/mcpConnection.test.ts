@@ -27,9 +27,50 @@ describe('mcpUrlForConnection', () => {
     expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('returns the url for an active mcp connection', async () => {
+  it('returns the url for an active mcp connection with no timeout overrides', async () => {
     findUnique.mockResolvedValue(mcpConn() as never);
-    expect(await mcpUrlForConnection('c1')).toBe('https://mcp.example.com/mcp');
+    expect(await mcpUrlForConnection('c1')).toEqual({ url: 'https://mcp.example.com/mcp' });
+  });
+
+  it('returns listTimeoutMs / callTimeoutMs when set on config', async () => {
+    findUnique.mockResolvedValue(
+      mcpConn({
+        config: {
+          callTimeoutMs: 5000,
+          listTimeoutMs: 2500,
+          url: 'https://mcp.example.com/mcp',
+        },
+      }) as never
+    );
+    expect(await mcpUrlForConnection('c1')).toEqual({
+      callTimeoutMs: 5000,
+      listTimeoutMs: 2500,
+      url: 'https://mcp.example.com/mcp',
+    });
+  });
+
+  it('omits a timeout that is not a finite positive number (0, negative, NaN, non-number)', async () => {
+    findUnique.mockResolvedValueOnce(
+      mcpConn({ config: { callTimeoutMs: 0, url: 'https://mcp.example.com/mcp' } }) as never
+    );
+    expect(await mcpUrlForConnection('c1')).toEqual({ url: 'https://mcp.example.com/mcp' });
+
+    findUnique.mockResolvedValueOnce(
+      mcpConn({ config: { listTimeoutMs: -100, url: 'https://mcp.example.com/mcp' } }) as never
+    );
+    expect(await mcpUrlForConnection('c1')).toEqual({ url: 'https://mcp.example.com/mcp' });
+
+    findUnique.mockResolvedValueOnce(
+      mcpConn({ config: { callTimeoutMs: 'fast', url: 'https://mcp.example.com/mcp' } }) as never
+    );
+    expect(await mcpUrlForConnection('c1')).toEqual({ url: 'https://mcp.example.com/mcp' });
+
+    findUnique.mockResolvedValueOnce(
+      mcpConn({
+        config: { listTimeoutMs: Number.NaN, url: 'https://mcp.example.com/mcp' },
+      }) as never
+    );
+    expect(await mcpUrlForConnection('c1')).toEqual({ url: 'https://mcp.example.com/mcp' });
   });
 
   it('returns null when the connection is missing / inactive / not mcp / has no url', async () => {
@@ -55,10 +96,30 @@ describe('resolveAgentMcpUrl', () => {
   const agent = (over: Record<string, unknown> = {}) =>
     ({ key: 'implementer', mcpConnectionId: 'c1', toolKeys: ['bash', 'mcp'], ...over }) as never;
 
-  it('returns the url when the agent enables mcp and references an mcp connection', async () => {
+  it('returns the target when the agent enables mcp and references an mcp connection', async () => {
     mockedFetchActiveAgent.mockResolvedValue(agent());
     findUnique.mockResolvedValue(mcpConn() as never);
-    expect(await resolveAgentMcpUrl('implementer')).toBe('https://mcp.example.com/mcp');
+    expect(await resolveAgentMcpUrl('implementer')).toEqual({
+      url: 'https://mcp.example.com/mcp',
+    });
+  });
+
+  it('carries the per-connection timeouts through to the agent resolution', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(
+      mcpConn({
+        config: {
+          callTimeoutMs: 90_000,
+          listTimeoutMs: 30_000,
+          url: 'https://mcp.example.com/mcp',
+        },
+      }) as never
+    );
+    expect(await resolveAgentMcpUrl('implementer')).toEqual({
+      callTimeoutMs: 90_000,
+      listTimeoutMs: 30_000,
+      url: 'https://mcp.example.com/mcp',
+    });
   });
 
   it('returns null when the agent does not enable mcp', async () => {

@@ -28,15 +28,16 @@ export interface McpCallToolResult {
  * policy governs it. The MCP client is always disconnected in `finally`.
  */
 export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolResult> {
-  const url = await mcpUrlForConnection(input.connectionRef);
-  if (!url) {
+  const target = await mcpUrlForConnection(input.connectionRef);
+  if (!target) {
     throw new Error(
       `mcp node: connection '${input.connectionRef}' is not an active mcp connection`
     );
   }
+  const { url, listTimeoutMs, callTimeoutMs } = target;
 
   const tracer = new AgentTracer();
-  const loaded = await loadMcpTools(url, tracer);
+  const loaded = await loadMcpTools(url, tracer, { callTimeoutMs, listTimeoutMs });
   try {
     const key = `mcp_${sanitizeToolName(input.tool)}`;
     const tool = loaded.tools[key];

@@ -126,13 +126,17 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       resolved.model.apiKey,
       resolved.model.apiBase
     );
-    const mcpServerRef = await resolveAgentMcpUrl(parsed.key, ctx);
+    const mcpTarget = await resolveAgentMcpUrl(parsed.key, ctx);
     const built = await createImplementerAgent(
       workspace,
       undefined,
       resolved.toolKeys,
       resolved.skills,
-      { mcpServerRef },
+      {
+        mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
+        mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
+        mcpServerRef: mcpTarget?.url,
+      },
       model
     );
     closeMcp = built.closeMcp;

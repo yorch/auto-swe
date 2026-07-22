@@ -94,14 +94,15 @@ describe('runAgentNode', () => {
       agentKey: 'reviewer',
       tools: { existing: 't' },
     } as never);
-    mockedResolveMcpUrl.mockResolvedValueOnce('https://mcp.example.com/mcp');
+    mockedResolveMcpUrl.mockResolvedValueOnce({ url: 'https://mcp.example.com/mcp' });
     mockedLoadMcpTools.mockResolvedValueOnce({ close, tools: { mcp_x: 'mt' } } as never);
 
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
 
     expect(mockedLoadMcpTools).toHaveBeenCalledWith(
       'https://mcp.example.com/mcp',
-      expect.any(AgentTracer)
+      expect.any(AgentTracer),
+      { callTimeoutMs: undefined, listTimeoutMs: undefined }
     );
     // Spec/built-in tools win over MCP tools on key collision.
     expect(mockedRunAgent).toHaveBeenCalledWith(
@@ -110,6 +111,28 @@ describe('runAgentNode', () => {
       { spanName: 'llm.agent_node' }
     );
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('threads the connection timeout overrides into loadMcpTools', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedResolveSpec.mockResolvedValueOnce({
+      agentKey: 'reviewer',
+      tools: { existing: 't' },
+    } as never);
+    mockedResolveMcpUrl.mockResolvedValueOnce({
+      callTimeoutMs: 90_000,
+      listTimeoutMs: 30_000,
+      url: 'https://mcp.example.com/mcp',
+    });
+    mockedLoadMcpTools.mockResolvedValueOnce({ close, tools: { mcp_x: 'mt' } } as never);
+
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
+
+    expect(mockedLoadMcpTools).toHaveBeenCalledWith(
+      'https://mcp.example.com/mcp',
+      expect.any(AgentTracer),
+      { callTimeoutMs: 90_000, listTimeoutMs: 30_000 }
+    );
   });
 
   it('skips MCP loading when the agent has no mcp server', async () => {

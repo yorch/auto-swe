@@ -88,6 +88,52 @@ describe('mcpConnectionRoutes', () => {
     await app.close();
   });
 
+  it('creates an mcp connection with optional list/call timeouts persisted in config', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+    mockPrisma.connection.create.mockResolvedValue({ id: ID, name: 'docs', type: 'mcp' });
+    const res = await app.inject({
+      body: {
+        callTimeoutMs: 90_000,
+        listTimeoutMs: 30_000,
+        name: 'docs',
+        teamId: TEAM,
+        url: 'https://mcp.example.com/mcp',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/mcp-connections',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.connection.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          config: {
+            callTimeoutMs: 90_000,
+            listTimeoutMs: 30_000,
+            url: 'https://mcp.example.com/mcp',
+          },
+          name: 'docs',
+          teamId: TEAM,
+          type: 'mcp',
+        },
+      })
+    );
+    await app.close();
+  });
+
+  it('400s on a non-positive timeout override', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      body: { listTimeoutMs: 0, name: 'docs', teamId: TEAM, url: 'https://mcp.example.com/mcp' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/mcp-connections',
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('404s when the team is missing', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.team.findUnique.mockResolvedValue(null);
