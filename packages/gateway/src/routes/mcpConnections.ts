@@ -129,7 +129,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'UPDATE',
         actor,
         after: { name, type: 'mcp', ...config },
-        before: { name: conn.name, ...(before ?? {}) },
+        before: { name: conn.name, type: 'mcp', ...(before ?? {}) },
         entityId: conn.id,
         entityType: 'Connection',
       });

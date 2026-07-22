@@ -19,6 +19,61 @@ import {
 import { useTeams } from '@/hooks/useTeams';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
+/**
+ * Parse the two timeout text inputs shared by the create + edit forms. Returns
+ * `{ error }` on an invalid entry, otherwise `null` (blank → clear/omit) or a
+ * positive integer for each — the caller decides what null means for its route.
+ */
+function parseTimeoutInputs(form: {
+  listTimeoutMs: string;
+  callTimeoutMs: string;
+}): { error: string } | { listTimeoutMs: number | null; callTimeoutMs: number | null } {
+  const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
+  const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
+  if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
+    return {
+      error: 'Timeouts must be positive whole numbers of milliseconds, or blank to use the default',
+    };
+  }
+  return { callTimeoutMs, listTimeoutMs };
+}
+
+/** The list/call timeout grid, shared by the create + edit connection modals. */
+function McpTimeoutFields({
+  callTimeoutMs,
+  listTimeoutMs,
+  onChange,
+}: {
+  listTimeoutMs: string;
+  callTimeoutMs: string;
+  onChange: (patch: { listTimeoutMs?: string; callTimeoutMs?: string }) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <FieldWrapper label="List timeout (ms)">
+        <Input
+          min={1}
+          onChange={(e) => onChange({ listTimeoutMs: e.target.value })}
+          placeholder="15000"
+          step={1}
+          type="number"
+          value={listTimeoutMs}
+        />
+      </FieldWrapper>
+      <FieldWrapper label="Call timeout (ms)">
+        <Input
+          min={1}
+          onChange={(e) => onChange({ callTimeoutMs: e.target.value })}
+          placeholder="60000"
+          step={1}
+          type="number"
+          value={callTimeoutMs}
+        />
+      </FieldWrapper>
+    </div>
+  );
+}
+
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
   const create = useCreateMcpConnection();
@@ -29,14 +84,10 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    // Blank = null = omit (loadMcpTools falls back to its own default);
-    // undefined = a non-positive-integer entry we reject client-side.
-    const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
-    const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
-    if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
-      setError(
-        'Timeouts must be positive whole numbers of milliseconds, or blank to use the default'
-      );
+    // Blank → null → omit (loadMcpTools falls back to its own default).
+    const parsed = parseTimeoutInputs(form);
+    if ('error' in parsed) {
+      setError(parsed.error);
       return;
     }
     try {
@@ -44,8 +95,8 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
         name: form.name,
         teamId: form.teamId,
         url: form.url,
-        ...(listTimeoutMs !== null ? { listTimeoutMs } : {}),
-        ...(callTimeoutMs !== null ? { callTimeoutMs } : {}),
+        ...(parsed.listTimeoutMs !== null ? { listTimeoutMs: parsed.listTimeoutMs } : {}),
+        ...(parsed.callTimeoutMs !== null ? { callTimeoutMs: parsed.callTimeoutMs } : {}),
       });
       onClose();
       setForm(initialForm);
@@ -90,28 +141,11 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
             ))}
           </Select>
         </FieldWrapper>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="List timeout (ms)">
-            <Input
-              min={1}
-              onChange={(e) => setForm((f) => ({ ...f, listTimeoutMs: e.target.value }))}
-              placeholder="15000"
-              step={1}
-              type="number"
-              value={form.listTimeoutMs}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Call timeout (ms)">
-            <Input
-              min={1}
-              onChange={(e) => setForm((f) => ({ ...f, callTimeoutMs: e.target.value }))}
-              placeholder="60000"
-              step={1}
-              type="number"
-              value={form.callTimeoutMs}
-            />
-          </FieldWrapper>
-        </div>
+        <McpTimeoutFields
+          callTimeoutMs={form.callTimeoutMs}
+          listTimeoutMs={form.listTimeoutMs}
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+        />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -155,14 +189,11 @@ function EditMcpConnectionModal({
       return;
     }
     setError(null);
-    // Blank = null = clear the override (falls back to the default); undefined =
-    // a non-positive-integer entry we reject client-side.
-    const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
-    const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
-    if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
-      setError(
-        'Timeouts must be positive whole numbers of milliseconds, or blank to use the default'
-      );
+    // Blank → null → omit from the body → the PATCH rebuilds config without it,
+    // clearing the override back to the loadMcpTools default.
+    const parsed = parseTimeoutInputs(form);
+    if ('error' in parsed) {
+      setError(parsed.error);
       return;
     }
     try {
@@ -170,8 +201,8 @@ function EditMcpConnectionModal({
         body: {
           name: form.name,
           url: form.url,
-          ...(listTimeoutMs !== null ? { listTimeoutMs } : {}),
-          ...(callTimeoutMs !== null ? { callTimeoutMs } : {}),
+          ...(parsed.listTimeoutMs !== null ? { listTimeoutMs: parsed.listTimeoutMs } : {}),
+          ...(parsed.callTimeoutMs !== null ? { callTimeoutMs: parsed.callTimeoutMs } : {}),
         },
         id: connection.id,
       });
@@ -204,28 +235,11 @@ function EditMcpConnectionModal({
             value={form.url}
           />
         </FieldWrapper>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="List timeout (ms)">
-            <Input
-              min={1}
-              onChange={(e) => setForm((f) => ({ ...f, listTimeoutMs: e.target.value }))}
-              placeholder="15000"
-              step={1}
-              type="number"
-              value={form.listTimeoutMs}
-            />
-          </FieldWrapper>
-          <FieldWrapper label="Call timeout (ms)">
-            <Input
-              min={1}
-              onChange={(e) => setForm((f) => ({ ...f, callTimeoutMs: e.target.value }))}
-              placeholder="60000"
-              step={1}
-              type="number"
-              value={form.callTimeoutMs}
-            />
-          </FieldWrapper>
-        </div>
+        <McpTimeoutFields
+          callTimeoutMs={form.callTimeoutMs}
+          listTimeoutMs={form.listTimeoutMs}
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+        />
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} type="button" variant="ghost">
