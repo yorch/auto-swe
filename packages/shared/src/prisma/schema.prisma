@@ -496,6 +496,10 @@ model SlackChannel {
   /// Cooldown anchor: when the reactive pass last actually posted an interjection.
   /// Rate-limits proactive posts (at most one per cooldown window).
   lastReactiveAt   DateTime?      @map("last_reactive_at") @db.Timestamptz
+  /// Per-channel proactivity tuning (all nullable → use the built-in default).
+  /// Reactive interjection: min gap between posts / how far back a tick scans.
+  reactiveCooldownMinutes Int?    @map("reactive_cooldown_minutes")
+  reactiveLookbackMinutes Int?    @map("reactive_lookback_minutes")
   /// Optional per-channel monthly spend cap in USD cents. Null = inherit org cap.
   monthlyBudgetUsdCents Int?      @map("monthly_budget_usd_cents")
   /// Per-channel persona prompt injected at the top of every system prompt for
@@ -527,6 +531,8 @@ model SlackChannel {
   /// alike — NOT only when a flag was posted). Org flags are digest-level, so this
   /// rate-limits both the spend and the posting to at most once per ~20 h.
   lastOrgFlagCheckAt DateTime?    @map("last_org_flag_check_at") @db.Timestamptz
+  /// Org-flag evaluation cooldown in hours (null = built-in default 20).
+  orgFlagCooldownHours Int?       @map("org_flag_cooldown_hours")
   /// Persistent live session (Gap H): when true, a plain follow-up reply in a
   /// thread the assistant was recently active in continues the conversation
   /// WITHOUT a re-@mention (within a short session window). Opt-in, default off.
@@ -538,6 +544,11 @@ model SlackChannel {
   consolidationEnabled Boolean    @default(true) @map("consolidation_enabled")
   consolidationMinClusterSize Int? @map("consolidation_min_cluster_size")
   consolidationSimilarityThreshold Float? @map("consolidation_similarity_threshold")
+  /// Open-item sweep (Gap C) proactivity tuning (null = built-in default).
+  /// How long an open item must be idle before the assistant nudges (default 24h),
+  /// and the min gap between successive nudges of the same item (default 12h).
+  openItemNudgeAfterHours Int?    @map("open_item_nudge_after_hours")
+  openItemNudgeCooldownHours Int? @map("open_item_nudge_cooldown_hours")
   isActive         Boolean        @default(true) @map("is_active")
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
