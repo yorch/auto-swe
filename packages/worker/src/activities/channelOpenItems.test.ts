@@ -252,6 +252,62 @@ describe('sweepChannelOpenItems', () => {
     expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
   });
 
+  it('honors a per-channel openItemNudgeAfterHours override (shorter than the 24h default)', async () => {
+    // 2 hours old would NOT be stale under the 24h default, but a 1-hour
+    // override should already consider it stale.
+    const youngButOverridden = {
+      createdAt: new Date(Date.now() - 2 * 3_600_000),
+      description: 'Review PR #99',
+      id: 'item-young',
+      lastNudgedAt: null,
+      ownerUserId: 'U004',
+    };
+    findChannel.mockResolvedValue(makeChannel({ openItemNudgeAfterHours: 1 }) as never);
+    fetchChannelHistoryMock.mockResolvedValue(makeMessages(1));
+    findOpenItems
+      .mockResolvedValueOnce([youngButOverridden] as never)
+      .mockResolvedValueOnce([] as never);
+    agentGenerateMock.mockResolvedValue({
+      object: { newItems: [], resolvedIds: [] },
+      usage: { completionTokens: 20, promptTokens: 60 },
+    });
+
+    const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
+    expect(result.nudgesSent).toBe(1);
+    expect(postSlackChannelMessageMock).toHaveBeenCalledWith(
+      'C0TEST',
+      expect.stringContaining('Review PR #99')
+    );
+  });
+
+  it('honors a per-channel openItemNudgeCooldownHours override (shorter than the 12h default)', async () => {
+    // Nudged 3h ago would still be within cooldown under the 12h default, but
+    // a 1-hour override should already allow a re-nudge.
+    const recentlyNudgedButOverridden = {
+      createdAt: new Date(Date.now() - 48 * 3_600_000),
+      description: 'Old task with override',
+      id: 'item-override-cooldown',
+      lastNudgedAt: new Date(Date.now() - 3 * 3_600_000),
+      ownerUserId: null,
+    };
+    findChannel.mockResolvedValue(makeChannel({ openItemNudgeCooldownHours: 1 }) as never);
+    fetchChannelHistoryMock.mockResolvedValue(makeMessages(1));
+    findOpenItems
+      .mockResolvedValueOnce([recentlyNudgedButOverridden] as never)
+      .mockResolvedValueOnce([] as never);
+    agentGenerateMock.mockResolvedValue({
+      object: { newItems: [], resolvedIds: [] },
+      usage: { completionTokens: 20, promptTokens: 60 },
+    });
+
+    const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
+    expect(result.nudgesSent).toBe(1);
+    expect(postSlackChannelMessageMock).toHaveBeenCalledWith(
+      'C0TEST',
+      expect.stringContaining('Old task with override')
+    );
+  });
+
   it('deduplicates new items by sourceTs against already-tracked ones', async () => {
     findChannel.mockResolvedValue(makeChannel() as never);
     fetchChannelHistoryMock.mockResolvedValue(makeMessages(2));

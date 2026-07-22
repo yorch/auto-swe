@@ -188,6 +188,37 @@ describe('evaluateReactiveInterjection', () => {
     expect(lastUpdate.data).toHaveProperty('lastReactiveAt');
   });
 
+  it('honors a per-channel reactiveCooldownMinutes override (shorter than the default)', async () => {
+    // 5 minutes ago would still be on cooldown under the 10-minute default, but
+    // a 1-minute override should have already cleared it.
+    findChannel.mockResolvedValue(
+      makeChannel({
+        lastReactiveAt: new Date(Date.now() - 5 * 60_000),
+        reactiveCooldownMinutes: 1,
+      }) as never
+    );
+
+    const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+    expect(res.reason).not.toBe('cooldown');
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors a per-channel reactiveLookbackMinutes override when computing the fetch cursor', async () => {
+    findChannel.mockResolvedValue(makeChannel({ reactiveLookbackMinutes: 5 }) as never);
+
+    const before = Date.now();
+    await evaluateReactiveInterjection({ channelId: 'chan-1' });
+    const after = Date.now();
+
+    const call = fetchChannelHistoryMock.mock.calls.at(-1);
+    const oldestTs = (call?.[1] as { oldestTs: string }).oldestTs;
+    const oldestMs = parseFloat(oldestTs) * 1000;
+    // Should be ~5 minutes before "now", not the 30-minute default.
+    expect(oldestMs).toBeGreaterThanOrEqual(before - 5 * 60_000 - 1000);
+    expect(oldestMs).toBeLessThanOrEqual(after - 5 * 60_000 + 1000);
+  });
+
   it('does NOT post (and does not stamp cooldown) when the agent replies SKIP', async () => {
     runAgentMock.mockResolvedValue({
       costUsd: 0.005,
