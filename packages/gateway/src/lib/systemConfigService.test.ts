@@ -45,6 +45,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveKnowledgeBaseConfig: vi.fn(),
   resolveSlackConfig: vi.fn(),
   resolveStorageConfig: vi.fn(),
+  resolveWorkflowDefaults: vi.fn(),
 }));
 
 import {
@@ -54,6 +55,7 @@ import {
   resolveKnowledgeBaseConfig,
   resolveSlackConfig,
   resolveStorageConfig,
+  resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import {
   detectJiraFields,
@@ -83,6 +85,7 @@ import {
   updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
+  updateWorkflowDefaults,
   writeSystemConfigAudit,
 } from './systemConfigService.js';
 
@@ -92,6 +95,7 @@ const resolveStorageConfigMock = vi.mocked(resolveStorageConfig);
 const resolveFigmaConfigMock = vi.mocked(resolveFigmaConfig);
 const resolveKnowledgeBaseConfigMock = vi.mocked(resolveKnowledgeBaseConfig);
 const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
+const resolveWorkflowDefaultsMock = vi.mocked(resolveWorkflowDefaults);
 
 // ─── test helpers ───────────────────────────────────────────────────────────
 
@@ -164,6 +168,7 @@ function makeMockPrisma() {
       findMany: vi.fn(),
     },
     workflowDefaults: {
+      findUnique: vi.fn(),
       upsert: vi.fn(),
     },
   };
@@ -753,6 +758,75 @@ describe('systemConfigService', () => {
         canaryEnabled: true,
         canaryPercent: 25,
       });
+    });
+  });
+
+  // ─── Workflow defaults (general + Tier-2 knobs) ─────────────────────────
+
+  describe('updateWorkflowDefaults', () => {
+    it('writes the Tier-2 knobs to prisma, lists them in changedFields, and returns the resolved shape', async () => {
+      mockPrisma.workflowDefaults.findUnique.mockResolvedValueOnce(null);
+      resolveWorkflowDefaultsMock.mockResolvedValueOnce({
+        branchPrefix: 'auto',
+        budgetTiers: {
+          EPIC: { inputTokens: 20_000_000, outputTokens: 5_000_000 },
+          LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
+          STANDARD: { inputTokens: 3_000_000, outputTokens: 500_000 },
+        },
+        evalJudgeThreshold: 0.6,
+        maxTddIterations: 7,
+        workspaceMemory: '8g',
+      } as never);
+
+      const result = await updateWorkflowDefaults(prisma, {
+        branchPrefix: 'auto',
+        budgetStandardInputTokens: 3_000_000,
+        evalJudgeThreshold: 0.6,
+        maxTddIterations: 7,
+        workspaceMemory: '8g',
+      });
+
+      // Written to prisma verbatim (plain passthrough, no encryption).
+      const sentData = mockPrisma.workflowDefaults.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData.budgetStandardInputTokens).toBe(3_000_000);
+      expect(sentData.maxTddIterations).toBe(7);
+      expect(sentData.workspaceMemory).toBe('8g');
+      expect(sentData.evalJudgeThreshold).toBe(0.6);
+
+      // In changedFields + audit list.
+      expect(result.changedFields).toEqual(
+        expect.arrayContaining([
+          'branchPrefix',
+          'budgetStandardInputTokens',
+          'evalJudgeThreshold',
+          'maxTddIterations',
+          'workspaceMemory',
+        ])
+      );
+      expect(result.auditAfterJson.changedFields).toEqual(result.changedFields);
+      expect(result.existed).toBe(false);
+
+      // Returned as the resolved (nested budgetTiers) shape.
+      const data = result.data as { budgetTiers: { STANDARD: { inputTokens: number } } };
+      expect(data.budgetTiers.STANDARD.inputTokens).toBe(3_000_000);
+    });
+
+    it('omits untouched fields from the write and changedFields', async () => {
+      mockPrisma.workflowDefaults.findUnique.mockResolvedValueOnce({ id: 'default' });
+      resolveWorkflowDefaultsMock.mockResolvedValueOnce({} as never);
+
+      const result = await updateWorkflowDefaults(prisma, { lessonRetrievalLimit: 8 });
+
+      const sentData = mockPrisma.workflowDefaults.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData).toEqual({ lessonRetrievalLimit: 8 });
+      expect(result.changedFields).toEqual(['lessonRetrievalLimit']);
+      expect(result.existed).toBe(true);
     });
   });
 

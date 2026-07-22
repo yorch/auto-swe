@@ -13,6 +13,7 @@ import {
   startChild,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { RETRY_STANDARD, RETRY_STATE, T_5M, T_30S } from './proxyOptions.js';
 
 // Re-export types for external consumers
 export type { EpicRepoEntry, EpicRequest, EpicResult };
@@ -20,23 +21,13 @@ export type { EpicRepoEntry, EpicRequest, EpicResult };
 // ── Activity Proxies ──
 
 const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomainState'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '1s',
-    maximumAttempts: 5,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '30s',
+  retry: RETRY_STATE,
+  startToCloseTimeout: T_30S,
 });
 
 const plannerActivities = proxyActivities<Pick<typeof activitiesType, 'planEpic'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
 });
 
 const templateActivities = proxyActivities<Pick<typeof activitiesType, 'resolveTemplateForRepo'>>({
@@ -46,7 +37,7 @@ const templateActivities = proxyActivities<Pick<typeof activitiesType, 'resolveT
     maximumAttempts: 3,
     maximumInterval: '10s',
   },
-  startToCloseTimeout: '30s',
+  startToCloseTimeout: T_30S,
 });
 
 // ── Signals ──

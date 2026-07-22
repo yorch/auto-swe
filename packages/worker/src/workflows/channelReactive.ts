@@ -1,5 +1,6 @@
 import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { RETRY_LLM_LIGHT, RETRY_RUN_RECORD, T_30S } from './proxyOptions.js';
 
 /**
  * ChannelReactiveWorkflow — channel assistant (Gap A: reactive interjection).
@@ -20,12 +21,7 @@ import type * as activitiesType from '../activities/index.js';
 const { evaluateReactiveInterjection } = proxyActivities<
   Pick<typeof activitiesType, 'evaluateReactiveInterjection'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '10s',
-    maximumAttempts: 2,
-    maximumInterval: '1m',
-  },
+  retry: RETRY_LLM_LIGHT,
   startToCloseTimeout: '3m',
 });
 
@@ -34,13 +30,8 @@ const { evaluateReactiveInterjection } = proxyActivities<
 const { startChannelRun, finalizeChannelRun } = proxyActivities<
   Pick<typeof activitiesType, 'startChannelRun' | 'finalizeChannelRun'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '2s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '30s',
+  retry: RETRY_RUN_RECORD,
+  startToCloseTimeout: T_30S,
 });
 
 export async function ChannelReactiveWorkflow(input: { channelId: string }): Promise<void> {

@@ -2,6 +2,7 @@ import type { ScheduledEvalInput } from '@auto-swe/shared/types/workflow';
 import { log, proxyActivities } from '@temporalio/workflow';
 import type { runEvalHarnessActivity as runEvalHarnessActivityType } from '../activities/evalHarness.js';
 import type { prepareScheduledEvalRun as prepareScheduledEvalRunType } from '../activities/prepareScheduledEvalRun.js';
+import { T_2_MINUTES, T_4_HOURS, T_5_MINUTES } from './proxyOptions.js';
 
 /**
  * Scheduled eval-regression workflow (evals P1) — the platform-native nightly
@@ -18,15 +19,15 @@ const { prepareScheduledEvalRun } = proxyActivities<{
   prepareScheduledEvalRun: typeof prepareScheduledEvalRunType;
 }>({
   retry: { maximumAttempts: 3 },
-  startToCloseTimeout: '2 minutes',
+  startToCloseTimeout: T_2_MINUTES,
 });
 
 const { runEvalHarnessActivity } = proxyActivities<{
   runEvalHarnessActivity: typeof runEvalHarnessActivityType;
 }>({
-  heartbeatTimeout: '5 minutes',
+  heartbeatTimeout: T_5_MINUTES,
   // A full benchmark is many multi-minute Docker + LLM cases.
-  startToCloseTimeout: '4 hours',
+  startToCloseTimeout: T_4_HOURS,
 });
 
 export async function ScheduledEvalWorkflow(input: ScheduledEvalInput): Promise<void> {

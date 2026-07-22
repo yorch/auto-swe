@@ -1,6 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { evalRubric: { findFirst: vi.fn().mockResolvedValue(null) } },
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(),
+}));
+vi.mock('../lib/activityContext.js', () => ({
+  currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn() }));
+
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import type { EvalScorer } from '@auto-swe/shared/workflow';
 import type { ScoreInput } from '../lib/scorerCombination.js';
-import { assembleScores, evalAssert } from './runEvalNode.js';
+import { assembleScores, evalAssert, runEvalNode } from './runEvalNode.js';
+
+const mockResolveDefaults = vi.mocked(resolveWorkflowDefaults);
 
 describe('evalAssert', () => {
   it('evaluates numeric comparisons against a json path', () => {
@@ -27,6 +43,7 @@ describe('assembleScores', () => {
   const gatePass: ScoreInput = { kind: 'gate', passed: true, scorer: 'gate:t', value: 1 };
   const gateFail: ScoreInput = { kind: 'gate', passed: false, scorer: 'gate:t', value: 0 };
   const judge: ScoreInput = { kind: 'judge', scorer: 'judge:q', value: 0.2 };
+  const judge05: ScoreInput = { kind: 'judge', scorer: 'judge:q', value: 0.5 };
 
   it('gates to 0 and blocks on floor failure', () => {
     const r = assembleScores([gateFail, judge], true);
@@ -45,5 +62,32 @@ describe('assembleScores', () => {
   it('blocks on a weak judge when not advisory', () => {
     const r = assembleScores([gatePass, judge], false);
     expect(r.decision.blocked).toBe(true);
+  });
+
+  it('respects a caller-supplied judgeThreshold (config-driven) in the gate decision', () => {
+    // Same judge value (0.5), opposite decisions depending on the threshold the
+    // caller threads through — proving the param reaches decideGate.
+    expect(assembleScores([gatePass, judge05], false, 0.8).decision.blocked).toBe(true);
+    expect(assembleScores([gatePass, judge05], false, 0.4).decision.blocked).toBe(false);
+  });
+});
+
+describe('runEvalNode (judge threshold from DB config)', () => {
+  // A judge scorer with no rubric row scores 0.5; whether that blocks depends on
+  // the evalJudgeThreshold resolved from workflow_defaults, so a distinctive
+  // mocked value must decide the gate.
+  const judgeScorer = { kind: 'judge', rubricRef: 'quality' } as EvalScorer;
+
+  it('blocks the gate when the resolved evalJudgeThreshold exceeds the judge score', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.8 } as never);
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(true);
+    expect(r.decision.reason).toContain('0.8');
+  });
+
+  it('passes the gate when the resolved evalJudgeThreshold is below the judge score', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.4 } as never);
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(false);
   });
 });

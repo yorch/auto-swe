@@ -9,6 +9,7 @@ import {
   resolveKnowledgeBaseConfig,
   resolveSlackConfig,
   resolveStorageConfig,
+  resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
@@ -1076,6 +1077,98 @@ export async function testFigmaConnection(): Promise<{ detail: string; ok: boole
       ok: false,
     };
   }
+}
+
+// ─── Workflow defaults (general + Tier-2 operator knobs) ────────────────────────
+
+export type WorkflowDefaultsInput = {
+  branchPrefix?: string;
+  budgetEpicInputTokens?: number;
+  budgetEpicOutputTokens?: number;
+  budgetLargeInputTokens?: number;
+  budgetLargeOutputTokens?: number;
+  budgetStandardInputTokens?: number;
+  budgetStandardOutputTokens?: number;
+  defaultTeamSlug?: string;
+  evalHealthMaxFlakeRate?: number;
+  evalHealthMaxStaleRate?: number;
+  evalHealthMinKappa?: number;
+  evalJudgeThreshold?: number;
+  lessonRetrievalLimit?: number;
+  lessonRetrievalThreshold?: number;
+  maxEvalIterations?: number;
+  maxTddIterations?: number;
+  prBodyTemplate?: string;
+  prTitleTemplate?: string;
+  workspaceCpus?: number;
+  workspaceImage?: string;
+  workspaceMemory?: string;
+  workspacePidsLimit?: number;
+};
+
+/// The plain (non-secret) scalar columns owned by the general workflow-defaults
+/// editor. Every key maps 1:1 to a `workflow_defaults` column of the same name;
+/// values are written verbatim when provided (`!== undefined`). Schedule/canary
+/// columns are intentionally excluded — they have their own dedicated updaters.
+const WORKFLOW_DEFAULTS_KEYS = [
+  'branchPrefix',
+  'budgetEpicInputTokens',
+  'budgetEpicOutputTokens',
+  'budgetLargeInputTokens',
+  'budgetLargeOutputTokens',
+  'budgetStandardInputTokens',
+  'budgetStandardOutputTokens',
+  'defaultTeamSlug',
+  'evalHealthMaxFlakeRate',
+  'evalHealthMaxStaleRate',
+  'evalHealthMinKappa',
+  'evalJudgeThreshold',
+  'lessonRetrievalLimit',
+  'lessonRetrievalThreshold',
+  'maxEvalIterations',
+  'maxTddIterations',
+  'prBodyTemplate',
+  'prTitleTemplate',
+  'workspaceCpus',
+  'workspaceImage',
+  'workspaceMemory',
+  'workspacePidsLimit',
+] as const satisfies readonly (keyof WorkflowDefaultsInput)[];
+
+/// Writes the general (non-secret) fields onto the WorkflowDefaults singleton.
+/// Non-secret plain passthrough — no encryption. `data` is the resolved
+/// read-back (with env-var fallbacks + nested budgetTiers) so GET and PUT share
+/// one shape.
+export async function updateWorkflowDefaults(
+  prisma: PrismaClient,
+  body: WorkflowDefaultsInput
+): Promise<ConfigUpdateResult> {
+  const existing = await prisma.workflowDefaults.findUnique({ where: { id: 'default' } });
+
+  const data: Record<string, unknown> = {};
+  for (const key of WORKFLOW_DEFAULTS_KEYS) {
+    const value = body[key];
+    if (value !== undefined) {
+      data[key] = value;
+    }
+  }
+
+  await prisma.workflowDefaults.upsert({
+    create: { id: 'default', ...data },
+    update: data,
+    where: { id: 'default' },
+  });
+
+  const changedFields = changedKeys(WORKFLOW_DEFAULTS_KEYS.map((k) => [k, body[k]]));
+
+  return {
+    auditAfterJson: { ...data, changedFields },
+    changedFields,
+    // Return through the shared resolver so GET and PUT always produce the same
+    // shape, including env-var fallbacks for fields not yet set in DB.
+    data: { ...(await resolveWorkflowDefaults()) },
+    existed: !!existing,
+  };
 }
 
 // ─── Consolidation schedule ───────────────────────────────────────────────────

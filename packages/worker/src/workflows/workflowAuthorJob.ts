@@ -1,5 +1,6 @@
 import { ApplicationFailure, defineQuery, proxyActivities, setHandler } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { RETRY_SINGLE_ATTEMPT, T_5M, T_30S } from './proxyOptions.js';
 
 /**
  * WorkflowAuthorJobWorkflow — the async (non-blocking) generation job.
@@ -44,8 +45,8 @@ export const authorJobProgressQuery = defineQuery<WorkflowAuthorJobProgress>('au
 const { generateWorkflowSpec } = proxyActivities<
   Pick<typeof activitiesType, 'generateWorkflowSpec'>
 >({
-  retry: { maximumAttempts: 1 },
-  startToCloseTimeout: '5m',
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_5M,
 });
 
 const { persistDraftTemplate } = proxyActivities<
@@ -55,8 +56,8 @@ const { persistDraftTemplate } = proxyActivities<
   // activity-level retry after a committed-but-unacked create would persist a
   // SECOND DRAFT. One attempt; a transient failure fails the job (the user
   // retries), which is preferable to silently leaking duplicate templates.
-  retry: { maximumAttempts: 1 },
-  startToCloseTimeout: '30s',
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_30S,
 });
 
 export async function WorkflowAuthorJobWorkflow(

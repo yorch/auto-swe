@@ -23,6 +23,22 @@ import {
   workflowInfo,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import {
+  RETRY_AGENT,
+  RETRY_LLM_LIGHT,
+  RETRY_SANDBOX,
+  RETRY_SINGLE_ATTEMPT,
+  RETRY_STANDARD,
+  RETRY_STATE,
+  T_1M,
+  T_2M,
+  T_5M,
+  T_10M,
+  T_15M,
+  T_30M,
+  T_30S,
+  T_60M,
+} from './proxyOptions.js';
 
 /**
  * RunnableWorkflow — generic interpreter that executes any WorkflowSpec.
@@ -46,13 +62,8 @@ const stateActivities = proxyActivities<
     | 'cancelPendingHumanSteps'
   >
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '1s',
-    maximumAttempts: 5,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '30s',
+  retry: RETRY_STATE,
+  startToCloseTimeout: T_30S,
 });
 
 const agentActivities = proxyActivities<
@@ -67,62 +78,42 @@ const agentActivities = proxyActivities<
     | 'runReviewNetwork'
   >
 >({
-  heartbeatTimeout: '5m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 2,
-    maximumInterval: '2m',
-  },
-  startToCloseTimeout: '30m',
+  heartbeatTimeout: T_5M,
+  retry: RETRY_AGENT,
+  startToCloseTimeout: T_30M,
 });
 
 const mergeActivities = proxyActivities<Pick<typeof activitiesType, 'mergeBranches'>>({
-  heartbeatTimeout: '5m',
+  heartbeatTimeout: T_5M,
   retry: {
     backoffCoefficient: 2,
     initialInterval: '5s',
     maximumAttempts: 2,
     maximumInterval: '1m',
   },
-  startToCloseTimeout: '15m',
+  startToCloseTimeout: T_15M,
 });
 
 // Conflict resolution is implementer-bound (one or more LLM calls per branch);
 // share the long-lived agent timeouts rather than the cheaper merge proxy.
 const conflictActivities = proxyActivities<Pick<typeof activitiesType, 'resolveMergeConflict'>>({
-  heartbeatTimeout: '5m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 2,
-    maximumInterval: '2m',
-  },
-  startToCloseTimeout: '30m',
+  heartbeatTimeout: T_5M,
+  retry: RETRY_AGENT,
+  startToCloseTimeout: T_30M,
 });
 
 // Phase 6: user-authored shell steps. `runShellStep` runs the command via
 // async spawn with heartbeat pumping; `startToCloseTimeout` still caps the
 // wall clock (the activity's own cap is `timeoutMs`, set on the shell node).
 const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runShellStep'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 2,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '60m',
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_60M,
 });
 
 // P4/WS4: container-contract coded steps. Same sandbox/lifecycle shape as shell.
 const containerStepActivities = proxyActivities<Pick<typeof activitiesType, 'runContainerStep'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 2,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '60m',
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_60M,
 });
 
 // Quality gates: shell-bound, fail-by-exit-code. Temporal-level retries are
@@ -134,14 +125,9 @@ const gateActivities = proxyActivities<
     'runLint' | 'runTypecheck' | 'runTests' | 'runBuild' | 'runVulnScan' | 'runPerfBench'
   >
 >({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 2,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '15m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_15M,
 });
 
 const githubActivities = proxyActivities<
@@ -153,28 +139,18 @@ const githubActivities = proxyActivities<
     maximumAttempts: 4,
     maximumInterval: '2m',
   },
-  startToCloseTimeout: '2m',
+  startToCloseTimeout: T_2M,
 });
 
 const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '5m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
 });
 
 const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
 });
 
 // P2: declarative agent node. Tool-free single-shot agent run; same retry shape
@@ -183,52 +159,32 @@ const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMe
 const agentNodeActivities = proxyActivities<
   Pick<typeof activitiesType, 'runAgentNode' | 'planChannelTask'>
 >({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '10m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
 });
 
 // Evals P2: declarative `eval` node. Runs scorers (assert/trajectory + judge
 // LLM call), so it gets the longer agent-style timeout.
 const evalNodeActivities = proxyActivities<Pick<typeof activitiesType, 'runEvalNode'>>({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '10m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
 });
 
 // P2/WS4: declarative mcp node. Single external MCP tool call (network I/O in
 // the activity); heartbeat + retry like the other network activities.
 const mcpNodeActivities = proxyActivities<Pick<typeof activitiesType, 'mcpCallTool'>>({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '10m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
 });
 
 // CI-wait config resolution — a quick DB read, same shape as the other config
 // activities.
 const ciConfigActivities = proxyActivities<Pick<typeof activitiesType, 'resolveCiWaitConfig'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '1m',
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_1M,
 });
 
 // CI polling — a long-running activity that self-bounds by its `deadlineSec`
@@ -236,8 +192,8 @@ const ciConfigActivities = proxyActivities<Pick<typeof activitiesType, 'resolveC
 // configurable deadline (default 4h); no Temporal-level retry — the poll loop
 // already tolerates transient fetch errors, and a deadline is terminal.
 const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'waitForCiByPolling'>>({
-  heartbeatTimeout: '2m',
-  retry: { maximumAttempts: 1 },
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SINGLE_ATTEMPT,
   startToCloseTimeout: '6h',
 });
 
@@ -250,14 +206,9 @@ const prdActivities = proxyActivities<
     'analyzePrd' | 'decomposePrd' | 'createTrackerItems' | 'submitPrdWorkRequests'
   >
 >({
-  heartbeatTimeout: '5m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '10s',
-    maximumAttempts: 2,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '15m',
+  heartbeatTimeout: T_5M,
+  retry: RETRY_LLM_LIGHT,
+  startToCloseTimeout: T_15M,
 });
 
 // ── Inputs ──

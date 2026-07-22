@@ -596,6 +596,8 @@ Every run carries a `budgetTier` (set at submission, default `STANDARD`). `recor
 | `LARGE` | 8,000,000 | 2,000,000 |
 | `EPIC` | 20,000,000 | 5,000,000 |
 
+These caps are DB-backed defaults: `resolveBudgetTiers()` reads them from the `WorkflowDefaults` singleton (six columns → the nested `budgetTiers` map, `~30 s` config cache) and falls back to the hardcoded `BUDGET_LIMITS` constant when unconfigured. They are part of the **Tier-2 resource & tuning defaults** — a set of previously-hardcoded operational knobs (budget caps, TDD/eval iteration ceilings, workspace container caps + base image, lesson-retrieval limit/threshold, eval-health gate thresholds) now editable at `/admin/workflow` → "Resource & tuning defaults (Tier 2)". All are GLOBAL-scope only. See the Tier-2 table in `AGENTS.md` §"System Config" for the full field list and consumers.
+
 Unknown model specs emit `llm.cost_pricing_known=false` and accrue zero cost rather than breaking the run.
 
 ---

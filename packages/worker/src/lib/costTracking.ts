@@ -1,7 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
+import { configCacheTtlMs, withCache } from './config/cache.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -108,11 +110,36 @@ export function getModelPrice(spec: string): { price: ModelPrice; known: boolean
   return { known: false, price: ZERO_PRICE };
 }
 
+/**
+ * Baked-in per-tier token budgets. Retained as the fallback the DB-backed
+ * resolver returns when no override row exists (identical numbers), and exported
+ * for callers/tests that reference the defaults directly. The live values used
+ * for enforcement come from `resolveBudgetTiers()` below.
+ */
 export const BUDGET_LIMITS: Record<BudgetTier, { inputTokens: number; outputTokens: number }> = {
   EPIC: { inputTokens: 20_000_000, outputTokens: 5_000_000 },
   LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
   STANDARD: { inputTokens: 2_000_000, outputTokens: 500_000 },
 };
+
+/**
+ * Resolve the per-tier token budgets from the DB-backed workflow defaults.
+ *
+ * `recordLlmUsage` is a hot path (called after every LLM call), so the resolved
+ * value is memoized through the shared config TTL cache (`withCache`, same
+ * ~30 s TTL as the model/credential resolvers) rather than hitting the DB per
+ * call. A config edit in the dashboard takes effect on the next call after the
+ * TTL elapses, mirroring how every other worker-side config resolution behaves.
+ * With no override row the resolver returns the same numbers as `BUDGET_LIMITS`.
+ */
+async function resolveBudgetTiers(): Promise<
+  Record<string, { inputTokens: number; outputTokens: number }>
+> {
+  return withCache('workflow-defaults:budgetTiers', configCacheTtlMs(), async () => {
+    const defaults = await resolveWorkflowDefaults();
+    return defaults.budgetTiers;
+  });
+}
 
 /**
  * Computes the USD cost of a single LLM call given the model spec and token counts.
@@ -242,10 +269,11 @@ export async function recordLlmUsage(
         });
 
         const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
-        const limits = BUDGET_LIMITS[tier];
+        const budgetTiers = await resolveBudgetTiers();
+        const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
         if (!limits) {
           throw new Error(
-            `Unknown budget tier "${tier}" — update BUDGET_LIMITS in costTracking.ts`
+            `Unknown budget tier "${tier}" — update the workflow-defaults budget tiers / BUDGET_LIMITS in costTracking.ts`
           );
         }
 

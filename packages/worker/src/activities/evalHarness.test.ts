@@ -1,5 +1,44 @@
-import { describe, expect, it, vi } from 'vitest';
-import { type EvalCaseRow, type HarnessDeps, runEvalHarness } from './evalHarness.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mocks for the runCaseDefault path — its collaborators are the Docker + LLM
+// boundary. The runEvalHarness tests below inject their own deps and never
+// exercise these, so mocking them here is inert for those tests.
+const generate = vi.fn(async () => ({}));
+const execCapture = vi.fn(async () => ({ exitCode: 1, stderr: 'fail', stdout: '' }));
+const destroy = vi.fn(async () => {});
+
+vi.mock('./workspace.js', () => ({
+  createWorkspace: vi.fn(async () => ({ destroy, execCapture })),
+}));
+vi.mock('../agents/implementer.js', () => ({
+  createImplementerAgent: vi.fn(async () => ({
+    agent: { generate },
+    closeMcp: undefined,
+    promptSuffix: '',
+  })),
+}));
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: vi.fn(async () => ({
+    model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: undefined },
+    skills: [],
+    toolKeys: null,
+  })),
+}));
+vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpUrl: vi.fn(async () => undefined),
+}));
+vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => ({})) }));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
+}));
+
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import {
+  type EvalCaseRow,
+  type HarnessDeps,
+  runCaseDefault,
+  runEvalHarness,
+} from './evalHarness.js';
 
 const cases: EvalCaseRow[] = [
   {
@@ -89,5 +128,34 @@ describe('runEvalHarness', () => {
     await runEvalHarness(input, d);
     expect((d.records[0] as { value: number }).value).toBe(0);
     expect((d.records[0] as { passed: boolean }).passed).toBe(false);
+  });
+});
+
+describe('runCaseDefault iteration cap', () => {
+  beforeEach(() => {
+    generate.mockClear();
+    execCapture.mockClear();
+    execCapture.mockResolvedValue({ exitCode: 1, stderr: 'fail', stdout: '' });
+  });
+
+  it('runs at most maxEvalIterations refine attempts before scoring 0', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 2 } as never);
+
+    const result = await runCaseDefault(cases[0], 'implementer');
+
+    // Golden test never passes → loop is bounded by the resolved cap, not 3.
+    expect(result).toBe(0);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(execCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns 1 as soon as the golden test passes, short-circuiting the cap', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 3 } as never);
+    execCapture.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: 'ok' });
+
+    const result = await runCaseDefault(cases[0], 'implementer');
+
+    expect(result).toBe(1);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 });

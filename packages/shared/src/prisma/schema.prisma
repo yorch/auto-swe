@@ -1414,6 +1414,38 @@ model WorkflowDefaults {
   canaryCandidateVersion Int?    @map("canary_candidate_version")
   canaryPercent          Float   @default(0) @map("canary_percent")
 
+  // ── Tier-2 operator knobs (GLOBAL) — previously hardcoded in the worker,
+  //    now DB-tunable via /admin/workflow. Consumers read them through
+  //    resolveWorkflowDefaults() (cached), falling back to these defaults. ──
+
+  // Per-tier token budgets enforced by the worker's cost tracker.
+  budgetStandardInputTokens  Int @default(2000000) @map("budget_standard_input_tokens")
+  budgetStandardOutputTokens Int @default(500000) @map("budget_standard_output_tokens")
+  budgetLargeInputTokens     Int @default(8000000) @map("budget_large_input_tokens")
+  budgetLargeOutputTokens    Int @default(2000000) @map("budget_large_output_tokens")
+  budgetEpicInputTokens      Int @default(20000000) @map("budget_epic_input_tokens")
+  budgetEpicOutputTokens     Int @default(5000000) @map("budget_epic_output_tokens")
+
+  // Agent refine-loop caps (quality/cost).
+  maxTddIterations  Int @default(5) @map("max_tdd_iterations")
+  maxEvalIterations Int @default(3) @map("max_eval_iterations")
+
+  // Ephemeral workspace container sizing + default base image.
+  workspaceMemory     String @default("4g") @map("workspace_memory")
+  workspaceCpus       Float  @default(2) @map("workspace_cpus")
+  workspacePidsLimit  Int    @default(512) @map("workspace_pids_limit")
+  workspaceImage      String @default("node:24-alpine") @map("workspace_image")
+
+  // Lesson (semantic-memory) retrieval relevance knobs.
+  lessonRetrievalLimit     Int   @default(5) @map("lesson_retrieval_limit")
+  lessonRetrievalThreshold Float @default(0.7) @map("lesson_retrieval_threshold")
+
+  // Eval-suite health gate + LLM-judge decision thresholds.
+  evalHealthMaxFlakeRate Float @default(0.1) @map("eval_health_max_flake_rate")
+  evalHealthMaxStaleRate Float @default(0.1) @map("eval_health_max_stale_rate")
+  evalHealthMinKappa     Float @default(0.4) @map("eval_health_min_kappa")
+  evalJudgeThreshold     Float @default(0.5) @map("eval_judge_threshold")
+
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("workflow_defaults")

@@ -4,6 +4,7 @@ import type {
   ExplainWorkflowSpecResult,
 } from '../activities/explainWorkflowSpec.js';
 import type * as activitiesType from '../activities/index.js';
+import { T_2M } from './proxyOptions.js';
 
 /**
  * WorkflowExplainWorkflow — generate a plain-language explanation of a
@@ -17,7 +18,7 @@ import type * as activitiesType from '../activities/index.js';
 const { explainWorkflowSpec } = proxyActivities<Pick<typeof activitiesType, 'explainWorkflowSpec'>>(
   {
     retry: { maximumAttempts: 2 },
-    startToCloseTimeout: '2m',
+    startToCloseTimeout: T_2M,
   }
 );
 

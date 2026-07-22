@@ -50,7 +50,21 @@ vi.mock('@auto-swe/shared/db', async () => {
   };
 });
 
+// Mock the workflow-defaults resolver — recordLlmUsage reads its per-tier
+// budgets from here (memoized through the shared config cache). Default returns
+// the baked-in tier numbers so existing budget tests behave unchanged.
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    budgetTiers: {
+      EPIC: { inputTokens: 20_000_000, outputTokens: 5_000_000 },
+      LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
+      STANDARD: { inputTokens: 2_000_000, outputTokens: 500_000 },
+    },
+  })),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { _resetConfigCacheForTests } from './config/cache.js';
 import {
   BUDGET_LIMITS,
@@ -171,6 +185,30 @@ describe('recordLlmUsage', () => {
     ).resolves.not.toThrow();
 
     expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
+  });
+
+  it('enforces the per-tier budget resolved from workflow defaults (tiny override fires BUDGET_EXCEEDED early)', async () => {
+    // A tiny STANDARD cap from the resolver must gate a call that would sail
+    // through the baked-in 2M-token default — proving the resolved value, not
+    // BUDGET_LIMITS, drives enforcement.
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({
+      budgetTiers: {
+        EPIC: { inputTokens: 20_000_000, outputTokens: 5_000_000 },
+        LARGE: { inputTokens: 8_000_000, outputTokens: 2_000_000 },
+        STANDARD: { inputTokens: 100, outputTokens: 100 },
+      },
+    } as never);
+    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
+      budgetTier: 'STANDARD',
+      costUsdAccrued: 0,
+      id: 'wf-1',
+      tokensInputUsed: 0,
+      tokensOutputUsed: 0,
+    } as never);
+
+    await expect(
+      recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200, outputTokens: 10 })
+    ).rejects.toThrow(ApplicationFailure);
   });
 
   it('throws BUDGET_EXCEEDED when cumulative input tokens exceed tier limit', async () => {

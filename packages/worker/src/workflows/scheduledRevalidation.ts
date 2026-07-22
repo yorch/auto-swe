@@ -5,30 +5,21 @@ import type {
 import { proxyActivities } from '@temporalio/workflow';
 import type { revalidateDatasetActivity } from '../activities/evalRevalidate.js';
 import type { getDatasetsForRevalidation } from '../activities/getDatasetsForRevalidation.js';
+import { RETRY_SCHEDULED, T_2_MINUTES, T_30_MINUTES } from './proxyOptions.js';
 
 const { getDatasetsForRevalidation: getDatasets } = proxyActivities<{
   getDatasetsForRevalidation: typeof getDatasetsForRevalidation;
 }>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '2 minutes',
+  retry: RETRY_SCHEDULED,
+  startToCloseTimeout: T_2_MINUTES,
 });
 
 const { revalidateDatasetActivity: revalidateDataset } = proxyActivities<{
   revalidateDatasetActivity: typeof revalidateDatasetActivity;
 }>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
+  retry: RETRY_SCHEDULED,
   // Long timeout — re-validation clones repos and runs Docker gates per case.
-  startToCloseTimeout: '30 minutes',
+  startToCloseTimeout: T_30_MINUTES,
 });
 
 /**

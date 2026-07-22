@@ -6,6 +6,7 @@ import {
   resolveRevalidationConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -38,6 +39,7 @@ import {
   updateRevalidationScheduleConfig,
   updateSlackConfig,
   updateStorageConfig,
+  updateWorkflowDefaults,
   writeSystemConfigAudit,
 } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -110,9 +112,37 @@ const WorkflowDefaultsPutBody = z.object({
     .max(100)
     .regex(/^[a-z0-9][a-z0-9/-]*$/, 'must be lowercase alphanumeric with - or /')
     .optional(),
+  budgetEpicInputTokens: z.number().int().min(1).optional(),
+  budgetEpicOutputTokens: z.number().int().min(1).optional(),
+  budgetLargeInputTokens: z.number().int().min(1).optional(),
+  budgetLargeOutputTokens: z.number().int().min(1).optional(),
+  budgetStandardInputTokens: z.number().int().min(1).optional(),
+  budgetStandardOutputTokens: z.number().int().min(1).optional(),
   defaultTeamSlug: z.string().min(1).max(100).optional(),
+  evalHealthMaxFlakeRate: z.number().min(0).max(1).optional(),
+  evalHealthMaxStaleRate: z.number().min(0).max(1).optional(),
+  evalHealthMinKappa: z.number().min(0).max(1).optional(),
+  evalJudgeThreshold: z.number().min(0).max(1).optional(),
+  lessonRetrievalLimit: z.number().int().min(1).optional(),
+  lessonRetrievalThreshold: z.number().min(0).max(1).optional(),
+  maxEvalIterations: z.number().int().min(1).optional(),
+  maxTddIterations: z.number().int().min(1).optional(),
   prBodyTemplate: z.string().max(10_000).optional(),
   prTitleTemplate: z.string().min(1).max(500).optional(),
+  workspaceCpus: z.number().positive().optional(),
+  // Format-validate the two operational strings at write time so a bad value
+  // fails fast here (a 400) instead of breaking every future workspace creation
+  // deep in the worker. `workspaceImage` must satisfy the same ref regex
+  // `createWorkspace` enforces; `workspaceMemory` must be a docker memory value
+  // (digits + optional b/k/m/g unit) — this also removes any shell metacharacter.
+  workspaceImage: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE).optional(),
+  workspaceMemory: z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(/^\d+[bkmg]?$/i, 'must be a docker memory value, e.g. 512m or 4g')
+    .optional(),
+  workspacePidsLimit: z.number().int().min(1).optional(),
 });
 
 const ConsolidationPutBody = z.object({
@@ -327,14 +357,20 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/workflow-defaults',
     { schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      await prisma.workflowDefaults.upsert({
-        create: { id: 'default', ...req.body },
-        update: req.body,
-        where: { id: 'default' },
-      });
-      // Return through the shared resolver so GET and PUT always produce the
-      // same shape, including env-var fallbacks for fields not yet set in DB.
-      return reply.send({ data: await resolveWorkflowDefaults() });
+      const result = await updateWorkflowDefaults(prisma, req.body);
+      if (result.changedFields.length > 0) {
+        const actor = requireUser(req);
+        await writeSystemConfigAudit(prisma, fastify.log, {
+          action: result.existed ? 'UPDATE' : 'CREATE',
+          actorId: actor.sub,
+          afterJson: result.auditAfterJson,
+          entityId: SYSTEM_CONFIG_IDS.workflowDefaults,
+          entityType: 'WorkflowDefaults',
+        });
+      }
+      // result.data is the shared resolver's shape so GET and PUT match,
+      // including env-var fallbacks for fields not yet set in DB.
+      return reply.send({ data: result.data });
     }
   );
 

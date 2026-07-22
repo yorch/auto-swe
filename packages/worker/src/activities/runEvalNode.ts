@@ -203,10 +203,11 @@ async function runJudge(rubricRef: string, targetValue: unknown): Promise<number
 /** Pure assembly (tested): combine score inputs into the node result. */
 export function assembleScores(
   scoreInputs: ScoreInput[],
-  judgeAdvisory: boolean
+  judgeAdvisory: boolean,
+  judgeThreshold?: number
 ): RunEvalNodeResult {
   const combined = combineScores(scoreInputs);
-  const decision = decideGate(scoreInputs, { judgeAdvisory });
+  const decision = decideGate(scoreInputs, { judgeAdvisory, judgeThreshold });
   return {
     decision: { blocked: decision.blocked, reason: decision.reason },
     floorPassed: combined.floorPassed,
@@ -232,7 +233,10 @@ export async function runEvalNode(input: RunEvalNodeInput): Promise<RunEvalNodeR
     : [];
   const scoreInputs = [...baseInputs, ...judgeInputs];
 
-  const result = assembleScores(scoreInputs, judgeAdvisory);
+  // DB-backed judge threshold (workflow_defaults) drives the blocking-judge
+  // gate; `assembleScores`/`decideGate` keep 0.5 as the last-resort fallback.
+  const { evalJudgeThreshold } = await resolveWorkflowDefaults();
+  const result = assembleScores(scoreInputs, judgeAdvisory, evalJudgeThreshold);
 
   // Record one decomposable EvalResult row per scorer (best-effort).
   await Promise.all(

@@ -1,5 +1,6 @@
 import { proxyActivities } from '@temporalio/workflow';
 import type { runEvalHarnessActivity as runEvalHarnessActivityType } from '../activities/evalHarness.js';
+import { T_4_HOURS, T_5_MINUTES } from './proxyOptions.js';
 
 /**
  * Durable offline-eval harness workflow (evals P1/WS4; docs/evals-p1.md).
@@ -13,9 +14,9 @@ import type { runEvalHarnessActivity as runEvalHarnessActivityType } from '../ac
 const { runEvalHarnessActivity } = proxyActivities<{
   runEvalHarnessActivity: typeof runEvalHarnessActivityType;
 }>({
-  heartbeatTimeout: '5 minutes',
+  heartbeatTimeout: T_5_MINUTES,
   // A full benchmark is many multi-minute Docker + LLM cases.
-  startToCloseTimeout: '4 hours',
+  startToCloseTimeout: T_4_HOURS,
 });
 
 export interface EvalRunWorkflowInput {

@@ -343,6 +343,27 @@ export interface ResolvedWorkflowDefaults {
   /// After this long with no CI checks present, the poller concludes "passed".
   ciPollGraceSec: number;
   ciPollDeadlineSec: number;
+
+  // ── Tier-2 operator knobs (GLOBAL) ──
+  /// Per-tier token budgets keyed by BudgetTier ('STANDARD'|'LARGE'|'EPIC').
+  budgetTiers: Record<string, { inputTokens: number; outputTokens: number }>;
+  /// Implementer TDD refine-loop cap per run.
+  maxTddIterations: number;
+  /// Eval-harness attempt cap.
+  maxEvalIterations: number;
+  /// Ephemeral workspace container caps + default base image.
+  workspaceMemory: string;
+  workspaceCpus: number;
+  workspacePidsLimit: number;
+  workspaceImage: string;
+  /// Lesson-retrieval relevance knobs.
+  lessonRetrievalLimit: number;
+  lessonRetrievalThreshold: number;
+  /// Eval-suite health gate + LLM-judge thresholds.
+  evalHealthMaxFlakeRate: number;
+  evalHealthMaxStaleRate: number;
+  evalHealthMinKappa: number;
+  evalJudgeThreshold: number;
 }
 
 /** Parse a positive-integer env var, falling back to `fallback` when unset/invalid. */
@@ -357,14 +378,43 @@ export async function resolveWorkflowDefaults(
   const row = await (await db()).workflowDefaults.findUnique({ where: { id: 'default' } });
   return {
     branchPrefix: row?.branchPrefix ?? process.env.BRANCH_PREFIX ?? 'auto',
+
+    // Tier-2 knobs: DB value ?? the previously-hardcoded default. `??` (not `||`)
+    // so a legitimately-zero override is honored where meaningful.
+    budgetTiers: {
+      EPIC: {
+        inputTokens: row?.budgetEpicInputTokens ?? 20_000_000,
+        outputTokens: row?.budgetEpicOutputTokens ?? 5_000_000,
+      },
+      LARGE: {
+        inputTokens: row?.budgetLargeInputTokens ?? 8_000_000,
+        outputTokens: row?.budgetLargeOutputTokens ?? 2_000_000,
+      },
+      STANDARD: {
+        inputTokens: row?.budgetStandardInputTokens ?? 2_000_000,
+        outputTokens: row?.budgetStandardOutputTokens ?? 500_000,
+      },
+    },
     ciPollDeadlineSec: envPositiveInt(process.env.CI_POLL_DEADLINE_SEC, 14_400),
     ciPollGraceSec: envPositiveInt(process.env.CI_POLL_GRACE_SEC, 60),
     ciPollIntervalSec: envPositiveInt(process.env.CI_POLL_INTERVAL_SEC, 15),
     ciWaitMode: process.env.CI_WAIT_MODE === 'poll' ? 'poll' : 'signal',
     defaultTeamSlug: row?.defaultTeamSlug ?? process.env.DEFAULT_TEAM_SLUG ?? 'default',
+    evalHealthMaxFlakeRate: row?.evalHealthMaxFlakeRate ?? 0.1,
+    evalHealthMaxStaleRate: row?.evalHealthMaxStaleRate ?? 0.1,
+    evalHealthMinKappa: row?.evalHealthMinKappa ?? 0.4,
+    evalJudgeThreshold: row?.evalJudgeThreshold ?? 0.5,
+    lessonRetrievalLimit: row?.lessonRetrievalLimit ?? 5,
+    lessonRetrievalThreshold: row?.lessonRetrievalThreshold ?? 0.7,
+    maxEvalIterations: row?.maxEvalIterations ?? 3,
+    maxTddIterations: row?.maxTddIterations ?? 5,
     prBodyTemplate: row?.prBodyTemplate ?? process.env.PR_BODY_TEMPLATE ?? '',
     prTitleTemplate:
       row?.prTitleTemplate ?? process.env.PR_TITLE_TEMPLATE ?? '[auto-swe] {{ticketId}}',
+    workspaceCpus: row?.workspaceCpus ?? 2,
+    workspaceImage: row?.workspaceImage ?? 'node:24-alpine',
+    workspaceMemory: row?.workspaceMemory ?? '4g',
+    workspacePidsLimit: row?.workspacePidsLimit ?? 512,
   };
 }
 
