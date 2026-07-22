@@ -77,11 +77,16 @@ const UpdateChannelSchema = z.object({
   isPrivate: z.boolean().optional(),
   monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
+  openItemNudgeAfterHours: z.number().int().min(1).nullable().optional(),
+  openItemNudgeCooldownHours: z.number().int().min(1).nullable().optional(),
+  orgFlagCooldownHours: z.number().int().min(1).nullable().optional(),
   orgFlaggingEnabled: z.boolean().optional(),
   passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
+  reactiveCooldownMinutes: z.number().int().min(1).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   reactiveEnabled: z.boolean().optional(),
+  reactiveLookbackMinutes: z.number().int().min(1).nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -126,11 +131,16 @@ function channelWritableData(body: {
   isPrivate?: boolean;
   monthlyBudgetUsdCents?: number | null;
   name?: string | null;
+  openItemNudgeAfterHours?: number | null;
+  openItemNudgeCooldownHours?: number | null;
+  orgFlagCooldownHours?: number | null;
   orgFlaggingEnabled?: boolean;
   passiveIngestEnabled?: boolean;
   personaPrompt?: string | null;
+  reactiveCooldownMinutes?: number | null;
   reactiveCron?: string | null;
   reactiveEnabled?: boolean;
+  reactiveLookbackMinutes?: number | null;
 }) {
   return {
     ...(body.agentKey !== undefined ? { agentKey: body.agentKey } : {}),
@@ -154,6 +164,15 @@ function channelWritableData(body: {
       ? { monthlyBudgetUsdCents: body.monthlyBudgetUsdCents }
       : {}),
     ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.openItemNudgeAfterHours !== undefined
+      ? { openItemNudgeAfterHours: body.openItemNudgeAfterHours }
+      : {}),
+    ...(body.openItemNudgeCooldownHours !== undefined
+      ? { openItemNudgeCooldownHours: body.openItemNudgeCooldownHours }
+      : {}),
+    ...(body.orgFlagCooldownHours !== undefined
+      ? { orgFlagCooldownHours: body.orgFlagCooldownHours }
+      : {}),
     ...(body.orgFlaggingEnabled !== undefined
       ? { orgFlaggingEnabled: body.orgFlaggingEnabled }
       : {}),
@@ -161,8 +180,14 @@ function channelWritableData(body: {
       ? { passiveIngestEnabled: body.passiveIngestEnabled }
       : {}),
     ...(body.personaPrompt !== undefined ? { personaPrompt: body.personaPrompt } : {}),
+    ...(body.reactiveCooldownMinutes !== undefined
+      ? { reactiveCooldownMinutes: body.reactiveCooldownMinutes }
+      : {}),
     ...(body.reactiveCron !== undefined ? { reactiveCron: body.reactiveCron } : {}),
     ...(body.reactiveEnabled !== undefined ? { reactiveEnabled: body.reactiveEnabled } : {}),
+    ...(body.reactiveLookbackMinutes !== undefined
+      ? { reactiveLookbackMinutes: body.reactiveLookbackMinutes }
+      : {}),
   };
 }
 

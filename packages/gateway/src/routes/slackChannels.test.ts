@@ -250,6 +250,80 @@ describe('slackChannelRoutes', () => {
     await app.close();
   });
 
+  it('patches a proactivity cooldown override', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isActive: true,
+      orgId: 'org-1',
+      reactiveCooldownMinutes: null,
+      teamId: TEAM,
+    });
+    mockPrisma.slackChannel.update.mockResolvedValue({
+      id: CHANNEL,
+      reactiveCooldownMinutes: 5,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { reactiveCooldownMinutes: 5 },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data.reactiveCooldownMinutes).toBe(5);
+    expect(mockPrisma.slackChannel.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ reactiveCooldownMinutes: 5 }),
+      })
+    );
+    await app.close();
+  });
+
+  it('clears a proactivity cooldown override back to the default via null', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isActive: true,
+      orgId: 'org-1',
+      reactiveCooldownMinutes: 5,
+      teamId: TEAM,
+    });
+    mockPrisma.slackChannel.update.mockResolvedValue({
+      id: CHANNEL,
+      reactiveCooldownMinutes: null,
+      teamId: TEAM,
+      workspace: { id: 'ws-1' },
+    });
+    const res = await app.inject({
+      body: { reactiveCooldownMinutes: null },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data.reactiveCooldownMinutes).toBeNull();
+    expect(mockPrisma.slackChannel.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ reactiveCooldownMinutes: null }),
+      })
+    );
+    await app.close();
+  });
+
+  it('rejects a non-positive proactivity cooldown override', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      body: { orgFlagCooldownHours: 0 },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('re-validates the team and re-syncs org on a teamId change', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.slackChannel.findUnique.mockResolvedValue({

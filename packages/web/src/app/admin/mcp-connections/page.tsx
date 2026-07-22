@@ -16,20 +16,38 @@ import {
   useMcpConnections,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
+import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
   const create = useCreateMcpConnection();
-  const [form, setForm] = useState({ name: '', teamId: '', url: '' });
+  const initialForm = { callTimeoutMs: '', listTimeoutMs: '', name: '', teamId: '', url: '' };
+  const [form, setForm] = useState(initialForm);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Blank = null = omit (loadMcpTools falls back to its own default);
+    // undefined = a non-positive-integer entry we reject client-side.
+    const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
+    const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
+    if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
+      setError(
+        'Timeouts must be positive whole numbers of milliseconds, or blank to use the default'
+      );
+      return;
+    }
     try {
-      await create.mutateAsync(form);
+      await create.mutateAsync({
+        name: form.name,
+        teamId: form.teamId,
+        url: form.url,
+        ...(listTimeoutMs !== null ? { listTimeoutMs } : {}),
+        ...(callTimeoutMs !== null ? { callTimeoutMs } : {}),
+      });
       onClose();
-      setForm({ name: '', teamId: '', url: '' });
+      setForm(initialForm);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create connection');
     }
@@ -71,6 +89,28 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
             ))}
           </Select>
         </FieldWrapper>
+        <div className="grid grid-cols-2 gap-4">
+          <FieldWrapper label="List timeout (ms)">
+            <Input
+              min={1}
+              onChange={(e) => setForm((f) => ({ ...f, listTimeoutMs: e.target.value }))}
+              placeholder="15000"
+              step={1}
+              type="number"
+              value={form.listTimeoutMs}
+            />
+          </FieldWrapper>
+          <FieldWrapper label="Call timeout (ms)">
+            <Input
+              min={1}
+              onChange={(e) => setForm((f) => ({ ...f, callTimeoutMs: e.target.value }))}
+              placeholder="60000"
+              step={1}
+              type="number"
+              value={form.callTimeoutMs}
+            />
+          </FieldWrapper>
+        </div>
         {error && <p className="text-xs text-brick-400">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose} type="button" variant="ghost">
@@ -174,6 +214,7 @@ export default function AdminMcpConnectionsPage() {
                 <tr className="border-b border-ink-600">
                   <th className="py-2 text-left text-xs text-paper-500">Name</th>
                   <th className="py-2 text-left text-xs text-paper-500">URL</th>
+                  <th className="py-2 text-left text-xs text-paper-500">Timeouts (list/call ms)</th>
                   <th className="py-2 text-left text-xs text-paper-500">Team</th>
                   <th className="py-2" />
                 </tr>
@@ -186,6 +227,10 @@ export default function AdminMcpConnectionsPage() {
                       <code className="block truncate font-mono text-[11px] text-paper-300">
                         {c.config?.url}
                       </code>
+                    </td>
+                    <td className="py-2 pr-4 text-xs text-paper-300">
+                      {c.config?.listTimeoutMs ?? 'default'} /{' '}
+                      {c.config?.callTimeoutMs ?? 'default'}
                     </td>
                     <td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</td>
                     <td className="py-2 text-right">

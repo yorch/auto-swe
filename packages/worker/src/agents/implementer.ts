@@ -64,6 +64,10 @@ export interface ImplementerAgentOptions {
    * built-in tools only.
    */
   mcpServerRef?: string | null;
+  /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
+  mcpListTimeoutMs?: number;
+  /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
+  mcpCallTimeoutMs?: number;
 }
 
 export async function createImplementerAgent(
@@ -336,7 +340,10 @@ export async function createImplementerAgent(
   let mcpTools: McpToolRecord = {};
   let closeMcp: (() => Promise<void>) | undefined;
   if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
-    const loaded = await loadMcpTools(options.mcpServerRef, tracer);
+    const loaded = await loadMcpTools(options.mcpServerRef, tracer, {
+      callTimeoutMs: options.mcpCallTimeoutMs,
+      listTimeoutMs: options.mcpListTimeoutMs,
+    });
     // Always adopt the returned close — it is NOOP on failure/empty paths and
     // safe to call repeatedly. Capturing it only when tools>0 would leak the
     // live MCP client connection when a server connects but exposes zero tools.
@@ -396,13 +403,17 @@ export async function buildImplementerForActivity(
     loadAgentToolConfig('implementer', ctx),
     loadAgentSkills('implementer', ctx),
   ]);
-  const mcpServerRef = await resolveAgentMcpUrl('implementer', ctx);
+  const mcpTarget = await resolveAgentMcpUrl('implementer', ctx);
   const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
     workspace,
     tracer,
     toolKeys,
     skills,
-    { mcpServerRef }
+    {
+      mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
+      mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
+      mcpServerRef: mcpTarget?.url,
+    }
   );
   return { agent, closeMcp, promptSuffix, skills, toolKeys };
 }

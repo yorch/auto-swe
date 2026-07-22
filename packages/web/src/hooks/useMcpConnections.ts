@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 export interface McpConnectionRow {
   id: string;
   name: string | null;
-  config: { url?: string } | null;
+  config: { url?: string; listTimeoutMs?: number; callTimeoutMs?: number } | null;
   teamId: string;
   team?: { id: string; name: string; slug: string } | null;
   createdAt?: string;
@@ -17,6 +17,10 @@ export interface CreateMcpConnectionBody {
   name: string;
   url: string;
   teamId: string;
+  /** Optional override of `loadMcpTools`'s list-timeout (default 15 s). */
+  listTimeoutMs?: number;
+  /** Optional override of `loadMcpTools`'s per-call timeout (default 60 s). */
+  callTimeoutMs?: number;
 }
 
 const BASE = '/api/v1/admin/mcp-connections';

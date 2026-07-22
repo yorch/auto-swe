@@ -37,6 +37,11 @@ export interface SlackChannel {
   consolidationSimilarityThreshold: number | null;
   monthlyBudgetUsdCents: number | null;
   personaPrompt: string | null;
+  reactiveCooldownMinutes: number | null;
+  reactiveLookbackMinutes: number | null;
+  orgFlagCooldownHours: number | null;
+  openItemNudgeAfterHours: number | null;
+  openItemNudgeCooldownHours: number | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -88,6 +93,11 @@ export interface UpdateSlackChannelBody {
   consolidationSimilarityThreshold?: number | null;
   monthlyBudgetUsdCents?: number | null;
   personaPrompt?: string | null;
+  reactiveCooldownMinutes?: number | null;
+  reactiveLookbackMinutes?: number | null;
+  orgFlagCooldownHours?: number | null;
+  openItemNudgeAfterHours?: number | null;
+  openItemNudgeCooldownHours?: number | null;
   isActive?: boolean;
   teamId?: string;
 }

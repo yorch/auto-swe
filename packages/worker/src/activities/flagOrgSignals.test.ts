@@ -127,6 +127,20 @@ describe('flagOrgSignals', () => {
     expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
   });
 
+  it('honors a per-channel orgFlagCooldownHours override (shorter than the 20h default)', async () => {
+    // 2 hours ago would still be on cooldown under the 20-hour default, but a
+    // 1-hour override should have already cleared it.
+    findChannel.mockResolvedValue(
+      makeChannel({
+        lastOrgFlagCheckAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        orgFlagCooldownHours: 1,
+      }) as never
+    );
+    const res = await flagOrgSignals({ channelId: 'chan-1' });
+    expect(res.reason).not.toBe('cooldown');
+    expect(searchOrgChannelMemoryMock).toHaveBeenCalled();
+  });
+
   it('skips when over budget', async () => {
     isChannelOverBudgetNowMock.mockResolvedValue(true);
     const res = await flagOrgSignals({ channelId: 'chan-1' });

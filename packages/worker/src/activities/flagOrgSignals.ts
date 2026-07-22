@@ -44,7 +44,7 @@ const MAX_ORG_CANDIDATES = 8;
 const ORG_SIMILARITY_THRESHOLD = 0.7;
 
 /** Org flags are digest-level: at most one per this window keeps them rare + signal-rich. */
-const ORG_FLAG_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 hours
+const DEFAULT_ORG_FLAG_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 hours
 
 /** Below this length a "flag" is a trivial reply not worth posting. */
 const MIN_FLAG_LENGTH = 12;
@@ -114,7 +114,7 @@ export function buildOrgFlagPrompt(
  *  - **Private-channel exclusion (Gap G):** `searchOrgChannelMemory` JOINs
  *    `slack_channels` and excludes `is_private = true` SOURCE channels, so a
  *    private channel's content is never flagged elsewhere.
- *  - **Cooldown:** at most one *evaluation* per {@link ORG_FLAG_COOLDOWN_MS}.
+ *  - **Cooldown:** at most one *evaluation* per {@link DEFAULT_ORG_FLAG_COOLDOWN_MS}.
  *    `lastOrgFlagCheckAt` is advanced once the embedding + org search have run —
  *    for the no-signals, skip, AND posted outcomes alike — so a channel that
  *    rarely (or never) flags doesn't re-pay the embedding + pgvector search on
@@ -134,6 +134,7 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
         isActive: true,
         lastOrgFlagCheckAt: true,
         monthlyBudgetUsdCents: true,
+        orgFlagCooldownHours: true,
         orgFlaggingEnabled: true,
         orgId: true,
         personaPrompt: true,
@@ -147,12 +148,17 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
       return { posted: false, reason: 'disabled' };
     }
 
+    const orgFlagCooldownMs =
+      channel.orgFlagCooldownHours != null
+        ? channel.orgFlagCooldownHours * 3_600_000
+        : DEFAULT_ORG_FLAG_COOLDOWN_MS;
+
     const now = new Date();
 
     // Cooldown first — cheapest gate, skips the embedding + org search + LLM.
     if (
       channel.lastOrgFlagCheckAt &&
-      now.getTime() - channel.lastOrgFlagCheckAt.getTime() < ORG_FLAG_COOLDOWN_MS
+      now.getTime() - channel.lastOrgFlagCheckAt.getTime() < orgFlagCooldownMs
     ) {
       return { posted: false, reason: 'cooldown' };
     }

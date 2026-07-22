@@ -212,7 +212,7 @@ All eight tables follow the singleton pattern (single row, `id = 'default'`, enf
 | `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
 | `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
 
-Per-entity knobs (channel proactivity cooldowns on `SlackChannel`, MCP per-connection timeouts on the `mcp` `Connection`) were intentionally left out of this GLOBAL tier — they belong on their own rows and are tracked as deferred follow-ups.
+Per-entity knobs live on their own rows rather than in this GLOBAL tier: **channel proactivity cooldowns** are nullable columns on `SlackChannel` (`reactiveCooldownMinutes`/`reactiveLookbackMinutes`, `orgFlagCooldownHours`, `openItemNudgeAfterHours`/`openItemNudgeCooldownHours`; null = the worker's built-in default — read directly in `channelReactive`/`flagOrgSignals`/`channelOpenItems`, edited at `/admin/slack-channels`), and **MCP per-connection timeouts** live on the `mcp` `Connection.config` JSON bag (`listTimeoutMs`/`callTimeoutMs`; null = 15 s / 60 s — resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`, edited at `/admin/mcp-connections`).
 
 **Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
 

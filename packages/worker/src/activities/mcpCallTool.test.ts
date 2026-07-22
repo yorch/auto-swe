@@ -26,7 +26,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('mcpCallTool', () => {
   it('invokes the named tool with the inputs, returns its result, and closes the client', async () => {
-    mockedUrl.mockResolvedValue('https://mcp.example.com/mcp');
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
     const execute = vi.fn().mockResolvedValue({ ok: 1 });
     const close = vi.fn().mockResolvedValue(undefined);
     mockedLoad.mockResolvedValue({ close, tools: { mcp_search_docs: { execute } } } as never);
@@ -42,6 +42,24 @@ describe('mcpCallTool', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('threads the connection timeout overrides into loadMcpTools', async () => {
+    mockedUrl.mockResolvedValue({
+      callTimeoutMs: 5000,
+      listTimeoutMs: 2500,
+      url: 'https://mcp.example.com/mcp',
+    });
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedLoad.mockResolvedValue({ close, tools: { mcp_search_docs: { execute } } } as never);
+
+    await mcpCallTool({ connectionRef: 'c1', inputs: { q: 'x' }, tool: 'search_docs' });
+
+    expect(mockedLoad).toHaveBeenCalledWith('https://mcp.example.com/mcp', expect.anything(), {
+      callTimeoutMs: 5000,
+      listTimeoutMs: 2500,
+    });
+  });
+
   it('throws when the connection is not an active mcp connection', async () => {
     mockedUrl.mockResolvedValue(null);
     await expect(mcpCallTool({ connectionRef: 'c1', tool: 't' })).rejects.toThrow(
@@ -51,7 +69,7 @@ describe('mcpCallTool', () => {
   });
 
   it('throws when the tool is missing from the server but still closes the client', async () => {
-    mockedUrl.mockResolvedValue('https://mcp.example.com/mcp');
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
     const close = vi.fn().mockResolvedValue(undefined);
     mockedLoad.mockResolvedValue({ close, tools: {} } as never);
 

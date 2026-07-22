@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -9,49 +9,58 @@ import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { SectionHeader } from '@/components/ui/PageHeader';
 import {
+  type ConsolidationConfig,
+  type ConsolidationConfigInput,
   triggerConsolidationNow,
   useConsolidationConfig,
   useUpdateConsolidationConfig,
 } from '@/hooks/useAdminConfig';
+import { useConfigForm } from '@/hooks/useConfigForm';
+
+interface ConsolidationFormState {
+  enabled: boolean;
+  cron: string;
+  minClusterSize: number;
+  similarityThreshold: number;
+}
+
+const INITIAL: ConsolidationFormState = {
+  cron: '0 3 * * 0',
+  enabled: true,
+  minClusterSize: 3,
+  similarityThreshold: 0.85,
+};
+
+function toForm(data: ConsolidationConfig): ConsolidationFormState {
+  return {
+    cron: data.cronExpression,
+    enabled: data.enabled,
+    minClusterSize: data.minClusterSize,
+    similarityThreshold: data.similarityThreshold,
+  };
+}
+
+function toBody(form: ConsolidationFormState): ConsolidationConfigInput {
+  return {
+    cronExpression: form.cron,
+    enabled: form.enabled,
+    minClusterSize: form.minClusterSize,
+    similarityThreshold: form.similarityThreshold,
+  };
+}
 
 export function ConsolidationForm() {
   const { data: consolidation, isLoading } = useConsolidationConfig();
   const update = useUpdateConsolidationConfig();
+  const { form, setField, submit, saved, error } = useConfigForm({
+    data: consolidation,
+    initial: INITIAL,
+    mutateAsync: update.mutateAsync,
+    toBody,
+    toForm,
+  });
 
-  const [enabled, setEnabled] = useState(true);
-  const [cron, setCron] = useState('0 3 * * 0');
-  const [minClusterSize, setMinClusterSize] = useState(3);
-  const [similarityThreshold, setSimilarityThreshold] = useState(0.85);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [triggering, setTriggering] = useState(false);
-
-  useEffect(() => {
-    if (!consolidation) {
-      return;
-    }
-    setEnabled(consolidation.enabled);
-    setCron(consolidation.cronExpression);
-    setMinClusterSize(consolidation.minClusterSize);
-    setSimilarityThreshold(consolidation.similarityThreshold);
-  }, [consolidation]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaved(false);
-    try {
-      await update.mutateAsync({
-        cronExpression: cron,
-        enabled,
-        minClusterSize,
-        similarityThreshold,
-      });
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
-  };
 
   const handleTriggerNow = async () => {
     setTriggering(true);
@@ -73,7 +82,7 @@ export function ConsolidationForm() {
       {isLoading ? (
         <LoadingState message="Loading…" />
       ) : (
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
               <CardTitle eyebrow="Schedule">Consolidation schedule</CardTitle>
@@ -81,10 +90,10 @@ export function ConsolidationForm() {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <input
-                  checked={enabled}
+                  checked={form.enabled}
                   className="h-4 w-4 accent-ember-400"
                   id="consolidation-enabled"
-                  onChange={(e) => setEnabled(e.target.checked)}
+                  onChange={(e) => setField('enabled', e.target.checked)}
                   type="checkbox"
                 />
                 <label className="text-sm" htmlFor="consolidation-enabled">
@@ -110,9 +119,9 @@ export function ConsolidationForm() {
               >
                 <Input
                   id="consolidation-cron"
-                  onChange={(e) => setCron(e.target.value)}
+                  onChange={(e) => setField('cron', e.target.value)}
                   placeholder="0 3 * * 0"
-                  value={cron}
+                  value={form.cron}
                 />
               </FieldWrapper>
 
@@ -126,9 +135,9 @@ export function ConsolidationForm() {
                     id="consolidation-min-cluster"
                     max={20}
                     min={2}
-                    onChange={(e) => setMinClusterSize(Number(e.target.value))}
+                    onChange={(e) => setField('minClusterSize', Number(e.target.value))}
                     type="number"
-                    value={minClusterSize}
+                    value={form.minClusterSize}
                   />
                 </FieldWrapper>
 
@@ -141,10 +150,10 @@ export function ConsolidationForm() {
                     id="consolidation-threshold"
                     max={1}
                     min={0.5}
-                    onChange={(e) => setSimilarityThreshold(Number(e.target.value))}
+                    onChange={(e) => setField('similarityThreshold', Number(e.target.value))}
                     step={0.05}
                     type="number"
-                    value={similarityThreshold}
+                    value={form.similarityThreshold}
                   />
                 </FieldWrapper>
               </div>

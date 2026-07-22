@@ -77,10 +77,13 @@ export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNo
   // P2/WS3: bind MCP tools when the Agent enables them; closed in finally.
   // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
   const tracer = new AgentTracer();
-  const mcpServerRef = await resolveAgentMcpUrl(key, resolveCtx);
+  const mcpTarget = await resolveAgentMcpUrl(key, resolveCtx);
   let closeMcp: (() => Promise<void>) | undefined;
-  if (mcpServerRef) {
-    const loaded = await loadMcpTools(mcpServerRef, tracer);
+  if (mcpTarget) {
+    const loaded = await loadMcpTools(mcpTarget.url, tracer, {
+      callTimeoutMs: mcpTarget.callTimeoutMs,
+      listTimeoutMs: mcpTarget.listTimeoutMs,
+    });
     closeMcp = loaded.close;
     // Built-in/spec tools win over MCP tools on key collision.
     spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;

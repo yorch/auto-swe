@@ -12,6 +12,10 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * identity columns stay null. http(s) only — stdio is intentionally unsupported.
  */
 const CreateSchema = z.object({
+  /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
+  callTimeoutMs: z.number().int().positive().optional(),
+  /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
+  listTimeoutMs: z.number().int().positive().optional(),
   name: z.string().min(1).max(200),
   teamId: z.string().uuid(),
   url: z
@@ -40,7 +44,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CreateSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { name, teamId, url } = request.body;
+      const { name, teamId, url, listTimeoutMs, callTimeoutMs } = request.body;
       const safety = isSafeProbeUrl(url);
       if (!safety.ok) {
         return reply
@@ -53,14 +57,19 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' } });
       }
+      const config = {
+        url,
+        ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
+        ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
+      };
       const conn = await fastify.prisma.connection.create({
-        data: { config: { url }, name, teamId, type: 'mcp' },
+        data: { config, name, teamId, type: 'mcp' },
         include: { team: { select: { id: true, name: true, slug: true } } },
       });
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
-        after: { name, type: 'mcp', url },
+        after: { name, type: 'mcp', ...config },
         entityId: conn.id,
         entityType: 'Connection',
       });

@@ -45,10 +45,10 @@ const MAX_HISTORY_MESSAGES = 40;
 const SWEEP_LOOKBACK_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 /** Age at which an unresolved open item becomes "stale" and warrants a nudge. */
-const NUDGE_AFTER_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_NUDGE_AFTER_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /** Minimum interval between nudges for the same item. */
-const NUDGE_COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours
+const DEFAULT_NUDGE_COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 /** Per-message char cap when building the transcript. */
 const MAX_MESSAGE_CHARS = 400;
@@ -88,8 +88,9 @@ function buildSweepPrompt(
  * 2. **Persist** — new items are inserted; resolved IDs are status-updated.
  *    `sourceTs` is used as a dedup anchor so the same message never spawns
  *    two items across consecutive fires.
- * 3. **Nudge** — for each still-OPEN item that is older than `NUDGE_AFTER_MS`
- *    and hasn't been nudged in `NUDGE_COOLDOWN_MS`, the assistant posts a
+ * 3. **Nudge** — for each still-OPEN item that is older than `DEFAULT_NUDGE_AFTER_MS`
+ *    (or the channel's `openItemNudgeAfterHours` override) and hasn't been nudged
+ *    in `DEFAULT_NUDGE_COOLDOWN_MS` (or `openItemNudgeCooldownHours`), the assistant posts a
  *    brief follow-up to the channel top-level.
  *
  * Budget-gated: over the cap ⇒ early return without LLM spend.
@@ -112,6 +113,8 @@ export async function sweepChannelOpenItems(
         id: true,
         isActive: true,
         monthlyBudgetUsdCents: true,
+        openItemNudgeAfterHours: true,
+        openItemNudgeCooldownHours: true,
         orgId: true,
         slackChannelId: true,
         teamId: true,
@@ -122,6 +125,15 @@ export async function sweepChannelOpenItems(
     if (!channel?.ambientEnabled || !channel.isActive) {
       return emptyResult;
     }
+
+    const nudgeAfterMs =
+      channel.openItemNudgeAfterHours != null
+        ? channel.openItemNudgeAfterHours * 3_600_000
+        : DEFAULT_NUDGE_AFTER_MS;
+    const nudgeCooldownMs =
+      channel.openItemNudgeCooldownHours != null
+        ? channel.openItemNudgeCooldownHours * 3_600_000
+        : DEFAULT_NUDGE_COOLDOWN_MS;
 
     if (await isChannelOverBudgetNow(channel.id, channel.monthlyBudgetUsdCents)) {
       return emptyResult;
@@ -263,13 +275,13 @@ export async function sweepChannelOpenItems(
           return false;
         }
         const age = now.getTime() - it.createdAt.getTime();
-        if (age < NUDGE_AFTER_MS) {
+        if (age < nudgeAfterMs) {
           return false;
         }
         const sinceNudge = it.lastNudgedAt
           ? now.getTime() - it.lastNudgedAt.getTime()
           : Number.POSITIVE_INFINITY;
-        return sinceNudge >= NUDGE_COOLDOWN_MS;
+        return sinceNudge >= nudgeCooldownMs;
       });
 
       let nudgesSent = 0;

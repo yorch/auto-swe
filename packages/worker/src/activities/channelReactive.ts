@@ -33,10 +33,10 @@ const MAX_HISTORY_MESSAGES = 30;
 const MAX_MEMORY_ITEMS = 5;
 
 /** Don't re-read more than this far back on a first run / long-idle channel. */
-const MAX_LOOKBACK_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_LOOKBACK_MS = 30 * 60 * 1000;
 
 /** Minimum gap between two proactive interjections in a channel (rate limit). */
-const REACTIVE_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_REACTIVE_COOLDOWN_MS = 10 * 60 * 1000;
 
 /** Below this length an "interjection" is a trivial ack not worth posting. */
 const MIN_INTERJECTION_LENGTH = 12;
@@ -121,7 +121,7 @@ export function buildReactivePrompt(
  *    than the channel's `lastReactiveCheckAt` cursor (advanced every tick). A quiet
  *    channel costs one cheap Slack read and zero tokens.
  *  - **Budget gate:** over the monthly cap ⇒ no LLM, no post (same gate as the turn).
- *  - **Cooldown:** at most one interjection per {@link REACTIVE_COOLDOWN_MS}
+ *  - **Cooldown:** at most one interjection per {@link DEFAULT_REACTIVE_COOLDOWN_MS}
  *    (`lastReactiveAt`); on cooldown we skip the LLM entirely (couldn't post anyway).
  *  - **SKIP-aware:** a `SKIP` / empty / trivial reply is not posted.
  *
@@ -142,7 +142,9 @@ export async function evaluateReactiveInterjection(
         monthlyBudgetUsdCents: true,
         orgId: true,
         personaPrompt: true,
+        reactiveCooldownMinutes: true,
         reactiveEnabled: true,
+        reactiveLookbackMinutes: true,
         slackChannelId: true,
         team: { select: { defaultPersonaPrompt: true } },
         teamId: true,
@@ -155,10 +157,19 @@ export async function evaluateReactiveInterjection(
       return { posted: false, reason: 'disabled' };
     }
 
+    const reactiveCooldownMs =
+      channel.reactiveCooldownMinutes != null
+        ? channel.reactiveCooldownMinutes * 60_000
+        : DEFAULT_REACTIVE_COOLDOWN_MS;
+    const reactiveLookbackMs =
+      channel.reactiveLookbackMinutes != null
+        ? channel.reactiveLookbackMinutes * 60_000
+        : DEFAULT_MAX_LOOKBACK_MS;
+
     const now = new Date();
-    // Read messages since the cursor, but never further back than MAX_LOOKBACK
-    // (caps the first run / a long-idle channel).
-    const lookbackFloor = new Date(now.getTime() - MAX_LOOKBACK_MS);
+    // Read messages since the cursor, but never further back than the lookback
+    // window (caps the first run / a long-idle channel).
+    const lookbackFloor = new Date(now.getTime() - reactiveLookbackMs);
     const cursor =
       channel.lastReactiveCheckAt && channel.lastReactiveCheckAt > lookbackFloor
         ? channel.lastReactiveCheckAt
@@ -202,7 +213,7 @@ export async function evaluateReactiveInterjection(
     // (we couldn't post anyway) to keep cost down on a busy channel.
     if (
       channel.lastReactiveAt &&
-      now.getTime() - channel.lastReactiveAt.getTime() < REACTIVE_COOLDOWN_MS
+      now.getTime() - channel.lastReactiveAt.getTime() < reactiveCooldownMs
     ) {
       await advanceCursor();
       return { posted: false, reason: 'cooldown' };

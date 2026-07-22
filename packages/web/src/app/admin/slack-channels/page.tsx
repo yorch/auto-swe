@@ -29,6 +29,7 @@ import {
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -345,7 +346,23 @@ interface EditForm {
   budgetDollars: string;
   personaPrompt: string;
   teamId: string;
+  reactiveCooldownMinutes: string;
+  reactiveLookbackMinutes: string;
+  orgFlagCooldownHours: string;
+  openItemNudgeAfterHours: string;
+  openItemNudgeCooldownHours: string;
 }
+
+/** Format a nullable Int override for display in a text/number input: null
+ * (use the built-in default) becomes an empty string; the caller shows the
+ * default as the input's placeholder instead. */
+function intToDisplayString(value: number | null | undefined): string {
+  return value == null ? '' : String(value);
+}
+
+// Nullable Int override parsing (blank → null = default, invalid → undefined)
+// is shared with the mcp-connections timeout inputs.
+const parsePositiveIntOverride = parseOptionalPositiveInt;
 
 function buildEditForm(ch: SlackChannel): EditForm {
   return {
@@ -357,11 +374,16 @@ function buildEditForm(ch: SlackChannel): EditForm {
     followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
     name: ch.name ?? '',
+    openItemNudgeAfterHours: intToDisplayString(ch.openItemNudgeAfterHours),
+    openItemNudgeCooldownHours: intToDisplayString(ch.openItemNudgeCooldownHours),
+    orgFlagCooldownHours: intToDisplayString(ch.orgFlagCooldownHours),
     orgFlaggingEnabled: ch.orgFlaggingEnabled,
     passiveIngestEnabled: ch.passiveIngestEnabled,
     personaPrompt: ch.personaPrompt ?? '',
+    reactiveCooldownMinutes: intToDisplayString(ch.reactiveCooldownMinutes),
     reactiveCron: ch.reactiveCron ?? '',
     reactiveEnabled: ch.reactiveEnabled,
+    reactiveLookbackMinutes: intToDisplayString(ch.reactiveLookbackMinutes),
     teamId: ch.teamId,
   };
 }
@@ -385,6 +407,21 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       setError('Budget must be a non-negative number (e.g. 10.00)');
       return;
     }
+    const reactiveCooldownMinutes = parsePositiveIntOverride(form.reactiveCooldownMinutes);
+    const reactiveLookbackMinutes = parsePositiveIntOverride(form.reactiveLookbackMinutes);
+    const orgFlagCooldownHours = parsePositiveIntOverride(form.orgFlagCooldownHours);
+    const openItemNudgeAfterHours = parsePositiveIntOverride(form.openItemNudgeAfterHours);
+    const openItemNudgeCooldownHours = parsePositiveIntOverride(form.openItemNudgeCooldownHours);
+    if (
+      reactiveCooldownMinutes === undefined ||
+      reactiveLookbackMinutes === undefined ||
+      orgFlagCooldownHours === undefined ||
+      openItemNudgeAfterHours === undefined ||
+      openItemNudgeCooldownHours === undefined
+    ) {
+      setError('Proactivity cooldowns must be positive whole numbers, or blank to use the default');
+      return;
+    }
     const body: UpdateSlackChannelBody = {
       agentKey: form.agentKey || undefined,
       ambientCron: form.ambientCron || null,
@@ -394,11 +431,16 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
       isPrivate: form.isPrivate,
       monthlyBudgetUsdCents: budgetCents,
       name: form.name || null,
+      openItemNudgeAfterHours,
+      openItemNudgeCooldownHours,
+      orgFlagCooldownHours,
       orgFlaggingEnabled: form.orgFlaggingEnabled,
       passiveIngestEnabled: form.passiveIngestEnabled,
       personaPrompt: form.personaPrompt.trim() || null,
+      reactiveCooldownMinutes,
       reactiveCron: form.reactiveCron || null,
       reactiveEnabled: form.reactiveEnabled,
+      reactiveLookbackMinutes,
       teamId: form.teamId || undefined,
     };
     try {
@@ -517,6 +559,66 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         label="Memory consolidation (compact channel memory on each ambient fire)"
         onChange={(v) => set('consolidationEnabled', v)}
       />
+      <div className="space-y-3 rounded border border-ink-600 p-3">
+        <p className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+          Proactivity cooldowns
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            hint="Minutes between reactive interjections (default 10)"
+            label="Reactive cooldown (min)"
+            min="1"
+            onChange={(e) => set('reactiveCooldownMinutes', e.target.value)}
+            placeholder="10"
+            step="1"
+            type="number"
+            value={form.reactiveCooldownMinutes}
+          />
+          <Input
+            hint="Minutes of channel history scanned per reactive poll (default 30)"
+            label="Reactive lookback (min)"
+            min="1"
+            onChange={(e) => set('reactiveLookbackMinutes', e.target.value)}
+            placeholder="30"
+            step="1"
+            type="number"
+            value={form.reactiveLookbackMinutes}
+          />
+          <Input
+            hint="Hours between org-wide flag checks from this channel (default 20)"
+            label="Org-flag cooldown (hrs)"
+            min="1"
+            onChange={(e) => set('orgFlagCooldownHours', e.target.value)}
+            placeholder="20"
+            step="1"
+            type="number"
+            value={form.orgFlagCooldownHours}
+          />
+          <Input
+            hint="Hours an open item sits before a nudge (default 24)"
+            label="Open-item nudge after (hrs)"
+            min="1"
+            onChange={(e) => set('openItemNudgeAfterHours', e.target.value)}
+            placeholder="24"
+            step="1"
+            type="number"
+            value={form.openItemNudgeAfterHours}
+          />
+          <Input
+            hint="Hours between repeat nudges for the same open item (default 12)"
+            label="Open-item nudge cooldown (hrs)"
+            min="1"
+            onChange={(e) => set('openItemNudgeCooldownHours', e.target.value)}
+            placeholder="12"
+            step="1"
+            type="number"
+            value={form.openItemNudgeCooldownHours}
+          />
+        </div>
+        <p className="text-[10px] text-paper-600">
+          Leave any field blank to use the built-in default shown as its placeholder.
+        </p>
+      </div>
       <Input
         hint="Monthly spend cap in USD (e.g. 50.00). Leave blank to remove the cap."
         label="Monthly budget ($)"
