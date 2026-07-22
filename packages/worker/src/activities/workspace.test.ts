@@ -132,7 +132,8 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
 
     const startCmd = commands.find((c) => c.includes('docker run -d --name'));
-    expect(startCmd).toContain('--memory=9g');
+    // The memory string is shell-quoted (defense-in-depth); numeric caps are not.
+    expect(startCmd).toContain(`--memory=${shellQuote('9g')}`);
     expect(startCmd).toContain('--cpus=6');
     expect(startCmd).toContain('--pids-limit=999');
     // No explicit image passed → the resolved config image is used.

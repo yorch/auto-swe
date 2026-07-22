@@ -282,6 +282,32 @@ describe('PUT /config/workflow-defaults', () => {
     expect(res.statusCode).toBe(400);
     await app.close();
   });
+
+  it('rejects a workspaceMemory that is not a docker memory value (shell-injection guard)', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { workspaceMemory: '4g --privileged' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a workspaceImage that fails the Docker ref regex', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { workspaceImage: 'my image:latest' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(updateWorkflowDefaultsMock).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
 
 describe('PUT /config/canary', () => {

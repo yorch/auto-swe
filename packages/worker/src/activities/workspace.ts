@@ -183,7 +183,10 @@ export async function createWorkspace(
   //    installing the route here would need `NET_ADMIN`, which conflicts
   //    with `--cap-drop=ALL`.
   await execShellAsync(
-    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${cfg.workspaceMemory} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
+    // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
+    // caps can't carry shell metacharacters); defense-in-depth on top of the
+    // route-level format validation.
+    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(cfg.workspaceMemory)} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
     { heartbeatLabel: 'workspace: starting container' }
   );
 

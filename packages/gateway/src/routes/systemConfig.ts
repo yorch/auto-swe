@@ -6,6 +6,7 @@ import {
   resolveRevalidationConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -129,8 +130,18 @@ const WorkflowDefaultsPutBody = z.object({
   prBodyTemplate: z.string().max(10_000).optional(),
   prTitleTemplate: z.string().min(1).max(500).optional(),
   workspaceCpus: z.number().positive().optional(),
-  workspaceImage: z.string().min(1).max(200).optional(),
-  workspaceMemory: z.string().min(1).max(32).optional(),
+  // Format-validate the two operational strings at write time so a bad value
+  // fails fast here (a 400) instead of breaking every future workspace creation
+  // deep in the worker. `workspaceImage` must satisfy the same ref regex
+  // `createWorkspace` enforces; `workspaceMemory` must be a docker memory value
+  // (digits + optional b/k/m/g unit) — this also removes any shell metacharacter.
+  workspaceImage: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE).optional(),
+  workspaceMemory: z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(/^\d+[bkmg]?$/i, 'must be a docker memory value, e.g. 512m or 4g')
+    .optional(),
   workspacePidsLimit: z.number().int().min(1).optional(),
 });
 
