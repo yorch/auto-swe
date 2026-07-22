@@ -29,6 +29,7 @@ import {
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -359,20 +360,9 @@ function intToDisplayString(value: number | null | undefined): string {
   return value == null ? '' : String(value);
 }
 
-/** Parse a nullable Int override input: empty string clears the override back
- * to null (use the built-in default); anything else must be a positive
- * integer, or `undefined` is returned to signal a validation error. */
-function parsePositiveIntOverride(value: string): number | null | undefined {
-  const trimmed = value.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  const num = Number.parseInt(trimmed, 10);
-  if (Number.isNaN(num) || num < 1 || String(num) !== trimmed) {
-    return undefined;
-  }
-  return num;
-}
+// Nullable Int override parsing (blank → null = default, invalid → undefined)
+// is shared with the mcp-connections timeout inputs.
+const parsePositiveIntOverride = parseOptionalPositiveInt;
 
 function buildEditForm(ch: SlackChannel): EditForm {
   return {

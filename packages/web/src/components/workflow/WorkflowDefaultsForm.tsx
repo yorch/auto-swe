@@ -168,8 +168,7 @@ export function WorkflowDefaultsForm() {
     toForm: fromResolved,
   });
 
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setField(key, value);
-  const num = (key: NumericKey) => (v: number) => set(key, v);
+  const num = (key: NumericKey) => (v: number) => setField(key, v);
 
   if (isLoading) {
     return <LoadingState message="Loading…" />;
@@ -189,7 +188,7 @@ export function WorkflowDefaultsForm() {
           >
             <Input
               id="branch-prefix"
-              onChange={(e) => set('branchPrefix', e.target.value)}
+              onChange={(e) => setField('branchPrefix', e.target.value)}
               placeholder="auto"
               value={form.branchPrefix}
             />
@@ -202,7 +201,7 @@ export function WorkflowDefaultsForm() {
           >
             <Input
               id="pr-title-template"
-              onChange={(e) => set('prTitleTemplate', e.target.value)}
+              onChange={(e) => setField('prTitleTemplate', e.target.value)}
               placeholder="[auto-swe] {{ticketId}}"
               value={form.prTitleTemplate}
             />
@@ -215,7 +214,7 @@ export function WorkflowDefaultsForm() {
           >
             <Textarea
               id="pr-body-template"
-              onChange={(e) => set('prBodyTemplate', e.target.value)}
+              onChange={(e) => setField('prBodyTemplate', e.target.value)}
               placeholder={
                 'Resolves {{ticketId}}\n\n## Summary\n{{description}}\n\n---\n🤖 Implemented by auto-swe'
               }
@@ -237,7 +236,7 @@ export function WorkflowDefaultsForm() {
         >
           <Input
             id="default-team-slug"
-            onChange={(e) => set('defaultTeamSlug', e.target.value)}
+            onChange={(e) => setField('defaultTeamSlug', e.target.value)}
             placeholder="default"
             value={form.defaultTeamSlug}
           />
@@ -325,7 +324,7 @@ export function WorkflowDefaultsForm() {
             <FieldWrapper hint="Docker memory limit, e.g. 4g." id="workspace-memory" label="Memory">
               <Input
                 id="workspace-memory"
-                onChange={(e) => set('workspaceMemory', e.target.value)}
+                onChange={(e) => setField('workspaceMemory', e.target.value)}
                 placeholder="4g"
                 value={form.workspaceMemory}
               />
@@ -337,7 +336,7 @@ export function WorkflowDefaultsForm() {
             >
               <Input
                 id="workspace-image"
-                onChange={(e) => set('workspaceImage', e.target.value)}
+                onChange={(e) => setField('workspaceImage', e.target.value)}
                 placeholder="node:24-alpine"
                 value={form.workspaceImage}
               />

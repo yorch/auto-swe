@@ -45,6 +45,29 @@ describe('useConfigForm', () => {
     expect(result.current.form).toEqual({ count: 5, name: 'loaded' });
   });
 
+  it('does not re-seed on a later data change, preserving in-progress edits', () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    const { result, rerender } = renderHook(
+      ({ data }: { data: FakeData | undefined }) =>
+        useConfigForm({ data, initial: INITIAL, mutateAsync, toBody, toForm }),
+      { initialProps: { data: { count: 5, name: 'loaded' } as FakeData | undefined } }
+    );
+
+    // Seeded once from the first data.
+    expect(result.current.form).toEqual({ count: 5, name: 'loaded' });
+
+    // User edits the form…
+    act(() => {
+      result.current.setField('name', 'edited');
+    });
+    expect(result.current.form).toEqual({ count: 5, name: 'edited' });
+
+    // …then a background refetch hands back a fresh `data` object. The edit
+    // must survive (no clobber).
+    rerender({ data: { count: 5, name: 'loaded' } });
+    expect(result.current.form).toEqual({ count: 5, name: 'edited' });
+  });
+
   it('setField updates a single field without touching the rest', () => {
     const mutateAsync = vi.fn().mockResolvedValue(undefined);
     const { result } = renderHook(() =>

@@ -16,6 +16,7 @@ import {
   useMcpConnections,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
+import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
@@ -27,14 +28,23 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Blank = null = omit (loadMcpTools falls back to its own default);
+    // undefined = a non-positive-integer entry we reject client-side.
+    const listTimeoutMs = parseOptionalPositiveInt(form.listTimeoutMs);
+    const callTimeoutMs = parseOptionalPositiveInt(form.callTimeoutMs);
+    if (listTimeoutMs === undefined || callTimeoutMs === undefined) {
+      setError(
+        'Timeouts must be positive whole numbers of milliseconds, or blank to use the default'
+      );
+      return;
+    }
     try {
-      // Empty = omit (loadMcpTools falls back to its own default).
       await create.mutateAsync({
         name: form.name,
         teamId: form.teamId,
         url: form.url,
-        ...(form.listTimeoutMs ? { listTimeoutMs: Number(form.listTimeoutMs) } : {}),
-        ...(form.callTimeoutMs ? { callTimeoutMs: Number(form.callTimeoutMs) } : {}),
+        ...(listTimeoutMs !== null ? { listTimeoutMs } : {}),
+        ...(callTimeoutMs !== null ? { callTimeoutMs } : {}),
       });
       onClose();
       setForm(initialForm);
@@ -85,6 +95,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
               min={1}
               onChange={(e) => setForm((f) => ({ ...f, listTimeoutMs: e.target.value }))}
               placeholder="15000"
+              step={1}
               type="number"
               value={form.listTimeoutMs}
             />
@@ -94,6 +105,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
               min={1}
               onChange={(e) => setForm((f) => ({ ...f, callTimeoutMs: e.target.value }))}
               placeholder="60000"
+              step={1}
               type="number"
               value={form.callTimeoutMs}
             />

@@ -1,7 +1,7 @@
 'use client';
 
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // Factors out the repeated "load query -> seed local form state -> submit ->
 // saved/error" cycle shared by the workflow config forms (consolidation,
@@ -40,9 +40,15 @@ export function useConfigForm<TData, TForm, TBody>(
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: toForm is a pure mapping supplied by the caller; re-seeding should only be driven by the query data itself, not by a new (often inline) function identity.
+  // Seed the form from the query data exactly ONCE, on its first arrival. A
+  // later background refetch (staleTime + refetchOnWindowFocus) hands back a new
+  // `data` reference; re-seeding on that would clobber the admin's in-progress
+  // edits, so we guard with a ref. The form is user-owned after the first seed.
+  const seededRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: toForm is a pure mapping supplied by the caller; seeding is driven only by the query data's first arrival, not by a new (often inline) function identity.
   useEffect(() => {
-    if (data) {
+    if (data && !seededRef.current) {
+      seededRef.current = true;
       setForm(toForm(data));
     }
   }, [data]);
