@@ -71,18 +71,21 @@ Deliberately **not** centralized (over-centralization avoided):
 ## Tier 2 — DB CONFIG (operator policy) — *proposed, not yet built*
 
 Each of these is a value an operator would plausibly change per-deployment or
-per-tenant without shipping code. They are **not** in this change — each needs
-schema + migration + resolver (+ cache + admin UI + tests), so they should be
-approved and built individually. Listed by value/effort.
+per-tenant without shipping code. Each needs schema + migration + resolver
+(+ cache + admin UI + tests). **Status: all rows below have now shipped** — the
+GLOBAL `workflow_defaults` knobs (budgets, iteration caps, eval thresholds,
+workspace caps, lesson retrieval) in the Tier-2 change (PR #135), and the two
+per-entity rows (channel proactivity, MCP timeouts) as their own `SlackChannel`
+columns / `mcp` `Connection.config` fields. Listed by value/effort.
 
 | Constant | Location | Proposed home | Notes |
 |---|---|---|---|
 | **`BUDGET_LIMITS`** (per-tier token budgets) | `worker/lib/costTracking.ts` | new `BudgetTierConfig` or `workflow_defaults` | Clearest case — the DB already holds org $ caps; token tiers are pure policy |
-| **Channel proactivity** (`REACTIVE_COOLDOWN_MS`, `ORG_FLAG_COOLDOWN_MS`, similarity floors, nudge windows) | `channelReactive/flagOrgSignals/channelOpenItems` | `SlackChannel` / channel config | The channel already carries DB feature-flags + budgets; these ride alongside |
+| **Channel proactivity** (`REACTIVE_COOLDOWN_MS`, `ORG_FLAG_COOLDOWN_MS`, nudge windows) — ✅ **done** | `channelReactive/flagOrgSignals/channelOpenItems` | nullable `SlackChannel` columns (`reactiveCooldownMinutes`/`reactiveLookbackMinutes`/`orgFlagCooldownHours`/`openItemNudgeAfterHours`/`openItemNudgeCooldownHours`; null = built-in default), edited at `/admin/slack-channels` | The channel already carries DB feature-flags + budgets; these ride alongside |
 | **Eval health/judge thresholds** (`DEFAULT_HEALTH_THRESHOLDS`, `judgeThreshold`) | `worker/lib/evalSuiteHealth.ts`, `scorerCombination.ts` | `resolveEvalScheduleConfig` (already DB-backed) | Regression-gate policy per the evals RFC |
 | **Iteration caps** (`MAX_TDD_ITERATIONS=5`, `MAX_EVAL_ITERATIONS=3`) | `executeImplementation.ts`, `evalHarness.ts` | `workflow_defaults` | Quality/cost knob |
 | **Memory retrieval thresholds** (`0.7`/`0.65`/`0.75` floors) | `lessonRetrieval.ts`, `channelMemory.ts` | memory / workflow config | Relevance is a quality knob; also close the gap that `consolidateLessons` lacks the per-scope DB override its channel twin has |
-| **MCP timeouts** (`15s`/`60s`) | `agents/mcpTools.ts` | the `mcp` Connection row | A slow MCP server is an ops reality; per-connection override |
+| **MCP timeouts** (`15s`/`60s`) — ✅ **done** | `agents/mcpTools.ts` | optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (null = 15 s / 60 s), edited at `/admin/mcp-connections` | A slow MCP server is an ops reality; per-connection override |
 | **Workspace resource caps + default image** (`4g`/`2`/`512`, `node:24-alpine`) | `activities/workspace.ts` | `workflow_defaults` or `WorkspaceLimitsConfig` | Also an infra-sizing concern; per-repo `executorImage` already exists |
 
 ## Tier 3 — ENV (deploy-time infra knobs) — *implemented*

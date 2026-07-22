@@ -153,7 +153,7 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Loaded tools are keyed `mcp_<toolName>` in the agent tool record (sanitized to provider-safe names); built-in tool keys always win on collision.
 - Every MCP tool call is audit-logged (`[mcp:audit] server=… tool=… args=…`, like the `bash` tool) and recorded on the `AgentTracer` with `toolName: 'mcp:<toolName>'`.
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
-- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts.
+- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/admin/mcp-connections`).
 
 **Status — WS3 complete:**
 - **Tool key (WS2):** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
