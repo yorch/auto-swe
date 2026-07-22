@@ -17,6 +17,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { createImplementerAgent } from '../agents/implementer.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
@@ -80,12 +81,11 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
     .catch(() => undefined);
 }
 
-const MAX_EVAL_ITERATIONS = 3;
-
 /**
  * Runs the implementer at the agent version specified by `ref` against the
  * frozen fixture, then checks `goldenTest`. Returns 1 when the golden test
- * passes within MAX_EVAL_ITERATIONS, 0 when it consistently fails.
+ * passes within the workflow-defaults eval-iteration cap, 0 when it
+ * consistently fails.
  *
  * A `0` means a genuine floor failure (the agent's code did not make the golden
  * test pass). Infrastructure/config errors — Docker provisioning, agent/model
@@ -103,6 +103,11 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   const parsed = parseAgentRef(ref);
   const ctx: ResolveCtx =
     parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {};
+
+  // Attempt cap comes from the DB-backed workflow defaults (falls back to 3).
+  // Resolved once per case-arm — not a hot path (each iteration is a Docker +
+  // LLM boundary).
+  const maxEvalIterations = (await resolveWorkflowDefaults()).maxEvalIterations;
 
   let workspace: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
@@ -138,7 +143,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input);
 
     let lastTestOutput = '';
-    for (let i = 0; i < MAX_EVAL_ITERATIONS; i++) {
+    for (let i = 0; i < maxEvalIterations; i++) {
       const userMessage = JSON.stringify({
         description: taskDescription,
         iteration: i,

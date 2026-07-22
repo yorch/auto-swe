@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { type CapturedResult, execShellAsync, spawnCaptureAsync } from '../lib/execUtils.js';
 
@@ -27,12 +28,11 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-// Resource caps applied to every workspace container: bound worst-case memory/CPU
-// usage from a runaway agent-driven build/test process, and cap process count to
-// blunt fork-bomb-style failures.
-const WORKSPACE_MEMORY = '4g';
-const WORKSPACE_CPUS = 2;
-const WORKSPACE_PIDS_LIMIT = 512;
+// Resource caps applied to every workspace container (bound worst-case
+// memory/CPU usage from a runaway agent-driven build/test process, and cap
+// process count to blunt fork-bomb-style failures) and the default base image
+// are resolved per-call from the DB-backed workflow defaults — see
+// `createWorkspace` (defaults: 4g / 2 CPU / 512 pids / node:24-alpine).
 
 // Cloud metadata-IP egress block (deferred follow-up to the `--add-host`
 // hardening below): can be disabled per-deployment with
@@ -101,7 +101,13 @@ export async function createWorkspace(
   authedRepoUrl: string,
   branch: string,
   defaultBranch: string,
-  image: string = 'node:24-alpine',
+  /**
+   * Base image for the workspace container. When omitted, the DB-backed
+   * workflow default (`workspaceImage`, default `node:24-alpine`) is used, so a
+   * caller that passes nothing gets the GLOBAL config image; callers passing an
+   * explicit `executorImage` still override it.
+   */
+  image?: string,
   /**
    * Optional commit SHA to pin the workspace to (P1 frozen-benchmark fixtures —
    * docs/evals-p1.md). When set, the repo is cloned with full history and the
@@ -119,8 +125,13 @@ export async function createWorkspace(
    */
   existingBranch?: boolean
 ): Promise<Workspace> {
-  if (!DOCKER_IMAGE_REF_RE.test(image)) {
-    throw new Error(`Invalid Docker image name: ${image}`);
+  // Resolve container caps + default base image from the DB-backed workflow
+  // defaults. A caller-supplied `image` still wins (executor-image override).
+  const cfg = await resolveWorkflowDefaults();
+  const effectiveImage = image ?? cfg.workspaceImage;
+
+  if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
+    throw new Error(`Invalid Docker image name: ${effectiveImage}`);
   }
 
   // Extract the embedded credential from the authed clone URL (if any) so it
@@ -172,7 +183,7 @@ export async function createWorkspace(
   //    installing the route here would need `NET_ADMIN`, which conflicts
   //    with `--cap-drop=ALL`.
   await execShellAsync(
-    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${WORKSPACE_MEMORY} --cpus=${WORKSPACE_CPUS} --pids-limit=${WORKSPACE_PIDS_LIMIT} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(image)} sleep infinity`,
+    `docker run -d --name ${containerName} --dns=1.1.1.1 --dns=8.8.8.8 --memory=${cfg.workspaceMemory} --cpus=${cfg.workspaceCpus} --pids-limit=${cfg.workspacePidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
     { heartbeatLabel: 'workspace: starting container' }
   );
 

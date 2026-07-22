@@ -4,6 +4,7 @@ import type {
   GenerateWorkflowSpecResult,
 } from '../activities/generateWorkflowSpec.js';
 import type * as activitiesType from '../activities/index.js';
+import { RETRY_SINGLE_ATTEMPT, T_5M } from './proxyOptions.js';
 
 /**
  * WorkflowAuthorWorkflow — generate a {@link WorkflowSpec} from a natural-language
@@ -22,8 +23,8 @@ import type * as activitiesType from '../activities/index.js';
 const { generateWorkflowSpec } = proxyActivities<
   Pick<typeof activitiesType, 'generateWorkflowSpec'>
 >({
-  retry: { maximumAttempts: 1 },
-  startToCloseTimeout: '5m',
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_5M,
 });
 
 export async function WorkflowAuthorWorkflow(

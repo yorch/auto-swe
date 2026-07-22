@@ -1,5 +1,6 @@
 import { proxyActivities } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { RETRY_SCHEDULED, T_1M } from './proxyOptions.js';
 
 /**
  * ReembedMemoryWorkflow — channel assistant admin memory edit-with-reembed.
@@ -17,14 +18,9 @@ import type * as activitiesType from '../activities/index.js';
 const { reembedMemoryItemActivity } = proxyActivities<
   Pick<typeof activitiesType, 'reembedMemoryItemActivity'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    // Embedding-provider calls can fail transiently; a couple of retries is enough.
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '1m',
+  // Embedding-provider calls can fail transiently; a couple of retries is enough.
+  retry: RETRY_SCHEDULED,
+  startToCloseTimeout: T_1M,
 });
 
 export async function ReembedMemoryWorkflow(input: { memoryId: string }): Promise<void> {

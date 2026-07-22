@@ -1,5 +1,13 @@
 import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import {
+  RETRY_LLM_LIGHT,
+  RETRY_ONCE_SLOW,
+  RETRY_RUN_RECORD,
+  T_5M,
+  T_10M,
+  T_30S,
+} from './proxyOptions.js';
 
 /**
  * ChannelAmbientWorkflow — channel assistant (Phase 3 + Gap F).
@@ -31,13 +39,8 @@ import type * as activitiesType from '../activities/index.js';
 const { runChannelAmbientDigest } = proxyActivities<
   Pick<typeof activitiesType, 'runChannelAmbientDigest'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '10s',
-    maximumAttempts: 2,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_LLM_LIGHT,
+  startToCloseTimeout: T_5M,
 });
 
 // Gap F: channel memory consolidation — heavier than the digest (LLM synthesis
@@ -45,12 +48,8 @@ const { runChannelAmbientDigest } = proxyActivities<
 const { consolidateChannelMemory } = proxyActivities<
   Pick<typeof activitiesType, 'consolidateChannelMemory'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 1,
-  },
-  startToCloseTimeout: '10m',
+  retry: RETRY_ONCE_SLOW,
+  startToCloseTimeout: T_10M,
 });
 
 // Gap C: open-item sweep — detect new action items, mark resolved ones, nudge
@@ -58,12 +57,8 @@ const { consolidateChannelMemory } = proxyActivities<
 const { sweepChannelOpenItems } = proxyActivities<
   Pick<typeof activitiesType, 'sweepChannelOpenItems'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 1,
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_ONCE_SLOW,
+  startToCloseTimeout: T_5M,
 });
 
 // Passive memory ingestion — silently extract salient facts from human messages.
@@ -71,23 +66,15 @@ const { sweepChannelOpenItems } = proxyActivities<
 const { passiveIngestChannelMemory } = proxyActivities<
   Pick<typeof activitiesType, 'passiveIngestChannelMemory'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 1,
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_ONCE_SLOW,
+  startToCloseTimeout: T_5M,
 });
 
 // Gap B: org-wide proactive flagging — surface notable activity from other
 // (non-private) channels in the org. Opt-in per channel; single attempt.
 const { flagOrgSignals } = proxyActivities<Pick<typeof activitiesType, 'flagOrgSignals'>>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '30s',
-    maximumAttempts: 1,
-  },
-  startToCloseTimeout: '5m',
+  retry: RETRY_ONCE_SLOW,
+  startToCloseTimeout: T_5M,
 });
 
 // Run-record lifecycle (observability): a lightweight WorkflowRun keyed to this
@@ -95,13 +82,8 @@ const { flagOrgSignals } = proxyActivities<Pick<typeof activitiesType, 'flagOrgS
 const { startChannelRun, finalizeChannelRun } = proxyActivities<
   Pick<typeof activitiesType, 'startChannelRun' | 'finalizeChannelRun'>
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '2s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '30s',
+  retry: RETRY_RUN_RECORD,
+  startToCloseTimeout: T_30S,
 });
 
 export async function ChannelAmbientWorkflow(input: { channelId: string }): Promise<void> {

@@ -81,18 +81,29 @@ vi.mock('../lib/systemConfigService.js', () => ({
   updateRevalidationScheduleConfig: vi.fn(async () => {}),
   updateSlackConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
   updateStorageConfig: vi.fn(async () => ({ changedFields: [], data: {}, existed: true })),
+  updateWorkflowDefaults: vi.fn(async () => ({
+    auditAfterJson: { changedFields: ['maxTddIterations'] },
+    changedFields: ['maxTddIterations'],
+    data: { branchPrefix: 'auto', maxTddIterations: 7 },
+    existed: true,
+  })),
   writeSystemConfigAudit: vi.fn(async () => {}),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
 import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
-import { detectJiraFields, updateCanaryConfig } from '../lib/systemConfigService.js';
+import {
+  detectJiraFields,
+  updateCanaryConfig,
+  updateWorkflowDefaults,
+} from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
 
 const detectJiraFieldsMock = vi.mocked(detectJiraFields);
 const findAgentMock = vi.mocked(prisma.agent.findFirst);
 const resolveCanaryConfigMock = vi.mocked(resolveCanaryConfig);
 const updateCanaryConfigMock = vi.mocked(updateCanaryConfig);
+const updateWorkflowDefaultsMock = vi.mocked(updateWorkflowDefaults);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
@@ -232,6 +243,43 @@ describe('eval-schedule config', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(app.temporal.triggerEvalNow).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+});
+
+describe('PUT /config/workflow-defaults', () => {
+  it('accepts the Tier-2 knobs and delegates to updateWorkflowDefaults', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: {
+        budgetStandardInputTokens: 3_000_000,
+        evalJudgeThreshold: 0.6,
+        maxTddIterations: 7,
+        workspaceMemory: '8g',
+      },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updateWorkflowDefaultsMock).toHaveBeenCalledTimes(1);
+    expect(updateWorkflowDefaultsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ budgetStandardInputTokens: 3_000_000, maxTddIterations: 7 })
+    );
+    expect(JSON.parse(res.payload).data).toMatchObject({ maxTddIterations: 7 });
+    await app.close();
+  });
+
+  it('rejects an out-of-range threshold (evalJudgeThreshold > 1)', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { evalJudgeThreshold: 1.5 },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/admin/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(400);
     await app.close();
   });
 });

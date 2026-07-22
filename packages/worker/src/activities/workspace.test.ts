@@ -9,6 +9,18 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
   };
 });
 
+// Mock the workflow-defaults resolver so `createWorkspace` doesn't hit a real
+// DB — it now reads container caps + the default base image from here.
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    workspaceCpus: 2,
+    workspaceImage: 'node:24-alpine',
+    workspaceMemory: '4g',
+    workspacePidsLimit: 512,
+  })),
+}));
+
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync } from '../lib/execUtils.js';
 import { buildMetadataBlockArgs, createWorkspace, shellQuote } from './workspace.js';
 
@@ -104,6 +116,42 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     const nameMatch = startCmd?.match(/--name (\S+)/);
     expect(nameMatch?.[1]).toBeDefined();
     expect(metadataCmd).toContain(`--network container:${nameMatch?.[1]}`);
+
+    await ws.destroy();
+  });
+
+  it('applies the resolved workspace caps + default image from workflow defaults', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({
+      workspaceCpus: 6,
+      workspaceImage: 'custom/base:1.2',
+      workspaceMemory: '9g',
+      workspacePidsLimit: 999,
+    } as never);
+
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+
+    const startCmd = commands.find((c) => c.includes('docker run -d --name'));
+    expect(startCmd).toContain('--memory=9g');
+    expect(startCmd).toContain('--cpus=6');
+    expect(startCmd).toContain('--pids-limit=999');
+    // No explicit image passed → the resolved config image is used.
+    expect(startCmd).toContain(shellQuote('custom/base:1.2'));
+
+    await ws.destroy();
+  });
+
+  it('honours an explicit image argument over the resolved default image', async () => {
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'auto/TICKET-1',
+      'main',
+      'ghcr.io/acme/executor:9'
+    );
+    const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+    const startCmd = commands.find((c) => c.includes('docker run -d --name'));
+    expect(startCmd).toContain(shellQuote('ghcr.io/acme/executor:9'));
+    expect(startCmd).not.toContain(shellQuote('node:24-alpine'));
 
     await ws.destroy();
   });

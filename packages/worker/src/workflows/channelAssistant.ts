@@ -2,6 +2,14 @@ import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/share
 import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type { DelegateIntent } from '../activities/channelAssistant.js';
 import type * as activitiesType from '../activities/index.js';
+import {
+  RETRY_RUN_RECORD,
+  RETRY_SINGLE_ATTEMPT,
+  RETRY_STANDARD,
+  T_2M,
+  T_5M,
+  T_30S,
+} from './proxyOptions.js';
 import { startThreadTaskChild } from './taskChild.js';
 
 /**
@@ -34,14 +42,9 @@ import { startThreadTaskChild } from './taskChild.js';
 const { runChannelAssistantTurn } = proxyActivities<
   Pick<typeof activitiesType, 'runChannelAssistantTurn'>
 >({
-  heartbeatTimeout: '2m',
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '1m',
-  },
-  startToCloseTimeout: '5m',
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
 });
 
 // The Slack posts: quick network calls. Retry a few times so a transient blip
@@ -56,7 +59,7 @@ const { postChannelReply, postChannelPlaceholder, updateChannelReply } = proxyAc
     maximumAttempts: 4,
     maximumInterval: '30s',
   },
-  startToCloseTimeout: '30s',
+  startToCloseTimeout: T_30S,
 });
 
 // Run-record lifecycle: a lightweight WorkflowRun keyed to this Temporal
@@ -68,13 +71,8 @@ const { startChannelRun, finalizeChannelRun, touchChannelThreadSession } = proxy
     'startChannelRun' | 'finalizeChannelRun' | 'touchChannelThreadSession'
   >
 >({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '2s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '30s',
+  retry: RETRY_RUN_RECORD,
+  startToCloseTimeout: T_30S,
 });
 
 // Phase A: task-launch preparation + budget gate. Quick DB reads/writes — short
@@ -89,13 +87,8 @@ const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTa
       'createChannelTaskRun' | 'createChannelCodeTaskRun' | 'isChannelOverBudgetForTask'
     >
   >({
-    retry: {
-      backoffCoefficient: 2,
-      initialInterval: '2s',
-      maximumAttempts: 3,
-      maximumInterval: '30s',
-    },
-    startToCloseTimeout: '30s',
+    retry: RETRY_RUN_RECORD,
+    startToCloseTimeout: T_30S,
   });
 
 // Workflow generation: an LLM activity (generate→validate→repair) + a DB write.
@@ -104,7 +97,7 @@ const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTa
 const { createChannelWorkflowDraft, refineChannelWorkflowDraft } = proxyActivities<
   Pick<typeof activitiesType, 'createChannelWorkflowDraft' | 'refineChannelWorkflowDraft'>
 >({
-  retry: { maximumAttempts: 1 },
+  retry: RETRY_SINGLE_ATTEMPT,
   startToCloseTimeout: '6m',
 });
 

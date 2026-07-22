@@ -32,6 +32,27 @@ export default function AdminWorkflowPage() {
   const [prBodyTemplate, setPrBodyTemplate] = useState('');
   const [defaultTeamSlug, setDefaultTeamSlug] = useState('');
 
+  // Tier-2 resource & tuning defaults (GLOBAL). Seeded from the resolved GET
+  // payload; sent back as flat fields on the PUT body.
+  const [budgetStandardInputTokens, setBudgetStandardInputTokens] = useState(2_000_000);
+  const [budgetStandardOutputTokens, setBudgetStandardOutputTokens] = useState(500_000);
+  const [budgetLargeInputTokens, setBudgetLargeInputTokens] = useState(8_000_000);
+  const [budgetLargeOutputTokens, setBudgetLargeOutputTokens] = useState(2_000_000);
+  const [budgetEpicInputTokens, setBudgetEpicInputTokens] = useState(20_000_000);
+  const [budgetEpicOutputTokens, setBudgetEpicOutputTokens] = useState(5_000_000);
+  const [maxTddIterations, setMaxTddIterations] = useState(5);
+  const [maxEvalIterations, setMaxEvalIterations] = useState(3);
+  const [workspaceMemory, setWorkspaceMemory] = useState('4g');
+  const [workspaceCpus, setWorkspaceCpus] = useState(2);
+  const [workspacePidsLimit, setWorkspacePidsLimit] = useState(512);
+  const [workspaceImage, setWorkspaceImage] = useState('node:24-alpine');
+  const [lessonRetrievalLimit, setLessonRetrievalLimit] = useState(5);
+  const [lessonRetrievalThreshold, setLessonRetrievalThreshold] = useState(0.7);
+  const [evalHealthMaxFlakeRate, setEvalHealthMaxFlakeRate] = useState(0.1);
+  const [evalHealthMaxStaleRate, setEvalHealthMaxStaleRate] = useState(0.1);
+  const [evalHealthMinKappa, setEvalHealthMinKappa] = useState(0.4);
+  const [evalJudgeThreshold, setEvalJudgeThreshold] = useState(0.5);
+
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,6 +125,52 @@ export default function AdminWorkflowPage() {
     setPrTitleTemplate(data.prTitleTemplate ?? '');
     setPrBodyTemplate(data.prBodyTemplate ?? '');
     setDefaultTeamSlug(data.defaultTeamSlug ?? '');
+
+    const tiers = data.budgetTiers;
+    if (tiers) {
+      setBudgetStandardInputTokens(tiers.STANDARD.inputTokens);
+      setBudgetStandardOutputTokens(tiers.STANDARD.outputTokens);
+      setBudgetLargeInputTokens(tiers.LARGE.inputTokens);
+      setBudgetLargeOutputTokens(tiers.LARGE.outputTokens);
+      setBudgetEpicInputTokens(tiers.EPIC.inputTokens);
+      setBudgetEpicOutputTokens(tiers.EPIC.outputTokens);
+    }
+    if (data.maxTddIterations !== undefined) {
+      setMaxTddIterations(data.maxTddIterations);
+    }
+    if (data.maxEvalIterations !== undefined) {
+      setMaxEvalIterations(data.maxEvalIterations);
+    }
+    if (data.workspaceMemory !== undefined) {
+      setWorkspaceMemory(data.workspaceMemory);
+    }
+    if (data.workspaceCpus !== undefined) {
+      setWorkspaceCpus(data.workspaceCpus);
+    }
+    if (data.workspacePidsLimit !== undefined) {
+      setWorkspacePidsLimit(data.workspacePidsLimit);
+    }
+    if (data.workspaceImage !== undefined) {
+      setWorkspaceImage(data.workspaceImage);
+    }
+    if (data.lessonRetrievalLimit !== undefined) {
+      setLessonRetrievalLimit(data.lessonRetrievalLimit);
+    }
+    if (data.lessonRetrievalThreshold !== undefined) {
+      setLessonRetrievalThreshold(data.lessonRetrievalThreshold);
+    }
+    if (data.evalHealthMaxFlakeRate !== undefined) {
+      setEvalHealthMaxFlakeRate(data.evalHealthMaxFlakeRate);
+    }
+    if (data.evalHealthMaxStaleRate !== undefined) {
+      setEvalHealthMaxStaleRate(data.evalHealthMaxStaleRate);
+    }
+    if (data.evalHealthMinKappa !== undefined) {
+      setEvalHealthMinKappa(data.evalHealthMinKappa);
+    }
+    if (data.evalJudgeThreshold !== undefined) {
+      setEvalJudgeThreshold(data.evalJudgeThreshold);
+    }
   }, [data]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -124,6 +191,31 @@ export default function AdminWorkflowPage() {
     if (defaultTeamSlug) {
       body.defaultTeamSlug = defaultTeamSlug;
     }
+
+    // Tier-2 knobs — always sent (number inputs are seeded from the server, so
+    // they carry valid values). Budgets are flattened out of the nested read shape.
+    body.budgetStandardInputTokens = budgetStandardInputTokens;
+    body.budgetStandardOutputTokens = budgetStandardOutputTokens;
+    body.budgetLargeInputTokens = budgetLargeInputTokens;
+    body.budgetLargeOutputTokens = budgetLargeOutputTokens;
+    body.budgetEpicInputTokens = budgetEpicInputTokens;
+    body.budgetEpicOutputTokens = budgetEpicOutputTokens;
+    body.maxTddIterations = maxTddIterations;
+    body.maxEvalIterations = maxEvalIterations;
+    if (workspaceMemory) {
+      body.workspaceMemory = workspaceMemory;
+    }
+    body.workspaceCpus = workspaceCpus;
+    body.workspacePidsLimit = workspacePidsLimit;
+    if (workspaceImage) {
+      body.workspaceImage = workspaceImage;
+    }
+    body.lessonRetrievalLimit = lessonRetrievalLimit;
+    body.lessonRetrievalThreshold = lessonRetrievalThreshold;
+    body.evalHealthMaxFlakeRate = evalHealthMaxFlakeRate;
+    body.evalHealthMaxStaleRate = evalHealthMaxStaleRate;
+    body.evalHealthMinKappa = evalHealthMinKappa;
+    body.evalJudgeThreshold = evalJudgeThreshold;
 
     try {
       await update.mutateAsync(body);
@@ -278,6 +370,294 @@ export default function AdminWorkflowPage() {
                   value={defaultTeamSlug}
                 />
               </FieldWrapper>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle eyebrow="Resources &amp; tuning">
+                  Resource &amp; tuning defaults (Tier 2)
+                </CardTitle>
+              </CardHeader>
+              <div className="space-y-6">
+                <div>
+                  <p className="mb-3 text-xs uppercase tracking-wide text-paper-500">
+                    Per-tier token budgets
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldWrapper
+                      hint="STANDARD tier input-token cap."
+                      id="budget-standard-input"
+                      label="Standard · input tokens"
+                    >
+                      <Input
+                        id="budget-standard-input"
+                        min={1}
+                        onChange={(e) => setBudgetStandardInputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetStandardInputTokens}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="STANDARD tier output-token cap."
+                      id="budget-standard-output"
+                      label="Standard · output tokens"
+                    >
+                      <Input
+                        id="budget-standard-output"
+                        min={1}
+                        onChange={(e) => setBudgetStandardOutputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetStandardOutputTokens}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="LARGE tier input-token cap."
+                      id="budget-large-input"
+                      label="Large · input tokens"
+                    >
+                      <Input
+                        id="budget-large-input"
+                        min={1}
+                        onChange={(e) => setBudgetLargeInputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetLargeInputTokens}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="LARGE tier output-token cap."
+                      id="budget-large-output"
+                      label="Large · output tokens"
+                    >
+                      <Input
+                        id="budget-large-output"
+                        min={1}
+                        onChange={(e) => setBudgetLargeOutputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetLargeOutputTokens}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="EPIC tier input-token cap."
+                      id="budget-epic-input"
+                      label="Epic · input tokens"
+                    >
+                      <Input
+                        id="budget-epic-input"
+                        min={1}
+                        onChange={(e) => setBudgetEpicInputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetEpicInputTokens}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="EPIC tier output-token cap."
+                      id="budget-epic-output"
+                      label="Epic · output tokens"
+                    >
+                      <Input
+                        id="budget-epic-output"
+                        min={1}
+                        onChange={(e) => setBudgetEpicOutputTokens(Number(e.target.value))}
+                        type="number"
+                        value={budgetEpicOutputTokens}
+                      />
+                    </FieldWrapper>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-xs uppercase tracking-wide text-paper-500">
+                    Agent refine-loop caps
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldWrapper
+                      hint="Implementer TDD refine-loop cap per run."
+                      id="max-tdd-iterations"
+                      label="Max TDD iterations"
+                    >
+                      <Input
+                        id="max-tdd-iterations"
+                        min={1}
+                        onChange={(e) => setMaxTddIterations(Number(e.target.value))}
+                        type="number"
+                        value={maxTddIterations}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Eval-harness attempt cap."
+                      id="max-eval-iterations"
+                      label="Max eval iterations"
+                    >
+                      <Input
+                        id="max-eval-iterations"
+                        min={1}
+                        onChange={(e) => setMaxEvalIterations(Number(e.target.value))}
+                        type="number"
+                        value={maxEvalIterations}
+                      />
+                    </FieldWrapper>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-xs uppercase tracking-wide text-paper-500">
+                    Ephemeral workspace container
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldWrapper
+                      hint="Docker memory limit, e.g. 4g."
+                      id="workspace-memory"
+                      label="Memory"
+                    >
+                      <Input
+                        id="workspace-memory"
+                        onChange={(e) => setWorkspaceMemory(e.target.value)}
+                        placeholder="4g"
+                        value={workspaceMemory}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Default base image for workspace containers."
+                      id="workspace-image"
+                      label="Base image"
+                    >
+                      <Input
+                        id="workspace-image"
+                        onChange={(e) => setWorkspaceImage(e.target.value)}
+                        placeholder="node:24-alpine"
+                        value={workspaceImage}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper hint="CPU quota (cores)." id="workspace-cpus" label="CPUs">
+                      <Input
+                        id="workspace-cpus"
+                        min={0.1}
+                        onChange={(e) => setWorkspaceCpus(Number(e.target.value))}
+                        step={0.5}
+                        type="number"
+                        value={workspaceCpus}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Max process count (pids limit)."
+                      id="workspace-pids"
+                      label="PIDs limit"
+                    >
+                      <Input
+                        id="workspace-pids"
+                        min={1}
+                        onChange={(e) => setWorkspacePidsLimit(Number(e.target.value))}
+                        type="number"
+                        value={workspacePidsLimit}
+                      />
+                    </FieldWrapper>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-xs uppercase tracking-wide text-paper-500">
+                    Lesson retrieval
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldWrapper
+                      hint="Max lessons retrieved per run."
+                      id="lesson-retrieval-limit"
+                      label="Retrieval limit"
+                    >
+                      <Input
+                        id="lesson-retrieval-limit"
+                        min={1}
+                        onChange={(e) => setLessonRetrievalLimit(Number(e.target.value))}
+                        type="number"
+                        value={lessonRetrievalLimit}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Cosine similarity floor (0–1)."
+                      id="lesson-retrieval-threshold"
+                      label="Retrieval threshold"
+                    >
+                      <Input
+                        id="lesson-retrieval-threshold"
+                        max={1}
+                        min={0}
+                        onChange={(e) => setLessonRetrievalThreshold(Number(e.target.value))}
+                        step={0.01}
+                        type="number"
+                        value={lessonRetrievalThreshold}
+                      />
+                    </FieldWrapper>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-xs uppercase tracking-wide text-paper-500">
+                    Eval health gate &amp; judge thresholds
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldWrapper
+                      hint="Max acceptable flake rate (0–1)."
+                      id="eval-health-flake"
+                      label="Max flake rate"
+                    >
+                      <Input
+                        id="eval-health-flake"
+                        max={1}
+                        min={0}
+                        onChange={(e) => setEvalHealthMaxFlakeRate(Number(e.target.value))}
+                        step={0.01}
+                        type="number"
+                        value={evalHealthMaxFlakeRate}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Max acceptable stale rate (0–1)."
+                      id="eval-health-stale"
+                      label="Max stale rate"
+                    >
+                      <Input
+                        id="eval-health-stale"
+                        max={1}
+                        min={0}
+                        onChange={(e) => setEvalHealthMaxStaleRate(Number(e.target.value))}
+                        step={0.01}
+                        type="number"
+                        value={evalHealthMaxStaleRate}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="Minimum inter-rater kappa (0–1)."
+                      id="eval-health-kappa"
+                      label="Min kappa"
+                    >
+                      <Input
+                        id="eval-health-kappa"
+                        max={1}
+                        min={0}
+                        onChange={(e) => setEvalHealthMinKappa(Number(e.target.value))}
+                        step={0.01}
+                        type="number"
+                        value={evalHealthMinKappa}
+                      />
+                    </FieldWrapper>
+                    <FieldWrapper
+                      hint="LLM-judge pass threshold (0–1)."
+                      id="eval-judge-threshold"
+                      label="Judge threshold"
+                    >
+                      <Input
+                        id="eval-judge-threshold"
+                        max={1}
+                        min={0}
+                        onChange={(e) => setEvalJudgeThreshold(Number(e.target.value))}
+                        step={0.01}
+                        type="number"
+                        value={evalJudgeThreshold}
+                      />
+                    </FieldWrapper>
+                  </div>
+                </div>
+              </div>
             </Card>
 
             {saved && <Alert variant="success">Settings saved.</Alert>}

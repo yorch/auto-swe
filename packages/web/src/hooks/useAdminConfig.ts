@@ -164,11 +164,31 @@ export function testStorageConnection() {
 
 // ── Workflow defaults ──
 
+export interface WorkflowBudgetTier {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface WorkflowDefaultsConfig {
   branchPrefix: string | null;
   prTitleTemplate: string | null;
   prBodyTemplate: string | null;
   defaultTeamSlug: string | null;
+  // Tier-2 operator knobs (GLOBAL). Present on the resolved GET payload; the
+  // per-tier budgets come back nested under budgetTiers.
+  budgetTiers?: Record<'STANDARD' | 'LARGE' | 'EPIC', WorkflowBudgetTier>;
+  maxTddIterations?: number;
+  maxEvalIterations?: number;
+  workspaceMemory?: string;
+  workspaceCpus?: number;
+  workspacePidsLimit?: number;
+  workspaceImage?: string;
+  lessonRetrievalLimit?: number;
+  lessonRetrievalThreshold?: number;
+  evalHealthMaxFlakeRate?: number;
+  evalHealthMaxStaleRate?: number;
+  evalHealthMinKappa?: number;
+  evalJudgeThreshold?: number;
 }
 
 export interface WorkflowDefaultsInput {
@@ -176,6 +196,25 @@ export interface WorkflowDefaultsInput {
   prTitleTemplate?: string;
   prBodyTemplate?: string;
   defaultTeamSlug?: string;
+  // Tier-2 knobs — budgets are flat on the PUT body (nested only on read).
+  budgetStandardInputTokens?: number;
+  budgetStandardOutputTokens?: number;
+  budgetLargeInputTokens?: number;
+  budgetLargeOutputTokens?: number;
+  budgetEpicInputTokens?: number;
+  budgetEpicOutputTokens?: number;
+  maxTddIterations?: number;
+  maxEvalIterations?: number;
+  workspaceMemory?: string;
+  workspaceCpus?: number;
+  workspacePidsLimit?: number;
+  workspaceImage?: string;
+  lessonRetrievalLimit?: number;
+  lessonRetrievalThreshold?: number;
+  evalHealthMaxFlakeRate?: number;
+  evalHealthMaxStaleRate?: number;
+  evalHealthMinKappa?: number;
+  evalJudgeThreshold?: number;
 }
 
 export function useWorkflowDefaultsConfig() {

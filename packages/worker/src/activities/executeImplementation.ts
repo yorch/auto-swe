@@ -29,8 +29,6 @@ import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
 
-const MAX_TDD_ITERATIONS = 5;
-
 /**
  * Render the stored Figma design summary (a `FigmaDesignSummary[]` written by
  * the gateway's design enrichment) into a compact prompt block. Returns '' when
@@ -147,7 +145,12 @@ export async function executeImplementation(
     // Retrieve relevant lessons from past workflows for context enrichment
     let lessonsContext = '';
     try {
-      const lessons = await retrieveSimilarLessons(request.description, request.repoId);
+      const lessons = await retrieveSimilarLessons(
+        request.description,
+        request.repoId,
+        workflowDefaults.lessonRetrievalLimit,
+        workflowDefaults.lessonRetrievalThreshold
+      );
       if (lessons.length > 0) {
         lessonsContext =
           '\n\n## Lessons from Previous Workflows\n' +
@@ -214,9 +217,10 @@ export async function executeImplementation(
     const llmSystemPrompt =
       systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '') + lessonsContext + designContext;
 
-    // TDD loop
-    for (let iteration = 0; iteration < MAX_TDD_ITERATIONS; iteration++) {
-      heartbeat(`TDD iteration ${iteration + 1}/${MAX_TDD_ITERATIONS}`);
+    // TDD loop — bound by the DB-backed workflow default (falls back to 5).
+    const maxTddIterations = workflowDefaults.maxTddIterations;
+    for (let iteration = 0; iteration < maxTddIterations; iteration++) {
+      heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
 
       const llmUserMessage = JSON.stringify({
         description: subtask?.description ?? request.description,
@@ -369,7 +373,7 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: `Completed in ${testResult.passed ? '≤5' : '5 (max)'} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
       repoId: request.repoId,
       testResults: testResult,
     };

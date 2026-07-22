@@ -5,17 +5,13 @@ import type {
 import { proxyActivities, startChild, workflowInfo } from '@temporalio/workflow';
 import type { getReposForConsolidation } from '../activities/getReposForConsolidation.js';
 import type { ConsolidateLessonsWorkflow as ConsolidateLessonsWorkflowType } from './consolidateLessons.js';
+import { RETRY_SCHEDULED, T_2_MINUTES } from './proxyOptions.js';
 
 const { getReposForConsolidation: getRepos } = proxyActivities<{
   getReposForConsolidation: typeof getReposForConsolidation;
 }>({
-  retry: {
-    backoffCoefficient: 2,
-    initialInterval: '5s',
-    maximumAttempts: 3,
-    maximumInterval: '30s',
-  },
-  startToCloseTimeout: '2 minutes',
+  retry: RETRY_SCHEDULED,
+  startToCloseTimeout: T_2_MINUTES,
 });
 
 /**
