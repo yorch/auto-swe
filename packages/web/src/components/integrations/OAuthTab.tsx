@@ -9,6 +9,7 @@ import {
   useGoogleOAuthConfig,
   useUpdateGoogleOAuthConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
@@ -22,20 +23,13 @@ export function OAuthTab() {
 
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const { saved, error, requiresRestart, submit } = useIntegrationConfigForm();
 
   // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
   const googleOauthCallback = `${API_BASE}/api/auth/callback/google`;
 
-  const [saved, setSaved] = useState(false);
-  const [requiresRestart, setRequiresRestart] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setRequiresRestart(false);
-
     const body: GoogleOAuthConfigInput = {};
     if (clientId) {
       body.clientId = clientId;
@@ -43,15 +37,10 @@ export function OAuthTab() {
     if (clientSecret) {
       body.clientSecret = clientSecret;
     }
-
-    try {
-      const res = await update.mutateAsync(body);
-      setSaved(true);
-      setRequiresRestart(!!res.data.requiresRestart);
-      setClientSecret('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => setClientSecret('')
+    );
   };
 
   if (isLoading) {
