@@ -11,12 +11,9 @@ import {
   useIssueTrackerConfig,
   useUpdateIssueTrackerConfig,
 } from '@/hooks/useAdminConfig';
+import { errMsg, useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
-
-function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 const PROVIDER_HINTS: Record<
   IssueTrackerProvider,
@@ -59,11 +56,8 @@ export function IssueTrackerTab() {
 
   const detectFields = useDetectJiraFields();
 
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
   const [testTicketId, setTestTicketId] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
   const [detectResult, setDetectResult] = useState<string | null>(null);
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
@@ -76,11 +70,8 @@ export function IssueTrackerTab() {
       ? PROVIDER_HINTS[effectiveProvider]
       : null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setTestResult(null);
 
     const body: IssueTrackerConfigInput = {};
     if (provider) {
@@ -117,27 +108,17 @@ export function IssueTrackerTab() {
       body.webhookTriggerStatus = webhookTriggerStatus;
     }
 
-    try {
-      await update.mutateAsync(body);
-      setSaved(true);
-      setApiToken('');
-      setWebhookSecret('');
-    } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => {
+        setApiToken('');
+        setWebhookSecret('');
+      }
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testIssueTrackerConnection(testTicketId.trim());
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: errMsg(err), ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testIssueTrackerConnection(testTicketId.trim()));
   };
 
   if (isLoading) {
