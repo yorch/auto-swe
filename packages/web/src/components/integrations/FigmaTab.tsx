@@ -9,11 +9,8 @@ import {
   useFigmaConfig,
   useUpdateFigmaConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { SecretInput } from './SecretInput';
-
-function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 export function FigmaTab() {
   const { data: resp, isLoading } = useFigmaConfig();
@@ -25,16 +22,10 @@ export function FigmaTab() {
   const [apiToken, setApiToken] = useState('');
   const [maxNodes, setMaxNodes] = useState('');
 
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setTestResult(null);
 
     const body: FigmaConfigInput = {};
     if (enabled !== undefined) {
@@ -50,26 +41,14 @@ export function FigmaTab() {
       }
     }
 
-    try {
-      await update.mutateAsync(body);
-      setSaved(true);
-      setApiToken('');
-    } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => setApiToken('')
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testFigmaConnection();
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: errMsg(err), ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testFigmaConnection());
   };
 
   if (isLoading) {
