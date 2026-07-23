@@ -42,6 +42,24 @@ export function useCreateMcpConnection() {
   });
 }
 
+export interface UpdateMcpConnectionBody {
+  name: string;
+  url: string;
+  /** Optional override of `loadMcpTools`'s list-timeout (default 15 s). Omit to clear. */
+  listTimeoutMs?: number;
+  /** Optional override of `loadMcpTools`'s per-call timeout (default 60 s). Omit to clear. */
+  callTimeoutMs?: number;
+}
+
+export function useUpdateMcpConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateMcpConnectionBody }) =>
+      api.patch<{ data: McpConnectionRow }>(`${BASE}/${id}`, body).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useDeleteMcpConnection() {
   const qc = useQueryClient();
   return useMutation({

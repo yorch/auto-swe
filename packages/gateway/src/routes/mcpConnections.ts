@@ -24,6 +24,22 @@ const CreateSchema = z.object({
     .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL'),
 });
 
+/**
+ * Edit an existing `mcp` connection. `name` + `url` are always present (the edit
+ * form is pre-filled); the two timeouts are optional and the handler rebuilds
+ * `config` from scratch, so a blank timeout in the form clears the override back
+ * to `loadMcpTools`'s default rather than leaving a stale value behind.
+ */
+const UpdateSchema = z.object({
+  callTimeoutMs: z.number().int().positive().optional(),
+  listTimeoutMs: z.number().int().positive().optional(),
+  name: z.string().min(1).max(200),
+  url: z
+    .string()
+    .url()
+    .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL'),
+});
+
 const IdParams = z.object({ id: z.string().uuid() });
 
 export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
@@ -74,6 +90,50 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'Connection',
       });
       return reply.status(201).send({ data: conn });
+    }
+  );
+
+  app.patch(
+    '/mcp-connections/:id',
+    { onRequest: adminOnly, schema: { body: UpdateSchema, params: IdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const { name, url, listTimeoutMs, callTimeoutMs } = request.body;
+      // Scope to type='mcp' so this route can never mutate a git_repo connection.
+      const conn = await fastify.prisma.connection.findFirst({
+        where: { id: request.params.id, type: 'mcp' },
+      });
+      if (!conn) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
+      }
+      const safety = isSafeProbeUrl(url);
+      if (!safety.ok) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
+      }
+      const before = conn.config as Record<string, unknown> | null;
+      const config = {
+        url,
+        ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
+        ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
+      };
+      const updated = await fastify.prisma.connection.update({
+        data: { config, name },
+        include: { team: { select: { id: true, name: true, slug: true } } },
+        where: { id: conn.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { name, type: 'mcp', ...config },
+        before: { name: conn.name, type: 'mcp', ...(before ?? {}) },
+        entityId: conn.id,
+        entityType: 'Connection',
+      });
+      return reply.send({ data: updated });
     }
   );
 
