@@ -17,7 +17,7 @@
     "db:reset": "yarn workspace @auto-swe/shared prisma migrate reset",
     "db:push": "yarn workspace @auto-swe/shared prisma db push",
     "db:deploy": "yarn workspace @auto-swe/shared prisma migrate deploy",
-    "postinstall": "DATABASE_URL=dummy yarn workspace @auto-swe/shared prisma generate",
+    "postinstall": "yarn db:generate",
     "db:seed": "yarn workspace @auto-swe/shared prisma db seed && yarn db:seed:auth",
     "db:seed:auth": "yarn workspace @auto-swe/gateway exec tsx src/scripts/provisionAuthAdmin.ts",
     "db:studio": "yarn workspace @auto-swe/shared prisma studio",
