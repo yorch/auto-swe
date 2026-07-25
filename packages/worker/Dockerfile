@@ -10,7 +10,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn install --immutable
+RUN corepack enable && yarn install --immutable --mode=skip-build
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/

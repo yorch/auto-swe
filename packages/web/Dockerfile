@@ -7,7 +7,7 @@ COPY package.json yarn.lock .yarnrc.yml ./
 # Vendored yarn binary referenced by .yarnrc.yml's `yarnPath`
 COPY .yarn/releases ./.yarn/releases
 
-# Workspace package.json files — all 6 needed for `yarn install --immutable`
+# Workspace package.json files — all 6 needed for `yarn install --immutable --mode=skip-build`
 # to satisfy the `workspaces: ["packages/*"]` topology check.
 COPY packages/cli/package.json packages/cli/
 COPY packages/gateway/package.json packages/gateway/
@@ -16,7 +16,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 
-RUN corepack enable && yarn install --immutable
+RUN corepack enable && yarn install --immutable --mode=skip-build
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
