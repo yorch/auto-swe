@@ -7,6 +7,11 @@ COPY package.json yarn.lock .yarnrc.yml ./
 # Vendored yarn binary referenced by .yarnrc.yml's `yarnPath`
 COPY .yarn/releases ./.yarn/releases
 
+# The root `postinstall` runs `prisma generate`, so the schema must be present
+# before install. Copying it here (rather than skipping build scripts) keeps
+# native dependency builds working.
+COPY packages/shared/prisma.config.ts packages/shared/
+COPY packages/shared/src/prisma packages/shared/src/prisma
 # Workspace package.json files — all 6 needed for `yarn install --immutable`
 # to satisfy the `workspaces: ["packages/*"]` topology check.
 COPY packages/cli/package.json packages/cli/
@@ -16,7 +21,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 
-RUN corepack enable && yarn install --immutable
+RUN yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -28,7 +33,7 @@ COPY docs docs
 # `DATABASE_URL` even for generate-only calls, so a placeholder is required
 # (see the prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
-RUN yarn workspace @auto-swe/shared prisma generate \
+RUN yarn workspace @auto-swe/shared db:generate \
  && yarn workspace @auto-swe/shared build \
  && yarn workspace @auto-swe/web build \
  && mkdir -p packages/web/public

@@ -53,7 +53,14 @@
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js"
   },
   "scripts": {
-    "build": "DATABASE_URL=dummy prisma generate && tsc",
+    "db:generate": "DATABASE_URL=dummy prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:reset": "prisma migrate reset",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "build": "yarn db:generate && tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "prisma": "prisma"

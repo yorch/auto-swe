@@ -143,7 +143,8 @@ yarn typecheck            # Type-check all packages (no emit)
 yarn dev:gateway          # Start gateway in dev mode (tsx watch)
 yarn dev:worker           # Start worker in dev mode (tsx watch)
 yarn dev:web              # Start Next.js dashboard (port 3000)
-yarn db:migrate           # Run Prisma migrations
+yarn db:migrate           # Create + apply a migration (dev)
+yarn db:deploy            # Apply existing migrations (production)
 yarn db:generate          # Generate Prisma client
 yarn db:seed              # Seed admin user + sample repository
 yarn db:studio            # Open Prisma Studio

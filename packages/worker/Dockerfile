@@ -10,7 +10,12 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn install --immutable
+# The root `postinstall` runs `prisma generate`, so the schema must be present
+# before install. Copying it here (rather than skipping build scripts) keeps
+# native dependency builds working.
+COPY packages/shared/prisma.config.ts packages/shared/
+COPY packages/shared/src/prisma packages/shared/src/prisma
+RUN yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -19,7 +24,7 @@ COPY packages/worker/ packages/worker/
 # prisma.config.ts eagerly resolves DATABASE_URL even for generate-only calls,
 # so a placeholder is required (prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
-RUN yarn workspace @auto-swe/shared prisma generate \
+RUN yarn workspace @auto-swe/shared db:generate \
  && yarn workspace @auto-swe/shared build \
  && yarn workspace @auto-swe/worker build
 
@@ -35,7 +40,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn workspaces focus @auto-swe/worker --production \
+RUN yarn workspaces focus @auto-swe/worker --production \
  && mkdir -p packages/shared/node_modules packages/worker/node_modules
 
 # ── Stage 3: Runtime ──
