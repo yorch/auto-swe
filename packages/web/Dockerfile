@@ -7,7 +7,12 @@ COPY package.json yarn.lock .yarnrc.yml ./
 # Vendored yarn binary referenced by .yarnrc.yml's `yarnPath`
 COPY .yarn/releases ./.yarn/releases
 
-# Workspace package.json files — all 6 needed for `yarn install --immutable --mode=skip-build`
+# The root `postinstall` runs `prisma generate`, so the schema must be present
+# before install. Copying it here (rather than skipping build scripts) keeps
+# native dependency builds working.
+COPY packages/shared/prisma.config.ts packages/shared/
+COPY packages/shared/src/prisma packages/shared/src/prisma
+# Workspace package.json files — all 6 needed for `yarn install --immutable`
 # to satisfy the `workspaces: ["packages/*"]` topology check.
 COPY packages/cli/package.json packages/cli/
 COPY packages/gateway/package.json packages/gateway/

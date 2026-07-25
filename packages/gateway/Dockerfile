@@ -10,7 +10,12 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn install --immutable --mode=skip-build
+# The root `postinstall` runs `prisma generate`, so the schema must be present
+# before install. Copying it here (rather than skipping build scripts) keeps
+# native dependency builds working.
+COPY packages/shared/prisma.config.ts packages/shared/
+COPY packages/shared/src/prisma packages/shared/src/prisma
+RUN corepack enable && yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
