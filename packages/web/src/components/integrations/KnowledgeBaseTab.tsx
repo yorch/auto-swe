@@ -10,12 +10,9 @@ import {
   useKnowledgeBaseConfig,
   useUpdateKnowledgeBaseConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
-
-function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 const PROVIDER_HINTS: Record<
   KnowledgeBaseProvider,
@@ -47,12 +44,9 @@ export function KnowledgeBaseTab() {
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
   const [maxPages, setMaxPages] = useState('');
-
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [testQuery, setTestQuery] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
     | KnowledgeBaseProvider
@@ -64,11 +58,8 @@ export function KnowledgeBaseTab() {
       ? PROVIDER_HINTS[effectiveProvider]
       : null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setTestResult(null);
 
     const body: KnowledgeBaseConfigInput = {};
     if (provider) {
@@ -102,26 +93,14 @@ export function KnowledgeBaseTab() {
       }
     }
 
-    try {
-      await update.mutateAsync(body);
-      setSaved(true);
-      setApiToken('');
-    } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => setApiToken('')
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testKnowledgeBaseConnection(testQuery.trim());
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: errMsg(err), ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testKnowledgeBaseConnection(testQuery.trim()));
   };
 
   if (isLoading) {

@@ -10,15 +10,12 @@ import {
   useGitHubConfig,
   useUpdateGitHubConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 import { UrlRow } from './UrlRow';
-
-function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 export function GitHubTab() {
   const { data: resp, isLoading } = useGitHubConfig();
@@ -39,23 +36,16 @@ export function GitHubTab() {
   const [appInstallationId, setAppInstallationId] = useState('');
   const [authMode, setAuthMode] = useState<string | null>(null);
 
-  const [saved, setSaved] = useState(false);
-  const [requiresRestart, setRequiresRestart] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const { saved, error, requiresRestart, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm();
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
   // better-auth's social-provider callback convention: {basePath}/callback/{providerId}
   const githubOauthCallback = `${API_BASE}/api/auth/callback/github`;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setRequiresRestart(false);
-    setTestResult(null);
 
     const body: GitHubConfigInput = {};
     if (token) {
@@ -95,31 +85,20 @@ export function GitHubTab() {
       body.authMode = authMode;
     }
 
-    try {
-      const res = await update.mutateAsync(body);
-      setSaved(true);
-      setRequiresRestart(!!res.data.requiresRestart);
-      setToken('');
-      setWebhookSecret('');
-      setOauthClientSecret('');
-      setAppPrivateKey('');
-      setAppClientSecret('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => {
+        setToken('');
+        setWebhookSecret('');
+        setOauthClientSecret('');
+        setAppPrivateKey('');
+        setAppClientSecret('');
+      }
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testGitHubConnection();
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: errMsg(err), ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testGitHubConnection());
   };
 
   if (isLoading) {

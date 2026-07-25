@@ -10,6 +10,7 @@ import {
   useStorageConfig,
   useUpdateStorageConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 
@@ -28,10 +29,7 @@ export function StorageTab() {
   const [awsAccessKeyId, setAwsAccessKeyId] = useState('');
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState('');
 
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
   // Seed form from loaded data (once)
   useEffect(() => {
@@ -47,11 +45,8 @@ export function StorageTab() {
     setAwsAccessKeyId(data.awsAccessKeyId ?? '');
   }, [data]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setTestResult(null);
 
     const body: StorageConfigInput = { backend };
     if (backend === 's3') {
@@ -76,26 +71,14 @@ export function StorageTab() {
       }
     }
 
-    try {
-      await update.mutateAsync(body);
-      setSaved(true);
-      setAwsSecretAccessKey('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => setAwsSecretAccessKey('')
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testStorageConnection();
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: err instanceof Error ? err.message : 'Request failed', ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testStorageConnection());
   };
 
   if (isLoading) {

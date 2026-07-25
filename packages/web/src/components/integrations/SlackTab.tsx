@@ -9,16 +9,13 @@ import {
   useSlackConfig,
   useUpdateSlackConfig,
 } from '@/hooks/useAdminConfig';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
 import { RestartWarning } from './RestartWarning';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 import { UrlRow } from './UrlRow';
-
-function errMsg(err: unknown, fallback = 'Request failed'): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 export function SlackTab() {
   const { data: resp, isLoading } = useSlackConfig();
@@ -31,22 +28,15 @@ export function SlackTab() {
   const [clientSecret, setClientSecret] = useState('');
   const [signingSecret, setSigningSecret] = useState('');
 
-  const [saved, setSaved] = useState(false);
-  const [requiresRestart, setRequiresRestart] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const { saved, requiresRestart, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm();
 
   const slackRedirectUri = `${API_BASE}/api/auth/slack/callback`;
   const slackEventUrl = `${API_BASE}/api/v1/webhooks/slack/events`;
   const slackInteractivityUrl = `${API_BASE}/api/v1/webhooks/slack/interactivity`;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSaved(false);
-    setRequiresRestart(false);
-    setTestResult(null);
 
     const body: SlackConfigInput = {};
     if (botToken) {
@@ -62,29 +52,18 @@ export function SlackTab() {
       body.signingSecret = signingSecret;
     }
 
-    try {
-      const res = await update.mutateAsync(body);
-      setSaved(true);
-      setRequiresRestart(!!res.data.requiresRestart);
-      setBotToken('');
-      setClientSecret('');
-      setSigningSecret('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    }
+    submit(
+      () => update.mutateAsync(body),
+      () => {
+        setBotToken('');
+        setClientSecret('');
+        setSigningSecret('');
+      }
+    );
   };
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testSlackConnection();
-      setTestResult(res);
-    } catch (err) {
-      setTestResult({ detail: errMsg(err), ok: false });
-    } finally {
-      setTesting(false);
-    }
+  const handleTest = () => {
+    runTest(() => testSlackConnection());
   };
 
   if (isLoading) {
