@@ -24,7 +24,7 @@ COPY packages/worker/ packages/worker/
 # prisma.config.ts eagerly resolves DATABASE_URL even for generate-only calls,
 # so a placeholder is required (prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
-RUN yarn workspace @auto-swe/shared prisma generate \
+RUN yarn workspace @auto-swe/shared db:generate \
  && yarn workspace @auto-swe/shared build \
  && yarn workspace @auto-swe/worker build
 

@@ -21,7 +21,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 
-RUN corepack enable && yarn install --immutable --mode=skip-build
+RUN corepack enable && yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -33,7 +33,7 @@ COPY docs docs
 # `DATABASE_URL` even for generate-only calls, so a placeholder is required
 # (see the prisma-7-ci-generate-database-url pattern).
 ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
-RUN yarn workspace @auto-swe/shared prisma generate \
+RUN yarn workspace @auto-swe/shared db:generate \
  && yarn workspace @auto-swe/shared build \
  && yarn workspace @auto-swe/web build \
  && mkdir -p packages/web/public
