@@ -15,7 +15,7 @@ COPY packages/worker/package.json packages/worker/
 # native dependency builds working.
 COPY packages/shared/prisma.config.ts packages/shared/
 COPY packages/shared/src/prisma packages/shared/src/prisma
-RUN corepack enable && yarn install --immutable
+RUN yarn install --immutable
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -40,7 +40,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
-RUN corepack enable && yarn workspaces focus @auto-swe/gateway --production \
+RUN yarn workspaces focus @auto-swe/gateway --production \
  && mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
