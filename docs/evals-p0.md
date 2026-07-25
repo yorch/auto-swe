@@ -98,7 +98,7 @@ try/catch.
   }
   ```
 - Add the back-relation on `WorkflowRun` (schema.prisma ~:520): `evalResults EvalResult[]`.
-- **Migration:** `yarn db:migrate:dev --name add_eval_results` then `yarn db:generate`. (Migrations
+- **Migration:** `yarn db:migrate --name add_eval_results` then `yarn db:generate`. (Migrations
   live in `packages/shared/src/prisma/migrations/`.)
 - **Acceptance:** migration applies on a clean DB; `prisma.evalResult` is typed in the generated
   client.

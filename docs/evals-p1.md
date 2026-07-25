@@ -119,7 +119,7 @@ LLM cost on the scorer side; the *candidate run* still costs tokens, hence **nig
   ```
 - **`EvalResult` (from P0)** gains: `evalRunId String? @db.Uuid` (+ relation) and the real `caseId`
   FK to `EvalCase`. Online/production rows keep both null.
-- **Migration:** `yarn db:migrate:dev --name add_eval_datasets` + `yarn db:generate`.
+- **Migration:** `yarn db:migrate --name add_eval_datasets` + `yarn db:generate`.
 - **Acceptance:** models typed; a dataset with 2 cases + a run + per-case results round-trips.
 
 ### WS2 — SHA-pinned workspace
