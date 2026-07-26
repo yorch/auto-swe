@@ -1,40 +1,55 @@
-.git
-.gitignore
-
+# ── Dependencies ────────────────────────────────────────────────
 # Node (yarn-4 monorepo: gateway / web / worker / defaults)
 node_modules
 **/node_modules
-**/.next
-**/dist
-**/*.tsbuildinfo
 .yarn/cache
 .yarn/unplugged
 .yarn/build-state.yml
 .yarn/install-state.gz
 
-# Env / secrets
+# ── Build output ────────────────────────────────────────────────
+**/.next
+**/*.tsbuildinfo
+
+# ── Env files ───────────────────────────────────────────────────
+# Ignore every env file except the committed examples.
+# `.env.*` does not match `.env` itself, hence both lines; the negations come
+# last so they win regardless of what appears above.
 .env
 .env.*
 !.env.example
 !**/.env.example
 
-# Tooling / OS
-.DS_Store
-*.log
-coverage
+# ── Local infra state ───────────────────────────────────────────
+# Local infra volumes created by `docker:infra:up` (root-owned).
+# Anchored to the repo root so it never shadows a source dir named `data`.
+# NOTE: `docs/` is intentionally NOT ignored — the web image's build stage runs
+# `COPY docs docs` to statically render the /docs pages (packages/web reads
+# ../../docs at build time). Excluding it breaks the web Docker build.
+# container: sending it as build context bloats the context and can fail with
+# "error from sender: ... permission denied".
+data/
+
+# ── Editor / IDE ────────────────────────────────────────────────
+# Share project editor config; ignore everything else the editor writes.
 .idea
 .vscode
 
+# ── OS ──────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Logs & caches ───────────────────────────────────────────────
+*.log
+
+# ── Testing & coverage ──────────────────────────────────────────
+coverage
+
+# ── Project-specific ────────────────────────────────────────────
+.git
+.gitignore
+**/dist
 # Docker meta — not needed inside any image
 Dockerfile
 .dockerignore
 docker-compose*.yml
 README.md
-# NOTE: `docs/` is intentionally NOT ignored — the web image's build stage runs
-# `COPY docs docs` to statically render the /docs pages (packages/web reads
-# ../../docs at build time). Excluding it breaks the web Docker build.
-
-# Local infra state (docker:infra postgres/minio bind mounts). Root-owned by the
-# container: sending it as build context bloats the context and can fail with
-# "error from sender: ... permission denied".
-data/
