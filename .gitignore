@@ -38,6 +38,9 @@ packages/shared/src/generated/
 !.vscode/launch.json
 !.vscode/tasks.json
 
+# ── OS ─────────────────────────────────────────────────────────
+.DS_Store
+
 # ── Testing & coverage ──────────────────────────────────────────
 test-results/
 # vitest coverage output
@@ -58,6 +61,3 @@ docs/superpowers/
 # Generated codebase reference artifacts
 output/
 .worktrees/
-
-# ── OS ─────────────────────────────────────────────────────────
-.DS_Store
