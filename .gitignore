@@ -39,3 +39,18 @@ test-results/
 
 # vitest coverage output
 coverage/
+
+# Env files: ignore everything except the committed examples.
+# `.env.*` does not match `.env` itself, hence both lines. Negations come last
+# so they win regardless of what is above.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editor config: share project settings, ignore everything else VS Code writes.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
