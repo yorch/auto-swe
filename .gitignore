@@ -58,3 +58,6 @@ docs/superpowers/
 # Generated codebase reference artifacts
 output/
 .worktrees/
+
+# ── OS ─────────────────────────────────────────────────────────
+.DS_Store

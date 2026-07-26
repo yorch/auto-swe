@@ -43,6 +43,7 @@ data/
 
 # ── Testing & coverage ──────────────────────────────────────────
 coverage
+**/coverage
 
 # ── Project-specific ────────────────────────────────────────────
 .git
