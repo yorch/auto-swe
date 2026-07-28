@@ -1,69 +1,62 @@
-# Docs
+# Documentation
 
-> Status table mirrors [`AGENTS.md` §2](../AGENTS.md#2-design-documents) — that table is canonical if the two ever diverge.
+These docs describe **how auto-swe works now**, in present tense. There is no status column here
+and no roadmap: what shipped when lives in git history, and completed plans live in
+[`history/`](./history/).
 
 ## Start here
 
-| Doc | Status | Purpose |
-|-----|--------|---------|
-| **[product-overview.md](./product-overview.md)** | **Current** | Product thesis, target users, business value, capability map, primary use cases, differentiators, non-goals, maturity — start here for the "why" and "what" |
-| **[architecture.md](./architecture.md)** | **Current** | System context, package map with file references, request lifecycle, workflow engine (14 node types), runtime security scanners, budget tiers, auth, data model, infra diagrams |
-| **[agents.md](./agents.md)** | **Current** | The 10 seeded agent keys (6 model-backed + 4 sub-roles), the first-class `Agent` library, implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
-| [deployment.md](./deployment.md) | **Living** | End-to-end "clone → deployed" runbook |
-| [model-configuration.md](./model-configuration.md) | **Living** | DB-backed LLM model + provider credential config |
-| [oauth-setup.md](./oauth-setup.md) | **Living** | GitHub / Google OAuth + magic-link setup |
-| [slack-app-setup.md](./slack-app-setup.md) | **Living** | Slack app manifest import and admin configuration |
-| [github-app-setup.md](./github-app-setup.md) | **Living** | GitHub App creation, permissions, installation ID, admin UI config, auth mode options |
-| [hitl-workflows.md](./hitl-workflows.md) | **Living** | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference |
+| Doc | Covers |
+|-----|--------|
+| **[product-overview.md](./product-overview.md)** | What auto-swe is and who it is for — thesis, target users, capability map, primary use cases, differentiators, and what is deliberately out of scope |
+| **[architecture.md](./architecture.md)** | How it is put together — system context, package map, run lifecycle, the workflow engine and its node types, the config cascade, auth, data model, infrastructure |
+| **[agents.md](./agents.md)** | The agent layer — seeded agents and how they bind models, the review network, skills, implementer tools, MCP, and the `AgentTracer` pattern |
 
-## Platform pivot (complete)
+## Capabilities
 
-RFC + per-phase build plans for the pivot from a SWE-specific system to a generic durable
-agent-workflow platform (SWE becomes seed content). **All phases (P0–P5) are implemented and merged.**
+| Doc | Covers |
+|-----|--------|
+| [hitl-workflows.md](./hitl-workflows.md) | Human-in-the-loop nodes (approval / decision / input / review), signal flow, the inbox, API |
+| [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
+| [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — turns, ambient and reactive modes, channel memory, personas, budgets |
+| [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
+| [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 
-| Doc | Status | Purpose |
-|-----|--------|---------|
-| [platform-pivot.md](./platform-pivot.md) | Done | RFC + roadmap (phases P0–P5) |
-| [platform-pivot-p0.md](./platform-pivot-p0.md) | ✅ Done (archived) | De-domainify the engine (enum→string, step registry, `AgentSpec`/`runAgent`, …) |
-| [platform-pivot-p1.md](./platform-pivot-p1.md) | ✅ Done (archived) | Agent library (first-class `Agent` entity, versioning, governed API + UI) |
-| [platform-pivot-p1.5.md](./platform-pivot-p1.5.md) | ✅ Done (archived) | Retire the role tables — `Agent` is the sole source of truth |
-| [platform-pivot-p2.md](./platform-pivot-p2.md) | ✅ Done | Declarative `agent` node + MCP (all 5 work-streams) |
-| [platform-pivot-p3.md](./platform-pivot-p3.md) | ✅ Done (archived) | Generic Connections / inputs / triggers / memory |
-| [platform-pivot-p4.md](./platform-pivot-p4.md) | ✅ Done | Distribution layer — bundles, install, signature trust, container-contract coded steps, authoring SDK |
-| [platform-pivot-p5.md](./platform-pivot-p5.md) | ✅ Done | UX layering + multi-org — org foundation, org RBAC, row isolation, org billing caps, SDK polish, canvas org-scope |
+## Configuration & operations
 
-Diagrams for the pivot are folded into [platform-pivot.md → Architecture & flow diagrams](./platform-pivot.md#architecture--flow-diagrams).
+| Doc | Covers |
+|-----|--------|
+| [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
+| [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
+| [oauth-setup.md](./oauth-setup.md) | GitHub and Google OAuth apps; magic-link email |
+| [github-app-setup.md](./github-app-setup.md) | GitHub App creation, permissions, installation, auth modes |
+| [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
 
-Top-level files:
+Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
+(dashboard design screenshots).
 
-- [`README.md`](../README.md) — quickstart, env vars, commands
-- [`AGENTS.md`](../AGENTS.md) — current conventions, tech stack, model defaults, tool/agent rules
-- [`STATUS.md`](../STATUS.md) — what shipped vs. what was planned (frozen at the 4-phase plan; platform-pivot status lives in `platform-pivot.md`)
-- [`PLAN.md`](../PLAN.md) — original v19 architectural plan (historical)
-- [`REPO_REVIEW.md`](./REPO_REVIEW.md) — one-shot multi-agent repository audit (2026-06-09); findings largely remediated, kept as a point-in-time snapshot
+## Conventions
 
----
+Working in this repo? Read [`AGENTS.md`](../AGENTS.md) — conventions, critical implementation
+notes, and the gotchas that cause real bugs.
 
-## Historical design documents
+Writing docs? Two rules:
 
-Preserved for design rationale; the code is the authoritative reference where they diverge.
+1. **Present tense, current state.** No shipped-status, PR numbers, phase labels, or "now shipped"
+   narration. That is what git history is for.
+2. **Countable claims are enforced.** `yarn docs:check` derives facts (node types, Prisma models,
+   built-in skills, scanner patterns, seeded agents) from source and fails CI on any living doc
+   that disagrees. Run it after changing the schema, the node-type union, the skills, the scanner
+   patterns, or the seeded agents.
 
-| File                                                       | Scope                                                                          | Drift note |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- |
-| [configurable-workflows.md](./configurable-workflows.md)   | Workflow engine roadmap + architecture decisions log                            | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale |
-| [mvp-architecture.md](./mvp-architecture.md)               | Phase 1 MVP architecture & component design                                    | `EngineeringWorkflow` deleted (PR #13); replaced by `RunnableWorkflow` + seeded spec |
-| [data-and-infra.md](./data-and-infra.md)                   | Prisma schema, embedding pipeline, executor images, security                   | Schema section outdated — actual schema is `packages/shared/src/prisma/schema.prisma` (40 models); §3.1–3.2 DinD description is accurate |
-| [gateway-and-auth.md](./gateway-and-auth.md)               | Full Gateway API spec, JWT/RBAC, Slack OAuth                                   | RS256 framing; HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
-| [workflow-and-activities.md](./workflow-and-activities.md) | Temporal workflow, agent data flow, review network, CI loop, memory commit     | K8s workspace references; `EngineeringWorkflow` pseudocode replaced by `RunnableWorkflow` |
-| [wireframes.md](./wireframes.md)                           | Web dashboard wireframes (ASCII) for every page                                | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4 |
+## history/
 
----
+Completed roadmaps, closed build plans, point-in-time reviews, and research write-ups. Preserved
+for design rationale — **the code is authoritative wherever they diverge.** These files are frozen:
+they are not maintained, not checked for drift, and should not be edited or used to learn current
+behaviour.
 
-## Research
-
-Exploratory write-ups that informed shipped features; not maintained as references.
-
-| File | Topic |
-| ---- | ----- |
-| [agent-dreaming-research.md](./agent-dreaming-research.md) | Offline lesson consolidation ("dreaming") pattern behind the lesson-consolidation feature |
-| [skills-research.md](./skills-research.md) | Skill (prompt-fragment) design research behind the agent skills system |
+The original 4-phase plan and its status matrix ([`PLAN.md`](./history/PLAN.md),
+[`STATUS.md`](./history/STATUS.md)), the configurable-workflow-engine and platform-pivot roadmaps
+with their per-phase build plans, the evals phase plans, the 2026-06 and 2026-07 repository
+reviews, and research on agent dreaming, skills, and Claude Tag all live there.
