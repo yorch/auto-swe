@@ -1,5 +1,7 @@
 # Channel assistant — remaining capability gaps vs. Claude Tag
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > A granular inventory of **what Anthropic's Claude Tag does that our channel
 > assistant does not yet support**. Source material:
 > [`claude-tag-research.md`](./claude-tag-research.md). Supersedes the earlier

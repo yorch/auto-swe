@@ -1,6 +1,8 @@
 # Platform Pivot — P3 Epic: Generic Connections, inputs, triggers, memory
 
-> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](./architecture.md), [agents.md](./agents.md), and [STATUS.md](../STATUS.md).
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](../architecture.md), [agents.md](../agents.md), and [STATUS.md](./STATUS.md).
 
 > Build plan for **Phase P3** of the [platform pivot](./platform-pivot.md). P3 decouples the
 > remaining SWE-shaped schema so the engine is domain-generic; SWE specializes via seed/config.

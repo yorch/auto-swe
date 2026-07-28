@@ -1,12 +1,14 @@
 # Evals — P1: Frozen-benchmark offline harness + online drift
 
-> Build plan for **Phase P1** of the [evals RFC](./evals.md). P1 delivers the **regression gate on
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Build plan for **Phase P1** of the [evals RFC](./evals-rfc.md). P1 delivers the **regression gate on
 > robust mechanisms**: a nightly offline harness that scores a candidate agent/model/prompt against
 > a **small frozen benchmark** (owned, SHA-pinned fixtures or a SWE-bench Verified slice), plus thin
 > **online scoring + drift** off the P0 capture rows. **No LLM judge yet** — scorers are execution
 > gates + a programmatic trajectory scorer.
 >
-> Parent RFC: [`evals.md`](./evals.md) §4.3 (frozen benchmark), §4.5 (online/drift), §6 (roadmap),
+> Parent RFC: [`evals.md`](./evals-rfc.md) §4.3 (frozen benchmark), §4.5 (online/drift), §6 (roadmap),
 > §9 (flaky-floor, small-N, coverage risks). Builds on [`evals-p0.md`](./evals-p0.md) (the
 > `EvalResult` table + capture). **Demotes historical replay to the optional P3 tier** — the gate
 > here never replays moving production history.

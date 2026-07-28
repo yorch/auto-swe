@@ -1,5 +1,7 @@
 # Agent Skills: Discovery, Utilization, and Composition — Research Report
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Deep research report generated 2026-06-06.
 > Methodology: 5 parallel search angles → 40+ sources fetched → verified claims synthesized.
 > Companion document: `docs/agent-dreaming-research.md`

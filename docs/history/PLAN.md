@@ -1,6 +1,8 @@
 # Autonomous Agentic Engineering System (v19.0 - TDD, CI/CD, & RBAC)
 
-> **Historical design document.** This is the original v19 architectural plan that drove Phases 1–4 of the build. Some sections describe aspirational choices (Kubernetes Jobs + KEDA, multi-provider LLM routing with `gemini-2.5-pro` / `gpt-5.2`, RS256 JWT with K8s Secrets) that diverged during implementation. For what actually shipped, see [STATUS.md](./STATUS.md). For current conventions, model defaults, and tech stack, see [AGENTS.md](./AGENTS.md). For local quickstart, see [README.md](./README.md).
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> **Historical design document.** This is the original v19 architectural plan that drove Phases 1–4 of the build. Some sections describe aspirational choices (Kubernetes Jobs + KEDA, multi-provider LLM routing with `gemini-2.5-pro` / `gpt-5.2`, RS256 JWT with K8s Secrets) that diverged during implementation. For what actually shipped, see [STATUS.md](./STATUS.md). For current conventions, model defaults, and tech stack, see [AGENTS.md](../../AGENTS.md). For local quickstart, see [README.md](../../README.md).
 
 ## 1. System Overview & Purpose
 

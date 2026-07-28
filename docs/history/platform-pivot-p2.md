@@ -1,5 +1,7 @@
 # Platform Pivot — P2 Epic: Declarative `agent` node + MCP
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Build plan for **Phase P2** of the [platform pivot](./platform-pivot.md). P2 ships the two
 > no/low-code extension tiers: a first-class **`agent` workflow node** (so a template can run any
 > Agent from the canvas, not just the hardcoded SWE steps), and **MCP completion** (an `mcp` tool

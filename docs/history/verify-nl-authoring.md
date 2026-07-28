@@ -1,5 +1,7 @@
 # Verifying NL workflow authoring (live)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 This is the manual runbook for exercising the natural-language workflow features
 end-to-end against real infrastructure. It complements the automated coverage:
 

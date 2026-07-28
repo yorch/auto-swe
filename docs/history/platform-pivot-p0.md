@@ -1,6 +1,8 @@
 # P0 — De-domainify the engine (implementation epic)
 
-> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](./architecture.md), [agents.md](./agents.md), and [STATUS.md](../STATUS.md).
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [architecture.md](../architecture.md), [agents.md](../agents.md), and [STATUS.md](./STATUS.md).
 
 Companion to [`platform-pivot.md`](./platform-pivot.md) (rev. 2). This is the build plan for
 **Phase P0**: remove every hardcoded SWE assumption from the engine so it is domain-agnostic,

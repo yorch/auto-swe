@@ -1,12 +1,14 @@
 # Evals — P3: Drift dashboard, cost control, suite health, optional historical replay
 
-> Build plan for **Phase P3** of the [evals RFC](./evals.md). P3 turns evals into a continuously
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Build plan for **Phase P3** of the [evals RFC](./evals-rfc.md). P3 turns evals into a continuously
 > monitored, cost-bounded, self-checking system: an `/admin/evals` **drift dashboard**, **dataset
 > compression**, **cost ceilings + tiered scoring**, **suite-health** meta-monitoring, a **golden-set
 > re-validation loop**, and — *only if the replay spike cleared* — the **optional historical-replay
 > tier**.
 >
-> Parent RFC: [`evals.md`](./evals.md) §4.5 (drift), §6 (roadmap), §9 (dataset rot, eval-needs-evals,
+> Parent RFC: [`evals.md`](./evals-rfc.md) §4.5 (drift), §6 (roadmap), §9 (dataset rot, eval-needs-evals,
 > cost spiral, on-distribution coverage, the demoted historical-replay tier). Builds on
 > [`evals-p1.md`](./evals-p1.md) + [`evals-p2.md`](./evals-p2.md).
 

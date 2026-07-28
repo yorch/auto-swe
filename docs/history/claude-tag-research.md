@@ -1,10 +1,12 @@
 # Research — Anthropic's "Claude Tag" (source material)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > External product research on Anthropic's **Claude Tag** announcement, compiled
 > 2026-06-24 from the official announcement + press coverage. This is the
 > **inspiration / reference** for our own implementation; it documents the
 > *product we are replicating*, not our code. For what we actually built, see
-> [`channel-assistant.md`](./channel-assistant.md).
+> [`channel-assistant.md`](../channel-assistant.md).
 
 ---
 

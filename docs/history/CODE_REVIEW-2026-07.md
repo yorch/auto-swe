@@ -1,5 +1,7 @@
 # auto-swe — Whole-Repository Code Review (2026-07-15)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Point-in-time multi-agent review at commit `4e11c7a`. Findings are grouped by
 > dimension and ranked by severity within each. Every HIGH-severity item below
 > was independently verified against the source (file:line cited). This document
