@@ -551,6 +551,65 @@ describe('webhook routes', () => {
       ]);
     });
 
+    it('keeps paginating when total_count is absent and the page is full', async () => {
+      // Regression: the page count was previously used as the total when
+      // `total_count` was missing, so a FULL first page satisfied
+      // `runs.length >= totalCount` and aggregation concluded "complete" from
+      // page 1 alone — defeating the truncation guard and hiding page 2's
+      // failure. Without `total_count` a full page must NOT end the walk; only
+      // a short page (or the page cap) does.
+      const noTotal = (
+        runs: Array<{ status: string; conclusion: string | null; html_url: string }>
+      ) => ({
+        json: async () => ({ check_runs: runs }),
+        ok: true,
+      });
+      const page1 = Array.from({ length: 100 }, (_, i) => ({
+        conclusion: 'success',
+        html_url: `https://x/runs/${i}`,
+        status: 'completed',
+      }));
+      const page2 = [
+        { conclusion: 'failure', html_url: 'https://x/runs/100-failed', status: 'completed' },
+      ];
+      fetchMock.mockResolvedValueOnce(noTotal(page1)).mockResolvedValueOnce(noTotal(page2));
+
+      const body = ciPayload('success');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // Page 2's failing run must decide the outcome.
+      expect(signalCalls).toEqual([
+        {
+          args: [{ logsUrl: 'https://x/runs/100-failed', passed: false }],
+          signalName: 'ciPipelineSignal',
+          workflowId: 'wf-ci-1',
+        },
+      ]);
+    });
+
+    it('stops on a short page when total_count is absent', async () => {
+      const page1 = [{ conclusion: 'success', html_url: 'https://x/runs/0', status: 'completed' }];
+      fetchMock.mockResolvedValueOnce({
+        json: async () => ({ check_runs: page1 }),
+        ok: true,
+      });
+
+      const body = ciPayload('success');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(signalCalls).toEqual([
+        {
+          args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: true }],
+          signalName: 'ciPipelineSignal',
+          workflowId: 'wf-ci-1',
+        },
+      ]);
+    });
+
     it('ignores check_run events when no tracked PR matches the commit', async () => {
       openPrs = [];
       const body = ciPayload('failure');

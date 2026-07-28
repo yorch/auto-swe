@@ -169,7 +169,9 @@ async function aggregateCheckRuns(
   }
   type RawCheckRun = { status: string; conclusion: string | null; html_url: string };
   const runs: RawCheckRun[] = [];
-  let totalCount = 0;
+  // Did we actually page to the end of the result set? Only then can "complete"
+  // be trusted; otherwise the caller falls back to legacy per-run signaling.
+  let reachedEnd = false;
   try {
     for (let page = 1; page <= GITHUB_MAX_PAGES; page++) {
       const res = await fetch(
@@ -188,9 +190,19 @@ async function aggregateCheckRuns(
         total_count?: number;
         check_runs?: RawCheckRun[];
       };
-      totalCount = body.total_count ?? body.check_runs?.length ?? 0;
-      runs.push(...(body.check_runs ?? []));
-      if (runs.length >= totalCount) {
+      const pageRuns = body.check_runs ?? [];
+      runs.push(...pageRuns);
+      if (body.total_count !== undefined) {
+        if (runs.length >= body.total_count) {
+          reachedEnd = true;
+          break;
+        }
+      } else if (pageRuns.length < GITHUB_PER_PAGE) {
+        // No `total_count` (a proxy or non-canonical API): fall back to
+        // page-size probing. A SHORT page is the end of the set; a FULL page
+        // is not — inferring the total from the page length instead would make
+        // page 1 look complete and defeat the truncation guard below.
+        reachedEnd = true;
         break;
       }
     }
@@ -200,7 +212,7 @@ async function aggregateCheckRuns(
   if (runs.length === 0) {
     return null;
   }
-  if (runs.length < totalCount) {
+  if (!reachedEnd) {
     // Truncated after GITHUB_MAX_PAGES pages — a partial view can't be
     // trusted to compute "complete"; fall back to legacy per-run signaling.
     return null;
