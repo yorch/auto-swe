@@ -160,8 +160,20 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   // Aggregated in the DB via groupBy rather than loading every MemoryItem row
   // per repo — a repo with a long history of lessons would otherwise pull its
   // entire memory_items table into gateway memory just to count rows.
+  //
+  // The repo list is enumerated in its own query rather than derived from the
+  // groupBy: a repo that has no lessons yet must still render a zero row. On a
+  // fresh deployment EVERY configured repo is in that state, so deriving the
+  // list from the groupBy returned nothing and the admin table showed "No
+  // repositories found" — and the per-repo "Run now" control vanished with it.
   app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const [totalGroups, activeGroups] = await Promise.all([
+    const [repos, totalGroups, activeGroups] = await Promise.all([
+      // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
+      // servers), and a non-repo connection has no org/repo name to show.
+      fastify.prisma.connection.findMany({
+        select: { id: true, organizationName: true, repoName: true },
+        where: { type: 'git_repo' },
+      }),
       fastify.prisma.memoryItem.groupBy({
         _count: { _all: true },
         _max: { consolidatedAt: true },
@@ -175,25 +187,30 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       }),
     ]);
 
-    const repoIds = totalGroups.map((g) => g.repoId).filter((id): id is string => id !== null);
-    const repos = await fastify.prisma.connection.findMany({
-      select: { id: true, organizationName: true, repoName: true },
-      where: { id: { in: repoIds } },
-    });
     const repoById = new Map(repos.map((r) => [r.id, r]));
+    const totalByRepoId = new Map(
+      totalGroups
+        .filter((g): g is typeof g & { repoId: string } => g.repoId !== null)
+        .map((g) => [g.repoId, g] as const)
+    );
     const activeCountByRepoId = new Map(activeGroups.map((g) => [g.repoId, g._count._all]));
 
-    const data = totalGroups
-      .filter((g): g is typeof g & { repoId: string } => g.repoId !== null)
-      .map((g) => {
-        const repo = repoById.get(g.repoId);
-        const totalCount = g._count._all;
-        const activeCount = activeCountByRepoId.get(g.repoId) ?? 0;
+    // Every git repo, plus (defensively) any repo that has lessons but is
+    // absent from that list — the page sums these rows into its summary tiles,
+    // so silently dropping one would understate the totals.
+    const repoIds = [...new Set([...repoById.keys(), ...totalByRepoId.keys()])];
+
+    const data = repoIds
+      .map((id) => {
+        const repo = repoById.get(id);
+        const group = totalByRepoId.get(id);
+        const totalCount = group?._count._all ?? 0;
+        const activeCount = activeCountByRepoId.get(id) ?? 0;
         return {
           activeCount,
           consolidatedCount: totalCount - activeCount,
-          id: g.repoId,
-          lastConsolidatedAt: g._max.consolidatedAt,
+          id,
+          lastConsolidatedAt: group?._max.consolidatedAt ?? null,
           organizationName: repo?.organizationName ?? null,
           repoName: repo?.repoName ?? null,
           totalCount,
