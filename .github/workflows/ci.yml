@@ -17,6 +17,27 @@ env:
   DATABASE_URL: postgresql://ci:ci@invalid.local:5432/ci
 
 jobs:
+  # Living docs make countable claims ("15 node types", "51 Prisma models"). Prose has
+  # no compiler, so this is one: it derives each fact from source and fails on any doc
+  # that disagrees, and separately rejects broken relative doc links. No dependencies,
+  # so it runs standalone and reports in seconds.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+
+      # Invoked directly rather than via `yarn docs:check`: Yarn 4 refuses to run a
+      # script before `yarn install`, and this check deliberately needs no install.
+      - name: Check documentation drift
+        run: node scripts/check-doc-drift.mjs
+
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15
