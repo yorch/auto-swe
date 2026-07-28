@@ -72,12 +72,13 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
     return { ok: false, reason: `host '${host}' is internal` };
   }
 
-  // Short-form IPv4 (`127.1`, `10.1`, `0.0.1`): browsers and Node's own
-  // `net.isIP`-adjacent parsers accept 1-4 dotted decimal groups and expand
-  // the missing octets to zero, so `127.1` resolves exactly like
-  // `127.0.0.1`. The RFC1918/loopback regex below only matches the canonical
-  // 4-octet form, so without this check a short-form literal would slip
-  // through as an "invalid" (non-IPv4-looking) hostname string.
+  // Abbreviated / alternate-base IPv4 (`127.1`, `0177.0.0.1`, `0x7f000001`,
+  // `2130706433`). For http(s) — "special" schemes — the WHATWG URL parser
+  // already normalises all of these into canonical dotted-quad before we read
+  // `url.hostname`, so the range checks below catch them on their own. This
+  // branch is therefore belt-and-braces against a parser that ever stops
+  // normalising; it also uniquely covers 0.0.0.0/8 ("this network", which
+  // several stacks route to localhost) which no regex below matches.
   const shortFormMatch = /^\d+(\.\d+){0,3}$/.exec(host);
   if (shortFormMatch) {
     const firstOctet = host.split('.', 1)[0];
@@ -99,7 +100,10 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
     /^192\.168\./.test(effective) ||
     /^172\.(1[6-9]|2[0-9]|3[01])\./.test(effective) ||
     /^169\.254\./.test(effective) ||
-    /^fc[0-9a-f]{2}:/.test(effective) ||
+    // IPv6 unique-local is fc00::/7 — BOTH the fc00::/8 and fd00::/8 halves.
+    // In practice ULAs are fd00::/8 (RFC 4193 sets the L bit for locally
+    // assigned prefixes), so matching only `fc` let the common case through.
+    /^f[cd][0-9a-f]{2}:/.test(effective) ||
     /^fe[89ab][0-9a-f]:/.test(effective)
   ) {
     return { ok: false, reason: `host '${host}' is on a private network` };
