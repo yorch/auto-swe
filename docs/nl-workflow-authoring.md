@@ -4,7 +4,7 @@
 > `WorkflowSpec` and saves it as a **DRAFT** template for a human to review,
 > edit on the canvas, and activate.
 
-Status: **Shipped.** Entry points: web canvas, gateway API + CLI, and the Slack
+Entry points: web canvas, gateway API + CLI, and the Slack
 channel assistant. Generated drafts can then be **refined conversationally** —
 describe a change and it's applied as a new version (web chat panel + Slack
 thread follow-ups).

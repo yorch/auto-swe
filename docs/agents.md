@@ -4,47 +4,84 @@
 
 ---
 
-## 1. Agent Roles
+## 1. Agents
 
-Agent identity is a **free-form string** since the platform pivot — the `AgentRole` Postgres enum and the `SkillOnlyRole` union were removed (P0/P1); the DB columns are plain `TEXT` and `AnySkillRole = string`. The seeded SWE agent keys fall into two groups by convention. (The channel assistant adds one model-backed key, `channelAssistant` — see Group 1. The evals feature seeds one more model-backed agent, `evalJudge` — an LLM-as-judge on a distinct, cheaper model to avoid self-preference bias; it is eval infrastructure, not a SWE workflow role, and is not in `MODEL_BACKED_AGENT_KEYS`, so it does not gate worker boot. See `docs/evals.md`.)
+Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
+`AnySkillRole = string`. New agents are added as data, not code.
 
-### Group 1 — model-backed roles (7)
+`syncBuiltins` seeds 21 built-in agents, tagged `origin='swe-starter'`. They split by how they bind
+a model: an agent carries either its own `modelSpec`, or an `inheritsModelFrom` pointer that
+`resolveAgent` chases to a parent.
 
-These keys each have a **GLOBAL `Agent` row with a `modelSpec`** (created by the seed with the defaults below). The worker refuses to start (`assertConfigReady()`) until all seven SWE + channel roles resolve a model + credential. Model, prompt, skills, and tools are edited — and overridden at CHANNEL / TEAM / WORKFLOW_TEMPLATE scope — via the Agent library (`/admin/agents/library`).
+### Model-backed agents (10)
 
-| Role | Key | Activity | Default model |
-|---|---|---|---|
-| Implementer | `implementer` | `executeImplementation` | `anthropic/claude-opus-4-8` |
-| Reviewer | `reviewer` | `runReviewNetwork` | `anthropic/claude-opus-4-8` |
-| Planner | `planner` | `planDecomposition` | `anthropic/claude-sonnet-4-6` |
-| Security Review | `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
-| Validate Context | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
-| Commit to Memory | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
-| Channel Assistant | `channelAssistant` | `runChannelAgentTurn` (mention/ambient/reactive); `planChannelTask` + `runChannelSubtasks` (general-route "Channel Task" decomposition) | `anthropic/claude-opus-4-8` |
+Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
+— and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
+library at `/admin/agents/library`.
 
-> **`securityReview` role note:** This role was the original single-agent security path. The current canonical path is the three-agent **review network** (`runReviewNetwork`), which uses the `reviewer` model for all three sub-agents. The `securityReview` GLOBAL `Agent` row is still required at worker boot for forward compatibility. Do not route new agent code through `securityReview` — use the review network instead.
+| Key | Used by | Default model |
+|---|---|---|
+| `implementer` | `executeImplementation` | `anthropic/claude-opus-4-8` |
+| `reviewer` | `runReviewNetwork` (all three sub-agents) | `anthropic/claude-opus-4-8` |
+| `planner` | `planDecomposition`, epic planning | `anthropic/claude-sonnet-4-6` |
+| `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
+| `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
+| `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
+| `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-4-8` |
+| `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
+| `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-4-8` |
+| `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-4-6` |
 
-### Group 2 — sub-role personas (4)
+`assertConfigReady()` gates worker boot on the agents that active template specs actually reference
+— it is computed, not a fixed list. `evalJudge` deliberately runs on a cheaper, different model
+from the agents it scores, to avoid self-preference bias.
 
-**Sub-agent personas** used within a parent activity. Their `Agent` row has **no** `modelSpec` — it carries `inheritsModelFrom`, so `resolveAgent` binds the parent's model. They exist so skills and tools can be assigned at per-sub-agent granularity.
+> **`securityReview` is legacy.** It was the original single-agent security path. The canonical path
+> is the three-agent review network, which binds the `reviewer` model for all three sub-agents. The
+> row is kept for forward compatibility — **do not route new code through it.**
 
-| Role | Key | Inherits model from | Used by |
-|---|---|---|---|
-| Security Reviewer | `securityReviewer` | `reviewer` | `runReviewNetwork` |
-| Domain Logic Reviewer | `domainLogicReviewer` | `reviewer` | `runReviewNetwork` |
-| Performance Reviewer | `performanceReviewer` | `reviewer` | `runReviewNetwork` |
-| Decomposer | `decomposer` | `planner` | `planDecomposition` |
+### Sub-role personas (11)
 
-**Type definitions:** `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` (the 7-key model-backed set including `channelAssistant`) from `@auto-swe/shared/agentKeys`, shared with the web dashboard).
+No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. They exist so
+skills and tools can be assigned at per-sub-agent granularity.
 
-### First-class `Agent` entity (P1) + `agent` node (P2)
+| Key | Inherits from | Used by |
+|---|---|---|
+| `securityReviewer` | `reviewer` | `runReviewNetwork` |
+| `domainLogicReviewer` | `reviewer` | `runReviewNetwork` |
+| `performanceReviewer` | `reviewer` | `runReviewNetwork` |
+| `decomposer` | `planner` | `planDecomposition` |
+| `prdAnalyst` | `planner` | PRD analysis |
+| `prdDecomposer` | `planner` | PRD decomposition |
+| `ciFixer` | `implementer` | `executeCIFixImplementation` |
+| `reviewFixer` | `implementer` | `executeReviewFixImplementation` |
+| `gateFixer` | `implementer` | `executeGateFixImplementation` |
+| `mergeConflictResolver` | `implementer` | `resolveMergeConflict` |
+| `lessonConsolidator` | `commitToMemory` | `consolidateLessons` |
 
-The **`Agent`** table is the versioned, governed, **single source of truth** for an agent's model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were removed in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) takes the most-specific active Agent version (cascade `WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL`; the CHANNEL tier fires only when `ctx.channelId` is set; the ORGANIZATION tier — P5 — fires only when the run's team has an org; the version is pinned per run via the `WorkflowRun.agentVersions` snapshot or an explicit `key@version` ref): model from `modelSpec` (chasing `inheritsModelFrom`) + credential, skills from `skillRefs`, tools from `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are thin shims over it.
+`MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for cost
+pricing and model-config UI labels — it is **not** the agent universe, and it does not include every
+model-backed agent above.
 
-- **Resolution → execution:** `resolveAgentSpec` (`lib/config/agentSpec.ts`) composes the resolved model + skills + tools + prompt into an `AgentSpec`; the generic `runAgent` activity (`activities/runAgent.ts`) runs it.
-- **Governance:** editing an Agent's system prompt runs the injection/exfil scan and resets `isVerified`; versions are immutable (a base edit cuts a new version); RBAC GLOBAL=ADMIN, TEAM=team OWNER. Seeded built-ins are `origin='swe-starter'`.
-- **API + UI:** `/api/v1/admin/agent-library` (+ `/api/v1/teams/:id/agent-library`) and `/admin/agents/library`.
-- **Declarative `agent` node (P2):** a workflow node with `agentRef` (`<key>` / `<key>@<version>`) + optional `userMessage`/`systemPrompt` that the interpreter dispatches to the `runAgentNode` activity (resolve → `runAgent`).
+### The `Agent` entity
+
+`Agent` is the versioned, governed, single source of truth for an agent's model, prompt, skills, and
+tools. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) resolves the most-specific active
+version through the cascade, pinned per run by the `WorkflowRun.agentVersions` snapshot or an
+explicit `key@version` ref, then binds the model (chasing `inheritsModelFrom`) plus credential,
+skills from `skillRefs`, and tools from `toolKeys`. `getModel` / `getModelSpec` / `loadAgentSkills`
+/ `loadAgentToolConfig` are thin shims over it.
+
+- **Resolution → execution:** `resolveAgentSpec` composes the result into an `AgentSpec`, which the
+  generic `runAgent` activity executes.
+- **Governance:** editing a system prompt runs the injection/exfiltration scan and resets
+  `isVerified`. Versions are immutable — editing a base cuts a new version. RBAC is ADMIN for
+  GLOBAL, team OWNER for TEAM.
+- **API + UI:** `/api/v1/admin/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
+  `/admin/agents/library`.
+- **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
+  `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
+  and calls `runAgent`.
 
 ---
 
@@ -56,15 +93,15 @@ Model config is **fully DB-driven** — no model-related env vars. At activity-c
 WORKFLOW_TEMPLATE scope  →  (if templateId set and row exists)
 CHANNEL scope            →  (if channelId set — channel-resident runs only)
 TEAM scope               →  (if teamId set and row exists)
-ORGANIZATION scope       →  (if team belongs to an org — P5)
-GLOBAL scope             →  (required — 7 model-backed agent keys)
+ORGANIZATION scope       →  (if the team belongs to an org)
+GLOBAL scope             →  (required — every referenced agent must resolve here)
 ```
 
 **`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
 
 Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/admin/model-config`, per-agent model specs at `/admin/agents/library`.
 
-**Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → ORGANIZATION → GLOBAL (P5 added the org tier; an Agent pins an existing credential via `Agent.credentialId`).
+**Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → ORGANIZATION → GLOBAL (an Agent pins an existing credential via `Agent.credentialId`).
 
 **Files:** `packages/worker/src/lib/config/agentResolver.ts` — `resolveAgent` (the sole model/prompt/skills/tools resolver; `getModel`/`getModelSpec` are shims over it); `packages/worker/src/lib/config/resolver.ts` — `resolveProviderCredential`, `resolveEmbeddingConfig`, `ConfigMissingError`.
 
@@ -131,7 +168,7 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 **File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
 
 MCP servers are modelled as a first-class **`mcp`-type `Connection`** (`type='mcp'`,
-`config.url`) — P2/WS3 replaced the legacy `Connection.mcpServerRef` column. An Agent opts in by
+`config.url`). An Agent opts in by
 (a) referencing an `mcp` Connection via `Agent.mcpConnectionId` and (b) including `'mcp'` in its
 `toolKeys`; at run time the tools served by that MCP server are bound **in addition to** the agent's
 built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
@@ -143,9 +180,8 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 
 **Activation requires all three:**
 
-1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection (the run-time
-   binding that resolves the connection → `loadMcpTools(config.url)` is WS3-binding, landing next).
-2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'` — now accepted by the gateway tool-key validation (WS2).
+1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection.
+2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'` — now accepted by the gateway tool-key validation.
 3. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only — it never fails the implementation.
 
 **Security and observability:**
@@ -155,8 +191,8 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
 - Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/admin/mcp-connections`).
 
-**Status — WS3 complete:**
-- **Tool key (WS2):** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
+**How the pieces fit:**
+- **Tool key:** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
 - **Binding:** all three implementer activities (`executeImplementation`, `implementerSession`, and
   the `decomposition` merge-conflict resolver) bind MCP uniformly through the shared
   `buildImplementerForActivity` helper, which resolves the Agent's `mcpConnectionId` via
@@ -232,7 +268,7 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
 
-### 6.2 Built-in Skills (27 total)
+### 6.2 Built-in Skills (28 total)
 
 **File:** `packages/shared/src/skills/index.ts`
 
@@ -254,6 +290,7 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 | | `minimal-surface-area` | `implementer` |
 | | `configuration-over-hardcoding` | `implementer` |
 | | `rollback-first-planning` | `implementer` |
+| | `design-fidelity` | `implementer` |
 | Reviewer | `review-focus-security` | `reviewer` |
 | | `migration-safety-review` | `reviewer` |
 | | `api-contract-stability` | `reviewer` |
@@ -274,7 +311,7 @@ Skill assignments live on the resolved `Agent` as `skillRefs` → `AgentSkillRef
 WORKFLOW_TEMPLATE  →  (if templateId set and an Agent override exists for the key)
 CHANNEL            →  (if channelId set — channel-resident runs only)
 TEAM               →  (if teamId set and an Agent override exists for the key)
-ORGANIZATION       →  (if team belongs to an org — P5)
+ORGANIZATION       →  (if the team belongs to an org)
 GLOBAL             →  (always falls back to this; may carry no skill refs)
 ```
 
@@ -313,7 +350,7 @@ The scan runs:
 
 **Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
-**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it (P2/WS2). A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
+**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it. A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
 
 Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope (Prisma cannot express `WHERE IS NULL` in `upsert`). Code uses `findFirst + conditional create` for GLOBAL-scope rows instead of `upsert`.
 
@@ -405,7 +442,7 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 Skill *definitions* live in `packages/gateway/src/routes/skills.ts`; per-agent
 model / prompt / skills / tools live on the first-class `Agent` and are managed
 via the **agent-library** API in `packages/gateway/src/routes/agentLibrary.ts`.
-(P1.5 retired the per-role `/api/v1/admin/agents/:role/skills` + `:role/tools`
+(the per-role `/api/v1/admin/agents/:role/skills` + `:role/tools`
 assignment endpoints — that config is now fields on the `Agent`.)
 
 ### 9.1 Skills CRUD

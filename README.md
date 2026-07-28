@@ -49,7 +49,7 @@ Fastify Gateway ──────────────────▶ Tempor
        POST /api/v1/webhooks/ci     (CI check_run webhook → ciPipelineSignal)
 ```
 
-For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per-repo child `RunnableWorkflow`s using the Planner agent and runs them with dependency-graph scheduling. Each child runs the team's configured workflow spec (default: `default-engineering@v1`, parity with the original hardcoded loop). See [`docs/configurable-workflows.md`](./docs/configurable-workflows.md) for the spec schema, step catalog, and roadmap.
+For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per-repo child `RunnableWorkflow`s using the Planner agent and runs them with dependency-graph scheduling. Each child runs the team's configured workflow spec (default: `default-engineering@v1`). See [`docs/architecture.md`](./docs/architecture.md) for the spec schema, node types, and step catalog.
 
 ## Tech stack
 
@@ -209,6 +209,7 @@ yarn build               # Build all packages
 yarn test                # Run all tests (Vitest)
 yarn lint                # Lint + format check (Biome)
 yarn lint:fix            # Auto-fix safe lint issues + format
+yarn docs:check          # Fail on stale doc claims or broken doc links
 yarn db:migrate          # Run Prisma migrations
 yarn db:generate         # Regenerate Prisma client
 yarn db:seed             # Seed admin user + sample repository

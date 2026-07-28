@@ -1,7 +1,7 @@
 # Platform pivot — UI mocks
 
 Vision-pitch HTML mockups for the platform pivot described in
-[`docs/platform-pivot.md`](../docs/platform-pivot.md). Static, self-contained,
+[`docs/platform-pivot.md`](../docs/history/platform-pivot.md). Static, self-contained,
 no build step — open `index.html` in a browser.
 
 > **Working name "Conductor" is a placeholder** for the generic platform identity. The

@@ -26,7 +26,7 @@ This is useful for:
 
 ## Node types
 
-All four node types share a `timeout` field (ISO 8601 duration, e.g. `"24h"`, `"30m"`, `"7d"`) and an `onTimeout` routing target.
+All four HITL node types share a `timeout` field (ISO 8601 duration, e.g. `"24h"`, `"30m"`, `"7d"`) and an `onTimeout` routing target.
 
 ### `humanApproval`
 
