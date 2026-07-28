@@ -37,16 +37,32 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 const jiraPrismaState = vi.hoisted(() => ({
   activeRepo: null as Record<string, unknown> | null,
   activeWorkflowCreateCalls: [] as Record<string, unknown>[],
+  activeWorkflowDeleteCalls: 0,
   defaultTemplate: { activeVersion: 1, id: 'tpl-1' } as Record<string, unknown> | null,
   runInputCreateCalls: [] as Record<string, unknown>[],
+  /** Simulates the unique index already holding this deterministic workflow ID. */
+  workflowIdTaken: false,
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    // The launch path writes its ledger rows in one transaction; the array
+    // form just resolves the queued promises in order.
+    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
     activeWorkflow: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        // Mirror the real unique index on `temporal_workflow_id`: a second row
+        // for the same deterministic ID is rejected by the DB, which is the
+        // primary dedup gate for the auto-trigger.
+        if (jiraPrismaState.workflowIdTaken) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
         jiraPrismaState.activeWorkflowCreateCalls.push(args.data);
         return { id: 'aw-1', ...args.data };
+      }),
+      delete: vi.fn(async () => {
+        jiraPrismaState.activeWorkflowDeleteCalls += 1;
+        return {};
       }),
     },
     connection: {
@@ -57,6 +73,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         jiraPrismaState.runInputCreateCalls.push(args.data);
         return { id: 'ri-1', ...args.data };
       }),
+      delete: vi.fn(async () => ({})),
     },
     workflowTemplate: {
       findFirst: vi.fn(async () => jiraPrismaState.defaultTemplate),
@@ -177,6 +194,8 @@ describe('webhook routes', () => {
     jiraPrismaState.activeRepo = null;
     jiraPrismaState.runInputCreateCalls.length = 0;
     jiraPrismaState.activeWorkflowCreateCalls.length = 0;
+    jiraPrismaState.activeWorkflowDeleteCalls = 0;
+    jiraPrismaState.workflowIdTaken = false;
     jiraPrismaState.defaultTemplate = { activeVersion: 1, id: 'tpl-1' };
     jiraStartShouldConflict = false;
     jiraStartCalls.length = 0;
@@ -724,15 +743,33 @@ describe('webhook routes', () => {
       });
     });
 
-    it('returns 200 duplicate without writing RunInput/ActiveWorkflow when the deterministic workflow already exists', async () => {
+    it('returns 200 duplicate without starting a workflow when the ledger already owns the ID', async () => {
+      // Primary dedup gate: the unique index on `temporal_workflow_id` rejects
+      // the second insert, so the workflow is never started. This outlives
+      // Temporal's execution retention, unlike the AlreadyStarted fallback.
       jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
-      jiraStartShouldConflict = true;
+      jiraPrismaState.workflowIdTaken = true;
       const body = transitionPayload('Ready for Dev', 'PROJ-100');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-100' });
-      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
+      expect(jiraStartCalls).toHaveLength(0);
       expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(0);
+    });
+
+    it('rolls the ledger back when the workflow reports already-started', async () => {
+      // Fallback gate: the row inserted fine (e.g. a prior orphaned execution
+      // Temporal still remembers), so the rows we just wrote are compensated
+      // away rather than left wedging the ticket.
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      jiraStartShouldConflict = true;
+      const body = transitionPayload('Ready for Dev', 'PROJ-101');
+      const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-101' });
+      // Rows were written, then rolled back — nothing is left behind.
+      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.activeWorkflowDeleteCalls).toBe(1);
     });
   });
 });
