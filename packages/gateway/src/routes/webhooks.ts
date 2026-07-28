@@ -12,7 +12,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { postSlackMessage } from '../lib/slack.js';
-import { getErrorName } from '../plugins/auth.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
 // non-PR/non-check event can still arrive. Validate the fields we touch so a
@@ -531,58 +531,58 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
       const temporalWorkflowId = `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
-      try {
-        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-          request: {
+      // Ledger rows first, workflow second, rolled back if the start fails —
+      // see `launchTrackedWorkflow`.
+      const templateVersion = template.activeVersion;
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          activeWorkflow: {
             budgetTier: 'STANDARD',
-            description,
-            externalTicketId,
-            repoId: connectionId ?? '',
-            requestPayload: JSON.stringify(payload),
+            currentStatus: 'IMPLEMENTING',
+            repoId: connectionId ?? null,
+            temporalWorkflowId,
             workRequestId,
           },
-          templateId: template.id,
-          templateVersion: template.activeVersion,
-        });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'RUN_CONFLICT',
-              message: 'A run with this workflow ID already exists',
+          runInput: {
+            connectionId,
+            description,
+            externalTicketId,
+            id: workRequestId,
+            payload: payload as object,
+            requestedById: null,
+            requestPayload: JSON.stringify(payload),
+            templateId: template.id,
+            templateVersion,
+          },
+        },
+        () =>
+          fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+            request: {
+              budgetTier: 'STANDARD',
+              description,
+              externalTicketId,
+              repoId: connectionId ?? '',
+              requestPayload: JSON.stringify(payload),
+              workRequestId,
             },
-          });
-        }
-        throw err;
+            templateId: template.id,
+            templateVersion,
+          }),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: {
+            code: 'RUN_CONFLICT',
+            message: 'A run with this workflow ID already exists',
+          },
+        });
       }
 
-      await fastify.prisma.runInput.create({
-        data: {
-          connectionId,
-          description,
-          externalTicketId,
-          id: workRequestId,
-          payload: payload as object,
-          requestedById: null,
-          requestPayload: JSON.stringify(payload),
-          templateId: template.id,
-          templateVersion: template.activeVersion,
-        },
+      return reply.status(201).send({
+        data: { temporalWorkflowId, workflowId: launch.activeWorkflowId, workRequestId },
       });
-
-      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
-        data: {
-          budgetTier: 'STANDARD',
-          currentStatus: 'IMPLEMENTING',
-          repoId: connectionId ?? null,
-          temporalWorkflowId,
-          workRequestId,
-        },
-      });
-
-      return reply
-        .status(201)
-        .send({ data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId } });
     }
   );
 
@@ -667,49 +667,49 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // workflow ID; this is deliberate.
       const temporalWorkflowId = `jira-${ticketId}`;
 
-      // Start Temporal FIRST so a crash between here and the DB writes below
-      // never orphans a RunInput with no backing workflow.
-      try {
-        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-          request: {
+      // Ledger rows first, workflow second, rolled back if the start fails —
+      // see `launchTrackedWorkflow`. Because the workflow ID is deterministic
+      // (`jira-<ticket>`), the unique index on `temporalWorkflowId` is what
+      // makes the auto-trigger once-ever per ticket; that dedup now also
+      // outlives Temporal's execution-retention window.
+      const launch = await launchTrackedWorkflow(
+        prisma,
+        {
+          activeWorkflow: {
             budgetTier: 'STANDARD',
-            description: summary,
-            externalTicketId: ticketId,
+            currentStatus: 'IMPLEMENTING',
             repoId: defaultRepo.id,
-            requestPayload,
+            temporalWorkflowId,
             workRequestId,
           },
-          templateId: defaultTemplate.id,
-          templateVersion,
-        });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.code(200).send({ duplicate: true, ok: true, ticketId });
-        }
-        throw err;
+          runInput: {
+            connectionId: defaultRepo.id,
+            description: summary,
+            externalTicketId: ticketId,
+            id: workRequestId,
+            requestPayload,
+            templateId: defaultTemplate.id,
+            templateVersion,
+          },
+        },
+        () =>
+          fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+            request: {
+              budgetTier: 'STANDARD',
+              description: summary,
+              externalTicketId: ticketId,
+              repoId: defaultRepo.id,
+              requestPayload,
+              workRequestId,
+            },
+            templateId: defaultTemplate.id,
+            templateVersion,
+          }),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.code(200).send({ duplicate: true, ok: true, ticketId });
       }
-
-      await prisma.runInput.create({
-        data: {
-          connectionId: defaultRepo.id,
-          description: summary,
-          externalTicketId: ticketId,
-          id: workRequestId,
-          requestPayload,
-          templateId: defaultTemplate.id,
-          templateVersion,
-        },
-      });
-
-      await prisma.activeWorkflow.create({
-        data: {
-          budgetTier: 'STANDARD',
-          currentStatus: 'IMPLEMENTING',
-          repoId: defaultRepo.id,
-          temporalWorkflowId,
-          workRequestId,
-        },
-      });
 
       return reply.code(200).send({ ok: true, ticketId });
     }

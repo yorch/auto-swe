@@ -99,6 +99,7 @@ packages/
 | `src/lib/github.ts` | Octokit singleton and GitHub webhook HMAC verification |
 | `src/lib/slack.ts` | Slack SDK client; slash-command and interactive-webhook handlers |
 | `src/lib/telemetry.ts` | OpenTelemetry SDK init (OTLP/HTTP exporter) |
+| `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path for a tracked run: writes the `RunInput` + `ActiveWorkflow` ledger in one transaction, **then** starts the Temporal workflow, deleting the rows again if the start fails. Used by work-request submit + re-run and both webhook triggers. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate (`WorkflowExecutionAlreadyStartedError` is the fallback), so a run can never execute without a ledger row to attribute its spend and PRs to |
 | `src/routes/workRequests.ts` | `POST /api/v1/work-requests` — validates the run-input payload against the template's `inputSchema`, then creates `RunInput` (`payload` + `connectionId`) + starts `RunnableWorkflow` |
 | `src/routes/workflows.ts` | `GET /api/v1/workflows` — list active workflows (RBAC-filtered) |
 | `src/routes/workflowRuns.ts` | `GET /api/v1/workflow-runs` — paginated run history; `POST /:id/cancel` |

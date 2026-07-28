@@ -68,11 +68,15 @@ describe('POST /api/v1/work-requests', () => {
 
     // Mock prisma and temporal on the app instance (cast through unknown to bypass strict typing)
     app.decorate('prisma', {
+      // The launch path writes its ledger rows in one transaction; the array
+      // form just resolves the queued promises in order.
+      $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
       activeWorkflow: {
         create: async (args: { data: Record<string, unknown> }) => ({
           id: 'wf-1',
           ...args.data,
         }),
+        delete: async () => ({}),
         findMany: async () => existingWorkflows,
       },
       connection: {
@@ -104,6 +108,7 @@ describe('POST /api/v1/work-requests', () => {
       },
       runInput: {
         create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
+        delete: async () => ({}),
       },
       workflowTemplate: {
         findFirst: async () => ({

@@ -23,7 +23,8 @@ import { z } from 'zod';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { assertOrgAccess, assertOrgBudget } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
  * Deterministic canary routing decision (Evals P2). Returns the pinned candidate
@@ -538,9 +539,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // Start Temporal workflow FIRST — this is the idempotency gate.
-      // If the workflow already exists, Temporal returns WorkflowExecutionAlreadyStartedError
-      // and we haven't written any orphan DB rows yet.
+      // Ledger rows are written BEFORE the workflow starts, and rolled back if
+      // it fails to start — see `launchTrackedWorkflow` for why that ordering
+      // is the safe one. The unique index on `temporalWorkflowId` is the
+      // atomic dedup gate.
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
         description,
@@ -550,51 +552,47 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         workRequestId,
         ...(canaryPin ?? {}),
       };
-      try {
-        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-          request: repoWorkRequest,
-          templateId: resolvedTemplate.templateId,
-          templateVersion: resolvedTemplate.version,
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          activeWorkflow: {
+            assignedBranch: branch,
+            budgetTier,
+            currentStatus: 'IMPLEMENTING',
+            repoId: repo.id,
+            temporalWorkflowId,
+            workRequestId,
+          },
+          runInput: {
+            connectionId: repo.id,
+            description,
+            externalTicketId,
+            id: workRequestId,
+            payload,
+            requestedById: user.sub,
+            requestPayload: JSON.stringify(request.body),
+            templateId: resolvedTemplate.templateId,
+            templateVersion: resolvedTemplate.version,
+          },
+        },
+        () =>
+          fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+            request: repoWorkRequest,
+            templateId: resolvedTemplate.templateId,
+            templateVersion: resolvedTemplate.version,
+          }),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: {
+            code: 'WORKFLOW_ALREADY_EXISTS',
+            message: `Workflow already running for ${externalTicketId}`,
+          },
         });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'WORKFLOW_ALREADY_EXISTS',
-              message: `Workflow already running for ${externalTicketId}`,
-            },
-          });
-        }
-        throw err;
       }
-
-      // Workflow started — now persist to DB.
-      // If DB write fails, the Temporal workflow will eventually time out,
-      // which is preferable to orphan DB rows that block future retries.
-      const workRequest = await fastify.prisma.runInput.create({
-        data: {
-          connectionId: repo.id,
-          description,
-          externalTicketId,
-          id: workRequestId,
-          payload,
-          requestedById: user.sub,
-          requestPayload: JSON.stringify(request.body),
-          templateId: resolvedTemplate.templateId,
-          templateVersion: resolvedTemplate.version,
-        },
-      });
-
-      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
-        data: {
-          assignedBranch: branch,
-          budgetTier,
-          currentStatus: 'IMPLEMENTING',
-          repoId: repo.id,
-          temporalWorkflowId,
-          workRequestId: workRequest.id,
-        },
-      });
+      const workRequest = { id: workRequestId };
+      const activeWorkflow = { id: launch.activeWorkflowId };
 
       // Best-effort: seed the context snapshot with the external ticket's
       // content when a tracker connector is configured. Failures are logged
@@ -676,6 +674,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'NO_TEMPLATE_SNAPSHOT', message: 'Work request has no recorded template' },
         });
       }
+      // Bind the narrowed values: the start call below runs inside a closure,
+      // where TS can't carry a property narrowing.
+      const retryTemplateId = workRequest.templateId;
+      const retryTemplateVersion = workRequest.templateVersion;
 
       if (!isGitRepoConnection(repo)) {
         return reply.status(400).send({
@@ -710,34 +712,37 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         workRequestId: workRequest.id,
         ...(canaryPin ?? {}),
       };
-      try {
-        await fastify.temporal.startRunnableWorkflow(allocated.workflowId, {
-          request: repoWorkRequest,
-          templateId: workRequest.templateId,
-          templateVersion: workRequest.templateVersion,
-        });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'WORKFLOW_ALREADY_EXISTS',
-              message: `Workflow already running for ${workRequest.externalTicketId}`,
-            },
-          });
-        }
-        throw err;
-      }
-
-      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
-        data: {
-          assignedBranch: latest.assignedBranch,
-          budgetTier: latest.budgetTier,
-          currentStatus: 'IMPLEMENTING',
-          repoId: repo.id,
-          temporalWorkflowId: allocated.workflowId,
-          workRequestId: workRequest.id,
+      // Re-run: the RunInput already exists, so only the ActiveWorkflow row is
+      // written — again before the start, and rolled back if it fails.
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          activeWorkflow: {
+            assignedBranch: latest.assignedBranch,
+            budgetTier: latest.budgetTier,
+            currentStatus: 'IMPLEMENTING',
+            repoId: repo.id,
+            temporalWorkflowId: allocated.workflowId,
+            workRequestId: workRequest.id,
+          },
         },
-      });
+        () =>
+          fastify.temporal.startRunnableWorkflow(allocated.workflowId, {
+            request: repoWorkRequest,
+            templateId: retryTemplateId,
+            templateVersion: retryTemplateVersion,
+          }),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: {
+            code: 'WORKFLOW_ALREADY_EXISTS',
+            message: `Workflow already running for ${workRequest.externalTicketId}`,
+          },
+        });
+      }
+      const activeWorkflow = { id: launch.activeWorkflowId };
 
       return reply.status(201).send({
         data: {

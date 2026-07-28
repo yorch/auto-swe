@@ -37,16 +37,41 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 const jiraPrismaState = vi.hoisted(() => ({
   activeRepo: null as Record<string, unknown> | null,
   activeWorkflowCreateCalls: [] as Record<string, unknown>[],
+  activeWorkflowDeleteCalls: 0,
   defaultTemplate: { activeVersion: 1, id: 'tpl-1' } as Record<string, unknown> | null,
+  /**
+   * Stands in for the `active_workflows` table: row id → temporalWorkflowId.
+   * Enough to enforce the real `@unique` on `temporal_workflow_id`, so the
+   * tests exercise genuine insert-then-conflict rather than a mocked branch.
+   */
+  rows: new Map<string, string>(),
   runInputCreateCalls: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    // The launch path writes its ledger rows in one transaction; the array
+    // form just resolves the queued promises in order.
+    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
     activeWorkflow: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        // Enforce the real unique index on `temporal_workflow_id` — the
+        // primary dedup gate for the auto-trigger.
+        const wfId = args.data.temporalWorkflowId as string;
+        if ([...jiraPrismaState.rows.values()].includes(wfId)) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        const id = `aw-${jiraPrismaState.rows.size + 1}`;
+        jiraPrismaState.rows.set(id, wfId);
         jiraPrismaState.activeWorkflowCreateCalls.push(args.data);
-        return { id: 'aw-1', ...args.data };
+        return { id, ...args.data };
+      }),
+      // Compensation frees the ID again, so a rolled-back launch doesn't
+      // permanently block the ticket.
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        jiraPrismaState.activeWorkflowDeleteCalls += 1;
+        jiraPrismaState.rows.delete(args.where.id);
+        return {};
       }),
     },
     connection: {
@@ -57,6 +82,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         jiraPrismaState.runInputCreateCalls.push(args.data);
         return { id: 'ri-1', ...args.data };
       }),
+      delete: vi.fn(async () => ({})),
     },
     workflowTemplate: {
       findFirst: vi.fn(async () => jiraPrismaState.defaultTemplate),
@@ -101,6 +127,8 @@ describe('webhook routes', () => {
   let workflowRunRow: { id: string } | null = null;
   let fetchMock: ReturnType<typeof vi.fn>;
   let jiraStartShouldConflict = false;
+  /** When set, the next workflow start rejects with this error (transient outage). */
+  let jiraStartFailure: Error | null = null;
   const jiraStartCalls: Array<{ id: string; args: unknown }> = [];
 
   beforeAll(async () => {
@@ -140,6 +168,9 @@ describe('webhook routes', () => {
         signalCalls.push({ args, signalName, workflowId });
       },
       startRunnableWorkflow: async (id: string, args: unknown) => {
+        if (jiraStartFailure) {
+          throw jiraStartFailure;
+        }
         if (jiraStartShouldConflict) {
           const err = new Error('already started');
           err.name = 'WorkflowExecutionAlreadyStartedError';
@@ -177,8 +208,11 @@ describe('webhook routes', () => {
     jiraPrismaState.activeRepo = null;
     jiraPrismaState.runInputCreateCalls.length = 0;
     jiraPrismaState.activeWorkflowCreateCalls.length = 0;
+    jiraPrismaState.activeWorkflowDeleteCalls = 0;
     jiraPrismaState.defaultTemplate = { activeVersion: 1, id: 'tpl-1' };
     jiraStartShouldConflict = false;
+    jiraStartFailure = null;
+    jiraPrismaState.rows.clear();
     jiraStartCalls.length = 0;
     fetchMock = vi.fn(async () => {
       throw new Error('fetch not stubbed for this test');
@@ -724,15 +758,69 @@ describe('webhook routes', () => {
       });
     });
 
-    it('returns 200 duplicate without writing RunInput/ActiveWorkflow when the deterministic workflow already exists', async () => {
+    it('is once-ever per ticket: a redelivered transition starts no second workflow', async () => {
+      // The property the auto-trigger actually promises. Delivered twice, the
+      // second insert hits the unique index on `temporal_workflow_id` and the
+      // workflow is never started again — dedup that outlives Temporal's
+      // execution retention, unlike the AlreadyStarted fallback.
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      const body = transitionPayload('Ready for Dev', 'PROJ-100');
+
+      const first = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(first.statusCode).toBe(200);
+      expect(JSON.parse(first.payload)).toEqual({ ok: true, ticketId: 'PROJ-100' });
+
+      const second = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(second.statusCode).toBe(200);
+      expect(JSON.parse(second.payload)).toEqual({
+        duplicate: true,
+        ok: true,
+        ticketId: 'PROJ-100',
+      });
+
+      // Exactly one run: one workflow start, one surviving ledger row.
+      expect(jiraStartCalls).toHaveLength(1);
+      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.rows.size).toBe(1);
+    });
+
+    it('rolls the ledger back when the workflow reports already-started', async () => {
+      // Fallback gate: the row inserted fine (e.g. a prior orphaned execution
+      // Temporal still remembers), so the rows we just wrote are compensated
+      // away rather than left wedging the ticket.
       jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
       jiraStartShouldConflict = true;
-      const body = transitionPayload('Ready for Dev', 'PROJ-100');
+      const body = transitionPayload('Ready for Dev', 'PROJ-101');
       const res = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-100' });
-      expect(jiraPrismaState.runInputCreateCalls).toHaveLength(0);
-      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(0);
+      expect(JSON.parse(res.payload)).toEqual({ duplicate: true, ok: true, ticketId: 'PROJ-101' });
+      // Rows were written, then rolled back — nothing is left behind.
+      expect(jiraPrismaState.activeWorkflowCreateCalls).toHaveLength(1);
+      expect(jiraPrismaState.activeWorkflowDeleteCalls).toBe(1);
+      expect(jiraPrismaState.rows.size).toBe(0);
+    });
+
+    it('a transient start failure does not wedge the ticket — a redelivery succeeds', async () => {
+      // The regression this PR exists to prevent. Under the old ordering the
+      // ledger row was never written, so a later delivery re-derived the same
+      // deterministic ID and Temporal refused it — the ticket stayed
+      // unsubmittable with nothing in the DB to explain why. With
+      // ledger-then-start + rollback, the retry just works.
+      jiraPrismaState.activeRepo = { id: 'conn-1', isActive: true, type: 'git_repo' };
+      const body = transitionPayload('Ready for Dev', 'PROJ-102');
+
+      jiraStartFailure = new Error('temporal unreachable');
+      const failed = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(failed.statusCode).toBe(500);
+      // Rolled back, so the deterministic ID is free again.
+      expect(jiraPrismaState.rows.size).toBe(0);
+
+      jiraStartFailure = null;
+      const retried = await inject('/api/v1/webhooks/jira', body, jiraSign(body));
+      expect(retried.statusCode).toBe(200);
+      expect(JSON.parse(retried.payload)).toEqual({ ok: true, ticketId: 'PROJ-102' });
+      expect(jiraStartCalls).toHaveLength(1);
+      expect(jiraPrismaState.rows.size).toBe(1);
     });
   });
 });
