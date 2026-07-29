@@ -206,6 +206,12 @@ Thread-history context requires the `channels:history` and `groups:history` bot 
 
 ## 10. Known limitations
 
+**Not yet validated in a live workspace.** This is the load-bearing caveat: the capability surface
+below is built and unit-tested, but it has not been run against a real Slack workspace under
+sustained use. No code closes this — it needs an install, a pilot channel, and observation. Treat
+the proactivity features especially (ambient digests, reactive interjection, org-wide flagging) as
+unproven on real traffic, and turn them on one channel at a time.
+
 - **No hard budget cap.** See §7 — the gate allows at most one in-flight overshoot.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;

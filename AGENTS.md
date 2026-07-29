@@ -118,6 +118,10 @@ prose has no compiler and status prose rots silently.
   into a living doc. That belongs in git history and the pull request.
 - A roadmap or build-plan doc moves to `docs/history/` the day its work lands. It is frozen there,
   not maintained.
+- **Before freezing a doc, sweep it for facts that are still true** — open gaps, items that never
+  shipped, known limitations — and promote those into a living doc first. A roadmap is history; the
+  fact that one of its items was never built is current state, and it must not be buried in a file
+  nobody is supposed to read.
 - Countable claims ("15 node types", "51 Prisma models") are enforced: `yarn docs:check` derives
   each fact from source and fails on any living doc that disagrees. It runs as its own CI job.
   When you change the schema, the node-type union, the built-in skills, the scanner patterns, or

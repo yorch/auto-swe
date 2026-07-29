@@ -183,6 +183,14 @@ real repository produces a pull request worth merging. Verifying the Temporal, D
 end to end requires the full infrastructure stack, and the channel assistant in particular is newly
 built rather than validated under sustained real-world use.
 
+**The generic-platform surface is thinner than the engine underneath it.** The engine is
+domain-agnostic — templates declare an `inputSchema`, runs carry a typed `RunInput`, and memory and
+connections are generic. The *submit surface* has not caught up: there is no generic `POST /runs`
+endpoint, `RunInput.externalTicketId` is still non-nullable, trigger event→input mappings are
+config rather than a persisted `Trigger` table, and there is no live issues-webhook receiver. A
+non-SWE workflow therefore still enters through the SWE-shaped work-request route and must supply a
+ticket ID.
+
 Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
 so IP-direct connections are unfiltered and wildcard entries are informational only. Both would
 require an in-path egress proxy or resolver.

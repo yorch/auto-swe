@@ -56,6 +56,10 @@ for design rationale — **the code is authoritative wherever they diverge.** Th
 they are not maintained, not checked for drift, and should not be edited or used to learn current
 behaviour.
 
+Before freezing anything new here, sweep it for facts that are still true — open gaps, items that
+never shipped, known limitations — and promote those into a living doc first. A roadmap is history;
+an item on it that was never built is current state.
+
 The original 4-phase plan and its status matrix ([`PLAN.md`](./history/PLAN.md),
 [`STATUS.md`](./history/STATUS.md)), the configurable-workflow-engine and platform-pivot roadmaps
 with their per-phase build plans, the evals phase plans, the 2026-06 and 2026-07 repository
