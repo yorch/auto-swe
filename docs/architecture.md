@@ -574,10 +574,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
   overshoot its tier before `BUDGET_EXCEEDED` fires. Pre-flight reservation is not possible for
   cost that is only known after the call returns.
 - **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.
-- **`MemoryItem.teamId` and `orgId` are denormalized columns with no foreign key.** Unlike
-  `channelId`, they have no referential integrity and no cascade, so deleting a Team or Org leaves
-  orphaned rows whose dangling ids keep matching org-wide memory searches — a defunct tenant's
-  facts stay retrievable. Cleaning up a tenant means scrubbing these by hand.
 - **Determinism is covered behaviourally, not by replay.** Workflow tests run against
   `TestWorkflowEnvironment` with fake activities, which catches logic errors but not the actual
   V8-isolate failure mode. There is no `Replayer`-based test replaying recorded history against
@@ -586,9 +582,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **`specSnapshot` truncates.** `summarizeContext` clips any string over 4 KB before persisting the
   run snapshot, to keep `workflow_runs` rows small. Large diffs and logs in the frozen snapshot are
   therefore incomplete — the full values live in `WorkflowArtifact`.
-- **The browser keeps a JWT in `localStorage` and a JS-readable cookie.** The primary browser path
-  is the HttpOnly session cookie; this second credential is redundant and weaker-stored, readable by
-  any XSS or compromised dependency. Defense-in-depth only — no active XSS sink is known.
 - **CI wait mode is an env var, not DB config.** `CI_WAIT_MODE` (`signal` / `poll`) and its polling
   intervals are read from the environment, the one integration knob that has not moved to the
   DB-backed config the rest of the system uses.
