@@ -1,54 +1,36 @@
 # AGENTS.md — Project Guidelines for AI Agents
 
 > Guidelines for any AI agent (Claude Code, Codex, Copilot, Cursor, etc.) working on this codebase.
+>
+> **This file holds rules, not status.** It describes how to work in this repo — conventions,
+> constraints, and the gotchas that cause real bugs. What shipped when lives in git history;
+> what the system does lives in [`docs/`](./docs/README.md).
 
 ---
 
 ## 1. Project Overview
 
-**auto-swe** is an autonomous agentic software engineering system built as a Yarn 4 TypeScript monorepo. It accepts work requests (external ticket IDs from any issue tracker), runs LLM-powered agents to implement code in isolated Docker workspaces, reviews changes via a multi-agent review network, opens pull requests, and waits for human merge. It includes better-auth sessions + personal-access-token auth with RBAC, team management, Slack integration, a CI self-healing loop, semantic memory (pgvector), and a Next.js web dashboard.
+**auto-swe** is a durable, governed multi-agent workflow orchestration platform, built as a Yarn 4
+TypeScript monorepo. Workflows are versioned JSON DAGs executed on Temporal; agents run inside
+isolated Docker workspaces. Autonomous software engineering — ticket in, reviewed draft pull
+request out — is the flagship use case, seeded as ordinary library content rather than privileged
+runtime code.
+
+The platform provides human-in-the-loop governance, a multi-agent review network, layered runtime
+security scanning, semantic memory (pgvector), sandboxed container steps, and cost/budget control.
+For the product framing see [`docs/product-overview.md`](./docs/product-overview.md); for how the
+system is put together see [`docs/architecture.md`](./docs/architecture.md).
 
 ---
 
-## 2. Design Documents
+## 2. Documentation Map
 
-**Current and living references** — these match the running code:
+| Location | Contains |
+|---|---|
+| [`docs/`](./docs/README.md) | **Living references** — how the system works now. Start at `docs/README.md`. |
+| [`docs/history/`](./docs/history/) | **Frozen** — completed roadmaps, closed build plans, point-in-time reviews, research. Preserved for rationale; the code wins wherever they diverge. |
 
-| Document                         | Status  | Covers                                                                                     |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `docs/platform-pivot.md`         | Done | RFC + roadmap (rev. 2, libraries-first) for the platform pivot (SWE-system → generic durable workflow orchestration platform; SWE becomes seed content). **All phases done: P0 + P1 + P1.5 + P2 + P3 + P4 + P5. P2 in full: agent node (WS1) + `'mcp'` tool key (WS2) + full MCP integration — `mcp` Connection, binding across all implementer activities + the generic agent node, admin write-path (WS3) + `mcp` workflow node (WS4) + canvas palette/inspector (WS5). P4 (distribution layer: bundles + install + signature trust + container-contract coded steps + authoring SDK). P5 (UX/multi-org): multi-org foundation + org-level RBAC (`OrganizationMembership`/`OrgRole`) + application-layer row isolation + org-granularity billing (`OrgMonthlyUsage` + `monthlyBudgetUsdCents` caps) + authoring-SDK polish + canvas org-scope polish.** Per-phase build plans + live status in `docs/platform-pivot-p0.md`, `-p1.md`, `-p1.5.md`, `-p2.md`, `-p3.md`, `-p4.md`, `-p5.md` |
-| `docs/platform-pivot-p2.md`      | Done       | P2 build plan (declarative `agent` node + MCP): WS1 (agent node) + WS2 (`'mcp'` tool key) + WS3 (full MCP: `mcp` Connection, binding across all implementer activities + the generic `runAgentNode`, admin write-path at `/admin/mcp-connections` + `mcpConnectionId` agent field) + WS4 (`mcp` workflow node → `mcpCallTool`) + WS5 (canvas palette + `McpSection` inspector). All 5 work-streams complete |
-| `docs/platform-pivot-p4.md`      | Done | P4 build plan (distribution layer): WS1 bundle format + export · WS2 install as managed base layer · WS3 signature trust + registry + install-from-URL · WS4 container-contract coded steps · WS5 authoring SDK (`packages/sdk`). All 5 merged (#76) |
-| `docs/platform-pivot-p5.md`      | Done | P5 build plan (UX layering + multi-org): multi-org foundation + `ORGANIZATION` config scope + org-level RBAC (`OrganizationMembership`/`OrgRole`) + application-layer row isolation + org-granularity billing (`OrgMonthlyUsage` + `monthlyBudgetUsdCents`) + authoring-SDK polish + coded-step transports + canvas org-scope polish. Merged (#91, #102) |
-| `docs/product-overview.md`       | Current    | Product thesis, target users, business value, capability map, the 8 primary use cases, differentiators, non-goals, maturity |
-| `docs/architecture.md`           | Current    | System context, package map, request lifecycle, workflow engine (15 node types), runtime security scanners, budget tiers, auth, data model, infra   |
-| `docs/agents.md`                 | Current    | All 10 SWE agent roles (+ the eval-infra `evalJudge`), implementer tools (incl. `loadSkill`), 27 built-in skills, `AgentTracer` observability pattern, skill + tool assignment API reference |
-| `docs/deployment.md`             | Living     | Production deployment runbook (env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, hardening) |
-| `docs/model-configuration.md`    | Living     | DB-backed model + credential config (scope cascade, encryption, day-2 ops)                |
-| `docs/oauth-setup.md`            | Living     | GitHub + Google OAuth app registration; magic-link setup                                   |
-| `docs/slack-app-setup.md`        | Living     | Slack app manifest import and admin configuration                                          |
-| `docs/github-app-setup.md`       | Living     | GitHub App creation, permissions, installation ID, admin UI config, auth mode options      |
-| `docs/hitl-workflows.md`         | Living     | HITL node types (approval/decision/input/review), signal flow, inbox UI, API reference     |
-| `docs/nl-workflow-authoring.md`  | Current    | Natural-language workflow authoring: describe an automation → the seeded `workflowAuthor` agent generates a `WorkflowSpec` via a catalog-constrained generate→validate→repair loop in the worker → saved as a DRAFT for canvas review/activation. Entry points: web canvas ("Generate with AI"), gateway `POST /workflow-templates/generate` + CLI `workflows generate`, and the Slack channel assistant's `generateWorkflow` tool. **Conversational refinement**: `generateWorkflowSpec` takes an optional `baseSpec` (refine mode via `buildRefineRequestMessage`) → each change saved as a new template version. Surfaces: web "Refine with AI" chat panel (`POST /workflow-templates/:id/refine`, `RefineChatPanel`), Slack thread follow-ups (`refineWorkflow` tool → `refineChannelWorkflowDraft`, anchored by `ChannelThreadSession.lastGeneratedTemplateId`); also an "Explain" inverse (`workflowExplainer`) |
-| `docs/evals.md`                  | Current    | Evals RFC + roadmap: native output-quality measurement as an `eval` workflow node + DB-backed signals. P0 signal capture · P1 offline regression harness (frozen benchmark, paired error-barred stats) · P2 LLM judge + decision rule · P3 online drift dashboard + canary. Per-phase build plans in `docs/evals-p0.md`…`-p3.md`. **All deferred seams shipped (PR #129):** canary routing (`resolveCanaryConfig` + `shouldRouteToCanary` gate in `workRequests.ts` + `isCanary`/`agentVersions` override in `createWorkflowRun`), re-validation Temporal Schedule (`ScheduledRevalidationWorkflow` + `revalidateDatasetActivity` + admin UI at `/admin/workflow` + `GET/PUT /api/v1/config/revalidation`), per-run baseline SHA (`WorkflowRun.baselineSha` captured in `executeImplementation`), node-level gate execution (`runGateStandalone` wired into `runEvalNode` for `'gate'` scorer — scores the candidate's pushed branch on the repo's `executorImage`; fails safe to `passed:false` on any non-executable path), `runCaseDefault` with agent-library version-pin semantics (`"key@version"` refs, explicit `resolveAgent` + `createImplementerAgent(..., modelOverride)`; infra errors throw → `EvalRun` FAILED rather than a false `0`) |
-| `docs/figma-integration.md`      | Current    | Figma integration RFC + roadmap. **P0 + P1 shipped:** P0 `design-fidelity` implementer skill (steers faithful UI implementation when a Figma design is referenced / Figma MCP tools are bound — the MCP path reuses the P2 `mcp` Connection with no schema change); P1 submit-time design context — `FigmaConfig` singleton + `resolveFigmaConfig()`, `FigmaProvider` (REST) behind `createFigmaDesignProvider`, `extractFigmaRefs`, best-effort `enrichWithDesignData` seeding `ContextSnapshot.rawDesign`, worker injection of a compact design block into the implementer prompt, admin panel at `/admin/integrations → Figma`. Token-sync (P2) + design-QA review (P3) scoped-but-unbuilt |
-| `docs/channel-assistant.md`      | Current    | Channel assistant — Slack channel teammate (inspired by Anthropic's Claude Tag — research in `docs/claude-tag-research.md`): one shared assistant per channel. Adds `SlackWorkspace`/`SlackChannel`/`ChannelMonthlyUsage` models + a `CHANNEL` config-scope tier (`WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL`). **All phases shipped:** foundation · P0 (`@mention` → `ChannelAssistantWorkflow` → in-thread reply via `/api/v1/auth/slack/events`) · P1 (per-channel agent/tool scoping, admin CRUD at `/admin/slack-channels`, soft budget caps) · P2 (channel-scoped team memory + auto-inject + admin view/delete) · P3 (ambient mode: per-channel Temporal Schedule → proactive `ChannelAmbientWorkflow` digest) · P4 (live `chat.update` progress + advisory injection scan of channel input) · autonomous task execution (delegate `@mention` → durable thread-bound `RunnableWorkflow`, code + general routes, thread-reply steering) · Gaps D/E/F (deferred/scheduled tasks via `ChannelScheduledTaskWorkflow`; cross-channel team memory in `retrieveChannelMemory`; channel-memory consolidation via `consolidateChannelMemory` on every ambient fire) · Gap A reactive interjection (opt-in per-channel reactive Schedule → `ChannelReactiveWorkflow` → `evaluateReactiveInterjection` polls `conversations.history` and proactively chimes in, new-message/budget/cooldown gated, SKIP-aware) · Gap C open-item tracking (`sweepChannelOpenItems` rides the ambient Schedule: detects new open items + marks resolved + nudges stale, `ChannelOpenItem` model with `sourceTs` dedup anchor, admin UI modal with status filters + Resolve/Dismiss) · **Persona** (`SlackChannel.personaPrompt` + `Team.defaultPersonaPrompt`; `resolvePersonaPrompt(channelPersonaPrompt, teamDefaultPersonaPrompt)` — pure synchronous function — cascade in `lib/channelPersona.ts`; injected in `runChannelAgentTurn` before tool hints across all three channel LLM paths; admin UI on `/admin/slack-channels` (channel level) + `/teams/[id]` (team-wide default)) · **Passive memory ingestion** (`passiveIngestChannelMemory` — 4th best-effort ambient activity: silently extracts ≤5 salient facts from human messages via `commitToMemory` model, `passiveIngestCursor` ts-string cursor, 0.85 de-dup threshold, `countRun: false` budget; opt-in `passiveIngestEnabled` per channel; columns folded into `00000000000000_init`) · **Gap G private-channel exclusion** (`SlackChannel.isPrivate` — a private channel's memory is never a source in cross-channel reads: `searchTeamChannelMemory` JOINs `slack_channels` and filters `is_private = false`; auto-defaulted from Slack `channel_type: 'group'` at provision, admin-editable). · **Gap J per-channel audit view** (`GET /api/v1/admin/slack-channels/:id/audit` aggregates channel `WorkflowRun` rows by the `channelId` in `specSnapshot.channel`; `startChannelRun` stamps `userSlackId` + truncated message text; admin "Audit" modal with kind filter + `/runs/<id>` trace links) · **Gap B org-wide proactive flagging** (`flagOrgSignals` — 5th best-effort ambient activity, opt-in `orgFlaggingEnabled`: embeds the channel's recent memory once, `searchOrgChannelMemory` over org channels excluding `is_private` sources (Gap G), agent decides high-bar/SKIP-aware whether to flag; `lastOrgFlagCheckAt` 20 h cooldown advanced once the embedding + org search ran (no-signals/skip/posted alike, stamped before the LLM + best-effort post) so a rarely-flagging channel doesn't re-pay the embedding/search each fire, `countRun: false`) · **Gap H persistent live session** (opt-in `followupSessionEnabled`: a plain follow-up reply continues a thread without a re-`@mention` while a `ChannelThreadSession.lastAssistantAt` is fresh (30 min window); worker `touchChannelThreadSession` writes it, gateway `isLiveThreadSession` reads it; task-steer still takes precedence) · **Gap I packaged Slack-app UX** (App Home tab: on `app_home_opened`/home, `publishAppHome` → `views.publish` renders a Block Kit "front door"; `buildAppHomeView` pure/unit-tested; `/auto-swe` slash commands already existed). All lettered gaps A–J shipped, plus the four small follow-ups: **D** steerable fired deferred run (the `ChannelScheduledTaskWorkflow` wrapper stays alive after launch, forwarding `steer` to the running child via `startThreadTaskChild`'s returned handle + holding the per-thread id), **F** per-channel consolidation config (`SlackChannel.consolidationEnabled`/`consolidationMinClusterSize`/`consolidationSimilarityThreshold` read by `consolidateChannelMemory`), **H** addressed-to-me intent gate (SKIP-aware `followup` turns — `runChannelAssistantTurn` returns `suppressed` and the workflow posts nothing for non-addressed replies), and **I** one-click **multi-workspace install** (`GET /api/v1/auth/slack/install[/callback]` → `oauth.v2.access` → encrypted per-workspace bot token on `SlackWorkspace` (`appId`/`botUserId`/`installedAt`); the bot token is the only per-workspace secret, signing secret + OAuth creds stay singleton; all Slack I/O resolves the token by channel/workspace id via `resolveSlackBotTokenForSlackChannel`/`resolveSlackBotTokenForWorkspace` with singleton fallback; admin "Add to Slack" button + install status on `/admin/integrations`). **General-route decomposition** (conditional): the "Channel Task" spec is `plan → cond → {single agent | composite}` — a `planChannelTask` step (biased against splitting) returns 1..N subtasks; a cohesive task (`subtaskCount == 1`) runs the single `channelAssistant` node, a splittable one runs `runChannelSubtasks` (bounded-concurrency subtask fan-in + synthesis inside one activity, since the interpreter can't surface a fanOut branch agent's text to a join); `finalizeChannelTaskRun` reads `nodes.composite.output.text` ?? `nodes.task.output.text`. **Slack shortcuts** (`features.shortcuts`): a global "Run a workflow" (`auto_swe_run_shortcut` → run-picker modal) + a message "Ask auto-swe about this" (`auto_swe_ask_shortcut` → `handleAskMessageShortcut` starts a channel turn on the message, no account link, REJECT_DUPLICATE per-message id) — the packaged Slack surface (App Home + slash + install + shortcuts) is now complete. Only **K** (battle-testing, non-technical) remains — see `docs/channel-assistant-remaining-gaps.md` |
-
-**Historical** — preserved for design rationale; code is authoritative where they diverge:
-
-| Document                          | Drift note                                                                                            |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `docs/configurable-workflows.md`  | Completed roadmap — all 9 phases done; 39 architecture decisions preserved for rationale              |
-| `docs/mvp-architecture.md`        | `EngineeringWorkflow` replaced by `RunnableWorkflow` + seeded spec (Phase 1)                          |
-| `docs/gateway-and-auth.md`        | RS256 framing outdated — HS256 is the Docker Compose default; better-auth cookie path added post-Phase 4 |
-| `docs/data-and-infra.md`          | Schema section outdated (actual: 49 models in `packages/shared/src/prisma/schema.prisma`); DinD section is accurate |
-| `docs/workflow-and-activities.md` | `EngineeringWorkflow` pseudocode; activity list pre-dates the configurable-workflow engine            |
-| `docs/wireframes.md`              | Shipped UI in `packages/web/src/app/` is authoritative; "Workshop Telemetry" redesign post-Phase 4   |
-| `docs/platform-pivot-p0.md`       | Completed build plan (P0 — de-domainify the engine: enum→string, step registry, `AgentSpec`+`runAgent`, computed `assertConfigReady`). Current state lives in `architecture.md`/`agents.md`           |
-| `docs/platform-pivot-p1.md`       | Completed build plan (P1 — Agent library: first-class `Agent` + `resolveAgent`, versioning + run snapshot, governed CRUD API + UI). Current state in `agents.md`                                       |
-| `docs/platform-pivot-p1.5.md`     | Completed build plan (P1.5 — retire the role tables; `Agent` is the sole source of truth). Current state in `agents.md`                                                                                 |
-| `docs/platform-pivot-p3.md`       | Completed build plan (P3 — generic Connections/inputs/triggers/memory: `MemoryItem`←`AgentLesson`, `Connection`←`Repository`, template `inputSchema` + `RunInput`, trigger mappings). Current state in `architecture.md` |
-| `docs/REPO_REVIEW.md`             | One-shot multi-agent repository audit (2026-06-09, commit `9778506`). Nearly all findings remediated (see its §7); preserved as a point-in-time snapshot, not a live tracker |
+Do not consult `docs/history/` to learn current behaviour, and do not update it.
 
 ---
 
@@ -78,25 +60,26 @@
 
 ## 4. Package Map
 
-Per-package conventions worth knowing up front. Run `ls packages/<name>/src` for the actual layout — only non-obvious rules live here.
+Run `ls packages/<name>/src` for the actual layout — only non-obvious rules live here.
 
 | Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
-| ------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared`  | Prisma schema, DB client, shared types               | Singleton `PrismaClient` exported from `db.ts`; types re-exported via `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill, mirroring `workflow/templates/`) |
+| ------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill) |
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
-| `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external pkgs.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
+| `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external packages.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
-| `packages/cli`     | `auto-swe` CLI (workflows, runs, tokens; `bundle` local authoring + `bundles` distribution) | ESM Node 24+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. **`bundle init/validate/sign`** is token-free local authoring over `@auto-swe/sdk` (P5); **`bundles list/export/install/install-from-url`** hits `/api/v1/admin/bundles` (P5) |
-| `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK (P4/WS5)      | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` (schema + hash harness) |
+| `packages/cli`     | `auto-swe` CLI                                       | ESM Node 24+; auth via `AUTO_SWE_TOKEN` (personal access token from Settings → API tokens); thin fetch wrapper over the gateway REST API. `bundle init/validate/sign` is token-free local authoring over `@auto-swe/sdk`; `bundles list/export/install` hits the admin API |
+| `packages/sdk`     | `@auto-swe/sdk` — bundle authoring SDK               | Pure, I/O-free helpers over `@auto-swe/shared/bundle`: `defineAgent`/`defineSkill`/`defineTemplate`/`defineContainerStep`, `defineBundle` (+ content hash), `signBundle` (ed25519), `validateBundle` |
 
 Top-level files that matter:
 
-- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + MinIO (artifact store) + setup containers
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + MinIO + setup containers
 - `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
 - `vitest.config.ts` — root test runner; subpath aliases for `@auto-swe/shared/*` use array form (Vite prefix matching is order-sensitive)
 - `biome.json` — single source of truth for lint + format
+- `scripts/check-doc-drift.mjs` — CI doc-drift check (see §5)
 - `.env.example` — environment variable template
 
 ---
@@ -126,6 +109,29 @@ Top-level files that matter:
 | TypeScript interfaces         | `PascalCase`                      | `RepoWorkRequest`                         |
 | Activity functions            | `camelCase`, verb-first           | `executeImplementation`                   |
 
+### Documentation
+
+Docs describe the system **in present tense, as it is now**. This is a hard convention, because
+prose has no compiler and status prose rots silently.
+
+- **Never** write shipped-status, PR numbers, phase labels (`P2/WS3`), or "now shipped" narration
+  into a living doc. That belongs in git history and the pull request.
+- A roadmap or build-plan doc moves to `docs/history/` the day its work lands. It is frozen there,
+  not maintained.
+- **Before freezing a doc, sweep it for facts that are still true** — open gaps, items that never
+  shipped, known limitations — and promote those into a living doc first. A roadmap is history; the
+  fact that one of its items was never built is current state, and it must not be buried in a file
+  nobody is supposed to read.
+- **Known gaps live next to the feature**, in that doc's `## Limitations` section — never in a
+  central list, which is what drifted before. Product-level boundaries and overall maturity are the
+  exception and belong in `docs/product-overview.md` §7 and §8.
+- Countable claims ("15 node types", "51 Prisma models") are enforced: `yarn docs:check` derives
+  each fact from source and fails on any living doc that disagrees. It also rejects broken doc
+  links and any capability doc missing its `## Limitations` section. It runs as its own CI job.
+  When you change the schema, the node-type union, the built-in skills, the scanner patterns, or
+  the seeded agents, run it and fix what it reports.
+- `docs/history/` is exempt from the check and from edits.
+
 ### Testing
 
 - **Framework:** Vitest (`vitest.config.ts` at root)
@@ -153,14 +159,15 @@ yarn test:watch           # Vitest in watch mode
 yarn lint                 # Lint + format check (biome check)
 yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
 yarn format               # Format only (biome format --write)
+yarn docs:check           # Fail on stale countable claims in the living docs
 
-# Docker (infra = postgres + postgres-temporal + temporal (server + admin + ui) + minio; app = gateway + worker + web + otel-lgtm)
+# Docker (infra = postgres + postgres-temporal + temporal + minio; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
-yarn docker:app:up            # Start everything (infra + app)
-yarn docker:app:down          # Stop everything
-yarn docker:app:logs          # Tail logs (infra + app)
-yarn docker:app:build         # Rebuild app images
+yarn docker:app:up        # Start everything (infra + app)
+yarn docker:app:down      # Stop everything
+yarn docker:app:logs      # Tail logs (infra + app)
+yarn docker:app:build     # Rebuild app images
 ```
 
 ### Git Workflow
@@ -178,143 +185,192 @@ yarn docker:app:build         # Rebuild app images
 
 ### Mastra API
 
-The project uses `@mastra/core@1.40.0` with the Vercel AI SDK for model binding:
+The project uses `@mastra/core` with the Vercel AI SDK for model binding:
 
 - `Agent` constructor requires both `id` and `name` fields
 - `createTool()` requires `outputSchema` on all tools (structured output)
 - Tool execute functions return structured objects matching `outputSchema`
-- Model binding: **always use `getModel(role)` from `packages/worker/src/lib/models.ts`** — never call `anthropic('...')` / `openai('...')` directly in agent code. Provider selection is config-driven.
+- Model binding: **always use `getModel(key, ctx)` from `packages/worker/src/lib/models.ts`** — never call `anthropic('...')` / `openai('...')` directly in agent code. Provider selection is config-driven.
 - Structured generation: `agent.generate(messages, { output: zodSchema })`
 
 ### System Config (Integrations)
 
-GitHub, Slack, artifact storage, issue-tracker connector, workflow defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var fallback for backwards compat. **Never read these from `process.env` directly in new code.**
+GitHub, Slack, artifact storage, issue-tracker and knowledge-base connectors, Figma, workflow
+defaults, and OAuth credentials are stored encrypted in the DB and managed via the admin UI. Code
+uses `resolveXxxConfig()` from `packages/shared/src/lib/systemConfig.ts` — DB-primary with env-var
+fallback. **Never read these from `process.env` directly in new code.**
 
-| Admin page | What it manages | Resolver |
+| Admin page | Manages | Resolver |
 |---|---|---|
 | `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, OAuth app creds | `resolveGitHubConfig()` |
 | `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/admin/integrations → Storage` | S3 backend, bucket, region, credentials | `resolveStorageConfig()` |
-| `/admin/integrations → Tracker` | issue-tracker connector (Jira / Linear / GitHub Issues): provider, base URL, API token, Jira email, `allowPrivateNetwork` (explicit opt-in for a self-hosted base URL on a private/internal address — otherwise the SSRF guard rejects it) — a read-only fetch at work-request submit time populates `ContextSnapshot.rawTicketData`; failures never block submission | `resolveTrackerConfig()` |
+| `/admin/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveTrackerConfig()` |
+| `/admin/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
+| `/admin/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
-| `/admin/integrations → Knowledge Base` | knowledge-base connector (Confluence / Notion): provider, base URL, API token, email, `allowPrivateNetwork` (opt-in for a self-hosted internal base URL, same SSRF-guard rationale as Tracker) — injected as context at work-request submit time | `resolveKnowledgeBaseConfig()` |
-| `/admin/integrations → Figma` | Figma design connector (read-only): enable flag, API token, max-nodes cap — when a work request references a Figma file/node, a compact design summary is fetched at submit time into `ContextSnapshot.rawDesign`; failures never block submission. (Agent-time reads instead go through an `mcp` Connection to Figma's Dev Mode endpoint.) | `resolveFigmaConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug, lesson consolidation schedule, eval-regression schedule, **Tier-2 resource & tuning defaults** (see below) | `resolveWorkflowDefaults()` / `resolveConsolidationConfig()` / `resolveEvalScheduleConfig()` |
+| `/admin/workflow` | branch prefix, PR templates, default team slug, consolidation + eval schedules, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
 
-All eight tables follow the singleton pattern (single row, `id = 'default'`, enforced by `CHECK` constraint). Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential` — `CONFIG_ENCRYPTION_KEY` is required. Resolvers are in `packages/shared/src/lib/systemConfig.ts` (exported via `@auto-swe/shared/lib/systemConfig`).
+Every config table is a singleton: one row, `id = 'default'`, enforced by a `CHECK` constraint.
+Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
+`CONFIG_ENCRYPTION_KEY` is required to start either service.
 
-**Tier-2 resource & tuning defaults (`WorkflowDefaults`):** `resolveWorkflowDefaults()` also returns a set of previously-hardcoded operational knobs, all DB-backed on the `WorkflowDefaults` singleton with the `row?.x ?? default` fallback (so an unconfigured deployment keeps the old constants). Managed at `/admin/workflow` → "Resource & tuning defaults (Tier 2)"; the hot-path budget-tier read (`costTracking.resolveBudgetTiers()`) is memoized through the ~30 s config cache (`withCache`), while the coarser consumers (`workspace.ts`, `evalHarness.ts`, `runEvalNode.ts`) call `resolveWorkflowDefaults()` directly once per invocation — they already sit behind a Docker/eval boundary, so a per-call DB read is negligible. They are **GLOBAL-scope only** (not part of the per-team/-template cascade):
+**Tracker, knowledge-base, and Figma connectors** are fetched server-side at work-request submit
+time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. Each
+carries an `allowPrivateNetwork` flag — an explicit opt-in required before the SSRF guard will
+accept a self-hosted base URL on a private or internal address.
+
+**Tier-2 resource & tuning defaults** live on the `WorkflowDefaults` singleton with a
+`row?.x ?? default` fallback, so an unconfigured deployment keeps the built-in constants. They are
+**GLOBAL-scope only** — not part of the per-team/-template cascade — and are edited at
+`/admin/workflow`:
 
 | Field(s) | Default | Consumed by |
 |---|---|---|
-| `budgetTiers` (6 columns → nested `{ tier: { inputTokens, outputTokens } }`) | small/medium/large token caps | `costTracking.ts` (`resolveBudgetTiers()`, falls back to `BUDGET_LIMITS`) |
-| `maxTddIterations` / `maxEvalIterations` | 5 / 3 | `executeImplementation.ts` TDD loop / `evalHarness.ts` `runCaseDefault` |
-| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` `createWorkspace` container caps + default base image (explicit `image` arg still wins) |
+| `budgetTiers` (6 columns → nested `{ tier: { inputTokens, outputTokens } }`) | STANDARD / LARGE / EPIC caps | `costTracking.ts` (`resolveBudgetTiers()`, falls back to `BUDGET_LIMITS`) |
+| `maxTddIterations` / `maxEvalIterations` | 5 / 3 | `executeImplementation.ts` TDD loop / `evalHarness.ts` |
+| `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` container caps + default base image (an explicit `image` arg still wins) |
 | `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
 | `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
 
-Per-entity knobs live on their own rows rather than in this GLOBAL tier: **channel proactivity cooldowns** are nullable columns on `SlackChannel` (`reactiveCooldownMinutes`/`reactiveLookbackMinutes`, `orgFlagCooldownHours`, `openItemNudgeAfterHours`/`openItemNudgeCooldownHours`; null = the worker's built-in default — read directly in `channelReactive`/`flagOrgSignals`/`channelOpenItems`, edited at `/admin/slack-channels`), and **MCP per-connection timeouts** live on the `mcp` `Connection.config` JSON bag (`listTimeoutMs`/`callTimeoutMs`; null = 15 s / 60 s — resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`, edited at `/admin/mcp-connections`).
+The hot-path budget read is memoized behind the ~30 s config cache; coarser consumers
+(`workspace.ts`, `evalHarness.ts`, `runEvalNode.ts`) call the resolver directly once per invocation
+because they already sit behind a Docker or eval boundary.
 
-**Restart-required changes:** `initAuth()` in `betterAuth.ts` reads OAuth creds once at startup. Changing GitHub OAuth or Google OAuth credentials requires a gateway restart.
+**Per-entity knobs live on their own rows, not in the GLOBAL tier:** channel proactivity cooldowns
+are nullable columns on `SlackChannel` (null = the worker's built-in default), and MCP per-connection
+timeouts live on the `mcp` `Connection.config` JSON bag (`listTimeoutMs` / `callTimeoutMs`;
+null = 15 s / 60 s).
 
-### Agent Skills and Tool Access
+**Restart required:** `initAuth()` in `betterAuth.ts` reads OAuth credentials once at startup.
+Changing GitHub or Google OAuth credentials requires a gateway restart.
 
-Skills and tool configs are managed at `/admin/skills` and `/admin/agents` (admins), or per-team from `/teams/<id>` (team owners), or per-template from `/templates/<id>` (admins).
+### Agents, Skills, and Tool Access
 
-- **Skill** = named prompt fragment (`promptText`) injected into the agent system message at invocation time. Controls *how* an agent reasons. Built-in skills live in `packages/shared/src/skills/` (one file per skill); the seed creates them as `isBuiltIn: true` and `isVerified: true`. Custom skills are created with `isVerified: false`; the flag is reset to `false` whenever `promptText` is updated. Custom `promptText` is scanned for injection/exfiltration patterns by `scanSkillContent` (`packages/shared/src/lib/skillScanner`) — non-blocking; returns warnings. Scan patterns live in the `ScannerPattern` table (25 built-in INJECTION/EXFILTRATION patterns used by this scanner, 52 total across all scanner types, admin-extensible at `/admin/scanner`). Safe flag subset: `i`, `m`, `s`, `u`, `v` — `g`/`y` are rejected to prevent stateful `lastIndex` bugs.
-- **Tool** = executable Mastra `createTool()` function. The implementer has four configurable workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS` and controlled by the resolved `Agent`'s `toolKeys` (P1.5: replaced the `AgentToolConfig` table). A fifth tool, `loadSkill`, is automatically added when skills are present — it is **not** configurable via `toolKeys`. `null` `toolKeys` = all four workspace tools enabled. A sixth, `'mcp'` pseudo-key (P2/WS2; in `AGENT_TOOL_KEYS` but not `IMPLEMENTER_TOOL_IDS`) gates MCP tool loading: when an Agent lists `'mcp'` in `toolKeys` **and** references an active `mcp` Connection via `Agent.mcpConnectionId`, that server's tools bind at run time (`resolveAgentMcpUrl` → `loadMcpTools`) — for all three implementer activities (via `buildImplementerForActivity`) **and** the generic `runAgentNode` agent node. Admins manage `mcp` Connections at `/admin/mcp-connections` and attach one to an Agent via the `mcpConnectionId` field on the agent-library form. See `docs/agents.md` §3.5.
+**`Agent` is the single source of truth** for per-key model, prompt, skills, and tools. It is a
+first-class, versioned entity; there are no separate role/skill/tool config tables.
+`resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) is the **sole** resolver: it picks the
+most-specific active version (cascade below, plus the run-start `WorkflowRun.agentVersions` pin or
+an explicit `key@version` ref), binds the model via `modelSpec` or `inheritsModelFrom`, and loads
+skills via `skillRefs` and tools via `toolKeys`. `getModel` / `getModelSpec` / `loadAgentSkills` /
+`loadAgentToolConfig` are thin shims over it. `resolveAgentSpec` composes the result into an
+`AgentSpec`, which the generic `runAgent` activity executes.
 
-**Agent identity** is a free-form `string` (`AnySkillRole = string`; the `AgentRole` enum + `SkillOnlyRole` union were removed in P0/P1). `loadAgentSkills`/`loadAgentToolConfig` accept any key. The seeded SWE keys group as:
-- **Model-backed roles (7):** `implementer`, `reviewer`, `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant` — each has a GLOBAL `Agent` with a `modelSpec` (seeded). Note: `securityReview` is a legacy role preserved for forward compatibility; the canonical security analysis path is the three-agent **review network** (`runReviewNetwork`) which uses the `reviewer` model for all sub-agents. `channelAssistant` drives all channel-resident LLM paths (turns, ambient digest, reactive interjection) and may have `CHANNEL`-scoped overrides per channel in the resolver cascade.
-- **Sub-role personas (4):** `securityReviewer`, `domainLogicReviewer`, `performanceReviewer`, `decomposer` — their `Agent` has no `modelSpec`; it carries `inheritsModelFrom` (→ `reviewer` / `planner`) so `resolveAgent` binds the parent's model.
+**Agent identity is a free-form `string`** (`AnySkillRole = string`) — there is no enum. New agents
+are added as data, not code. Seeded built-ins split by how they bind a model:
 
-**First-class `Agent` entity (single source of truth since P1.5):** the `Agent` table holds per-role model/prompt/skills/tools — the legacy `ModelRoleConfig` / `AgentSkillAssignment` / `AgentToolConfig` tables were **removed** in P1.5. `resolveAgent(key, ctx)` (`lib/config/agentResolver.ts`) is the sole resolver: most-specific active version (cascade + run-start `WorkflowRun.agentVersions` pin or explicit `key@version`), model via `modelSpec`/`inheritsModelFrom`, skills via `skillRefs`, tools via `toolKeys`. `getModel`/`getModelSpec`/`loadAgentSkills`/`loadAgentToolConfig` are shims over it. `resolveAgentSpec` (`agentSpec.ts`) → `AgentSpec` → the generic `runAgent` activity. Library API `/api/v1/admin/agent-library`, UI `/admin/agents/library`. The declarative **`agent` workflow node** (P2) dispatches `agentRef` to the `runAgentNode` activity.
+- **Model-backed** (own `modelSpec`): `implementer`, `reviewer`, `planner`, `securityReview`,
+  `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`, `workflowAuthor`,
+  `workflowExplainer`.
+- **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` / `domainLogicReviewer` /
+  `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` / `prdDecomposer` (← `planner`);
+  `ciFixer` / `reviewFixer` / `gateFixer` / `mergeConflictResolver` (← `implementer`);
+  `lessonConsolidator` (← `commitToMemory`).
 
-**Progressive disclosure (implementer agent):** The implementer receives a compact L1 menu (skill name + description) in its system prompt and calls the `loadSkill` tool to fetch full `promptText` on demand — avoids injecting all skill text upfront. Reviewer sub-agents and planner/decomposer receive skill fragments directly in the system prompt.
+`securityReview` is a legacy key kept for forward compatibility — **do not route new code through
+it.** The canonical security path is the three-agent review network (`runReviewNetwork`), which
+binds the `reviewer` model for all three sub-agents.
 
-**Scope cascade** for skills and tool configs follows the same 5-level pattern as model config (the channel assistant added the `CHANNEL` tier; P5 added the `ORGANIZATION` tier):
-1. `WORKFLOW_TEMPLATE` scope (if the run's template has an override)
-2. `CHANNEL` scope (if `ctx.channelId` is set — channel-resident agent runs only; no-op for non-Slack runs)
-3. `TEAM` scope (if the team has an override)
-4. `ORGANIZATION` scope (P5; if the run's team belongs to an org with an override — `ctx.orgId` is derived transitively from `Team.orgId`)
-5. `GLOBAL` scope (system-wide; built-in skills are seeded here)
+`MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for
+cost pricing and the model-config UI labels — it is **not** the agent universe.
 
-Files: `packages/worker/src/lib/config/agentSkills.ts` (`loadAgentSkills`, `loadAgentToolConfig`, `skillsToPromptSuffix`), `packages/worker/src/lib/config/types.ts` (`AnySkillRole = string`; re-exports `ModelBackedAgentKey` from `@auto-swe/shared/agentKeys`), `packages/worker/src/lib/config/resolver.ts` (`resolveProviderCredential`, `resolveEmbeddingConfig`), `packages/worker/src/lib/config/agentResolver.ts` (`resolveAgent` — P1 Agent overlay; surfaces `mcpConnectionId`), `packages/worker/src/lib/config/agentSpec.ts` (`resolveAgentSpec`), `packages/worker/src/lib/config/agentRef.ts` (`parseAgentRef`), `packages/worker/src/lib/config/mcpConnection.ts` (`mcpUrlForConnection`, `resolveAgentMcpUrl` — P2/WS3), `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`), `packages/worker/src/activities/runAgent.ts` + `runAgentNode.ts`, gateway `packages/gateway/src/lib/agentLibraryService.ts`, `packages/shared/src/lib/skillScanner.ts`. Full API reference: `docs/agents.md`.
+**Skill** = a named prompt fragment (`promptText`) injected into the agent system message; it
+controls *how* an agent reasons. Built-ins live one-per-file in `packages/shared/src/skills/` and
+seed as `isBuiltIn` + `isVerified`. Custom skills seed as `isVerified: false`, and the flag resets
+to `false` whenever `promptText` is edited. Custom text is scanned by `scanSkillContent`
+(non-blocking; returns warnings).
 
-Note: `Agent` (and `ProviderCredential`) use partial unique indexes per scope — Prisma cannot express `WHERE scope = …` in upsert, so code uses `findFirst + conditional create` (not `upsert`) for GLOBAL-scope rows.
+**Tool** = an executable Mastra `createTool()` function. The implementer has four configurable
+workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS`
+and gated by the resolved Agent's `toolKeys`; `null` means all four are enabled. A fifth tool,
+`loadSkill`, is added automatically when skills are present and is **not** configurable via
+`toolKeys`. A sixth `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
+MCP tool loading: when an Agent lists `'mcp'` **and** references an active `mcp` Connection via
+`Agent.mcpConnectionId`, that server's tools bind at run time for the implementer activities and
+the generic agent node.
 
----
+**Progressive disclosure (implementer only):** the implementer receives a compact menu of skill
+names + descriptions and calls `loadSkill` to fetch full text on demand, so unused skills cost no
+tokens. Reviewer sub-agents, planner, and decomposer receive their fragments inline instead — they
+have no tools.
+
+**Scope cascade** — every per-key config resolves through five levels, most specific first:
+
+```
+WORKFLOW_TEMPLATE  →  CHANNEL  →  TEAM  →  ORGANIZATION  →  GLOBAL
+```
+
+`CHANNEL` applies only when `ctx.channelId` is set (channel-resident runs); `ORGANIZATION` only
+when the run's team belongs to an org (`ctx.orgId` derives transitively from `Team.orgId`). A
+deployment with neither behaves exactly like the three-level cascade. There is **no fallback past
+GLOBAL** — a missing row throws `ConfigMissingError`, and `assertConfigReady()` walks every
+required row at worker boot before the Temporal poller starts.
+
+> **Gotcha:** `Agent` and `ProviderCredential` use *partial* unique indexes per scope. Prisma cannot
+> express `WHERE scope = …` in an upsert, so use `findFirst` + conditional `create` — never
+> `upsert` — for GLOBAL-scope rows.
+
+Key files: `lib/config/agentResolver.ts` (`resolveAgent`), `lib/config/agentSpec.ts`,
+`lib/config/agentRef.ts`, `lib/config/agentSkills.ts`, `lib/config/resolver.ts`,
+`lib/config/mcpConnection.ts`, `agents/mcpTools.ts`, `activities/runAgent.ts` +
+`runAgentNode.ts`, gateway `lib/agentLibraryService.ts`, `shared/lib/skillScanner.ts`.
+Full reference: [`docs/agents.md`](./docs/agents.md).
 
 ### Runtime Security Scanners
 
-Six scanners run during agent execution. Each is independently advisory or blocking:
+Six scanners run during agent execution, each independently advisory or blocking:
 
-| Scanner | Stage | Type | Source |
+| Scanner | Stage | Behaviour | Source |
 |---|---|---|---|
-| **Skill content scanner** | Skill save + LLM output per TDD iteration | Advisory | DB-backed `INJECTION`/`EXFILTRATION` patterns (60 s TTL) via `skillScanner.ts` |
-| **Shell command scanner** | Pre-exec of every `bash` tool call | Soft-block | DB-backed `SHELL_COMMAND` patterns via `shellCommandScanner.ts`; returns error string to agent |
-| **Sensitive file scanner** | Pre-write of every `writeFile` call | Hard-block | DB-backed `SENSITIVE_FILE` patterns via `sensitiveFileScanner.ts`; 6 built-in rules (`.env`, PEM/key files, SSH keys, credentials JSON); admin-extensible |
-| **Pre-write content scanner** | Pre-write of every `writeFile` call | Soft-block | Regex rules in `preWriteSecurityCheck.ts`; tags trace error with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
-| **Code security scanner** | Post-commit diff scan | Advisory | DB-backed `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings flow through `CodeResult.codeSecurityFindings` to security reviewer |
-| **LLM output scanner** | Post-generate per TDD iteration | Advisory | `scanSkillContent` (INJECTION/EXFILTRATION patterns); wrapped in try/catch — DB failure must not abort the activity |
+| **Sensitive file** | Pre-write of every `writeFile` | **Hard-block** | `SENSITIVE_FILE` patterns via `sensitiveFileScanner.ts` |
+| **Pre-write content** | Pre-write of every `writeFile` | **Soft-block** (CRITICAL hard-blocks) | Static rules in `preWriteSecurityCheck.ts`; tags traces with `SECURITY_CHECK_FAILED_PREFIX` / `SECURITY_WARNINGS_PREFIX` |
+| **Shell command** | Pre-exec of every `bash` call | **Soft-block** (returns an error string to the agent) | `SHELL_COMMAND` patterns via `shellCommandScanner.ts` |
+| **Code security** | Post-commit diff scan | Advisory | `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings reach the security reviewer through `CodeResult.codeSecurityFindings` |
+| **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
+| **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 
-**Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` use `makePatternLoader()` from `scannerPatternLoader.ts` — a per-instance 60 s TTL factory that eliminates per-module cache boilerplate. Gateway and worker are separate processes — cache invalidation from pattern edits applies only via TTL expiry (no cross-process invalidation).
+**Built-in patterns:** 52 in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION,
+11 EXFILTRATION, 11 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced idempotently by
+`syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 
-**Built-in patterns:** 52 patterns in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION, 11 EXFILTRATION, 11 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced via `syncBuiltins()` at gateway startup (idempotent). Built-in patterns have `isBuiltIn: true`.
+**Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` share
+`makePatternLoader()` — a per-instance 60 s TTL cache. Gateway and worker are separate processes,
+so a pattern edit propagates only via TTL expiry; there is no cross-process invalidation.
 
-**Security events:** Scanner blocks tag `AgentTrace.error` with specific prefixes; advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The `GET /api/v1/admin/security-events` endpoint uses DB-level predicates per `SecurityEventType` so pagination is correct. See `/admin/security` (global dashboard) and `/runs/[id]` (per-run panel).
+**Safe regex flag subset:** `i`, `m`, `s`, `u`, `v`. `g` and `y` are rejected at the API to prevent
+stateful `lastIndex` bugs in cached RegExp objects.
 
-**Safe flag subset:** Regex flags accepted at the API: `i`, `m`, `s`, `u`, `v`. Flags `g` and `y` are rejected to prevent stateful `lastIndex` bugs in cached RegExp objects.
-
----
+**Security events:** blocks tag `AgentTrace.error` with the prefixes above; advisory events write
+named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
+`GET /api/v1/admin/security-events` endpoint derives each `SecurityEventType` with DB-level
+predicates so pagination stays correct.
 
 ### Multi-Model Support
 
-Model selection and provider credentials are fully DB-driven. Per-agent **model selection** (each agent's `modelSpec`) lives on the first-class `Agent`, managed at `/admin/agents/library` (admins) or per team from `/teams/<id>` (team owners); **provider credentials** and the **embedding model** are managed at `/admin/model-config`. There are no model/credential env vars; the worker refuses to start until the DB has every required row (verified by `assertConfigReady()` at boot).
+Model selection and provider credentials are fully DB-driven — there are **no model or credential
+env vars**, and the worker refuses to start until every required row exists.
 
-**Scope cascade** at activity-call time (worker's `resolveAgent(key, ctx)`):
+**Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`.
+Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the
+credential row — this covers OpenRouter, Ollama, vLLM, Groq, Cerebras, and similar.
 
-1. `WORKFLOW_TEMPLATE` row matching the run's template ID, if any
-2. `CHANNEL` row matching `ctx.channelId`, if set (channel-resident runs only; no-op for non-Slack runs)
-3. `TEAM` row matching the work request's team, if any
-4. `ORGANIZATION` row matching the team's owning org, if any (P5; `ctx.orgId` derived from `Team.orgId`)
-5. `GLOBAL` row (system-wide default — required for every role)
+**Credentials** are AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`.
+`CONFIG_ENCRYPTION_KEY` (base64, 32 bytes) is required to start the gateway or worker — both fail
+fast on a missing or wrong-length key. Rotation is not implemented; `key_version` is reserved for it.
 
-No fallback past GLOBAL — missing rows throw `ConfigMissingError`. The worker boot's `assertConfigReady()` walks every required row before the Temporal poller starts. The `ORGANIZATION` tier is consulted only when the run's team belongs to an org, so deployments that never create orgs behave exactly as the 3-level cascade did.
+**Mid-run config changes:** activities re-resolve their model on every call, so an edit lands on the
+next LLM call inside an already-running workflow rather than waiting for a fresh run.
 
-**Org multi-tenancy (P5):** the `Organization` boundary also carries RBAC and billing. `OrganizationMembership` (with the `OrgRole` enum: `ORG_ADMIN` / `ORG_MEMBER`) is the real access gate, enforced declaratively by the `requireAuth` onRequest hook: `requireAuth({ requiredOrgRole: 'ORG_MEMBER' | 'ORG_ADMIN', orgIdParam: 'orgId' })` resolves the membership for the route's `:orgId` param and checks the org role (`ORG_ADMIN` > `ORG_MEMBER`) — mirroring the team-scoped `requiredTeamRole`. So an `ORG_ADMIN` self-serves their own org regardless of platform role, and the platform `ADMIN` role bypasses the org check entirely. The one case the hook can't cover — work-request submission, where the org is derived from the target connection inside the handler rather than a route param — uses the `assertOrgAccess` helper (`packages/gateway/src/lib/orgAccess.ts`) inline (application-layer row isolation). Member CRUD lives at `/api/v1/admin/organizations/:orgId/members` and budget read/update at `/api/v1/admin/organizations/:orgId/budget`; both are surfaced in the `/admin/organizations/[orgId]` admin page. Billing aggregates per-org cost/runs/tokens into `OrgMonthlyUsage` — `finalizeWorkflowRun` runs the run-denormalize update + the `increment` upsert in one transaction, guarded by the pre-read `endedAt`, so a Temporal activity retry can't double-count (`runsCompleted` counts only `SUCCESS`; cost/tokens accrue for every terminal status). `Organization.monthlyBudgetUsdCents` caps monthly spend — work-request submit returns `402 ORG_BUDGET_EXCEEDED` when the current month's accrued cost meets or exceeds the cap. The month-bucket key (`currentYearMonth`, `'YYYY-MM'`) lives in `@auto-swe/shared/lib/billing` so the worker writer and gateway reader share one formula.
+Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 
-**Bootstrap flow** (fresh deployment):
+| Agent | Default |
+| ----- | ------- |
+| `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-4-8` |
+| `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-4-6` |
+| `evalJudge` | `anthropic/claude-haiku-4-5-20251001` |
+| (embedding) | `openai/text-embedding-3-large` |
 
-1. `yarn db:migrate && yarn db:generate && yarn db:seed` — creates the admin user.
-2. Start gateway + web only.
-3. The DB seed already created the 8 model-backed GLOBAL `Agent` rows (the 6 SWE roles + `channelAssistant` + `evalJudge`, all with default model specs) + the `EmbeddingConfig` singleton. Sign in as admin at `/admin/model-config → Credentials` and add a `ProviderCredential`.
-4. Add at least one `ProviderCredential` for the providers the seeded specs reference (Anthropic by default; OpenAI for embeddings).
-5. Go to `/admin/integrations → GitHub`. Enter the GitHub PAT and webhook secret. Save.
-6. Configure any other integrations (Slack, Storage, OAuth) as needed.
-7. Start the worker.
-
-Per-role baked-in defaults (seeded onto the GLOBAL Agents by `syncAgents`):
-
-| Role              | Default                       |
-| ----------------- | ----------------------------- |
-| `implementer`     | `anthropic/claude-opus-4-8`   |
-| `reviewer`        | `anthropic/claude-opus-4-8`   |
-| `planner`         | `anthropic/claude-sonnet-4-6` |
-| `securityReview`  | `anthropic/claude-sonnet-4-6` |
-| `validateContext` | `anthropic/claude-sonnet-4-6` |
-| `commitToMemory`  | `anthropic/claude-opus-4-8`   |
-| (embedding)       | `openai/text-embedding-3-large` |
-
-**Spec format** is `<provider>/<model-id>`. Built-in providers: `anthropic`, `openai`, `google`. Any other provider name routes through `@ai-sdk/openai-compatible` and requires an `apiBase` on the credential row — covers OpenRouter, Ollama, vLLM, Groq, Cerebras, Inflection Pi, OpenCode Go, etc.
-
-**Embeddings** have a dedicated singleton `EmbeddingConfig` table (one row, system-wide). The chosen model must produce 1536-dim vectors — `generateEmbedding` throws if it doesn't.
-
-**Credentials** are stored AES-256-GCM encrypted in `provider_credentials.api_key_ciphertext`. The encryption key (`CONFIG_ENCRYPTION_KEY`, base64 32 bytes) is required to start gateway or worker — fail fast on missing/wrong-length. Rotation is not yet implemented; the `key_version` column is reserved for it.
-
-**Mid-run config changes:** activities re-resolve their model on each call. An edit lands on the next LLM call within an already-running workflow rather than waiting for a fresh run. The dashboard surfaces this in a standing banner.
-
-**Latest model IDs at the time of writing** (override defaults from the dashboard; pricing for these is in `MODEL_PRICES`):
+Current model IDs — override defaults from the dashboard; pricing for these lives in `MODEL_PRICES`:
 
 | Provider  | Reasoning / heavy            | Balanced                    | Fast / cheap                            |
 | --------- | ---------------------------- | --------------------------- | --------------------------------------- |
@@ -322,32 +378,43 @@ Per-role baked-in defaults (seeded onto the GLOBAL Agents by `syncAgents`):
 | OpenAI    | `gpt-5-5-pro`                | `gpt-5-5`                   | `gpt-5`                                 |
 | Google    | `gemini-2.5-pro`             | `gemini-2.5-flash`          | `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash-lite` |
 
-Deprecation warning: `claude-sonnet-4-20250514` (the previous default for planner / securityReview / validateContext) **retires 2026-06-15** — anyone with a custom env override pinned to that ID must migrate to `claude-sonnet-4-6` before that date.
+> **Deprecation:** `claude-sonnet-4-20250514` retires **2026-06-15**. Any custom override still
+> pinned to that ID must migrate to `claude-sonnet-4-6`.
+
+Bootstrap for a fresh deployment is in [`docs/model-configuration.md`](./docs/model-configuration.md)
+and §8 below.
 
 ### Cost Tracking
 
-`packages/worker/src/lib/costTracking.ts` prices each call from `MODEL_PRICES` (USD per MTok). Unknown models fall back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span — usage is still recorded so the workflow runs aren't lost. Add new entries to `MODEL_PRICES` as roles are routed to new models, or set per-model env overrides:
+`packages/worker/src/lib/costTracking.ts` prices each call from `MODEL_PRICES` (USD per MTok).
+Unknown models fall back to zero cost and emit `llm.cost_pricing_known=false` on the OTel span —
+usage is still recorded, so runs are never lost to a missing price. Add new entries as agents are
+routed to new models, or set a per-model env override:
 
 ```
 MODEL_PRICE_<PROVIDER>_<MODEL>=<input>:<output>   # USD per MTok, non-alphanumerics → _
 ```
 
-`recordLlmUsage()` takes a `ModelBackedAgentKey` so the price is looked up via the same `getModelSpec()` the agent uses to bind its model.
+Pricing keys off the resolved `provider/model` spec only — it is decoupled from agent identity,
+which is retained purely for attribution and telemetry.
 
 ### Embeddings
 
-`packages/worker/src/lib/embeddings.ts` resolves its `<provider>/<model>` spec, API key, and (for OpenAI-compatible providers) `apiBase` entirely from the DB-backed `EmbeddingConfig` singleton via `resolveEmbeddingConfig()` — there are no `EMBEDDING_MODEL` / `<PROVIDER>_API_BASE` env vars (model + credential config is fully DB-driven; see `docs/model-configuration.md`). Built-in: `openai`; any other provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase` on the credential row. Output **must** be 1536-dimensional — the `memory_items.embedding` column is fixed at `vector(1536)` and the helper throws if the model returns a different shape.
+`packages/worker/src/lib/embeddings.ts` resolves its spec, API key, and (for OpenAI-compatible
+providers) `apiBase` from the DB-backed `EmbeddingConfig` singleton. Built-in: `openai`; any other
+provider name is treated as an OpenAI-compatible endpoint and requires an `apiBase`.
+
+Output **must** be 1536-dimensional — `memory_items.embedding` is fixed at `vector(1536)` and the
+helper throws if the model returns a different shape.
 
 ### Agent Observability (AgentTracer)
 
-Every LLM-calling activity must use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows in the `agent_traces` table, linked to the `WorkflowRun`. The `/runs/[id]` viewer uses them to show the full tool-call sequence per activity attempt.
-
-Pattern used in all LLM activities (`executeImplementation`, `commitToMemory`, `consolidateLessons`, `qualityGates`, etc.):
+Every LLM-calling activity must use `AgentTracer` to record tool calls, LLM responses, and activity
+events. These persist as `AgentTrace` rows and power the `/runs/[id]` viewer.
 
 ```typescript
 const tracer = new AgentTracer();
 try {
-  // LLM calls, tool calls, and event recording:
   tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
   tracer.addLlmResponse({ role, inputJson: { systemPrompt, userMessage }, outputJson, durationMs });
   tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
@@ -358,7 +425,9 @@ try {
 }
 ```
 
-`persistActivityTrace` from `packages/worker/src/lib/activityContext.ts` auto-resolves the `runId` and `attempt` from Temporal context. **Always call it in a `finally` block so traces are persisted even when the LLM call throws.** Calling it only on the success path silently drops all trace records when the activity fails — the run viewer will show no events for the failed attempt.
+`persistActivityTrace` (from `lib/activityContext.ts`) auto-resolves `runId` and `attempt` from
+Temporal context. **Always call it in a `finally` block.** Calling it only on the success path
+silently drops every trace record when the activity fails — exactly when you need them.
 
 ### Temporal Workflow Constraints
 
@@ -371,8 +440,8 @@ try {
 
 - The worker process needs the Docker socket mounted (`/var/run/docker.sock`)
 - Containers are created with `docker run`, commands executed with `docker exec`
-- **Always** clean up containers in a `finally` block — leaked containers will accumulate
-- Shell escaping: the workspace `exec` function escapes single quotes; be aware of injection risk from agent-generated commands
+- **Always** clean up containers in a `finally` block — leaked containers accumulate
+- Shell escaping: `shellQuote()` in `activities/workspace.ts` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the injection boundary for agent-generated commands — treat any change to it, or any caller that bypasses it, as security-critical.
 
 ### Yarn 4 Docker Builds
 
@@ -380,7 +449,7 @@ try {
 - `yarn workspaces focus <pkg> --production` strips devDependencies in the prod-deps stage
 - Dependencies are hoisted to root `node_modules/`; per-workspace `node_modules/` may be empty
 - Prisma generated client lives in `node_modules/.prisma` — must be explicitly copied from builder to runtime
-- Root `package.json` must be in runtime image for workspace symlink resolution
+- Root `package.json` must be in the runtime image for workspace symlink resolution
 - **No `corepack enable`** needed in the runtime stage — it only runs `node`
 
 ---
@@ -392,8 +461,9 @@ try {
 - Do **NOT** auto-merge PRs on target repositories — humans merge
 - Do **NOT** store secrets in code or commit `.env` files
 - Do **NOT** modify the Temporal server or its configuration
-- Do **NOT** use raw SQL except for pgvector operations — use Prisma client for everything else
-- Do **NOT** add dependencies without checking if an existing one covers the need
+- Do **NOT** use raw SQL except for pgvector operations — use the Prisma client for everything else
+- Do **NOT** add dependencies without checking whether an existing one covers the need
+- Do **NOT** write status prose, PR numbers, or phase labels into a living doc (§5)
 
 ---
 
@@ -403,47 +473,44 @@ try {
 # 1. Install
 corepack enable && yarn install
 
-# 2. Start infrastructure (postgres + postgres-temporal + temporal + minio — otel-lgtm starts with the app overlay, not here)
-cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally GITHUB_TOKEN/GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
+# 2. Start infrastructure (postgres + postgres-temporal + temporal + minio)
+cp .env.example .env    # Fill in CONFIG_ENCRYPTION_KEY, SEED_ADMIN_PASSWORD, and optionally
+                        # GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
 
 # 3. Database setup
 yarn db:migrate && yarn db:generate && yarn db:seed
-#  ↳ seeds the admin user, default team, sample repo, and default workflow
-#    template. Re-running `yarn workspace @auto-swe/shared exec prisma migrate reset`
-#    is the cleanest way to
-#    start over locally (two migrations: a generated `init` baseline + a
-#    hand-written `custom_constraints_and_indexes` file for DDL the Prisma DSL
-#    can't express — CHECK constraints, partial unique indexes, the pgvector
-#    HNSW index, array NOT NULL, seeds; see packages/shared/src/prisma/migrations).
+#  ↳ seeds the admin user, default team, sample connection, default workflow template,
+#    built-in skills + scanner patterns, and the GLOBAL Agent rows.
 
-# 4. Start gateway + web first (worker needs GitHub config in DB before starting)
+# 4. Start gateway + web first (the worker needs GitHub config in the DB before it starts)
 yarn dev:gateway         # Terminal 1 — http://localhost:8080
 yarn dev:web             # Terminal 2 — http://localhost:3000
 
-# 4b. Configure integrations in the admin UI
+# 5. Configure integrations in the admin UI
 #    Sign in at http://localhost:3000 with admin@auto-swe.local + SEED_ADMIN_PASSWORD
-#    → /admin/model-config → Credentials → add a provider credential (agents are seeded with default specs)
-#    → /admin/integrations → GitHub → enter GITHUB_TOKEN + GITHUB_WEBHOOK_SECRET → Save
-#    (or skip if GITHUB_TOKEN is set in .env — the env var fallback still works)
+#    → /admin/model-config → Credentials → add a provider credential
+#    → /admin/integrations → GitHub → enter the PAT + webhook secret → Save
+#      (or skip if GITHUB_TOKEN is set in .env — the env fallback still works)
 
-# 5. Start the worker
-yarn dev:worker          # Terminal 3 — reads GitHub token from DB (or .env fallback)
+# 6. Start the worker
+yarn dev:worker          # Terminal 3 — reads GitHub config from the DB
 
-# 6. Drive it from the dashboard
-#    Either click "+ Submit work request" or follow the onboarding panel.
-#    For headless / scripted use, mint a PAT at Settings → API tokens and:
+# 7. Drive it from the dashboard, or headlessly with a PAT from Settings → API tokens:
 TOKEN=<paste-PAT>
 curl -X POST http://localhost:8080/api/v1/work-requests \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"externalTicketId":"JIRA-1","description":"Add GET /health endpoint","repoIds":["<repo-uuid-from-seed>"]}'
-
-# 7. Monitor
-# Dashboard:       http://localhost:3000     (KPIs + needs-attention queue)
-# Run history:     http://localhost:3000/runs
-# Temporal UI:     http://localhost:8233    (workflow history, signals)
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"externalTicketId":"JIRA-1","description":"Add GET /health endpoint","repoIds":["<connection-uuid>"]}'
 ```
+
+Monitor at `http://localhost:3000` (dashboard), `/runs` (history), and `http://localhost:8233`
+(Temporal UI). To start over locally,
+`yarn workspace @auto-swe/shared exec prisma migrate reset` is the cleanest path — there are two
+migrations, a generated `init` baseline plus a hand-written `custom_constraints_and_indexes` file
+for DDL the Prisma DSL cannot express (CHECK constraints, partial unique indexes, the pgvector HNSW
+index, array `NOT NULL`).
+
+Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 
 ---
 
@@ -452,8 +519,10 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 | Decision                     | Choice                                                    | Rationale                                                         |
 | ---------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
 | HTTP framework               | Fastify 5.x over Express                                  | ~3x throughput, built-in schema validation, plugin architecture   |
-| Auth                         | better-auth sessions (browser) + PATs (CLI/CI); short-lived JWTs only via the session-token bridge | One identity store; PATs survive restarts; the legacy refresh-token rotation flow was removed (ARCH-4) |
-| DinD over K8s                | `docker run`/`exec`                                       | No cluster needed; same isolation model, zero infra beyond Docker |
-| PAT or GitHub App            | PAT for simplicity; GitHub App for production             | GitHub App: short-lived tokens, per-installation scope, full audit trail; admin UI at /admin/integrations |
-| pgvector for memory          | Vector embeddings on MemoryItem                          | Semantic similarity search for agent context enrichment           |
+| Auth                         | better-auth sessions (browser) + PATs (CLI/CI); short-lived JWTs via the session-token bridge | One identity store; PATs survive restarts |
+| DinD over K8s                | `docker run` / `exec`                                     | No cluster needed; same isolation model, zero infra beyond Docker |
+| PAT or GitHub App            | PAT for simplicity; GitHub App for production             | GitHub App gives short-lived tokens, per-installation scope, and a full audit trail |
+| pgvector for memory          | Vector embeddings on `MemoryItem`                         | Semantic similarity search for agent context enrichment           |
 | Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |
+| Agent identity as a string   | No enum; agents are data                                  | New agents ship as seed content, not code changes                 |
+| Human-governed merges        | The system opens PRs and never merges                     | The one decision that stays human                                 |

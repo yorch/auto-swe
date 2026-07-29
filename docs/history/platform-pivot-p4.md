@@ -1,5 +1,7 @@
 # Platform Pivot — P4 Epic: Distribution layer (bundles, install, coded capabilities)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Build plan for **Phase P4** of the [platform pivot](./platform-pivot.md) (§P4). P4 makes library
 > content **distributable** across deployments/parties and lets third parties add **new
 > capabilities**. P0–P3 deliberately made the libraries export/import-friendly (versioned,

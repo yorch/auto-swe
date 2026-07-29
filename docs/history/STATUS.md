@@ -1,10 +1,12 @@
 # STATUS.md — Implementation Status
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > **Frozen reference.** This file maps the original 4-phase plan (`PLAN.md`) against what
 > was actually built, plus the post-Phase-4 work through the June 2026 burst. It is **no
 > longer updated** for ongoing work. For the platform-pivot phases (P0–P5) and current
-> system state, see [`docs/platform-pivot.md`](./docs/platform-pivot.md), [`AGENTS.md`](./AGENTS.md),
-> and [`docs/architecture.md`](./docs/architecture.md). Last content update: 2026-06-10.
+> system state, see [`docs/platform-pivot.md`](./platform-pivot.md), [`AGENTS.md`](../../AGENTS.md),
+> and [`docs/architecture.md`](../architecture.md). Last content update: 2026-06-10.
 
 ## Legend
 
@@ -129,7 +131,7 @@ Work done after the original 4-phase plan was complete:
 
 ## Post-Phase 4: Configurable Workflow Engine
 
-Roadmap + decisions live in [`docs/configurable-workflows.md`](./docs/configurable-workflows.md). All 9 phases of the engine have shipped.
+Roadmap + decisions live in [`docs/configurable-workflows.md`](./configurable-workflows.md). All 9 phases of the engine have shipped.
 
 | Item                                                                                                  | Status | PR    | Notes                                                                                                                                                                                                                                |
 | ----------------------------------------------------------------------------------------------------- | ------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -177,7 +179,7 @@ The early-June feature burst (PRs #48–#68 plus the post-review remediation pas
 
 ## Platform Pivot: SWE-system → generic durable-workflow platform (complete)
 
-RFC + roadmap in [`docs/platform-pivot.md`](./docs/platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p5.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
+RFC + roadmap in [`docs/platform-pivot.md`](./platform-pivot.md); per-phase build plans + live status in `docs/platform-pivot-p0.md` … `-p5.md`. Turns the SWE-specific engine into a generic agentic-workflow platform with SWE as seed content.
 
 | Phase | Status | Notes |
 | ----- | ------ | ----- |

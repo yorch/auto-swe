@@ -1,5 +1,7 @@
 # Configurable Workflows — Roadmap
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 Living planning doc for the configurable-workflows initiative. Each phase is sized to land in one PR. Pick up here when starting a follow-up PR.
 
 ---

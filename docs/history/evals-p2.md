@@ -1,11 +1,13 @@
 # Evals — P2: `eval` workflow node + LLM-as-judge + calibration + canary
 
-> Build plan for **Phase P2** of the [evals RFC](./evals.md). P2 adds the **soft / subjective** axis
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Build plan for **Phase P2** of the [evals RFC](./evals-rfc.md). P2 adds the **soft / subjective** axis
 > that execution can't cover: a declarative **`eval` workflow node**, an **LLM-as-judge** scorer
 > (rubric-based, run via a dedicated `evalJudge` Agent), **judge calibration** against a
 > decontaminated human channel, and a **production canary** for fast per-change A/B.
 >
-> Parent RFC: [`evals.md`](./evals.md) §4.1 (`eval` node), §4.4 (calibration), §4.5 (canary), §6,
+> Parent RFC: [`evals.md`](./evals-rfc.md) §4.1 (`eval` node), §4.4 (calibration), §4.5 (canary), §6,
 > §9 (judge weakness, calibration confounding, Goodhart, decision rule, implementer/rubric wall).
 > Builds on [`evals-p1.md`](./evals-p1.md) (harness, scorers, stats). **Judge is advisory until
 > calibrated** — it ranks, it does not gate, until its κ clears a threshold (RFC §2, §9).

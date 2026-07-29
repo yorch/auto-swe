@@ -1,5 +1,7 @@
 # Constants & Configuration Assessment (2026-07)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > A survey of the tunable / policy / operational constants scattered across the
 > codebase, with a disposition for each: keep inline, **centralize** (dedupe into
 > a shared const), move to **ENV** (deploy-time infra knob), or move to

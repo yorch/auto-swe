@@ -1,12 +1,14 @@
 # Evals — P0: Signal capture
 
-> Build plan for **Phase P0** of the [evals RFC](./evals.md). P0 is the cheap, additive,
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Build plan for **Phase P0** of the [evals RFC](./evals-rfc.md). P0 is the cheap, additive,
 > pivot-agnostic first slice: stand up the `EvalResult` table and **passively capture** the quality
 > signals the system *already computes* — quality-gate pass/fail, review-network verdicts, and the
 > human PR merge/reject — as first-class, queryable, trend-able rows. **Zero new LLM cost.** No
 > offline harness, no judge, no datasets, no dashboards beyond one minimal read path.
 >
-> Parent RFC: [`evals.md`](./evals.md) — see §4.2 (models), §4.4 (review verdicts → scores), §6
+> Parent RFC: [`evals.md`](./evals-rfc.md) — see §4.2 (models), §4.4 (review verdicts → scores), §6
 > (roadmap), §9 (risks). P0 is **greenlit** independent of the P1 spikes: none of the §9 risks touch
 > it, and it accumulates the labeled corpus the later phases need.
 

@@ -1,10 +1,12 @@
 # MVP Architecture & Design (Phase 1: Single-Repo Agent Loop)
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > **Historical design document.** Phase 1 has shipped. This file is the original architecture & design rationale for the MVP — it explains the *why* behind decisions still visible in the code.
 >
 > **The hardcoded `EngineeringWorkflow` no longer exists.** It was deleted as part of the configurable-workflow engine (PR #13) and replaced by a single generic `RunnableWorkflow` that interprets a JSON `WorkflowSpec` (default seed: `default-engineering@v1`, behaviourally identical to the old loop). Wherever this doc names `EngineeringWorkflow`, read it as "the seeded default spec." See [`configurable-workflows.md`](./configurable-workflows.md) for the current runtime.
 >
-> For what was actually built, see [STATUS.md](../STATUS.md). For current conventions and tech stack, see [AGENTS.md](../AGENTS.md). For a quickstart, see the [README](../README.md).
+> For what was actually built, see [STATUS.md](./STATUS.md). For current conventions and tech stack, see [AGENTS.md](../../AGENTS.md). For a quickstart, see the [README](../README.md).
 
 ## 1. MVP Goal
 

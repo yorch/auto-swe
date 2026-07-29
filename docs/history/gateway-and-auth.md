@@ -1,6 +1,8 @@
 # Interaction Gateway & Authentication
 
-> Original design doc for the Gateway service — extracted from [PLAN.md](../PLAN.md). Phase 3 has shipped; the JWT / RBAC / Slack layer described here is implemented under `packages/gateway/`. Note: the doc describes RS256 JWTs with K8s Secrets as the canonical mode; the shipped gateway also supports HS256 (the default for Docker Compose) — see [README](../README.md) and `packages/gateway/src/plugins/auth.ts` for the actual conditional behaviour.
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Original design doc for the Gateway service — extracted from [PLAN.md](./PLAN.md). Phase 3 has shipped; the JWT / RBAC / Slack layer described here is implemented under `packages/gateway/`. Note: the doc describes RS256 JWTs with K8s Secrets as the canonical mode; the shipped gateway also supports HS256 (the default for Docker Compose) — see [README](../README.md) and `packages/gateway/src/plugins/auth.ts` for the actual conditional behaviour.
 
 ## 1. Authentication & Session Strategy
 

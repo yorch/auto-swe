@@ -1,6 +1,6 @@
 # Product Overview — auto-swe
 
-> **Current-state reference.** This is the product/capability synthesis: what auto-swe is, who it is for, the value it delivers, the end-to-end use cases it covers, and what is deliberately out of scope. For the technical "how" see [architecture.md](./architecture.md) and [agents.md](./agents.md); for shipped-vs-planned status see [STATUS.md](../STATUS.md).
+> What auto-swe is, who it is for, the value it delivers, the end-to-end use cases it covers, and what is deliberately out of scope. For the technical "how" see [architecture.md](./architecture.md) and [agents.md](./agents.md).
 
 ---
 
@@ -80,8 +80,8 @@ flowchart TB
 
 | Domain | Capabilities |
 |---|---|
-| **Agent system** | 11 roles (7 model-backed + 4 skill-only sub-personas); multi-agent review network; TDD implementation loop; channel-resident `channelAssistant` role with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
-| **Skills** | 27 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
+| **Agent system** | 21 seeded agents (10 model-backed + 11 sub-role personas); multi-agent review network; TDD implementation loop; channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
+| **Skills** | 28 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
@@ -91,7 +91,7 @@ flowchart TB
 | **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), magic-link, account linking, new-user approval |
 | **Integrations** | GitHub (PAT *or* GitHub App), Slack (slash command + interactive), issue trackers (Jira / Linear / GitHub Issues), S3/MinIO storage, email (SMTP/Resend) — all DB-configured, encrypted, with connection tests + audit log |
 | **Observability** | AgentTracer (tool calls / LLM responses / events per attempt); OTel → Grafana LGTM; 3-mode run viewer (split / transcript / flight-recorder replay) |
-| **Surfaces** | ~35 web dashboard pages, full CLI, REST API, Slack |
+| **Surfaces** | Web dashboard, full CLI, REST API, Slack |
 
 ---
 
@@ -173,11 +173,34 @@ These are architecturally enforced, not just policy:
 
 ## 8. Maturity
 
-By its own 9-phase build history, auto-swe is **feature-complete rather than aspirational** — the configurable-workflow engine, HITL, security scanners, multi-repo epics, GitHub App auth, scheduled requests, Slack integration, CLI, and analytics are all shipped. Test coverage grew from 146 (Phase 1) to 341+ across the phases, with property-based coverage of the workflow interpreter.
+The feature surface described above is built: the workflow engine, HITL, the security scanners,
+multi-repo epics, GitHub App auth, scheduled requests, Slack integration, evals, the distribution
+layer, the CLI, and analytics all exist in code, with the unit and workflow suites green.
 
-- **Shipped-vs-planned matrix:** [STATUS.md](../STATUS.md)
-- **Design rationale (39 architecture decisions):** [configurable-workflows.md](./configurable-workflows.md)
-- **Known follow-ups:** keyboard traversal in the interactive template *editor* (`TemplateEditor`) — the read-only run/diff DAG viewer (`WorkflowDag`) now supports arrow-key edge traversal, Home-to-entry, Enter-to-open, and per-node screen-reader labels, but the editor still relies on React Flow's native keyboard behavior. **Deliberate limitations** (see §7, not defects): IP-direct shell egress is unfiltered (DNS-only) and wildcard egress entries are informational-only — both would require an in-path egress proxy/resolver, out of scope for the current DNS/`/etc/hosts` mechanism. (Resolver- and shell-step memory *are* wired into `commitToMemory` via `recordLessonBackground` and covered by tests — an earlier "not yet wired" note was stale.) MCP tool integration is end-to-end — `mcp` Connection, binding in all implementer activities + generic agent node (P2/WS3), `mcp` workflow node (P2/WS4), and canvas authoring (P2/WS5) are all shipped. See [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in).
+Read that precisely. **The unit suite runs against mocked Docker, mocked Temporal, and mocked LLM
+calls**, so it establishes that the wiring is coherent — not that an agent given a real ticket and a
+real repository produces a pull request worth merging. Verifying the Temporal, Docker, and LLM paths
+end to end requires the full infrastructure stack, and the channel assistant in particular is newly
+built rather than validated under sustained real-world use.
+
+**The generic-platform surface is thinner than the engine underneath it.** The engine is
+domain-agnostic — templates declare an `inputSchema`, runs carry a typed `RunInput`, and memory and
+connections are generic. The *submit surface* has not caught up: there is no generic `POST /runs`
+endpoint, `RunInput.externalTicketId` is still non-nullable, trigger event→input mappings are
+config rather than a persisted `Trigger` table, and there is no live issues-webhook receiver. A
+non-SWE workflow therefore still enters through the SWE-shaped work-request route and must supply a
+ticket ID.
+
+Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
+so IP-direct connections are unfiltered and wildcard entries are informational only. Both would
+require an in-path egress proxy or resolver.
+
+Tenant isolation is enforced in the application layer — org and team membership checks on the
+routes — not by database row-level policies.
+
+Known gap: the interactive template editor still relies on React Flow's native keyboard behaviour.
+The read-only run and diff DAG viewer supports arrow-key edge traversal, Home-to-entry,
+Enter-to-open, and per-node screen-reader labels.
 
 ---
 
@@ -190,5 +213,5 @@ By its own 9-phase build history, auto-swe is **feature-complete rather than asp
 | HITL node types, signal flow, inbox | [hitl-workflows.md](./hitl-workflows.md) |
 | Model + credential configuration | [model-configuration.md](./model-configuration.md) |
 | Production deployment | [deployment.md](./deployment.md) |
-| Shipped vs planned | [STATUS.md](../STATUS.md) |
 | Conventions, tech stack, model defaults | [AGENTS.md](../AGENTS.md) |
+| Design rationale behind decisions already made | [history/](./history/) |

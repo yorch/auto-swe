@@ -1,6 +1,8 @@
 # Platform Pivot — P1 Epic: Agent Library (first-class, reusable, governed)
 
-> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [agents.md](./agents.md) and [STATUS.md](../STATUS.md).
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> **Status: ✅ Complete — historical build plan (archived).** Preserved for design rationale; current state lives in [agents.md](../agents.md) and [STATUS.md](./STATUS.md).
 
 > Build plan for **Phase P1** of the [platform pivot](./platform-pivot.md). P1 makes Agents
 > **real, reusable objects** users create, version, govern, and share across templates — instead of

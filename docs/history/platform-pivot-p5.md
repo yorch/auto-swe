@@ -1,12 +1,14 @@
 # Platform Pivot — P5 Epic: UX layering + multi-org
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Build plan for **Phase P5** of the [platform pivot](./platform-pivot.md) (§P5). P5 is the final
 > phase: it promotes the `orgId` stub from P3/EVOL-3 into a first-class **tenant boundary** (org-scoped
 > RBAC, config cascade, and billing), and polishes the authoring/canvas UX layered on the P0–P4 engine.
 >
 > Status: ✅ **Done** — all work-streams merged (#91, #102). Current state is documented in
-> [`AGENTS.md`](../AGENTS.md) (§"System Config", §"Multi-Model Support" → "Org multi-tenancy (P5)") and
-> [`architecture.md`](./architecture.md). This file is the **archived build plan**; code is
+> [`AGENTS.md`](../../AGENTS.md) (§"System Config", §"Multi-Model Support" → "Org multi-tenancy (P5)") and
+> [`architecture.md`](../architecture.md). This file is the **archived build plan**; code is
 > authoritative where they diverge.
 
 ---

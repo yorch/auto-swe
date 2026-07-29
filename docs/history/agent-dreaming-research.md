@@ -1,5 +1,7 @@
 # Agent Dreaming — Research Report
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > Deep research report generated 2026-06-03.
 > Methodology: 5 parallel search angles → 23 sources fetched → 110 claims extracted → 25 adversarially verified (3-vote majority required) → 14 killed → 11 confirmed → 7 synthesized findings.
 

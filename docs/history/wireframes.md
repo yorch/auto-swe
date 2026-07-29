@@ -1,5 +1,7 @@
 # Web Dashboard — ASCII Wireframes
 
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 > **Tech stack:** Next.js 16 + React 19 + Tailwind CSS 4 + custom "Workshop Telemetry" primitives (no shadcn/Radix; see `packages/web/src/components/ui/`) + Recharts
 > **API base:** `GET/POST/PATCH/PUT/DELETE /api/v1/*` (gateway on `:8080`)
 > **Auth:** any of (a) better-auth session cookie (browser, default), (b) JWT bearer (legacy email+password, HS256 by default for Docker Compose; RS256 if `JWT_PRIVATE_KEY_PATH` is set), or (c) personal access token (`ats_…`) for CLI / scripts — mint at Settings → API tokens.

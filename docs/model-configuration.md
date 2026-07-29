@@ -10,12 +10,12 @@ The DB is the sole source of truth for LLM config — no env vars for models or 
 
 ### Scopes
 
-Per-role model + system-prompt config lives on the first-class `Agent` table (the `ModelRoleConfig` table was removed in P1.5). Every `Agent` row lives at one of five scopes:
+Per-role model + system-prompt config lives on the first-class `Agent` table. Every `Agent` row lives at one of five scopes:
 
 | Scope | Discriminator | Purpose |
 | ----- | ------------- | ------- |
 | `GLOBAL` | none | System-wide default. Exactly one row per role. |
-| `ORGANIZATION` | `orgId` | Overrides GLOBAL for runs owned by teams in one org (P5). |
+| `ORGANIZATION` | `orgId` | Overrides GLOBAL for runs owned by teams in one org. |
 | `TEAM` | `teamId` | Overrides ORGANIZATION + GLOBAL for runs owned by one team. |
 | `CHANNEL` | `channelId` | Overrides TEAM for channel-resident runs only (Slack channel assistant). |
 | `WORKFLOW_TEMPLATE` | `workflowTemplateId` | Overrides all lower scopes for runs of one template. |
@@ -65,7 +65,7 @@ The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderC
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created 8 model-backed GLOBAL `Agent` rows (the 6 SWE roles + `channelAssistant` + `evalJudge`, all with default model specs) + the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/admin/model-config` → Credentials.
+3. The DB seed already created the built-in `Agent` rows — 10 model-backed with default model specs, plus 11 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/admin/model-config` → Credentials.
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 

@@ -1,6 +1,8 @@
 # Workflow & Activity Implementations
 
-> Original design doc for the Temporal worker — extracted from [PLAN.md](../PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, memory commit, and lesson consolidation described here are implemented under `packages/worker/`.
+> **Frozen.** Point-in-time document, preserved for design rationale. It is not maintained: the code and the current references in [`docs/`](../README.md) are authoritative wherever they diverge.
+
+> Original design doc for the Temporal worker — extracted from [PLAN.md](./PLAN.md). Phases 2–4 have shipped; the review network, CI self-healing loop, memory commit, and lesson consolidation described here are implemented under `packages/worker/`.
 >
 > **Two implementation drifts to keep in mind while reading:**
 >

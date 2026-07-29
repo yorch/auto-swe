@@ -30,6 +30,7 @@
     "docker:app:down": "run docker:app down",
     "docker:app:logs": "run docker:app logs -f",
     "docker:app:build": "run docker:app build",
+    "docs:check": "node scripts/check-doc-drift.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",

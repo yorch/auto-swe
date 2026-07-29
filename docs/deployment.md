@@ -19,7 +19,7 @@ Five long-running processes plus one Docker daemon:
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.8.1`                          | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | AWS S3 / Cloudflare R2 / `minio/minio` / etc.      | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
-The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request (see [`data-and-infra.md` §3.2](./data-and-infra.md#32-executor-image-selection)). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request (see [`data-and-infra.md` §3.2](./history/data-and-infra.md#32-executor-image-selection)). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
 > **Local-dev shortcut.** `yarn docker:infra:up` brings up MinIO (the `minio` + `minio-setup` containers in `docker-compose.infra.yml`) and pre-creates the `auto-swe-artifacts` bucket. Uncomment the `ARTIFACT_S3_*` and `AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY` blocks in `.env.example` (defaults match the MinIO container) to flip the worker onto S3 mode locally. Console at <http://localhost:9001> with `minioadmin`/`minioadmin`.
 
@@ -393,7 +393,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 ## 11. Where this guide ends
 
 This doc covers infrastructure setup and the first happy-path workflow. For ongoing development:
-- New features → [`AGENTS.md`](../AGENTS.md) and [`STATUS.md`](../STATUS.md).
-- Workflow engine internals → [`configurable-workflows.md`](./configurable-workflows.md).
-- Auth deep-dive → [`gateway-and-auth.md`](./gateway-and-auth.md) + [`oauth-setup.md`](./oauth-setup.md).
-- Data layer / DinD details → [`data-and-infra.md`](./data-and-infra.md).
+- New features → [`AGENTS.md`](../AGENTS.md) and [`STATUS.md`](./history/STATUS.md).
+- Workflow engine internals → [`configurable-workflows.md`](./history/configurable-workflows.md).
+- Auth deep-dive → [`gateway-and-auth.md`](./history/gateway-and-auth.md) + [`oauth-setup.md`](./oauth-setup.md).
+- Data layer / DinD details → [`data-and-infra.md`](./history/data-and-infra.md).
