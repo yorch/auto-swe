@@ -492,3 +492,20 @@ Writes cut a new immutable `version`.
 | `ScannerPattern` | `scanner_patterns` | Regex rules for INJECTION, EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE scanners |
 
 **Schema file:** `packages/shared/src/prisma/schema.prisma`
+
+---
+
+## 11. Limitations
+
+- **`securityReview` is a legacy key.** Kept for forward compatibility; the canonical security path
+  is the review network. Do not route new code through it.
+- **Skills are a global, ADMIN-curated library.** The `Skill` table carries no tenant column —
+  isolation is one layer up, via which tenant-scoped Agents reference a skill. A custom skill's
+  `promptText` is readable platform-wide.
+- **The shell scanner checks only `SHELL_COMMAND` patterns.** The `EXFILTRATION` rules (curl, wget,
+  nc, metadata endpoints) are never applied to `bash` calls, so they do not constrain shell usage.
+- **The write-path scanners gate the `writeFile` tool only.** `checkSensitiveFilePath` and the
+  pre-write content check run inside that tool, so a write performed through `bash` bypasses both.
+- **Soft-block scanners are advisory.** A soft block returns an error string for the model to
+  self-correct against; a model that ignores it is not stopped. Only the sensitive-file scanner and
+  CRITICAL pre-write findings hard-block.

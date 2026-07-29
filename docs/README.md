@@ -35,6 +35,21 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
 (dashboard design screenshots).
 
+## Where known gaps are documented
+
+Gaps live **next to the feature they belong to**, not in a central list — a central list is what
+drifted last time. Every capability doc ends with a `## Limitations` section stating what is not
+built, not proven, or deliberately constrained, and `yarn docs:check` fails if one is missing.
+
+| Scope | Where |
+|---|---|
+| Product-level boundaries the system will not cross | [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope) |
+| Overall maturity and what is unproven | [product-overview.md §8](./product-overview.md#8-maturity) |
+| A specific capability's gaps | That capability's own **Limitations** section |
+
+So: for "what are the known gaps in X", read `docs/X.md` and jump to the end. For "what is this
+system not, and what has not been proven", read `product-overview.md` §7 and §8.
+
 ## Conventions
 
 Working in this repo? Read [`AGENTS.md`](../AGENTS.md) — conventions, critical implementation

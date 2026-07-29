@@ -156,3 +156,16 @@ verdicts into trends per template, model, and prompt version.
 
 > End-to-end verification of the Temporal, Docker, and LLM paths requires the full infrastructure
 > stack running; the unit suite covers orchestration against mocks.
+
+---
+
+## 8. Limitations
+
+- **Historical replay is not built.** Replaying real production tickets against their original
+  repository states would need snapshot infrastructure the platform does not have. The regression
+  gate rests on the frozen benchmark plus online scoring and canary instead.
+- **End-to-end paths need real infrastructure.** The unit suite covers orchestration against mocked
+  Docker, Temporal, and LLM calls; the harness has not been exercised against a live stack.
+- **A judge is only as good as its rubric.** Suite health (flake rate, stale rate, judge/human
+  kappa) is tracked precisely because an uncalibrated judge produces confident, wrong verdicts —
+  check it before trusting a gate.

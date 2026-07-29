@@ -176,3 +176,17 @@ dynamic catalog + the user's intent go in the user message.
   shared by the schema's ref check and `validateSpec`.
 - **Future refinements:** true token-level streaming of the forming graph;
   a canvas live-lint UI + a dry-run that adds the cost estimate.
+
+---
+
+## 6. Limitations
+
+- **Shell nodes are refused on the async and channel paths.** Shell authoring requires an audit
+  trail, and neither the background generation job nor the Slack path has one. Only the synchronous
+  web/API path can generate a spec containing `shell` nodes, and only when the team's allowlist
+  permits.
+- **Generated specs are DRAFT, never active.** By design — activation is an explicit human action
+  through the canvas. A generated workflow cannot run until a person promotes it.
+- **Refinement replaces the whole spec.** Refine mode asks the model to return the full updated
+  spec rather than a diff, so a refinement is only as good as the model's fidelity to the parts it
+  was not asked to change. Every refinement saves a new version, so the previous one is recoverable.

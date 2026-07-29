@@ -551,3 +551,26 @@ The load-bearing ones, with rationale:
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
 | Human-governed merges | The system opens PRs and never merges; a signal bridges the merge webhook |
+
+---
+
+## 10. Limitations
+
+Current constraints of the system as built. Deliberate product boundaries are in
+[product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
+
+- **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
+  there are no database row-level policies. A missing check is a data-exposure bug, not something
+  the database will catch.
+- **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
+  allowlist entries are informational only. An in-path proxy or resolver would be required.
+- **The agent workspace keeps network access** — git and package installs need it — so its egress is
+  not default-deny. The metadata blackhole (§8) is best-effort, env-gated, and exercised only
+  against argument construction, not a live Docker daemon.
+- **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
+  processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
+  worker and the two can briefly disagree.
+- **Budget enforcement is post-hoc.** `recordLlmUsage` accrues then checks, so a single call can
+  overshoot its tier before `BUDGET_EXCEEDED` fires. Pre-flight reservation is not possible for
+  cost that is only known after the call returns.
+- **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.

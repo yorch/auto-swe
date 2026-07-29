@@ -317,3 +317,13 @@ Valid actions per kind:
 Returns `400` with `INVALID_ACTION` if the action is not valid for the step's kind.
 Returns `409` with `ALREADY_RESOLVED` if the step was already resolved or the workflow is no longer running.
 Returns `200` with `{ "data": { "id": "...", "status": "RESOLVED" } }` on success.
+
+---
+
+## Limitations
+
+- **`humanInput` supports four field types** — `text`, `number`, `boolean`, `select`. There is no
+  file upload, no multi-select, and no cross-field validation beyond what the spec declares.
+- **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.
+- **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but
+  not free; a 7-day approval keeps the workflow alive for 7 days unless it is cancelled.

@@ -122,8 +122,12 @@ prose has no compiler and status prose rots silently.
   shipped, known limitations — and promote those into a living doc first. A roadmap is history; the
   fact that one of its items was never built is current state, and it must not be buried in a file
   nobody is supposed to read.
+- **Known gaps live next to the feature**, in that doc's `## Limitations` section — never in a
+  central list, which is what drifted before. Product-level boundaries and overall maturity are the
+  exception and belong in `docs/product-overview.md` §7 and §8.
 - Countable claims ("15 node types", "51 Prisma models") are enforced: `yarn docs:check` derives
-  each fact from source and fails on any living doc that disagrees. It runs as its own CI job.
+  each fact from source and fails on any living doc that disagrees. It also rejects broken doc
+  links and any capability doc missing its `## Limitations` section. It runs as its own CI job.
   When you change the schema, the node-type union, the built-in skills, the scanner patterns, or
   the seeded agents, run it and fix what it reports.
 - `docs/history/` is exempt from the check and from edits.

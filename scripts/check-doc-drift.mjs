@@ -221,6 +221,28 @@ for (const file of targets) {
 }
 
 // ---------------------------------------------------------------------------
+// Every capability doc must state its gaps
+//
+// Known gaps live next to the feature they belong to, not in a central list that
+// drifts. That only works if every capability doc actually has one — so require it.
+// Runbooks are procedures, not capability descriptions, and are exempt.
+// ---------------------------------------------------------------------------
+
+const CAPABILITY_DOCS = [
+  'docs/architecture.md',
+  'docs/agents.md',
+  'docs/evals.md',
+  'docs/channel-assistant.md',
+  'docs/hitl-workflows.md',
+  'docs/nl-workflow-authoring.md',
+  'docs/figma-integration.md',
+  'docs/product-overview.md',
+];
+const GAP_HEADING = /^#{2,3} .*(limitation|not built|non-goal|out of scope|maturity)/im;
+
+const missingGaps = CAPABILITY_DOCS.filter((d) => !GAP_HEADING.test(read(d)));
+
+// ---------------------------------------------------------------------------
 // Broken relative links
 //
 // Moving a doc silently breaks every link into it. Unlike the counts above this
@@ -268,9 +290,10 @@ const facts = [
   ['implementer workspace tools', implementerTools],
 ];
 
-if (failures.length === 0 && brokenLinks.length === 0) {
+if (failures.length === 0 && brokenLinks.length === 0 && missingGaps.length === 0) {
   const summary = `${targets.length} living docs, ${CHECKS.length} facts, no broken links.`;
   console.log(`Doc drift check passed — ${summary}`);
+  console.log(`  ${CAPABILITY_DOCS.length} capability docs state their limitations.`);
   for (const [label, value] of facts) console.log(`  ${String(value).padStart(3)}  ${label}`);
   process.exit(0);
 }
@@ -284,6 +307,15 @@ if (failures.length > 0) {
   }
   console.error('Update the doc, or the source, so the two agree.');
   console.error('Frozen docs under docs/history/ are exempt from claim checks.\n');
+}
+
+if (missingGaps.length > 0) {
+  console.error(`Missing gap sections — ${missingGaps.length} capability doc(s).\n`);
+  for (const d of missingGaps) console.error(`  ${d}`);
+  console.error(
+    '\nEvery capability doc states its own known gaps, so they stay next to the feature.'
+  );
+  console.error('Add a "## Limitations" section, or "Not built" if nothing else fits.\n');
 }
 
 if (brokenLinks.length > 0) {
