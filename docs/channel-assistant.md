@@ -219,6 +219,21 @@ unproven on real traffic, and turn them on one channel at a time.
 - **No single long-lived per-channel workflow.** Turns are per-mention and ambient work is
   schedule-driven. Durable mid-task hand-off is already covered by thread-bound task runs, so
   consolidating onto one signal workflow per channel remains optional.
+- **Channel input scanning is non-blocking.** `scanChannelInput` runs the same `scanSkillContent`
+  the implementer's output scanner uses, but a warning only records a `channel.suspicious_input`
+  advisory event and the turn proceeds; the whole thing is wrapped in try/catch so a scanner
+  failure cannot abort a turn. A channel is also a *lower-trust* input surface than a ticket —
+  anyone in the workspace can type into it, and a delegated task turns that text into autonomous
+  work. The scanner coverage gaps in [agents.md §11](./agents.md#11-limitations) apply here too:
+  a `bash` call is checked only against `SHELL_COMMAND` patterns, and the write-path scanners gate
+  the `writeFile` tool only.
+- **`isPrivate` is a best-effort default, and it is the whole isolation guarantee.** Cross-channel
+  and org-wide memory reads exclude private sources by filtering `is_private = false`, so if the
+  flag is wrong for a channel, that channel's memory becomes readable org-wide. It is defaulted by
+  two different heuristics depending on the provisioning path — `channel_type === 'group'` on the
+  Slack event path, and a `G`-prefixed channel ID on the other — both marked best-effort in the
+  source, and neither is authoritative for every Slack channel shape. Verify the flag on any
+  channel holding sensitive discussion rather than trusting the default.
 
 ---
 
