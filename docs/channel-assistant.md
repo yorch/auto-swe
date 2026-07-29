@@ -14,7 +14,7 @@ MCP tool binding, the Slack app, and org/team RBAC — rather than a parallel st
 | `SlackWorkspace` | A connected workspace (`slackTeamId`), owned by one `Organization`. Carries the per-workspace bot token (encrypted) plus `appId` / `botUserId` / `installedAt` from the OAuth install. |
 | `SlackChannel` | A channel the assistant is resident in. Unique on `(workspaceId, slackChannelId)`. See the field groups below. |
 | `ChannelThreadSession` | `lastAssistantAt` per `(channelId, threadTs)` — the freshness anchor for follow-up sessions. |
-| `ChannelOpenItem` | A tracked open item, deduped by `sourceTs`, with a status lifecycle. |
+| `ChannelOpenItem` | A tracked open item, deduped by `sourceTs`. `ChannelOpenItemStatus` is `OPEN` → `RESOLVED` or `DISMISSED`; `lastNudgedAt` rate-limits stale-item nudges. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger, unique on `(channelId, yearMonth)`. |
 | `MemoryItem` | Gains `channelId` / `teamId` / `orgId` for channel-scoped memory. |
 | `Agent` | Gains `channelId` for `CHANNEL`-scoped rows; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
@@ -136,7 +136,11 @@ by the same pgvector search as everything else.
   fire, honouring the per-channel `consolidationEnabled` toggle and optional cluster-size and
   similarity overrides.
 
-Admins can view and delete channel memory from the admin surface.
+Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
+kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
+best-effort, because a Temporal hiccup must not fail the synchronous edit.
+
+Consolidation and lesson consolidation share `clusterByEmbedding` (`lib/embeddingClustering.ts`).
 
 ---
 
@@ -147,7 +151,8 @@ tracked in the channel ledger and is *not* double-counted into `OrgMonthlyUsage`
 
 The cap is a soft gate, not a hard reservation: pre-flight cost reservation is not achievable for
 post-hoc LLM cost, so the guarantee is a Serializable-transaction read ensuring **at most one
-in-flight turn can overshoot**.
+in-flight turn can overshoot**. `isChannelOverBudgetNow` gates conversational and proactive turns;
+`isChannelOverBudgetForTask` gates the heavier delegated task runs.
 
 ---
 
@@ -169,8 +174,15 @@ cost, tokens, run ID. The admin Audit modal renders it with a kind filter and a 
 full tool-call sequence. Read access uses the same `assertChannelAccess` guard as memory and open
 items.
 
-Channels are configured at `/admin/slack-channels`; channel-scoped agents are created from the
-agent-library form with `CHANNEL` scope and a channel picker.
+Channels are configured at `/admin/slack-channels` over
+`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/audit`, and the memory and open-item
+sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
+and a channel picker.
+
+**Schedule lifecycle.** `provisionChannel` registers a channel on first contact, defaulting
+`isPrivate` from Slack's `channel_type`. Toggling ambient or reactive mode calls
+`syncChannelAmbientSchedule` / `deleteChannelAmbientSchedule` on the gateway's Temporal plugin, so
+the per-channel Temporal Schedule is created, retimed, or torn down to match the row.
 
 ---
 

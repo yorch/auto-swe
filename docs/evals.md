@@ -65,9 +65,9 @@ Floor scorers run first and short-circuit the judge when they fail, so a broken 
 judge call. When a `judge` scorer is present the activity is an LLM activity and is wrapped in
 `AgentTracer` + `persistActivityTrace` like every other one.
 
-**The `gate` scorer fails safe.** It resolves the SCM clone URL from the run's connection, checks
-out the candidate's already-pushed branch (not a fresh branch off the default), and executes the
-gate command. Any non-executable path — no linked run, a missing connection or ticket, a clone or
+**The `gate` scorer fails safe.** `runGateStandalone` resolves the SCM clone URL from the run's
+connection, checks out the candidate's already-pushed branch (not a fresh branch off the default) on
+the repo's `executorImage`, and executes the gate command. Any non-executable path — no linked run, a missing connection or ticket, a clone or
 exec error — records `passed: false`. A floor scorer must never green-light unverified code by
 silently passing.
 

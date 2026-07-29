@@ -429,6 +429,9 @@ erDiagram
 Temporal activity retry cannot double-count. `runsCompleted` counts only `SUCCESS`; cost and tokens
 accrue for every terminal status. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 work-request submit returns `402 ORG_BUDGET_EXCEEDED` once the month's accrued cost meets the cap.
+The cap and org membership are managed at `/api/v1/admin/organizations/:orgId/budget` and
+`/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
+so the worker writer and the gateway reader cannot disagree about which month a run lands in.
 
 ---
 
@@ -502,6 +505,27 @@ falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
 mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-agenttracer).
+
+### Workspace hardening
+
+The agent workspace container executes LLM-generated commands, so its posture matters more than
+anything else in the system. `createWorkspace()` (`activities/workspace.ts`) applies:
+
+| Control | Detail |
+|---|---|
+| Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
+| Resources | Memory, CPU, and PID caps from the Tier-2 defaults |
+| Network | Kept — git and package installs need it. Egress is **not** IP-filtered |
+| Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace |
+| Cloud metadata | `169.254.169.254`, the ECS endpoint, and the IPv6 IMDS address are blackholed by a short-lived `--cap-add=NET_ADMIN` sidecar sharing the workspace netns (`buildMetadataBlockArgs`). Best-effort, gated by `WORKSPACE_BLOCK_METADATA` (default on) |
+| Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
+
+`shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
+injection boundary for agent-generated commands; treat any change to it, or any caller that
+bypasses it, as security-critical.
+
+> The metadata blackhole needs a real-Docker smoke test — it is exercised by unit tests against
+> argument construction, not against a live daemon.
 
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
