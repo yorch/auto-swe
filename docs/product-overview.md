@@ -198,9 +198,11 @@ require an in-path egress proxy or resolver.
 Tenant isolation is enforced in the application layer — org and team membership checks on the
 routes — not by database row-level policies.
 
-Known gap: the interactive template editor still relies on React Flow's native keyboard behaviour.
-The read-only run and diff DAG viewer supports arrow-key edge traversal, Home-to-entry,
-Enter-to-open, and per-node screen-reader labels.
+Both the read-only run/diff DAG viewer and the interactive template editor support keyboard
+navigation: arrow-key edge traversal, Home-to-entry, Enter-to-open, and per-node screen-reader
+labels (the editor also keeps Delete-to-remove). The editor's traversal is bound in the capture
+phase so it takes precedence over React Flow's native arrow-key node nudge (node positions are
+session-only, so nothing is lost).
 
 ---
 

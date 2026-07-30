@@ -32,6 +32,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, type HandleKind, handleKindsFor } from './dagNode';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
@@ -73,6 +74,7 @@ function EditorInner({
   actions,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const stepRegistryByName = useMemo(
@@ -269,6 +271,71 @@ function EditorInner({
     return () => window.removeEventListener('keydown', onKey);
   }, [handleDeleteNode]);
 
+  // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
+  // selection (React Flow tags each wrapper with `data-id`).
+  const focusNodeEl = useCallback((id: string) => {
+    const el = canvasRef.current?.querySelector<HTMLElement>(
+      `.react-flow__node[data-id="${CSS.escape(id)}"]`
+    );
+    el?.focus();
+  }, []);
+
+  // Keyboard graph traversal for the editor — parity with the read-only viewer.
+  // Arrows walk the edges, Home jumps to the entry node, Enter opens the focused
+  // node in the inspector. Attached in the CAPTURE phase so it preempts React
+  // Flow's native arrow-key node nudge (positions are session-only and not
+  // persisted, so overriding the nudge costs nothing). Space is deliberately
+  // left to React Flow (its default pan-activation key).
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) {
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        return;
+      }
+      const focusedId =
+        (document.activeElement as HTMLElement | null)
+          ?.closest?.('.react-flow__node')
+          ?.getAttribute('data-id') ?? null;
+      const anchor = focusedId ?? selectedNodeId ?? null;
+      const move = (direction: NavDirection) => {
+        const target = adjacentNodeId(anchor, direction, nodes, edges);
+        if (target) {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelect(target);
+          focusNodeEl(target);
+        }
+      };
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          move('next');
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          move('prev');
+          break;
+        case 'Home':
+          move('first');
+          break;
+        case 'Enter':
+          // Only when a node holds focus, so Enter on a Controls button still works.
+          if (focusedId) {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelect(focusedId);
+          }
+          break;
+      }
+    };
+    el.addEventListener('keydown', onKey, { capture: true });
+    return () => el.removeEventListener('keydown', onKey, { capture: true });
+  }, [nodes, edges, selectedNodeId, onSelect, focusNodeEl]);
+
   const handleRename = useCallback(
     (oldId: string, newId: string) => {
       if (!newId || oldId === newId || spec.nodes[newId]) {
@@ -345,7 +412,14 @@ function EditorInner({
 
         {/* Canvas */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target for HTML5 drag-and-drop wraps the React Flow canvas; the inner canvas itself is the interactive surface. */}
-        <div className="relative flex-1 bg-ink-900" onDragOver={handleDragOver} onDrop={handleDrop}>
+        <div
+          aria-label="Workflow editor canvas. Use arrow keys to move between nodes, Enter to open a node, Home to jump to the start, Delete to remove the selected node."
+          className="relative flex-1 bg-ink-900"
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          ref={canvasRef}
+          role="application"
+        >
           <ReactFlow
             connectionLineStyle={{ stroke: '#e26b3c', strokeWidth: 2 }}
             edges={edges}
