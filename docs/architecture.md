@@ -579,9 +579,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   V8-isolate failure mode. There is no `Replayer`-based test replaying recorded history against
   current workflow code, so a non-deterministic change can pass CI and break on replay in
   production.
-- **`specSnapshot` truncates.** `summarizeContext` clips any string over 4 KB before persisting the
-  run snapshot, to keep `workflow_runs` rows small. Large diffs and logs in the frozen snapshot are
-  therefore incomplete — the full values live in `WorkflowArtifact`.
+- **`specSnapshot` spills large values rather than storing them inline.** Strings over 4 KB are
+  written to a `WorkflowArtifact` and replaced by a reference, so the snapshot stays complete while
+  `workflow_runs` rows stay small. Past 20 spills in one run the remainder are truncated, and the
+  placeholder says so.
 - **CI wait mode is an env var, not DB config.** `CI_WAIT_MODE` (`signal` / `poll`) and its polling
   intervals are read from the environment, the one integration knob that has not moved to the
   DB-backed config the rest of the system uses.
