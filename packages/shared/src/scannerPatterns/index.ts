@@ -281,6 +281,67 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
     type: 'SHELL_COMMAND',
   },
 
+  // Shell-context exfiltration. The EXFILTRATION patterns above are written for
+  // *prose* (skill text, LLM output) and several are far too broad for a shell —
+  // `https?://\S+` would match almost every legitimate build command. These target
+  // outbound movement of *local data* instead of network access as such, so a
+  // normal `curl https://registry.npmjs.org/...` or `git clone` stays clean.
+
+  // curl/wget uploading a local file: -T/--upload-file, or @-prefixed data args.
+  {
+    flags: 'i',
+    label: 'shell-curl-uploads-local-file',
+    pattern:
+      '\\b(?:curl|wget)\\b[^;&|]*?(?:\\s-T\\s|--upload-file|(?:-d|-F|--data(?:-binary|-raw|-urlencode)?)\\s*[\'"]?@)',
+    type: 'SHELL_COMMAND',
+  },
+  // Request-capture services — no legitimate use from a build workspace.
+  {
+    flags: 'i',
+    label: 'shell-request-capture-sink',
+    pattern:
+      '\\b(?:curl|wget|nc|netcat|ncat)\\b[^;&|]*\\b(?:webhook\\.site|requestbin\\.\\w+|hookbin\\.com|beeceptor\\.com|pipedream\\.net|ngrok\\.io|burpcollaborator\\.net|interact\\.sh)',
+    type: 'SHELL_COMMAND',
+  },
+  // Cloud instance-metadata endpoints — credential theft, never legitimate here.
+  {
+    flags: 'i',
+    label: 'shell-cloud-metadata-fetch',
+    pattern:
+      '\\b(?:curl|wget|nc|netcat|ncat)\\b[^;&|]*(?:169\\.254\\.169\\.254|169\\.254\\.170\\.2|metadata\\.google\\.internal|\\[?fd00:ec2::254\\]?)',
+    type: 'SHELL_COMMAND',
+  },
+  // Raw socket egress: netcat to an explicit host and port.
+  {
+    flags: 'i',
+    label: 'shell-netcat-egress',
+    pattern: '\\b(?:nc|netcat|ncat)\\b\\s+(?:-[a-z]+\\s+)*[\\w.-]+\\s+\\d{1,5}\\b',
+    type: 'SHELL_COMMAND',
+  },
+  // Copying files to a remote host over ssh transports.
+  {
+    flags: 'i',
+    label: 'shell-remote-file-copy',
+    pattern: '\\b(?:scp|sftp|rsync)\\b[^;&|]*\\s[\\w.-]+@[\\w.-]+:',
+    type: 'SHELL_COMMAND',
+  },
+  // Reading credential-bearing system files.
+  {
+    flags: 'i',
+    label: 'shell-reads-system-credentials',
+    pattern:
+      '\\b(?:cat|less|more|head|tail|strings|xxd|od|base64)\\b[^;&|]*/etc/(?:passwd|shadow|sudoers)\\b',
+    type: 'SHELL_COMMAND',
+  },
+  // Encode/compress then pipe straight to a network client — chunked exfiltration.
+  {
+    flags: 'i',
+    label: 'shell-encode-then-network',
+    pattern:
+      '\\b(?:base64|gzip|bzip2|xz|tar|xxd|openssl)\\b[^;&|]*\\|[^;&|]*\\b(?:curl|wget|nc|netcat|ncat)\\b',
+    type: 'SHELL_COMMAND',
+  },
+
   // ── Code security patterns ─────────────────────────────────────────────────
   // Checked against added lines in the final diff. Findings are advisory —
   // they are passed to the security reviewer agent as structured context.

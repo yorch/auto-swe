@@ -329,9 +329,23 @@ Six scanners run during agent execution, each independently advisory or blocking
 | **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 
-**Built-in patterns:** 52 in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION,
-11 EXFILTRATION, 11 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced idempotently by
+**Built-in patterns:** 59 patterns in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION,
+11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
+
+`EXFILTRATION` patterns are written for **prose** — skill text and LLM output — and several are far
+too broad for a shell (`https?://\S+` matches most build commands). Shell-context exfiltration is
+covered by dedicated `SHELL_COMMAND` rules that target outbound movement of *local data* (upload
+flags, request-capture sinks, metadata endpoints, netcat egress, remote copy, credential-file reads,
+encode-then-pipe) rather than network access as such. **Do not wire the EXFILTRATION set into the
+shell scanner** — it would soft-block routine `curl`/`git clone` and drive the agent into retry
+loops.
+
+**The shell scanner also enforces the sensitive-file policy.** `scanShellCommand` extracts write
+targets from a command (redirects, `tee`, `dd of=`, `cp`/`mv` destinations) and runs each through
+`checkSensitiveFilePath`, so a `SENSITIVE_FILE` pattern added at `/admin/scanner` covers `bash` as
+well as the `writeFile` tool. Extraction is a heuristic over command text, not a shell parser — it
+raises the floor and is not a containment boundary.
 
 **Pattern cache:** `shellCommandScanner`, `codeSecurityScanner`, and `sensitiveFileScanner` share
 `makePatternLoader()` — a per-instance 60 s TTL cache. Gateway and worker are separate processes,
