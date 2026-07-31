@@ -502,10 +502,10 @@ Writes cut a new immutable `version`.
 - **Skills are a global, ADMIN-curated library.** The `Skill` table carries no tenant column —
   isolation is one layer up, via which tenant-scoped Agents reference a skill. A custom skill's
   `promptText` is readable platform-wide.
-- **The pre-write *content* check still gates the `writeFile` tool only.** `scanShellCommand` now
-  applies the sensitive-file policy to a command's write targets, but the OWASP-style content rules
-  in `preWriteSecurityCheck` inspect file *contents* and have no shell equivalent — a hardcoded
-  secret written through `bash` is not content-scanned.
+- **Shell content scanning only sees *literal* content.** `scanShellCommand` runs the pre-write
+  content rules over `echo`/`printf` redirects and here-docs, where the text being written is
+  present in the command. A write fed from a pipe, a variable, or another process carries no
+  inspectable content and is not scanned.
 - **Shell write-target extraction is a heuristic.** It reads command text for redirects, `tee`,
   `dd of=`, and `cp`/`mv` destinations. An agent determined to evade it can (`eval`, a path built in
   a variable, `printf` into a here-doc). It raises the floor; it is not a containment boundary.

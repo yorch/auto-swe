@@ -11,6 +11,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { invalidateSensitiveFilePatternCache } from './sensitiveFileScanner.js';
 import {
+  extractShellWrites,
   extractShellWriteTargets,
   invalidateShellCommandPatternCache,
   scanShellCommand,
@@ -380,5 +381,54 @@ describe('scanShellCommand — sensitive-file policy applies to bash', () => {
   it('reports which path tripped the policy', async () => {
     const result = await scanShellCommand('echo secret > config/prod.pem');
     expect(result).toContain("writes to 'config/prod.pem'");
+  });
+});
+
+describe('scanShellCommand — pre-write content rules apply to bash', () => {
+  // The gap left open by the sensitive-file work: those rules check the write
+  // *target*, these check what is actually being written.
+  it('blocks a hardcoded secret echoed into a source file', async () => {
+    const result = await scanShellCommand(
+      'echo "const key = \'AKIAIOSFODNN7EXAMPLE\'" > src/config.ts'
+    );
+    expect(result).toContain('SECURITY CHECK FAILED');
+  });
+
+  it('blocks a here-doc carrying a critical violation', async () => {
+    // Only CRITICAL rules block, matching the writeFile tool's bar — a
+    // hardcoded AWS key is one, an unparameterised query is a warning.
+    const result = await scanShellCommand(
+      "cat > src/aws.ts <<'EOF'\nconst id = 'AKIAIOSFODNN7EXAMPLE';\nEOF"
+    );
+    expect(result).toContain('SECURITY CHECK FAILED');
+  });
+
+  it.each([
+    'echo "hello world" > README.md',
+    'echo NODE_ENV=test > .env.example',
+    'printf "done\\n" > build.log',
+  ])('allows %j', async (command) => {
+    await expect(scanShellCommand(command)).resolves.toBeNull();
+  });
+
+  it('does not scan content written into a test file', async () => {
+    // checkContentSecurity exempts test paths; bash must honour that too or a
+    // fixture with a fake credential would be unwritable.
+    await expect(
+      scanShellCommand('echo "const key = \'AKIAIOSFODNN7EXAMPLE\'" > src/config.test.ts')
+    ).resolves.toBeNull();
+  });
+});
+
+describe('extractShellWrites', () => {
+  it('pairs echoed content with its redirect target', () => {
+    expect(extractShellWrites("echo 'secret' > out.txt")).toEqual([
+      { content: 'secret', target: 'out.txt' },
+    ]);
+  });
+
+  it('finds nothing when the content is not literal in the command', () => {
+    expect(extractShellWrites('cat template.txt > out.txt')).toEqual([]);
+    expect(extractShellWrites('generate | tee out.txt')).toEqual([]);
   });
 });
