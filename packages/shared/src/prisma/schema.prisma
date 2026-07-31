@@ -1451,6 +1451,14 @@ model WorkflowDefaults {
   lessonRetrievalLimit     Int   @default(5) @map("lesson_retrieval_limit")
   lessonRetrievalThreshold Float @default(0.7) @map("lesson_retrieval_threshold")
 
+  // CI-wait strategy. `signal` blocks for a GitHub webhook; `poll` actively
+  // queries the CI APIs, for deployments no inbound webhook can reach
+  // (local dev, air-gapped). Nullable so an unset row keeps the env fallback.
+  ciWaitMode        String? @map("ci_wait_mode")
+  ciPollIntervalSec Int?    @map("ci_poll_interval_sec")
+  ciPollGraceSec    Int?    @map("ci_poll_grace_sec")
+  ciPollDeadlineSec Int?    @map("ci_poll_deadline_sec")
+
   // Eval-suite health gate + LLM-judge decision thresholds.
   evalHealthMaxFlakeRate Float @default(0.1) @map("eval_health_max_flake_rate")
   evalHealthMaxStaleRate Float @default(0.1) @map("eval_health_max_stale_rate")

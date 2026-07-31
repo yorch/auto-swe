@@ -118,6 +118,12 @@ const WorkflowDefaultsPutBody = z.object({
   budgetLargeOutputTokens: z.number().int().min(1).optional(),
   budgetStandardInputTokens: z.number().int().min(1).optional(),
   budgetStandardOutputTokens: z.number().int().min(1).optional(),
+  // CI-wait strategy. Nullable: clearing a value hands the knob back to the
+  // env-var fallback rather than pinning a default into the row.
+  ciPollDeadlineSec: z.number().int().min(1).nullable().optional(),
+  ciPollGraceSec: z.number().int().min(1).nullable().optional(),
+  ciPollIntervalSec: z.number().int().min(1).nullable().optional(),
+  ciWaitMode: z.enum(['signal', 'poll']).nullable().optional(),
   defaultTeamSlug: z.string().min(1).max(100).optional(),
   evalHealthMaxFlakeRate: z.number().min(0).max(1).optional(),
   evalHealthMaxStaleRate: z.number().min(0).max(1).optional(),
