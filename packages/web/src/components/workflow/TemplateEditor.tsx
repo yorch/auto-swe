@@ -410,8 +410,8 @@ function EditorInner({
       <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
         <NodePalette steps={stepRegistry} />
 
-        {/* Canvas */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target for HTML5 drag-and-drop wraps the React Flow canvas; the inner canvas itself is the interactive surface. */}
+        {/* Canvas — this wrapper is the HTML5 drag-and-drop target; the React Flow
+            canvas inside it is the interactive surface. */}
         <div
           aria-label="Workflow editor canvas. Use arrow keys to move between nodes, Enter to open a node, Home to jump to the start, Delete to remove the selected node."
           className="relative flex-1 bg-ink-900"
