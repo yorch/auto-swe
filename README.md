@@ -2,9 +2,13 @@
 
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](./LICENSE)
 
-An autonomous agentic software engineering system. Submit a ticket ID — get a reviewed, tested pull request.
+A durable, governed multi-agent workflow platform for software engineering teams. Workflows are versioned JSON DAGs executed on Temporal; agents run inside isolated Docker workspaces, with human approval gates, security scanning, and cost control applied to every run.
 
-## How it works
+Its flagship use case — and what the default template ships for — is **ticket in, reviewed and tested draft pull request out**. That flow is an ordinary workflow template built from the same node types any team can author, not privileged runtime code, so it is a starting point rather than the boundary.
+
+Teams drive all of it from the **Slack channel teammate**: a channel-resident assistant with its own memory and persona that answers questions with repo and run context, and also starts, watches, and gates the workflows themselves.
+
+## The flagship flow
 
 1. **Submit a work request** — POST a ticket ID (Jira, Linear, GitHub Issues, etc.) and description to the API
 2. **Agent implements** — An LLM agent clones the target repo into an ephemeral Docker sandbox, writes code and tests, and iterates until tests go green (TDD loop, max 5 iterations)
@@ -14,6 +18,8 @@ An autonomous agentic software engineering system. Submit a ticket ID — get a 
 6. **Human merges** — The workflow waits (up to 7 days) for a human to merge the PR, then commits learnings to semantic memory (pgvector) for future runs
 
 All execution is durable via Temporal.io — workflows survive crashes, restarts, and API rate limits.
+
+Other automations — dependency sweeps, release-note generation, scheduled audits, PRD decomposition — are the same engine with a different DAG, authored on the visual template editor or in natural language. See [`docs/product-overview.md`](./docs/product-overview.md) for the full capability map and [`docs/channel-assistant.md`](./docs/channel-assistant.md) for the Slack teammate.
 
 ## Architecture
 
@@ -108,11 +114,12 @@ For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — 
 
 ### Submit a work request
 
-Three equivalent entry points — pick the one that fits the workflow:
+Four equivalent entry points — pick the one that fits the workflow:
 
 1. **Web dashboard** (recommended) — open <http://localhost:3000>, sign in, click **+ Submit work request** in the header (or in the onboarding panel if you have no runs yet). The repo dropdown, brief, and budget tier are all there; on submit it routes you to the new run.
-2. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
-3. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:
+2. **Slack** — ask the channel teammate in a channel it is installed in, or use the slash command. It also posts run progress and HITL prompts back into the channel. See [`docs/slack-app-setup.md`](./docs/slack-app-setup.md).
+3. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
+4. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:
 
    ```bash
    TOKEN=<your-PAT-from-Settings → API tokens>
@@ -244,7 +251,7 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 | ----------------------------- | ------------------------------------------------------------------------------- |
 | Docker-in-Docker (not K8s)    | No cluster required; same isolation, zero extra infra                           |
 | Temporal.io for orchestration | Durable execution — workflows survive crashes and wait days for human signals   |
-| Human-governed merges         | The system never auto-merges; all PRs require explicit human review             |
+| Human-governed merges         | Nothing the platform ships merges a PR; a human always merges                   |
 | PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |
 | pgvector for agent memory     | Semantic similarity search surfaces relevant past lessons into agent context    |
 | Mastra + Vercel AI SDK        | Mastra uses AI SDK under the hood; direct `@ai-sdk/anthropic` import is simpler |

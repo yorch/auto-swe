@@ -551,4 +551,4 @@ Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 | pgvector for memory          | Vector embeddings on `MemoryItem`                         | Semantic similarity search for agent context enrichment           |
 | Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |
 | Agent identity as a string   | No enum; agents are data                                  | New agents ship as seed content, not code changes                 |
-| Human-governed merges        | The system opens PRs and never merges                     | The one decision that stays human                                 |
+| Human-governed merges        | Nothing shipped merges a PR; the system opens them        | The one decision that stays human                                 |

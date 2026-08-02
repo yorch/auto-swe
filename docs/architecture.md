@@ -47,12 +47,16 @@ flowchart LR
     GW -->|Magic-link email| EMAIL
 ```
 
-Three invariants shape everything else:
+Two invariants shape everything else:
 
 - **The gateway is stateless.** All durable state lives in Temporal and Postgres.
 - **The worker drives all execution.** No LLM call ever happens in the gateway.
-- **Humans merge.** The system opens pull requests and never merges them; a Temporal signal bridges
-  the GitHub merge webhook back to the waiting workflow.
+
+A third property holds across everything the platform ships, though it is a property of the
+activity catalog rather than an enforced boundary: **nothing merges a pull request.** No activity
+calls the GitHub merge API, and no seeded template merges — the SWE flow opens a PR and parks, and a
+Temporal signal bridges the GitHub merge webhook back to the waiting workflow. See §10 for where
+that stops being a guarantee.
 
 ---
 
@@ -101,7 +105,7 @@ packages/
 | `src/plugins/auth.ts` | **Auth middleware** — `requireAuth({ requiredRole, requiredTeamRole, requiredOrgRole })`, role hierarchy |
 | `src/plugins/prisma.ts`, `src/plugins/temporal.ts` | Decorate `fastify.prisma` / `fastify.temporal` |
 | `src/lib/betterAuth.ts` | better-auth instance — email+password, GitHub/Google OAuth, magic-link, cookie sessions |
-| `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path for a tracked run. Writes the `RunInput` + `ActiveWorkflow` ledger in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run can never execute without a ledger row to attribute its spend and PRs to. |
+| `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the intended launch path for a tracked run. Writes the `RunInput` + `ActiveWorkflow` ledger in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. Work requests and the webhook triggers go through it; three other launch sites do not (§10). |
 | `src/lib/github.ts` | Octokit singleton + GitHub webhook HMAC verification |
 | `src/lib/slack.ts` | Slack client; slash-command, events, and interactive handlers |
 | `src/lib/ticketTracker.ts` | Read-only issue-tracker connectors (Jira / Linear / GitHub Issues); best-effort, never throws |
@@ -166,6 +170,11 @@ workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s.
 ---
 
 ## 3. Run Lifecycle
+
+The engine walks whatever DAG the run's `WorkflowSpec` declares — the sequence below is the shape of
+the seeded `default-engineering` template, not a fixed pipeline. It is worth reading in full because
+it exercises nearly every mechanism (agent activities, sandboxes, gates, signals, memory); a
+template that omits half of it is equally valid.
 
 End-to-end, from API call to merged pull request:
 
@@ -550,7 +559,7 @@ The load-bearing ones, with rationale:
 | Docker-in-Docker, not K8s | Same isolation model with zero cluster dependency; runs under Docker Compose |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
-| Human-governed merges | The system opens PRs and never merges; a signal bridges the merge webhook |
+| Human-governed merges | Nothing shipped merges a PR; a signal bridges the merge webhook (see §10) |
 
 ---
 
@@ -559,11 +568,23 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **Three launch sites bypass `launchTrackedWorkflow`.** It exists so a run can never execute
+  without a ledger row: ledger inside a transaction, *then* start, compensating if the start fails.
+  `POST /workflow-templates/:id/runs`, the Slack run modal, and `POST /prd-runs` invert that — they
+  start Temporal first, then write `RunInput` and `ActiveWorkflow` as two separate un-compensated
+  creates. A DB failure after a successful start leaves a workflow running with nothing to attribute
+  its spend or pull requests to. The generic template-run endpoint is the weakest of the three: its
+  workflow ID is random rather than deterministic, so it has no dedup gate at all.
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
+- **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
+  merge API and no seeded template merges, but `shell` and `containerStep` nodes take
+  `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
+  supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
+  is not enforced against what a team authors.
 - **The agent workspace keeps network access** — git and package installs need it — so its egress is
   not default-deny. The metadata blackhole (§8) is best-effort, env-gated, and exercised only
   against argument construction, not a live Docker daemon.
