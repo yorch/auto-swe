@@ -6,11 +6,26 @@
 
 ## 1. Product Thesis
 
-**auto-swe turns a ticket ID into a reviewed, tested, draft pull request — and then waits for a human to merge.**
+**auto-swe is a durable, governed multi-agent workflow platform for software engineering teams.** A
+workflow is a versioned JSON DAG executed on Temporal, with agents running inside isolated Docker
+workspaces, human approval gates wherever a team wants them, and cost, security, and observability
+applied to every run.
 
-It closes the last-mile gap between *"work is specified"* and *"code is in review."* Engineering teams spend disproportionate time on work that is well-defined but repetitive or time-consuming: implementing described features, writing tests, chasing CI failures, and waiting on review. auto-swe automates that span as a **durable, observable, governable pipeline** while preserving the one decision that should stay human — the merge.
+The flagship use case — and the one the default template ships for — is **ticket in, reviewed and
+tested draft pull request out.** That flow is not privileged runtime code: it is an ordinary
+workflow template composed of the same node types any team can author, so it is a starting point
+rather than the boundary of what the platform does. Other automations (dependency sweeps,
+release-note generation, scheduled audits, PRD decomposition) are the same engine with a different
+DAG.
 
-The defining constraint is a product choice, not a limitation: **the system never auto-merges.** It operates as a contributor that opens PRs; a human always merges. This positions auto-swe as an *amplifier* of an engineering team rather than a replacement for it.
+**The Slack channel teammate is both a headline capability and the platform's conversational
+surface.** It is a channel-resident assistant an engineering team talks to directly — and the same
+assistant starts, watches, and reports on the workflows above, so teams manage their automation
+from the channel they already work in rather than a separate console.
+
+One constraint holds across every workflow, as a product choice rather than a limitation: **the
+system never auto-merges.** It operates as a contributor that opens PRs; a human always merges.
+That makes auto-swe an *amplifier* of an engineering team rather than a replacement for it.
 
 ---
 
@@ -18,12 +33,20 @@ The defining constraint is a product choice, not a limitation: **the system neve
 
 | Persona | What they get | Primary surfaces |
 |---|---|---|
-| **Engineering teams** (more tickets than engineers) | Autonomous implementation of well-specified tickets, with quality gates and review applied by default | Dashboard submit flow, Slack `/auto-swe`, Epics |
+| **Engineering teams** (more tickets than engineers) | Autonomous implementation of well-specified tickets, with quality gates and review applied by default | Dashboard submit flow, Slack teammate, Epics |
 | **Tech leads** | Guaranteed human-governed merge, full visibility into what the agent did and why, HITL approval gates | Run viewer, HITL inbox, review network output |
 | **Platform / DevOps engineers** | Run auto-swe as shared infrastructure for other teams: integrations, model config, RBAC, security policy | Admin console, team config, scanner patterns |
+| **Workflow authors** | Automate team-specific engineering processes as versioned DAGs — no code change, no redeploy | Visual template editor, NL authoring, CLI bundles |
 | **CI/CD pipeline authors** | A scriptable pipeline step (PAT + CLI/REST) that fires on issue creation | CLI, REST API, scheduled work requests |
 
-auto-swe deliberately does **not** target very early-stage codebases where the implementation surface is too undefined for an agent to work autonomously — the value depends on tickets being specified well enough to derive measurable success criteria.
+The Slack teammate cuts across all of these: it answers questions in-channel with repo and run
+context, and it is also how a team kicks off a workflow, gets notified when one needs a decision,
+and answers a HITL gate without leaving Slack.
+
+For the autonomous-implementation use case specifically, auto-swe deliberately does **not** target
+very early-stage codebases where the implementation surface is too undefined for an agent to work
+autonomously — that value depends on tickets being specified well enough to derive measurable
+success criteria.
 
 ---
 
@@ -97,9 +120,11 @@ flowchart TB
 
 ## 5. Primary Use Cases & Workflows
 
-### 5.1 Standard single-repo work request (the core flow)
+### 5.1 Standard single-repo work request (the flagship flow)
 
-The canonical end-to-end journey. (Sequence diagram in [architecture.md §3](./architecture.md#3-work-request-lifecycle).)
+The canonical end-to-end journey, and what the default `default-engineering` template encodes. It is
+a composition of ordinary node types, not a hard-coded pipeline. (Sequence diagram in
+[architecture.md §3](./architecture.md#3-work-request-lifecycle).)
 
 ```mermaid
 flowchart LR
@@ -143,6 +168,13 @@ Admins configure standing automations backed by Temporal Schedules (nightly depe
 
 Each team overrides at TEAM scope (falling back to GLOBAL): model-per-role, provider credentials, assigned skills, enabled implementer tools, per-repo gate commands, shell-image and egress allowlists, and Slack notification channels.
 
+### 5.9 Channel-resident teammate
+
+A per-channel assistant with its own memory, persona, and budget. Two things at once: a capability
+a team uses directly — answering questions with repo and run context, summarising a thread, drafting
+a brief — and the conversational surface for everything above, so a workflow can be started,
+watched, and approved from the channel. See [channel-assistant.md](./channel-assistant.md).
+
 ---
 
 ## 6. Differentiators
@@ -155,6 +187,7 @@ What sets auto-swe apart from simpler "AI coding" tools:
 - **Semantic institutional memory:** pgvector retrieval surfaces relevant past failures and decisions into agent context on relevant future runs; the system's effective quality improves per-repo over time.
 - **First-class configurable workflow engine:** the workflow DAG is a versioned JSON spec interpreted by a pure functional interpreter — editable, A/B-testable, and analyzable from the UI, not a YAML pipeline bolted onto an agent.
 - **Operational security stack:** six independent runtime scanners at distinct stages, all DB-backed and admin-extensible, plus locked-down ephemeral shell containers.
+- **The automation lives where the team does:** the channel teammate is not a notification webhook — it is an agent with channel memory and a persona that also starts, watches, and gates the workflows, so the control surface and the conversation are the same place.
 
 ---
 
