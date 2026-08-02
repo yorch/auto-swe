@@ -43,6 +43,18 @@ ALTER TABLE "provider_credentials"
         OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
     );
 
+-- ── Skills: same scope-discriminator rule as provider credentials ───────────
+-- Skills are GLOBAL platform content or owned by one tenant. Without this a
+-- GLOBAL row could carry a team_id and leak into that tenant's filtered view,
+-- and a TEAM row could exist with no owner to filter on.
+ALTER TABLE "skills"
+    ADD CONSTRAINT "skills_scope_keys_check"
+    CHECK (
+        ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
+        OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
+        OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL)
+    );
+
 -- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
 -- org/repo are nullable so non-git connection types (e.g. `mcp`) need not set
 -- them; uniqueness applies only to git_repo rows. Prisma can't express a
@@ -117,6 +129,20 @@ ALTER TABLE "storage_config"
     ADD CONSTRAINT "storage_config_backend_check" CHECK ("backend" IN ('inline', 's3'));
 ALTER TABLE "workflow_defaults"
     ADD CONSTRAINT "workflow_defaults_singleton" CHECK ("id" = 'default');
+-- CI-wait strategy. All four columns are nullable: NULL means "not configured
+-- in the DB", so the resolver falls back to CI_WAIT_MODE / CI_POLL_*. Reject a
+-- typo here rather than silently degrading to 'signal', and reject a
+-- non-positive interval, which would busy-loop the CI poller.
+ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_ci_wait_mode_check"
+    CHECK ("ci_wait_mode" IS NULL OR "ci_wait_mode" IN ('signal', 'poll'));
+ALTER TABLE "workflow_defaults"
+    ADD CONSTRAINT "workflow_defaults_ci_poll_positive_check"
+    CHECK (
+        ("ci_poll_interval_sec" IS NULL OR "ci_poll_interval_sec" > 0)
+        AND ("ci_poll_grace_sec"    IS NULL OR "ci_poll_grace_sec"    > 0)
+        AND ("ci_poll_deadline_sec" IS NULL OR "ci_poll_deadline_sec" > 0)
+    );
 ALTER TABLE "google_oauth_config"
     ADD CONSTRAINT "google_oauth_config_singleton" CHECK ("id" = 'default');
 ALTER TABLE "embedding_configs"

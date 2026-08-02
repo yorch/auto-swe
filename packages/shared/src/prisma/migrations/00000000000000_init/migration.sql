@@ -802,6 +802,10 @@ CREATE TABLE "workflow_defaults" (
     "workspace_image" TEXT NOT NULL DEFAULT 'node:24-alpine',
     "lesson_retrieval_limit" INTEGER NOT NULL DEFAULT 5,
     "lesson_retrieval_threshold" DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    "ci_wait_mode" TEXT,
+    "ci_poll_interval_sec" INTEGER,
+    "ci_poll_grace_sec" INTEGER,
+    "ci_poll_deadline_sec" INTEGER,
     "eval_health_max_flake_rate" DOUBLE PRECISION NOT NULL DEFAULT 0.1,
     "eval_health_max_stale_rate" DOUBLE PRECISION NOT NULL DEFAULT 0.1,
     "eval_health_min_kappa" DOUBLE PRECISION NOT NULL DEFAULT 0.4,
@@ -914,6 +918,9 @@ CREATE TABLE "skills" (
     "is_built_in" BOOLEAN NOT NULL DEFAULT false,
     "is_verified" BOOLEAN NOT NULL DEFAULT false,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "scope" "ConfigScope" NOT NULL DEFAULT 'GLOBAL',
+    "team_id" UUID,
+    "org_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -1249,6 +1256,18 @@ CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"(
 CREATE INDEX "config_audit_log_actor_id_idx" ON "config_audit_log"("actor_id");
 
 -- CreateIndex
+CREATE INDEX "skills_scope_team_id_idx" ON "skills"("scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "skills_scope_org_id_idx" ON "skills"("scope", "org_id");
+
+-- CreateIndex
+CREATE INDEX "skills_team_id_idx" ON "skills"("team_id");
+
+-- CreateIndex
+CREATE INDEX "skills_org_id_idx" ON "skills"("org_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "scanner_patterns_label_key" ON "scanner_patterns"("label");
 
 -- CreateIndex
@@ -1439,6 +1458,12 @@ ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_org_id_f
 
 -- AddForeignKey
 ALTER TABLE "embedding_configs" ADD CONSTRAINT "embedding_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skills" ADD CONSTRAINT "skills_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skills" ADD CONSTRAINT "skills_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
