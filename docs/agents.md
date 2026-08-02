@@ -452,8 +452,8 @@ String values are truncated to 4 000 characters per field. The `writeFile` tool 
 Skill *definitions* live in `packages/gateway/src/routes/skills.ts`; per-agent
 model / prompt / skills / tools live on the first-class `Agent` and are managed
 via the **agent-library** API in `packages/gateway/src/routes/agentLibrary.ts`.
-(the per-role `/api/v1/admin/agents/:role/skills` + `:role/tools`
-assignment endpoints — that config is now fields on the `Agent`.)
+There are no separate per-role skill/tool assignment endpoints — both are fields
+on the `Agent` payload below.
 
 ### 9.1 Skills CRUD
 

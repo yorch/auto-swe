@@ -174,8 +174,6 @@ dynamic catalog + the user's intent go in the user message.
   work-in-progress draft is never rejected) and it's ready to back a **canvas
   live-lint** panel. Graph-edge enumeration lives once in `nodeEdges` (`spec.ts`),
   shared by the schema's ref check and `validateSpec`.
-- **Future refinements:** true token-level streaming of the forming graph;
-  a canvas live-lint UI + a dry-run that adds the cost estimate.
 
 ---
 

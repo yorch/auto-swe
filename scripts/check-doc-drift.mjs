@@ -194,6 +194,150 @@ const CHECKS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Dependency versions
+//
+// The tech-stack tables in AGENTS.md and README.md restate versions that
+// package.json already owns. That duplication is the point — an agent reads the
+// table, not the lockfile — but it rots on every upgrade, silently and in more
+// than one place at a time. So derive each version from the manifest.
+//
+// Docs may truncate ("Fastify 5.11", "TypeScript 6"), so a claim passes when it
+// is a dot-boundary *prefix* of the real version: 5.11 matches 5.11.0, 5.8 does
+// not. Versions appear in two shapes — inline prose and a trailing table cell —
+// and one cell may carry several versions ("16.2.7 / 19.2.7 / 4.3.0"), so a
+// table claim passes if any version in the cell matches.
+// ---------------------------------------------------------------------------
+
+const manifest = (p) => JSON.parse(read(p));
+const rootPkg = manifest('package.json');
+/** Highest-precedence declared version for a dependency, across all workspaces. */
+const MANIFESTS = [
+  'package.json',
+  ...readdirSync(join(ROOT, 'packages')).map((d) => `packages/${d}/package.json`),
+];
+const depVersion = (name) => {
+  for (const p of MANIFESTS) {
+    if (!existsSync(join(ROOT, p))) {
+      continue;
+    }
+    const pkg = manifest(p);
+    const v = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+    if (v) {
+      return v.replace(/^[\^~>=<\s]+/, '');
+    }
+  }
+  throw new Error(`could not find a declared version for '${name}'`);
+};
+
+/** `4.18` and `4.18.0` both satisfy `4.18.0`; `4.17` and `4.1` do not. */
+const isVersionPrefix = (claimed, actual) =>
+  actual === claimed || actual.startsWith(`${claimed}.`);
+
+const VERSIONED_DEPS = [
+  { actual: rootPkg.packageManager.replace(/^yarn@/, ''), name: 'Yarn', pattern: 'Yarn' },
+  { actual: depVersion('fastify'), name: 'Fastify', pattern: 'Fastify' },
+  { actual: depVersion('typescript'), name: 'TypeScript', pattern: 'TypeScript' },
+  { actual: depVersion('prisma'), name: 'Prisma', pattern: 'Prisma' },
+  { actual: depVersion('zod'), name: 'Zod', pattern: 'Zod' },
+  { actual: depVersion('vitest'), name: 'Vitest', pattern: 'Vitest' },
+  { actual: depVersion('@biomejs/biome'), name: 'Biome', pattern: 'Biome' },
+  { actual: depVersion('@mastra/core'), name: 'Mastra', pattern: 'Mastra' },
+  { actual: depVersion('next'), name: 'Next.js', pattern: 'Next\\.js' },
+  { actual: depVersion('react'), name: 'React', pattern: 'React' },
+  { actual: depVersion('tailwindcss'), name: 'Tailwind CSS', pattern: 'Tailwind(?: CSS)?' },
+  {
+    actual: depVersion('@tanstack/react-query'),
+    name: 'TanStack Query',
+    pattern: 'TanStack Query',
+  },
+  { actual: depVersion('zustand'), name: 'Zustand', pattern: 'Zustand' },
+  {
+    actual: depVersion('@temporalio/worker'),
+    name: '@temporalio SDK',
+    // Never bare "Temporal" — that is the server image, on its own release train.
+    pattern: '@temporalio(?:/[\\w{},*-]+)?(?: SDK)?',
+  },
+];
+
+const VERSION = '(\\d+(?:\\.\\d+)*)';
+
+/** Every version-looking token in a string, e.g. "16.2.7 / 19.2.7" → both. */
+const versionsIn = (cell) => (cell.match(/\d+(?:\.\d+)*/g) ?? []);
+
+const versionFailures = [];
+const checkVersions = (file, line, lineNo) => {
+  for (const dep of VERSIONED_DEPS) {
+    const inline = new RegExp(`\\b${dep.pattern}\\s+v?${VERSION}`, 'gi');
+    // A trailing table cell: "| Fastify | 5.11.0 |".
+    const cell = new RegExp(
+      `\\|[^|\\n]*?\\b${dep.pattern}\\b[^|\\n]*\\|\\s*(v?\\d[\\d./\\s]*?)\\s*\\|`,
+      'gi'
+    );
+
+    for (const m of line.matchAll(inline)) {
+      if (!isVersionPrefix(m[1], dep.actual)) {
+        versionFailures.push({
+          actual: dep.actual,
+          file,
+          line: lineNo,
+          name: dep.name,
+          text: m[0].trim(),
+        });
+      }
+    }
+    for (const m of line.matchAll(cell)) {
+      const claimed = versionsIn(m[1]);
+      if (claimed.length > 0 && !claimed.some((c) => isVersionPrefix(c, dep.actual))) {
+        versionFailures.push({
+          actual: dep.actual,
+          file,
+          line: lineNo,
+          name: dep.name,
+          text: `${dep.name} → ${m[1].trim()}`,
+        });
+      }
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Forbidden status prose
+//
+// Living docs describe the system in present tense. Shipped-status narration,
+// phase labels, PR numbers, and roadmap promises belong in git history and the
+// pull request — they are exactly the prose that rots without anyone noticing,
+// because nothing recompiles when the promise is kept or abandoned.
+//
+// Inline code and quoted strings are stripped first, so the convention can
+// quote the very phrases it bans without tripping its own check.
+// ---------------------------------------------------------------------------
+
+const FORBIDDEN_PROSE = [
+  { hint: 'phase label', re: /\(\s*(?:phase|P)\s*\d/i },
+  { hint: 'phase/workstream label', re: /\bP\d\s*\/\s*WS\d/i },
+  { hint: 'PR number', re: /\bPRs?\s*#\d+/i },
+  { hint: 'shipped-status narration', re: /\bnow shipped\b/i },
+  { hint: 'roadmap promise', re: /\bcoming soon\b/i },
+  { hint: 'roadmap promise', re: /\bin a follow-up\b/i },
+  { hint: 'roadmap promise', re: /\b(?:it'?ll|it will) come\b/i },
+  { hint: 'roadmap promise', re: /\bwill come in\b/i },
+  { hint: 'roadmap section', re: /\bfuture refinements?\b/i },
+];
+
+const stripQuoted = (line) => line.replace(/`[^`]*`/g, '').replace(/"[^"]*"/g, '');
+
+const proseFailures = [];
+const checkProse = (file, line, lineNo) => {
+  const prose = stripQuoted(line);
+  for (const { hint, re } of FORBIDDEN_PROSE) {
+    const m = prose.match(re);
+    if (m) {
+      proseFailures.push({ file, hint, line: lineNo, text: m[0].trim() });
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Scan the living docs
 // ---------------------------------------------------------------------------
 
@@ -211,6 +355,8 @@ const failures = [];
 for (const file of targets) {
   const lines = read(file).split('\n');
   lines.forEach((line, i) => {
+    checkVersions(relative('.', file), line, i + 1);
+    checkProse(relative('.', file), line, i + 1);
     for (const check of CHECKS) {
       if (check.skipLine?.test(line)) {
         continue;
@@ -331,10 +477,20 @@ const facts = [
   ['implementer workspace tools', implementerTools],
 ];
 
-if (failures.length === 0 && brokenLinks.length === 0 && missingGaps.length === 0) {
-  const summary = `${targets.length} living docs, ${CHECKS.length} facts, no broken links.`;
-  console.log(`Doc drift check passed — ${summary}`);
+const clean =
+  failures.length === 0 &&
+  brokenLinks.length === 0 &&
+  missingGaps.length === 0 &&
+  versionFailures.length === 0 &&
+  proseFailures.length === 0;
+
+if (clean) {
+  console.log(
+    `Doc drift check passed — ${targets.length} living docs, ${CHECKS.length} facts, ` +
+      `${VERSIONED_DEPS.length} dependency versions, no broken links.`
+  );
   console.log(`  ${CAPABILITY_DOCS.length} capability docs state their limitations.`);
+  console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
   }
@@ -361,6 +517,29 @@ if (missingGaps.length > 0) {
     '\nEvery capability doc states its own known gaps, so they stay next to the feature.'
   );
   console.error('Add a "## Limitations" section, or "Not built" if nothing else fits.\n');
+}
+
+if (versionFailures.length > 0) {
+  console.error(`Stale versions — ${versionFailures.length} in the living docs.\n`);
+  for (const v of versionFailures) {
+    console.error(`  ${v.file}:${v.line}`);
+    console.error(`    claims "${v.text}" but ${v.name} is ${v.actual}`);
+    console.error('    source of truth: package.json\n');
+  }
+  console.error('Bump the doc to match the manifest. A truncated version is fine when it is a');
+  console.error('prefix of the real one ("Fastify 5.11" for 5.11.0).\n');
+}
+
+if (proseFailures.length > 0) {
+  console.error(`Forbidden status prose — ${proseFailures.length} in the living docs.\n`);
+  for (const p of proseFailures) {
+    console.error(`  ${p.file}:${p.line}`);
+    console.error(`    ${p.hint}: "${p.text}"\n`);
+  }
+  console.error('Living docs describe the system in present tense. Shipped status, phase labels,');
+  console.error('PR numbers, and roadmap promises belong in git history and the pull request.');
+  console.error('A promise nothing recompiles on is a promise that rots. Backticks and quotes are');
+  console.error('stripped before matching, so the convention can still quote what it bans.\n');
 }
 
 if (brokenLinks.length > 0) {

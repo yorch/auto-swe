@@ -28,15 +28,17 @@ WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → ConfigMis
 
 A missing GLOBAL row is a startup error, not a runtime condition — `assertConfigReady()` at worker boot catches it before any activity runs.
 
-`ProviderCredential` rows are scoped only `GLOBAL` or `TEAM`. Templates that want to pin a specific credential do so via `Agent.credentialId` pointing at a GLOBAL or TEAM row. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
+`ProviderCredential` rows are scoped `GLOBAL`, `ORGANIZATION`, or `TEAM` — enforced by a DB CHECK, so there is deliberately no channel- or template-level credential tier. Credential resolution cascades `TEAM → ORGANIZATION → GLOBAL`. Templates and channels that want to pin a specific credential do so via `Agent.credentialId` pointing at one of those rows. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
 
 ## Per-scope system prompts
 
 `Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt for that scope. The cascade works identically to model selection:
 
 ```
-WORKFLOW_TEMPLATE → TEAM → GLOBAL → (use agent's built-in prompt)
+WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → (use agent's built-in prompt)
 ```
+
+`systemPrompt` cascades **independently of `modelSpec`**: a higher-scope row may set the model and leave `systemPrompt` null, in which case the search for a prompt continues down the cascade. So a team override can change the model without losing the global default prompt, and vice versa.
 
 The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
 
@@ -73,10 +75,13 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 
 | Role / Slot | Default |
 | ----------- | ------- |
-| `implementer` / `reviewer` / `commitToMemory` / `channelAssistant` | `anthropic/claude-opus-4-8` |
-| `planner` / `securityReview` / `validateContext` | `anthropic/claude-sonnet-4-6` |
+| `implementer` / `reviewer` / `commitToMemory` / `channelAssistant` / `workflowAuthor` | `anthropic/claude-opus-4-8` |
+| `planner` / `securityReview` / `validateContext` / `workflowExplainer` | `anthropic/claude-sonnet-4-6` |
 | `evalJudge` | `anthropic/claude-haiku-4-5-20251001` (distinct model to avoid self-preference bias) |
 | Embeddings | `openai/text-embedding-3-large` |
+
+The 11 sub-role personas carry no `modelSpec` — each binds its parent's model via
+`inheritsModelFrom`. Full roster in [`agents.md` §1](./agents.md#1-agents).
 
 ---
 
@@ -105,7 +110,7 @@ Removes via the **Reset** button. Resetting causes the next activity call for th
 
 ### Overriding a model for one workflow template
 
-Admin-only, via the model-config admin page. Set scope to WORKFLOW_TEMPLATE and supply the template ID. The dashboard's template editor doesn't yet have a built-in section for this; it'll come in a follow-up.
+Admin-only, from the Agent library at `/admin/agents/library`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
 
 ### Rotating an API key
 
@@ -135,15 +140,21 @@ There are no env vars for model selection, provider API keys, or embedding setti
 
 Everything in the dashboard maps 1:1 to gateway endpoints. A few common recipes:
 
+Per-agent model, prompt, skills, and tools all live on the `Agent` entity, so they are written
+through the **agent-library** API — there is no separate model-config write endpoint. Agent keys are
+free-form strings (`implementer`, not `IMPLEMENTER`), and every write cuts a new immutable version.
+
 ```bash
-# Bulk-seed a team's per-role overrides via the admin endpoint.
-# Repeat per role; the server upserts on (role, scope, teamId).
 TOKEN=<admin-PAT>
-curl -X PUT http://localhost:8080/api/v1/admin/model-config \
+
+# Override one agent's model for one team. Scope discriminators are exclusive:
+# TEAM scope takes teamId and nothing else.
+curl -X POST http://localhost:8080/api/v1/admin/agent-library \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "role": "IMPLEMENTER",
+    "key": "implementer",
+    "name": "Implementer (payments override)",
     "scope": "TEAM",
     "teamId": "<team-uuid>",
     "modelSpec": "anthropic/claude-opus-4-8"
@@ -161,7 +172,9 @@ curl -X POST http://localhost:8080/api/v1/admin/credentials/<credential-id>/test
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Team owners use the parallel `/api/v1/teams/<teamId>/{model-config,credentials}` routes — same shape, scope is forced server-side.
+Team owners use the parallel team-scoped routes — `/api/v1/teams/<teamId>/agent-library` for agent
+overrides and `/api/v1/teams/<teamId>/credentials` for credentials. Same shapes; scope is forced
+server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent-library-api).
 
 ### What happens when you delete a pinned credential
 

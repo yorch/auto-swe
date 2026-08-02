@@ -62,12 +62,14 @@ notes, and the gotchas that cause real bugs.
 
 Writing docs? Two rules:
 
-1. **Present tense, current state.** No shipped-status, PR numbers, phase labels, or "now shipped"
-   narration. That is what git history is for.
-2. **Countable claims are enforced.** `yarn docs:check` derives facts (node types, Prisma models,
-   built-in skills, scanner patterns, seeded agents) from source and fails CI on any living doc
-   that disagrees. Run it after changing the schema, the node-type union, the skills, the scanner
-   patterns, or the seeded agents.
+1. **Present tense, current state.** No shipped-status, PR numbers, phase labels, or roadmap
+   promises. That is what git history and the pull request are for.
+2. **`yarn docs:check` enforces both.** It derives countable facts (node types, Prisma models,
+   built-in skills, scanner patterns, seeded agents) and dependency versions from source, rejects
+   the status prose rule 1 bans, requires every capability doc to carry a `## Limitations` section,
+   and fails on broken relative links. It runs as its own CI job with no install step. Run it after
+   changing the schema, the node-type union, the skills, the scanner patterns, the seeded agents,
+   or any dependency a doc names by version.
 
 ## history/
 
