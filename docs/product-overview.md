@@ -226,7 +226,7 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 | `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
 | `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
 
-Both accept an optional **`Idempotency-Key`** header. With one, the run's workflow ID is a
+These and `POST /api/v1/prd-runs` accept an optional **`Idempotency-Key`** header. With one, the run's workflow ID is a
 deterministic function of the key, so a retried request or a redelivered webhook collapses onto the
 original run (`409`) instead of starting a second one. Without one, each request is a fresh run —
 idempotency is opt-in, because a schedule or a manual retry often *wants* to run the same payload
