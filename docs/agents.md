@@ -513,6 +513,13 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
+- **`STEP_REQUIRED_AGENTS` is only half-checked.** The boot gate derives itself from that map, and
+  `stepRequiredAgents.coverage.test.ts` catches keys naming a step that no longer exists. It cannot
+  catch the opposite and more damaging direction: a *new* step that resolves a model but has no
+  entry. Its agent is then never checked at boot, and the run fails mid-flight with
+  `ConfigMissingError` — precisely what `assertConfigReady` exists to prevent. "This step resolves a
+  model" is not syntactic, so the map stays hand-maintained; the `runnable.ts` executor table is the
+  thing to compare a new step against.
 - **The boot gate reflects install state at boot, not forever.** `requiredAgentKeysForDeployment()`
   reads the installed templates once, at startup. Activating a template afterwards — or adding a
   Slack channel — does not re-run the check, so a newly reachable agent with no credential fails at
