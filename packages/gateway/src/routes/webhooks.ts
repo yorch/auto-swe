@@ -531,10 +531,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Extract well-known fields from the payload (same as POST /:id/runs).
       const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
       const description = typeof payload.description === 'string' ? payload.description : '';
-      const externalTicketId =
-        typeof payload.ticketId === 'string' ? payload.ticketId : `webhook-${Date.now()}`;
-
       const workRequestId = crypto.randomUUID();
+      // Correlation key, not a ticket — see the note on the template-run route.
+      const externalTicketId =
+        typeof payload.ticketId === 'string' ? payload.ticketId : workRequestId;
       const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
       // An Idempotency-Key makes the ID a pure function of the key, so a sender
       // that retries (or fires twice) collapses onto one run instead of two.
@@ -575,7 +575,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               budgetTier: 'STANDARD',
               description,
               externalTicketId,
-              repoId: connectionId ?? '',
+              repoId: connectionId,
               requestPayload: JSON.stringify(payload),
               workRequestId,
             },

@@ -30,6 +30,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
@@ -128,7 +129,7 @@ interface RepoMeta {
 async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
-    where: { id: request.repoId },
+    where: { id: requireRepoId(request, 'shell') },
   });
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl, token } = await getScmProvider(repoRef).cloneCredentials(repoRef);
@@ -346,7 +347,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           image: input.image,
         },
         rationale: `Shell step succeeded (exit 0) and committed working-tree changes.`,
-        repoId: input.request.repoId,
+        repoId: requireRepoId(input.request, 'shell'),
         temporalWorkflowId: currentWorkflowId(),
       });
     }

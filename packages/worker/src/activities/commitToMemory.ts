@@ -9,6 +9,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 
 const LessonOutputSchema = z.object({
   failureType: z
@@ -62,9 +63,11 @@ async function writeMemoryItemRow(input: {
  */
 export async function commitToMemory(
   temporalWorkflowId: string,
-  repoId: string,
+  /** Lessons are repo-scoped, so a run with no connection cannot write one. */
+  repoId: string | null,
   systemPromptOverride?: string
 ): Promise<string> {
+  const scopedRepoId = requireRepoId({ repoId }, 'commitToMemory');
   const workflow = await prisma.activeWorkflow.findFirst({
     include: {
       pullRequests: true,
@@ -160,7 +163,7 @@ export async function commitToMemory(
       metadata: lesson.metadata,
       model: attribution.modelSpec || undefined,
       rationale: lesson.rationale,
-      repoId,
+      repoId: scopedRepoId,
       skillsActive: skills.map((s) => s.name),
       workflowId: workflow.id,
       workflowRunId,

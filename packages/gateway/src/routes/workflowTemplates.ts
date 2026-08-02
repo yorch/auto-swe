@@ -1391,17 +1391,22 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
       const description =
         typeof payload.description === 'string' ? payload.description : (request.body.label ?? '');
+      const workRequestId = crypto.randomUUID();
       const budgetTier = (
         ['STANDARD', 'LARGE', 'EPIC'].includes(payload.budget as string)
           ? (payload.budget as BudgetTier)
           : 'STANDARD'
       ) satisfies BudgetTier;
+      // Correlation key, not a ticket. A timestamp fallback used to make this
+      // unique but useless — two runs a millisecond apart were indistinguishable
+      // in the run list and nothing linked the key back to the run it named.
+      // The work-request id is already unique and already the thing you would
+      // look up.
       const externalTicketId =
         typeof payload.ticketId === 'string'
           ? payload.ticketId
-          : (request.body.label ?? `run-${Date.now()}`);
+          : (request.body.label ?? workRequestId);
 
-      const workRequestId = crypto.randomUUID();
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
       // With an Idempotency-Key the ID is a pure function of the key, so the
       // unique index on ActiveWorkflow.temporalWorkflowId becomes a real dedup
@@ -1415,7 +1420,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier,
         description,
         externalTicketId,
-        repoId: connectionId ?? '',
+        repoId: connectionId,
         requestPayload: JSON.stringify(request.body),
         workRequestId,
       };

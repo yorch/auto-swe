@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { CiPollDeadlineError, runCiPollLoop } from '../lib/scm/ciPollLoop.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 
@@ -27,7 +28,8 @@ export async function resolveCiWaitConfig(): Promise<CiWaitConfig> {
 }
 
 export interface WaitForCiByPollingInput {
-  repoId: string;
+  /** Target connection, or null on a run that is not connection-scoped. */
+  repoId: string | null;
   /** Branch or SHA to poll CI for (the PR head). */
   ref: string;
   intervalSec: number;
@@ -49,7 +51,9 @@ export interface WaitForCiByPollingInput {
 export async function waitForCiByPolling(
   input: WaitForCiByPollingInput
 ): Promise<{ ciPassed: boolean; logsUrl?: string }> {
-  const repo = await prisma.connection.findUniqueOrThrow({ where: { id: input.repoId } });
+  const repo = await prisma.connection.findUniqueOrThrow({
+    where: { id: requireRepoId(input, 'waitForCiByPolling') },
+  });
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
 

@@ -33,7 +33,22 @@ export interface ChannelAssistantTurnInput {
 
 export interface RepoWorkRequest {
   workRequestId: string;
-  repoId: string;
+  /**
+   * Target `Connection` id, or null when the run is not scoped to one.
+   *
+   * The generic triggers used to pass `''` here — an empty string posing as an
+   * id, which turned "this workflow needs no repository" into a
+   * `findUniqueOrThrow` failure complaining about a Connection that was never
+   * asked for. Null says it plainly, and `requireRepoId` turns the mismatch
+   * into an error naming the step that wanted one.
+   */
+  repoId: string | null;
+  /**
+   * Correlation key for the run. A ticket id for the SWE flow; for a generic
+   * run, whatever the caller labelled it, falling back to the work-request id.
+   * Always present — every run is correlated by something — but not necessarily
+   * a ticket.
+   */
   externalTicketId: string;
   description: string;
   requestPayload: string;
