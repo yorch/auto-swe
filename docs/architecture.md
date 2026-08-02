@@ -571,7 +571,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
 
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
-  the database will catch.
+  the database will catch. The gateway's Prisma client carries a `tenantGuard` extension that
+  flags a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
+  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate, but it
+  ships in **warn** mode — around 21 such call sites exist today, most of them legitimately global,
+  and none has been triaged. Run with `TENANT_GUARD_STRICT=1` to make them fail, mark the genuinely
+  global ones with `runUnscoped(reason, fn)`, fix the rest, then turn strict on for good. Single-row
+  lookups are deliberately unguarded, and raw SQL bypasses the extension entirely — this is defence
+  in depth, not the row-level security it stands in for.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
