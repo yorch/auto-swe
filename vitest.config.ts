@@ -16,6 +16,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/db.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/channelBudget',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/channelBudget.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/agentPrompts',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentPrompts.ts'),
       },

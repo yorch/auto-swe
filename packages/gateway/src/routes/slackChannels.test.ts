@@ -10,6 +10,9 @@ function newMockPrisma() {
     // budget-reset route treats as "a worker claimed this hold first".
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     channelBudgetHold: {
+      // The route counts outstanding holds for the audit log; the shared
+      // release helper does the listing and deleting.
+      count: vi.fn().mockResolvedValue(0),
       delete: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -928,9 +931,13 @@ describe('POST /:id/budget/reset', () => {
   /** Two $0.0775 holds outstanding on top of $5.00 of real spend. */
   function twoHolds(mockPrisma: ReturnType<typeof newMockPrisma>) {
     mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, name: 'general' });
+    mockPrisma.channelBudgetHold.count.mockResolvedValue(2);
+    // `yearMonth` comes back per row: the refund credits the hold's own month,
+    // never "now", so a hold that outlived a month boundary lands on the row it
+    // was taken against.
     mockPrisma.channelBudgetHold.findMany.mockResolvedValue([
-      { amountUsd: '0.0775', id: HOLD_A },
-      { amountUsd: '0.0775', id: HOLD_B },
+      { amountUsd: '0.0775', id: HOLD_A, yearMonth: '2026-06' },
+      { amountUsd: '0.0775', id: HOLD_B, yearMonth: '2026-06' },
     ]);
     mockPrisma.channelMonthlyUsage.findUnique.mockResolvedValue({
       costUsdAccrued: '5.155',

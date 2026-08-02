@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -408,39 +409,25 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
       }
       const yearMonth = currentYearMonth();
-      const holds = await fastify.prisma.channelBudgetHold.findMany({
-        select: { amountUsd: true, id: true },
-        where: { channelId: row.id, yearMonth },
-      });
-      const usageBefore = await fastify.prisma.channelMonthlyUsage.findUnique({
-        where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
-      });
+      const [holdsOutstanding, usageBefore] = await Promise.all([
+        fastify.prisma.channelBudgetHold.count({ where: { channelId: row.id, yearMonth } }),
+        fastify.prisma.channelMonthlyUsage.findUnique({
+          where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
+        }),
+      ]);
 
-      // One transaction per hold, deleting before decrementing — the same shape
-      // the worker's sweep uses, and for the same reason: the delete is the
-      // claim. A bulk `deleteMany` returns a count, not a set, so it cannot tell
-      // which amounts it actually took; refunding the whole sum on a partial
-      // delete would subtract a reservation a concurrent settle had already
-      // netted out, erasing real spend and loosening the cap.
-      let reclaimedUsd = 0;
-      let holdsReleased = 0;
-      for (const hold of holds) {
-        try {
-          await fastify.prisma.$transaction(async (tx) => {
-            await tx.channelBudgetHold.delete({ where: { id: hold.id } });
-            // `runsCompleted` is left alone: it counts turns that really happened.
-            await tx.channelMonthlyUsage.update({
-              data: { costUsdAccrued: { decrement: Number(hold.amountUsd) } },
-              where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
-            });
-          });
-          reclaimedUsd += Number(hold.amountUsd);
-          holdsReleased++;
-        } catch {
-          // A worker settled or swept this hold first; it is no longer ours to
-          // refund, and it has already accounted for itself.
+      // The refund protocol itself is shared with the worker's TTL sweep — one
+      // transaction per hold, delete before decrement, credit the hold's own
+      // month. When each side had a copy they had already diverged on that last
+      // point, and a bug there credits real spend back and loosens the cap.
+      const { reclaimedUsd, released: holdsReleased } = await releaseChannelBudgetHolds(
+        fastify.prisma,
+        row.id,
+        {
+          expiredOnly: false,
+          yearMonth,
         }
-      }
+      );
 
       const usage = await fastify.prisma.channelMonthlyUsage.findUnique({
         where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
@@ -455,7 +442,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         },
         before: {
           costUsdAccrued: usageBefore ? Number(usageBefore.costUsdAccrued) : 0,
-          holdsOutstanding: holds.length,
+          holdsOutstanding,
           yearMonth,
         },
         entityId: row.id,

@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { createTool } from '@mastra/core/tools';
@@ -23,7 +24,7 @@ import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
-import { getModelPrice } from '../lib/costTracking.js';
+import { calculateCostUsd } from '../lib/costTracking.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -350,7 +351,12 @@ export async function isChannelOverBudgetNow(
   if (!isChannelOverBudget(await accruedThisMonth(channelId, yearMonth), monthlyBudgetUsdCents)) {
     return false;
   }
-  await sweepExpiredHolds(channelId);
+  // A sweep that reclaimed nothing cannot have changed the answer, and refusal
+  // is the *steady* state for a channel that has genuinely spent its budget —
+  // re-reading on every event for the rest of the month would be pure waste.
+  if ((await sweepExpiredHolds(channelId)) === 0) {
+    return true;
+  }
   return isChannelOverBudget(await accruedThisMonth(channelId, yearMonth), monthlyBudgetUsdCents);
 }
 
@@ -390,23 +396,22 @@ async function estimateHoldUsd(
   ctx: { channelId: string; orgId: string; teamId: string },
   modelCalls: number
 ): Promise<number> {
-  const calls = Math.max(1, modelCalls);
+  let perCall = 0;
   try {
     const resolved = await resolveAgent(agentKey, ctx);
-    const { known, price } = getModelPrice(resolved.model.spec);
-    if (!known) {
-      return CHANNEL_TURN_RESERVATION_USD * calls;
-    }
-    const perCall =
-      (HOLD_INPUT_TOKENS * price.input + HOLD_OUTPUT_TOKENS * price.output) / 1_000_000;
-    // A zero-priced model would hold nothing, which bounds nothing.
-    return (perCall > 0 ? perCall : CHANNEL_TURN_RESERVATION_USD) * calls;
+    // Through the ledger's own pricing helper, so the USD-per-MTok convention
+    // lives in exactly one place — a hold sized by a second copy of the formula
+    // would drift from the cost it is netted against.
+    perCall = calculateCostUsd(resolved.model.spec, HOLD_INPUT_TOKENS, HOLD_OUTPUT_TOKENS);
   } catch {
     // Resolution failed (missing row, decrypt failure). The turn itself will
     // fail on the same lookup a moment later; hold the fallback rather than
     // letting an unpriced turn through unbounded.
-    return CHANNEL_TURN_RESERVATION_USD * calls;
   }
+  // An unknown or zero-priced model prices at 0, and a zero hold bounds nothing.
+  // The `* calls` scaling is applied once: forgetting it on any one branch would
+  // under-hold a fan-out pass by exactly the factor `modelCalls` exists to cover.
+  return (perCall > 0 ? perCall : CHANNEL_TURN_RESERVATION_USD) * Math.max(1, modelCalls);
 }
 
 /** A turn's claim on the channel's remaining monthly budget. */
@@ -429,37 +434,16 @@ export interface ChannelBudgetHold {
  * channel's ledger for the rest of the calendar month — a deploy during a busy
  * hour would silence the channel until an admin reset its budget by hand.
  *
- * Each refund is one transaction: the delete is the claim, so two workers
- * sweeping the same row concurrently cannot both refund it (the loser's delete
- * raises P2025 and it skips). Best-effort throughout — a failed sweep must not
- * stop the turn that triggered it.
+ * The refund protocol itself lives in `@auto-swe/shared/lib/channelBudget`,
+ * because the gateway's admin reset performs the same one — and when the two
+ * had a copy each they had already diverged on which month to credit.
+ *
+ * Returns how many holds were actually reclaimed, so a caller can skip the
+ * re-read when a sweep changed nothing.
  */
-async function sweepExpiredHolds(channelId: string): Promise<void> {
-  try {
-    const expired = await prisma.channelBudgetHold.findMany({
-      select: { amountUsd: true, id: true, yearMonth: true },
-      where: { channelId, expiresAt: { lt: new Date() } },
-    });
-    for (const hold of expired) {
-      try {
-        await prisma.$transaction(async (tx) => {
-          await tx.channelBudgetHold.delete({ where: { id: hold.id } });
-          await tx.channelMonthlyUsage.update({
-            data: { costUsdAccrued: { decrement: Number(hold.amountUsd) } },
-            where: { channelId_yearMonth: { channelId, yearMonth: hold.yearMonth } },
-          });
-        });
-      } catch {
-        // Another sweeper won the row, or its ledger row is gone. Either way
-        // this hold is no longer ours to refund.
-      }
-    }
-  } catch (err) {
-    console.error(
-      `[channelAssistant] failed to sweep expired budget holds for ${channelId}:`,
-      err instanceof Error ? err.message : err
-    );
-  }
+async function sweepExpiredHolds(channelId: string): Promise<number> {
+  const { released } = await releaseChannelBudgetHolds(prisma, channelId, { expiredOnly: true });
+  return released;
 }
 
 /**
@@ -518,6 +502,12 @@ export async function reserveChannelTurn(
 
   let claim: { accruedBefore: number; holdId: string } | null = null;
   try {
+    // Interactive rather than batched. The two statements are independent, so
+    // `$transaction([a, b])` would save round-trips — but it evaluates both
+    // queries before the transaction wraps them, which no test double can model
+    // as rolling back. The saving is a few milliseconds on a path that is about
+    // to spend seconds in an LLM call; being able to test the rollback is worth
+    // more.
     claim = await prisma.$transaction(async (tx) => {
       const row = await upsertChannelUsage(tx, channelId, yearMonth, reservation, false);
       const hold = await tx.channelBudgetHold.create({
@@ -551,9 +541,13 @@ export async function reserveChannelTurn(
 
   if (isChannelOverBudget(claim.accruedBefore, monthlyBudgetUsdCents)) {
     // Before refusing, reclaim anything abandoned — the total this decided on
-    // includes holds no one is spending against. Only paid on the refusal path.
-    await sweepExpiredHolds(channelId);
-    const accruedBefore = (await accruedThisMonth(channelId, yearMonth)) - reservation;
+    // includes holds no one is spending against. Only paid on the refusal path,
+    // and only re-read when the sweep actually reclaimed something.
+    const reclaimed = await sweepExpiredHolds(channelId);
+    const accruedBefore =
+      reclaimed > 0
+        ? (await accruedThisMonth(channelId, yearMonth)) - reservation
+        : claim.accruedBefore;
     if (isChannelOverBudget(accruedBefore, monthlyBudgetUsdCents)) {
       await releaseHold(channelId, yearMonth, claim.holdId, reservation);
       return REFUSED_HOLD;
@@ -573,7 +567,13 @@ const REFUSED_HOLD: ChannelBudgetHold = {
   settle: async () => {},
 };
 
-/** Drops a hold row and takes its amount back off the ledger. */
+/**
+ * Drops a hold row and takes its amount back off the ledger.
+ *
+ * Same protocol as {@link consumeHold}, which is the point — a release is a
+ * settle for a cost of zero, and giving them one implementation stops the
+ * delete-is-the-claim invariant from being maintained twice.
+ */
 async function releaseHold(
   channelId: string,
   yearMonth: string,
@@ -581,16 +581,33 @@ async function releaseHold(
   amountUsd: number
 ): Promise<void> {
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.channelBudgetHold.delete({ where: { id: holdId } });
-      await upsertChannelUsage(tx, channelId, yearMonth, -amountUsd, false);
-    });
+    await consumeHold(channelId, yearMonth, holdId, -amountUsd, false);
   } catch (err) {
     console.error(
       `[channelAssistant] failed to release a budget hold for ${channelId}:`,
       err instanceof Error ? err.message : err
     );
   }
+}
+
+/**
+ * In one transaction: drop a hold row and apply `deltaUsd` to the ledger.
+ *
+ * Deleting the row *is* the claim — a raised delete is how the caller learns
+ * someone else (a sweep, an admin reset) already accounted for this hold, which
+ * is why the delete goes first and why this has to roll back as a unit.
+ */
+function consumeHold(
+  channelId: string,
+  yearMonth: string,
+  holdId: string,
+  deltaUsd: number,
+  countRun: boolean
+): Promise<unknown> {
+  return prisma.$transaction(async (tx) => {
+    await tx.channelBudgetHold.delete({ where: { id: holdId } });
+    await upsertChannelUsage(tx, channelId, yearMonth, deltaUsd, countRun);
+  });
 }
 
 function makeHold(
@@ -618,13 +635,10 @@ function makeHold(
         return;
       }
       try {
-        await prisma.$transaction(async (tx) => {
-          // Deleting the row is what proves the hold was still ours. If a sweep
-          // beat us to it the reservation has already been refunded, so the
-          // real cost is owed in full rather than net of it.
-          await tx.channelBudgetHold.delete({ where: { id: holdId } });
-          await upsertChannelUsage(tx, channelId, yearMonth, costUsd - reservedUsd, countRun);
-        });
+        // Deleting the row is what proves the hold was still ours. If a sweep
+        // beat us to it the reservation has already been refunded, so the real
+        // cost is owed in full rather than net of it.
+        await consumeHold(channelId, yearMonth, holdId, costUsd - reservedUsd, countRun);
       } catch {
         // Two ways in, one right answer. Either the delete raised because the
         // hold is gone (swept, or released by an admin reset) and the
@@ -1097,9 +1111,9 @@ function upsertChannelUsage(
 }
 
 /**
- * The one write to `ChannelMonthlyUsage`. Returns the row's new accrued total,
- * or `null` when the write failed — the budget row backs a cap, not billing, so
- * every caller degrades to "the turn still happens" rather than propagating.
+ * The one best-effort write to `ChannelMonthlyUsage`. The budget row backs a cap,
+ * not billing, so every caller degrades to "the turn still happens" rather than
+ * propagating a write failure.
  *
  * `deltaUsd` may be negative: {@link reserveChannelTurn} releases a hold that
  * way, and {@link ChannelBudgetHold.settle} nets a hold against a smaller real
@@ -1112,17 +1126,15 @@ async function addChannelUsage(
   yearMonth: string,
   deltaUsd: number,
   countRun: boolean
-): Promise<number | null> {
+): Promise<void> {
   try {
-    const row = await upsertChannelUsage(prisma, channelId, yearMonth, deltaUsd, countRun);
-    return Number(row.costUsdAccrued);
+    await upsertChannelUsage(prisma, channelId, yearMonth, deltaUsd, countRun);
   } catch (err) {
     // Best-effort: never let a budget-ledger write failure break the reply.
     console.error(
       `[channelAssistant] failed to accrue channel usage for ${channelId}:`,
       err instanceof Error ? err.message : err
     );
-    return null;
   }
 }
 
