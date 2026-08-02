@@ -205,7 +205,7 @@ describe('recordLlmUsage', () => {
           tokensInputUsed: { increment: 100 },
           tokensOutputUsed: { increment: 50 },
         }),
-        where: { id: 'wf-1' },
+        where: { temporalWorkflowId: 'wf-temporal-1' },
       })
     );
     expect(row.tokensInputUsed).toBe(100);
@@ -275,13 +275,35 @@ describe('recordLlmUsage', () => {
   });
 
   it('returns without error when workflow record is not found', async () => {
-    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue(null);
+    (prisma.activeWorkflow.findFirst as unknown as Mock).mockResolvedValue(null);
+    // Prisma's `update` on a missing row raises P2025; the usage call swallows
+    // exactly that code and nothing else.
+    (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(
+      Object.assign(new Error('Record to update not found'), { code: 'P2025' })
+    );
 
     await expect(
       recordLlmUsage('wf-unknown', 'implementer', { inputTokens: 100, outputTokens: 50 })
     ).resolves.not.toThrow();
+  });
 
-    expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
+  it('rethrows a non-P2025 update failure rather than silently losing usage', async () => {
+    (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(
+      Object.assign(new Error('deadlock detected'), { code: 'P2034' })
+    );
+
+    await expect(
+      recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
+    ).rejects.toThrow('deadlock detected');
+  });
+
+  it('accrues in a single query, keyed on the unique temporalWorkflowId', async () => {
+    ledger({});
+    await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1, outputTokens: 1 });
+    // The hottest path in the worker; a read-then-write would double its round trips.
+    expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { temporalWorkflowId: 'wf-temporal-1' } })
+    );
   });
 
   it('enforces the per-tier budget resolved from workflow defaults (tiny override fires BUDGET_EXCEEDED early)', async () => {
@@ -309,13 +331,7 @@ describe('recordLlmUsage', () => {
   });
 
   it('throws BUDGET_EXCEEDED when cumulative input tokens exceed tier limit', async () => {
-    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      budgetTier: 'STANDARD',
-      costUsdAccrued: 29.99,
-      id: 'wf-1',
-      tokensInputUsed: 1_999_900,
-      tokensOutputUsed: 0,
-    } as never);
+    ledger({ costUsdAccrued: 29.99, tokensInputUsed: 1_999_900 });
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200, outputTokens: 10 })

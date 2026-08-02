@@ -313,6 +313,42 @@ describe('RunnableWorkflow — oversized context values', () => {
     expect(calls.contextOverflowBatches).toBe(1);
   }, 120_000);
 
+  it('splits the spill across activities when the payload would be too large', async () => {
+    calls.contextOverflows.length = 0;
+    calls.contextOverflowBatches = 0;
+    // Three values of 600KB: one batch would be ~1.8MB, past what a single
+    // Temporal activity input should carry. Sending them all in one call would
+    // fail the run at its final step — strictly worse than the truncation the
+    // batching replaced.
+    const big = 'z'.repeat(600_000);
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        seed: {
+          next: 'done',
+          type: 'set',
+          values: {
+            'context.a': { literal: `${big}a` },
+            'context.b': { literal: `${big}b` },
+            'context.c': { literal: `${big}c` },
+          },
+        },
+      },
+      'seed'
+    );
+
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-overflow-chunked')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+
+    // Nothing lost...
+    expect(calls.contextOverflows).toHaveLength(3);
+    // ...and no single call carried all of them.
+    expect(calls.contextOverflowBatches).toBeGreaterThan(1);
+  }, 120_000);
+
   it('leaves small values inline', async () => {
     calls.contextOverflows.length = 0;
     currentSpec = makeSpec(

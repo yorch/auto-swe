@@ -811,6 +811,40 @@ async function runWithCancellation<T>(
 /** Strings longer than this are spilled to a `WorkflowArtifact`. */
 const CONTEXT_INLINE_LIMIT = 4000;
 
+/**
+ * Per-activity payload budget for spilled values, in UTF-16 code units.
+ *
+ * Temporal caps how large a single activity input may be, and a run that
+ * exceeds it fails at finalization — after all the real work is done. Well
+ * under the limit on purpose: this is a floor on round trips, not an attempt to
+ * pack the payload.
+ */
+const SPILL_CHUNK_BUDGET = 1_000_000;
+
+/**
+ * Groups values into chunks whose combined length stays under the budget.
+ * A value bigger than the budget on its own occupies a chunk by itself, which
+ * is the same payload it had when every value was sent individually.
+ */
+function chunkBySize<T extends { value: string }>(items: T[]): T[][] {
+  const chunks: T[][] = [];
+  let current: T[] = [];
+  let size = 0;
+  for (const item of items) {
+    if (current.length > 0 && size + item.value.length > SPILL_CHUNK_BUDGET) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(item);
+    size += item.value.length;
+  }
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
 function truncatedPlaceholder(value: string, note: string): string {
   return `${value.slice(0, CONTEXT_INLINE_LIMIT)}… [truncated ${value.length} bytes — ${note}]`;
 }
@@ -853,16 +887,22 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
   };
   walk(ctx, '');
 
-  // One activity call for the whole set. Spilling per value used to cost one
-  // round trip each, which is why this was capped at 20 and truncated the rest;
-  // batching removes that reason, so every oversized value now survives.
+  // Batched, but size-bounded. Spilling one value per activity used to cost a
+  // round trip each, which is why this was capped at 20 and truncated the rest.
+  // Batching removes that reason — but putting *every* value in one activity
+  // input would push a large context past Temporal's payload limit and fail the
+  // run at its final step, which is strictly worse than the truncation it
+  // replaced. So chunk by accumulated size instead.
+  //
+  // A single value larger than the budget still goes alone, exactly as it did
+  // when every value went alone.
   const spilled = new Map<string, string>();
-  if (oversized.length > 0) {
+  for (const chunk of chunkBySize(oversized)) {
     const refs = await stateActivities.storeContextOverflowBatch({
       runId,
-      values: oversized.map(({ path, value }) => ({ content: value, path })),
+      values: chunk.map(({ path, value }) => ({ content: value, path })),
     });
-    oversized.forEach(({ path, value }, i) => {
+    chunk.forEach(({ path, value }, i) => {
       const ref = refs[i];
       spilled.set(
         path,

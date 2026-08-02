@@ -227,6 +227,9 @@ export async function assertBudgetAvailable(
 
   const usedInput = Number(workflow.tokensInputUsed);
   const usedOutput = Number(workflow.tokensOutputUsed);
+  // `>=` here, `>` in the post-check below, deliberately: a call that lands
+  // exactly on the cap has spent its budget and is allowed, but the next call
+  // has nothing left to spend.
   if (usedInput >= limits.inputTokens || usedOutput >= limits.outputTokens) {
     throw ApplicationFailure.nonRetryable(
       `Budget already exhausted for tier ${tier} before ${label}: ` +
@@ -277,17 +280,6 @@ export async function recordLlmUsage(
           span.setAttribute('llm.spec_resolution_failed', true);
           span.recordException(specResolutionError as Error);
         }
-        const workflow = await prisma.activeWorkflow.findFirst({
-          select: { id: true },
-          where: { temporalWorkflowId },
-        });
-
-        if (!workflow) {
-          // Non-fatal: workflow record may not exist in test/dev scenarios
-          span.setAttribute('llm.workflow_found', false);
-          return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
-        }
-
         // Atomic increments, not read-modify-write.
         //
         // This used to read the counters, add locally, and write the sums back.
@@ -304,21 +296,42 @@ export async function recordLlmUsage(
         // representable. (A Decimal column was considered and rejected: Prisma
         // Decimal serializes as a string, silently changing the wire format of
         // every endpoint that returns raw rows.)
+        //
+        // Keyed on `temporalWorkflowId`, which is `@unique` — the same index the
+        // launch path deduplicates on. Reading the row first to get its `id`
+        // would double the round trips on the hottest path in the worker for
+        // nothing.
         const costDelta = Math.round(callCost * 1e6) / 1e6;
-        const updated = await prisma.activeWorkflow.update({
-          data: {
-            costUsdAccrued: { increment: costDelta },
-            tokensInputUsed: { increment: inputTokens },
-            tokensOutputUsed: { increment: outputTokens },
-          },
-          select: {
-            budgetTier: true,
-            costUsdAccrued: true,
-            tokensInputUsed: true,
-            tokensOutputUsed: true,
-          },
-          where: { id: workflow.id },
-        });
+        let updated: {
+          budgetTier: string | null;
+          costUsdAccrued: number;
+          tokensInputUsed: bigint;
+          tokensOutputUsed: bigint;
+        };
+        try {
+          updated = await prisma.activeWorkflow.update({
+            data: {
+              costUsdAccrued: { increment: costDelta },
+              tokensInputUsed: { increment: inputTokens },
+              tokensOutputUsed: { increment: outputTokens },
+            },
+            select: {
+              budgetTier: true,
+              costUsdAccrued: true,
+              tokensInputUsed: true,
+              tokensOutputUsed: true,
+            },
+            where: { temporalWorkflowId },
+          });
+        } catch (err) {
+          // P2025 — no ledger row. Non-fatal: channel tasks and PRD runs keep
+          // none, and test/dev runs may not have one either.
+          if ((err as { code?: string })?.code !== 'P2025') {
+            throw err;
+          }
+          span.setAttribute('llm.workflow_found', false);
+          return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
+        }
 
         const newInput = Number(updated.tokensInputUsed);
         const newOutput = Number(updated.tokensOutputUsed);
@@ -331,7 +344,7 @@ export async function recordLlmUsage(
           'llm.model': modelSpec,
           'llm.output_tokens': outputTokens,
           'llm.role': role,
-          'workflow.budget_tier': updated.budgetTier,
+          'workflow.budget_tier': updated.budgetTier ?? 'STANDARD',
           'workflow.cost_usd_cumulative': newCost,
           'workflow.tokens_input_cumulative': newInput,
           'workflow.tokens_output_cumulative': newOutput,
