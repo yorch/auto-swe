@@ -329,7 +329,7 @@ open https://app.example.com
 
 # In the dashboard:
 #  1. Settings → API tokens → "+ New token"  → save the PAT to your secret manager
-#  2. Repositories → "+ Add repository"      → connect a real repo (use a test one first)
+#  2. Connections → "+ Add connection"       → connect a real git repo (use a test one first)
 #  3. Dashboard "+ Submit work request"      → smallest possible task; verify the run starts
 #  4. Watch the run in /workflows/<id> and the Temporal UI
 

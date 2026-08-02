@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Markdown } from '@/components/docs/Markdown';
 import { Card } from '@/components/ui/Card';
-import { getDoc, listDocs } from '@/lib/docs';
+import { getDoc, listDocs, servedDocSlugs } from '@/lib/docs';
 
 type Params = { slug: string };
 
@@ -28,6 +28,7 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
   if (!doc) {
     notFound();
   }
+  const served = await servedDocSlugs();
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -39,7 +40,7 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
         <span className="font-mono">{doc.slug}.md</span>
       </nav>
       <Card className="p-8">
-        <Markdown>{doc.content}</Markdown>
+        <Markdown servedSlugs={served}>{doc.content}</Markdown>
       </Card>
     </div>
   );
