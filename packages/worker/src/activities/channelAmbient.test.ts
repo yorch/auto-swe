@@ -226,7 +226,13 @@ describe('runChannelAmbientDigest', () => {
     // The case a plain read gate cannot see: under the cap on read, but a
     // concurrent turn took the last of the headroom before this one held.
     findChannel.mockResolvedValue(makeChannel({ monthlyBudgetUsdCents: 500 }) as never);
-    findUsage.mockResolvedValue({ costUsdAccrued: 4.9 } as never);
+    // The cheap pre-gate reads $4.90; by the time this turn's hold lands, a
+    // concurrent turn has taken the channel to the $5 cap. Every later read —
+    // including the one the refusal re-takes after sweeping — sees the row as it
+    // now stands, hold included.
+    findUsage
+      .mockResolvedValueOnce({ costUsdAccrued: 4.9 } as never)
+      .mockResolvedValue({ costUsdAccrued: 5 + OPUS_HOLD } as never);
     // Post-increment total, so the pre-hold value is already at the $5 cap.
     upsertUsage.mockResolvedValue({ costUsdAccrued: 5 + OPUS_HOLD } as never);
 

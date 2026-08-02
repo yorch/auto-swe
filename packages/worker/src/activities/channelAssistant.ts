@@ -313,8 +313,17 @@ export function isChannelOverBudget(
   return accruedUsd * 100 >= capCents;
 }
 
+/** This month's accrued total for a channel, or 0 when it has spent nothing. */
+async function accruedThisMonth(channelId: string, yearMonth: string): Promise<number> {
+  const usage = await prisma.channelMonthlyUsage.findUnique({
+    select: { costUsdAccrued: true },
+    where: { channelId_yearMonth: { channelId, yearMonth } },
+  });
+  return usage ? Number(usage.costUsdAccrued) : 0;
+}
+
 /**
- * Read-only budget gate: has this channel already reached its cap?
+ * Budget gate: has this channel already reached its cap?
  *
  * Two callers, for two reasons. {@link isChannelOverBudgetForTask} gates a
  * delegated task run, whose spend lands on the run's own ledger when it
@@ -322,6 +331,13 @@ export function isChannelOverBudget(
  * channel ledger calls this first only as a cheap bail, to skip prompt-building
  * work when the answer is already no; the cap itself is enforced by
  * {@link reserveChannelTurn}, which holds for the duration of the call.
+ *
+ * **A refusal sweeps first.** The accrued total includes outstanding holds, so a
+ * channel pushed over its cap by holds that a dead worker abandoned would refuse
+ * every subsequent turn — including the ones that would otherwise have swept
+ * those holds, since every caller bails here before reserving. That is the state
+ * the sweep exists to fix, so it has to be reachable from inside it. The extra
+ * round-trips are paid only on the path that was about to say no.
  */
 export async function isChannelOverBudgetNow(
   channelId: string,
@@ -330,11 +346,12 @@ export async function isChannelOverBudgetNow(
   if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
     return false;
   }
-  const usage = await prisma.channelMonthlyUsage.findUnique({
-    select: { costUsdAccrued: true },
-    where: { channelId_yearMonth: { channelId, yearMonth: currentYearMonth() } },
-  });
-  return isChannelOverBudget(usage ? Number(usage.costUsdAccrued) : 0, monthlyBudgetUsdCents);
+  const yearMonth = currentYearMonth();
+  if (!isChannelOverBudget(await accruedThisMonth(channelId, yearMonth), monthlyBudgetUsdCents)) {
+    return false;
+  }
+  await sweepExpiredHolds(channelId);
+  return isChannelOverBudget(await accruedThisMonth(channelId, yearMonth), monthlyBudgetUsdCents);
 }
 
 /**
@@ -493,10 +510,6 @@ export async function reserveChannelTurn(
     return makeHold(channelId, yearMonth, 0, null);
   }
 
-  // Reclaim abandoned claims before deciding, so a channel is never refused on
-  // budget that nothing is actually spending.
-  await sweepExpiredHolds(channelId);
-
   const reservation = await estimateHoldUsd(
     opts.agentKey,
     { channelId, orgId: opts.orgId, teamId: opts.teamId },
@@ -537,8 +550,14 @@ export async function reserveChannelTurn(
   }
 
   if (isChannelOverBudget(claim.accruedBefore, monthlyBudgetUsdCents)) {
-    await releaseHold(channelId, yearMonth, claim.holdId, reservation);
-    return REFUSED_HOLD;
+    // Before refusing, reclaim anything abandoned — the total this decided on
+    // includes holds no one is spending against. Only paid on the refusal path.
+    await sweepExpiredHolds(channelId);
+    const accruedBefore = (await accruedThisMonth(channelId, yearMonth)) - reservation;
+    if (isChannelOverBudget(accruedBefore, monthlyBudgetUsdCents)) {
+      await releaseHold(channelId, yearMonth, claim.holdId, reservation);
+      return REFUSED_HOLD;
+    }
   }
   return makeHold(channelId, yearMonth, reservation, claim.holdId);
 }

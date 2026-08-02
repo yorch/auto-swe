@@ -169,6 +169,13 @@ describe('sweepChannelOpenItems', () => {
     });
 
     const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
+    // The hold is priced off the agent the pass actually spends on; swapping
+    // orgId/teamId or the key silently prices it off the wrong scope.
+    expect(reserveChannelTurnMock).toHaveBeenCalledWith(
+      'chan-1',
+      null,
+      expect.objectContaining({ agentKey: 'commitToMemory', orgId: 'org-1', teamId: 'team-1' })
+    );
     expect(result.itemsCreated).toBe(1);
     expect(result.itemsResolved).toBe(0);
     expect(createManyOpenItems).toHaveBeenCalledWith({

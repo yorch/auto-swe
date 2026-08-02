@@ -5,7 +5,11 @@ vi.mock('@auto-swe/shared/db', () => {
     $executeRawUnsafe: vi.fn(),
     $queryRawUnsafe: vi.fn(),
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
-    channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
+    // Without these the reserve transaction throws on `channelBudgetHold.create`
+    // and silently falls through to the read-only gate, which made this file's
+    // hold assertions read a write a real database would have rolled back.
+    channelBudgetHold: { create: vi.fn(), delete: vi.fn(), findMany: vi.fn() },
+    channelMonthlyUsage: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     memoryItem: { updateMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
   };
@@ -40,7 +44,14 @@ vi.mock('../lib/agentTracer.js', () => ({
     this.addToolCall = vi.fn();
   }),
 }));
+const resolveAgentMock = vi.fn();
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: (...args: unknown[]) => resolveAgentMock(...args),
+}));
 vi.mock('../lib/costTracking.js', () => ({
+  // The hold is priced off this; without it every hold silently took the
+  // unknown-model fallback.
+  getModelPrice: () => ({ known: true, price: { input: 5, output: 25 } }),
   recordLlmUsage: vi.fn().mockResolvedValue({
     costUsd: 0.02,
     inputTokens: 10,
@@ -82,10 +93,16 @@ beforeEach(() => {
     consolidationMinClusterSize: null,
     consolidationSimilarityThreshold: null,
     monthlyBudgetUsdCents: null,
+    orgId: 'org-1',
+    teamId: 'team-1',
   } as never);
   findUsage.mockResolvedValue(null as never);
   upsertUsage.mockResolvedValue({ costUsdAccrued: 0 } as never);
   queryRaw.mockResolvedValue(memoryRows() as never);
+  resolveAgentMock.mockResolvedValue({ model: { spec: 'anthropic/claude-opus-4-8' } });
+  vi.mocked(prisma.channelBudgetHold.create).mockResolvedValue({ id: 'hold-1' } as never);
+  vi.mocked(prisma.channelBudgetHold.delete).mockResolvedValue({ id: 'hold-1' } as never);
+  vi.mocked(prisma.channelBudgetHold.findMany).mockResolvedValue([] as never);
   agentGenerateMock.mockResolvedValue({
     object: { memories: [{ lessonSummary: 'merged', rationale: 'why' }] },
     usage: null,
@@ -128,6 +145,8 @@ describe('consolidateChannelMemory', () => {
       consolidationMinClusterSize: 2,
       consolidationSimilarityThreshold: null,
       monthlyBudgetUsdCents: 100_000,
+      orgId: 'org-1',
+      teamId: 'team-1',
     } as never);
     findUsage.mockResolvedValue({ costUsdAccrued: 0 } as never);
     // Two clusters of two: rows 0/1 identical, rows 2/3 identical but orthogonal.
@@ -146,7 +165,16 @@ describe('consolidateChannelMemory', () => {
         update: { costUsdAccrued: { increment: number } };
       }
     ).update.costUsdAccrued.increment;
-    expect(held).toBeCloseTo(0.1, 6); // two clusters × $0.05
+    // Two clusters, priced off the bound model: 2 × (8K × $5 + 1.5K × $25) / 1M.
+    expect(held).toBeCloseTo(2 * ((8_000 * 5 + 1_500 * 25) / 1_000_000), 6);
+    // And the hold really was taken, rather than silently degrading to the
+    // read-only gate — which is what this file used to assert against.
+    expect(vi.mocked(prisma.channelBudgetHold.create)).toHaveBeenCalledTimes(1);
+    expect(resolveAgentMock).toHaveBeenCalledWith('commitToMemory', {
+      channelId: CHANNEL_ID,
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
   });
 
   it('writes no usage row for an uncapped channel that spent nothing', async () => {

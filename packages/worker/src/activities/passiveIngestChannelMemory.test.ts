@@ -177,6 +177,13 @@ describe('passiveIngestChannelMemory', () => {
     });
 
     const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+    // The hold is priced off the agent the pass actually spends on; swapping
+    // orgId/teamId or the key silently prices it off the wrong scope.
+    expect(reserveChannelTurnMock).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      null,
+      expect.objectContaining({ agentKey: 'commitToMemory', orgId: 'org-1', teamId: 'team-1' })
+    );
     expect(result.messagesRead).toBe(2);
     expect(result.factsExtracted).toBe(1);
     expect(result.factsWritten).toBe(1);
