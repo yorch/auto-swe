@@ -1,4 +1,4 @@
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, log } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 // Mock prisma before importing the module under test. modelRoleConfig +
@@ -55,7 +55,10 @@ vi.mock('@auto-swe/shared/db', async () => {
 // the baked-in tier numbers so existing budget tests behave unchanged.
 // `assertBudgetAvailable` now derives the workflow id from Temporal activity
 // context instead of trusting a caller-supplied string.
-vi.mock('./activityContext.js', () => ({ currentWorkflowId: () => 'wf-temporal-1' }));
+vi.mock('./activityContext.js', () => ({
+  currentActivityType: () => 'commitToMemory',
+  currentWorkflowId: () => 'wf-temporal-1',
+}));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({
@@ -158,7 +161,14 @@ describe('BUDGET_LIMITS', () => {
 });
 
 describe('recordLlmUsage', () => {
-  beforeEach(() => vi.clearAllMocks());
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => warnSpy.mockRestore());
 
   /**
    * Wire `activeWorkflow.findFirst`/`update` to a tiny in-memory row that
@@ -295,6 +305,24 @@ describe('recordLlmUsage', () => {
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
     ).rejects.toThrow('deadlock detected');
+  });
+
+  it('flags a step that spends on an agent the boot gate does not know about', async () => {
+    ledger({});
+    // `commitToMemory` is a registered step, but not for the `implementer` key.
+    await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1, outputTokens: 1 });
+
+    // Advisory, never fatal — the provider has already been paid.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('STEP_REQUIRED_AGENTS'),
+      expect.objectContaining({ role: 'implementer' })
+    );
+  });
+
+  it('stays quiet when the step declares the agent it used', async () => {
+    ledger({});
+    await recordLlmUsage('wf-temporal-1', 'commitToMemory', { inputTokens: 1, outputTokens: 1 });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('accrues in a single query, keyed on the unique temporalWorkflowId', async () => {

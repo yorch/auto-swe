@@ -1,51 +1,63 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /**
- * `STEP_REQUIRED_AGENTS` carries a "keep this in sync with `STEP_EXECUTORS`"
- * instruction and, until now, nothing that checked it.
+ * `STEP_REQUIRED_AGENTS` is hand-maintained, carries a "keep this in sync with
+ * `STEP_EXECUTORS`" instruction, and is the sole input to the boot gate —
+ * `requiredAgentKeysForDeployment` maps installed templates' step nodes through
+ * it. Two directions can rot:
  *
- * That got materially more dangerous when the boot gate started deriving
- * itself from this map: a step renamed or deleted in `runnable.ts` leaves a
- * stale key here, and a *new* model-resolving step with no key means the agent
- * it needs is never checked at boot — the run fails mid-flight with
- * `ConfigMissingError`, which is precisely what `assertConfigReady` exists to
- * prevent.
+ *  - a **stale key**, naming a step that no longer exists. Checked here.
+ *  - a **missing key** for a step that resolves a model. Checked at runtime by
+ *    `recordLlmUsage`, which is the only place that knows both the executing
+ *    activity and the agent key it just spent tokens on.
  *
- * "This step resolves a model" is not syntactic, so full derivation is out.
- * What is checkable is the direction that actually rots: every key here must
- * name a step that still exists.
+ * The missing-key direction deliberately is *not* inferred statically. The
+ * obvious approach — walk a step's activity module and its imports looking for
+ * `recordLlmUsage` — over-approximates badly, because one module hosts several
+ * activities: `qualityGates.ts` imports `implementerSession` for the gate-fix
+ * loop, so `runLint` "reaches" LLM usage it never performs. Narrowing that to
+ * real call-graph analysis is far more machinery than the check is worth when
+ * one runtime assertion answers it exactly.
  */
 
-const RUNNABLE_SRC = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '../../workflows/runnable.ts'),
-  'utf8'
-);
+const WORKER_SRC = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const RUNNABLE = join(WORKER_SRC, 'workflows/runnable.ts');
 
-/** Step names registered in `runnable.ts`'s executor table: `['name', async …`. */
-function registeredStepNames(): Set<string> {
-  const names = new Set<string>();
-  for (const m of RUNNABLE_SRC.matchAll(/^\s*'([a-zA-Z][\w]*)',\s*$/gm)) {
-    names.add(m[1]);
-  }
-  return names;
+/**
+ * Step names registered in `STEP_EXECUTORS`.
+ *
+ * Entries come in two shapes — multi-line with an inline arrow, and single-line
+ * sharing a helper (`['runTests', gateExecutor]`) — so match the leading name
+ * token rather than trying to bracket a whole entry. An earlier version keyed
+ * off the closing `],` and silently dropped every single-line entry, which took
+ * `planDecomposition` with it.
+ */
+function registeredSteps(): Set<string> {
+  const src = readFileSync(RUNNABLE, 'utf8');
+  const table = src.slice(src.indexOf('const STEP_EXECUTORS'), src.indexOf('\n]);'));
+  return new Set(
+    [...table.matchAll(/\[\s*(?:\/\/[^\n]*\n\s*)*'([a-zA-Z]\w*)'\s*,/g)].map((m) => m[1])
+  );
 }
 
 describe('STEP_REQUIRED_AGENTS tracks the step executors', () => {
-  const registered = registeredStepNames();
+  const steps = registeredSteps();
 
   it('finds the executor table (the parser itself works)', () => {
-    // Without this the assertion below passes vacuously on any parser drift.
-    expect(registered.size).toBeGreaterThan(15);
-    expect(registered).toContain('executeImplementation');
-    expect(registered).toContain('runReviewNetwork');
+    // Without this every assertion below passes vacuously on parser drift.
+    expect(steps.size).toBeGreaterThan(20);
+    // One of each entry shape, so dropping either is caught.
+    expect(steps).toContain('executeImplementation'); // multi-line
+    expect(steps).toContain('runTests'); // single-line, shared executor
+    expect(steps).toContain('planDecomposition');
   });
 
   it('names only steps that still exist', () => {
-    const stale = Object.keys(STEP_REQUIRED_AGENTS).filter((step) => !registered.has(step));
-    expect(stale, 'steps in STEP_REQUIRED_AGENTS with no executor in runnable.ts').toEqual([]);
+    const stale = Object.keys(STEP_REQUIRED_AGENTS).filter((step) => !steps.has(step));
+    expect(stale, 'keys in STEP_REQUIRED_AGENTS with no executor in runnable.ts').toEqual([]);
   });
 });

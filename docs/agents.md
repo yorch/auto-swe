@@ -513,13 +513,15 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
-- **`STEP_REQUIRED_AGENTS` is only half-checked.** The boot gate derives itself from that map, and
-  `stepRequiredAgents.coverage.test.ts` catches keys naming a step that no longer exists. It cannot
-  catch the opposite and more damaging direction: a *new* step that resolves a model but has no
-  entry. Its agent is then never checked at boot, and the run fails mid-flight with
-  `ConfigMissingError` — precisely what `assertConfigReady` exists to prevent. "This step resolves a
-  model" is not syntactic, so the map stays hand-maintained; the `runnable.ts` executor table is the
-  thing to compare a new step against.
+- **`STEP_REQUIRED_AGENTS` drift is caught late in one direction.** A stale key — naming a step
+  that no longer exists — fails `stepRequiredAgents.coverage.test.ts` in CI. A *missing* key, the
+  damaging direction, cannot be inferred statically: one activity module hosts several activities,
+  so walking imports for `recordLlmUsage` reports `runLint` as an LLM step because its module also
+  holds the gate-fix loop. `recordLlmUsage` therefore checks it at runtime instead — it is the only
+  place that knows both the executing activity and the agent key just spent on — and logs a warning
+  plus an `llm.step_agent_unregistered` span attribute. That fires the first time the step runs, not
+  at merge, so a new model-resolving step should be added to the map deliberately rather than
+  discovered.
 - **The boot gate reflects install state at boot, not forever.** `requiredAgentKeysForDeployment()`
   reads the installed templates once, at startup. Activating a template afterwards — or adding a
   Slack channel — does not re-run the check, so a newly reachable agent with no credential fails at

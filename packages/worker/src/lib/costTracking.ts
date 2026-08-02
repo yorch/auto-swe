@@ -1,10 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
-import { trace } from '@opentelemetry/api';
-import { ApplicationFailure } from '@temporalio/activity';
-import { currentWorkflowId } from './activityContext.js';
+import { type Span, trace } from '@opentelemetry/api';
+import { ApplicationFailure, log } from '@temporalio/activity';
+import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
+import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -266,6 +267,43 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   }
 }
 
+/**
+ * Flags a step that spends tokens on an agent the boot gate does not know about.
+ *
+ * `STEP_REQUIRED_AGENTS` is hand-maintained, and a *missing* entry is the
+ * damaging direction: the agent is never validated at startup, so a deployment
+ * boots clean and the run dies partway through with `ConfigMissingError`. That
+ * cannot be inferred statically without real call-graph analysis — one activity
+ * module hosts several activities — but here both facts are in hand: which
+ * activity is executing, and which agent key it just spent on.
+ *
+ * Advisory by construction. This is bookkeeping; it must never fail a run that
+ * has already paid the provider. The span attribute is the durable signal.
+ */
+function flagUnregisteredAgentUsage(role: string, span: Span): void {
+  let activity: string;
+  try {
+    activity = currentActivityType();
+  } catch {
+    return; // Outside an activity (tests, direct calls) — nothing to check.
+  }
+  const declared = STEP_REQUIRED_AGENTS[activity];
+  // No entry at all means the step resolves no model *as far as the map knows*;
+  // an entry that omits this role means the map is incomplete for it. Both are
+  // drift, and only steps that actually reach here can be judged.
+  if (declared?.includes(role as (typeof declared)[number])) {
+    return;
+  }
+  span.setAttribute('llm.step_agent_unregistered', true);
+  log.warn(
+    `Step '${activity}' recorded usage for agent '${role}', which is not in ` +
+      'STEP_REQUIRED_AGENTS. The boot gate cannot validate that agent, so a ' +
+      'deployment missing its model or credential will fail mid-run instead of ' +
+      'at startup. Add it to lib/config/stepRequiredAgents.ts.',
+    { activity, role }
+  );
+}
+
 export async function recordLlmUsage(
   temporalWorkflowId: string,
   role: string,
@@ -377,6 +415,8 @@ export async function recordLlmUsage(
         // The write above happens before the limit check, deliberately: actual
         // consumption is recorded even when the limit is breached, so the UI
         // shows the real overage rather than the last value under the limit.
+        flagUnregisteredAgentUsage(role, span);
+
         const { limits, tier } = await resolveTierLimits(updated.budgetTier);
 
         span.setAttributes({
