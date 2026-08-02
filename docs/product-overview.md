@@ -218,13 +218,27 @@ real repository produces a pull request worth merging. Verifying the Temporal, D
 end to end requires the full infrastructure stack, and the channel assistant in particular is newly
 built rather than validated under sustained real-world use.
 
-**The generic-platform surface is thinner than the engine underneath it.** The engine is
-domain-agnostic — templates declare an `inputSchema`, runs carry a typed `RunInput`, and memory and
-connections are generic. The *submit surface* has not caught up: there is no generic `POST /runs`
-endpoint, `RunInput.externalTicketId` is still non-nullable, trigger event→input mappings are
-config rather than a persisted `Trigger` table, and there is no live issues-webhook receiver. A
-non-SWE workflow therefore still enters through the SWE-shaped work-request route and must supply a
-ticket ID.
+**A non-SWE workflow has its own way in.** Two entry points take a generic payload validated against
+the template's declared `inputSchema`, with no ticket ID and no repository required:
+
+| Entry point | Auth | Notes |
+|---|---|---|
+| `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
+| `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
+
+**What is still SWE-shaped is the plumbing behind them, not the door.** Both marshal the payload into
+a `RepoWorkRequest` — the ticket→PR struct — passing `repoId: ''` when there is no connection, and
+`RunInput.externalTicketId` remains non-nullable in the schema (auto-filled rather than demanded of
+the caller). Event→input mappings for external triggers are configuration rather than a persisted
+`Trigger` table.
+
+**The generic entry points do not get the ledger guarantee.** `POST /workflow-templates/:id/runs`
+starts the Temporal workflow before writing its `RunInput` and `ActiveWorkflow` rows, outside a
+transaction and without compensation, rather than going through `launchTrackedWorkflow` — so a DB
+failure after a successful start leaves a run executing with nothing to attribute its spend or PRs
+to. Its workflow ID is random, so it has no dedup either. The Slack run modal and `POST /prd-runs`
+have the same ordering (both at least derive a deterministic ID). See
+[architecture.md §10](./architecture.md#10-limitations).
 
 Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
 so IP-direct connections are unfiltered and wildcard entries are informational only. Both would
