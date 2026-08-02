@@ -174,10 +174,16 @@ follows it, which settle against the same hold), and the passes that fan out ove
 the batch size.
 
 **The hold is priced, not guessed at.** `estimateHoldUsd` resolves the agent the channel is bound to
-and prices a nominal turn envelope (8K in / 1.5K out) against `MODEL_PRICES` — so an Opus channel
-holds ~$0.078 per call and a Haiku channel ~$0.016, rather than sharing one number that is ~5x wrong
-for one of them. `CHANNEL_TURN_RESERVATION_USD` ($0.05) survives only as the fallback for a model
-with no known price, since a zero hold would bound nothing.
+and prices a nominal turn envelope (8K in / 1.5K out) through `calculateCostUsd`, the same helper the
+run ledger prices real calls with — so an Opus channel holds ~$0.078 per call and a Haiku channel
+~$0.016, rather than sharing one number that is ~5x wrong for one of them, and the hold cannot drift
+from the cost it is netted against. `CHANNEL_TURN_RESERVATION_USD` ($0.05) survives only as the
+fallback for a model with no known price, since a zero hold would bound nothing.
+
+Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
+threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
+context carries no `channelId`, so a pass that priced its hold at that tier and bound its model
+without it would charge for a channel-scoped override it never used.
 
 With `H` USD of headroom, at most `H / estimate` calls are admitted, and each can overshoot by however
 far its real cost exceeds its hold — so the aggregate overshoot is bounded by admitted concurrency,
@@ -194,18 +200,23 @@ hold was swept settles its full cost rather than netting against a reservation t
 **The sweep runs from the refusal, not the happy path.** The accrued total a gate reads *includes*
 outstanding holds, so the state the sweep exists to repair — a channel pushed over its cap by holds
 nobody is spending against — is exactly the state that refuses every subsequent turn. Both
-`isChannelOverBudgetNow` and `reserveChannelTurn` therefore sweep from inside their refusal branch
-and re-decide on the reclaimed total; a channel under its cap never pays the extra round-trips, and
-never needs to.
+`isChannelOverBudgetNow` and `reserveChannelTurn` therefore sweep from inside their refusal branch,
+and re-decide only when the sweep actually reclaimed something. A channel under its cap never pays
+the extra round-trips; a channel that has genuinely spent its budget — for which refusal is the
+*steady* state, not a rare path — pays one query and no re-read.
 
 The corollary is that a channel comfortably under its cap never sweeps at all, so its abandoned holds
 sit until something pushes it to the cap.
 `POST /api/v1/admin/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
-control in the admin UI. It drops the outstanding holds one transaction at a time (the same
-delete-is-the-claim shape the worker's sweep uses, so a hold a worker is concurrently settling is
-never double-refunded) and reports how many it actually released. It is deliberately not a "zero the
-month" button: it subtracts exactly what the holds added and leaves real spend alone, so recovering
-from a crash never doubles as disabling the cap.
+control in the admin UI. It reports how many holds it actually released, and is deliberately not a
+"zero the month" button: it subtracts exactly what the holds added and leaves real spend alone, so
+recovering from a crash never doubles as disabling the cap.
+
+**The refund protocol has one implementation**, `releaseChannelBudgetHolds` in
+`@auto-swe/shared/lib/channelBudget`, shared by the sweep and the reset. One transaction per hold,
+delete before decrement, credit the *hold's own* month, never touch `runsCompleted`. It lives in
+`shared` because it is a data-model invariant rather than route logic: a bug there credits real spend
+back and quietly loosens the cap it exists to enforce.
 
 One path still spends on the channel ledger **without** a hold: `finalizeChannelTaskRun`. A delegated
 task run spends across a whole workflow, not inside one activity, so there is nothing in-process to
