@@ -1,3 +1,4 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -91,14 +92,22 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     '/agent-library',
     { onRequest: adminOnly, schema: { querystring: ListQuery } },
     async (request) => {
-      const rows = await listAgents(fastify.prisma, {
-        channelId: request.query.channelId,
-        latestOnly: !request.query.all,
-        orgId: request.query.orgId,
-        scope: request.query.scope,
-        teamId: request.query.teamId,
-        workflowTemplateId: request.query.workflowTemplateId,
-      });
+      // Every filter here is an optional query parameter, so the unfiltered
+      // call — the admin library view with nothing selected — is the normal
+      // case, not an oversight.
+      const rows = await runUnscoped(
+        "admin lists the Agent library across every team's scopes",
+        ['Agent'],
+        () =>
+          listAgents(fastify.prisma, {
+            channelId: request.query.channelId,
+            latestOnly: !request.query.all,
+            orgId: request.query.orgId,
+            scope: request.query.scope,
+            teamId: request.query.teamId,
+            workflowTemplateId: request.query.workflowTemplateId,
+          })
+      );
       return { data: rows };
     }
   );

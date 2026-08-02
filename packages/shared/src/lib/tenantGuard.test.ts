@@ -31,7 +31,8 @@ describe('hasTenantPredicate', () => {
     ['a team relation', { team: { memberships: { some: { userId: 'u1' } } } }],
     ['a memberships relation', { memberships: { some: { userId: 'u1' } } }],
     ['nested inside AND', { AND: [{ isActive: true }, { teamId: 't1' }] }],
-    ['nested inside NOT', { NOT: { teamId: 't1' } }],
+    // `teamId: null` selects the GLOBAL rows, which belong to no tenant.
+    ['a null teamId', { teamId: null }],
     // How the lessons routes scope: tenancy reached through a relation.
     ['through a relation', { repository: { team: { memberships: { some: { userId: 'u' } } } } }],
     ['through a list filter', { cases: { some: { dataset: { teamId: 't1' } } } }],
@@ -52,6 +53,14 @@ describe('hasTenantPredicate', () => {
     ['an unrelated filter', { status: 'ACTIVE' }],
     ['an id lookup', { id: 'abc' }],
     ['an OR with no tenant branch', { OR: [{ status: 'A' }, { status: 'B' }] }],
+    // Negations match every tenant but one — the opposite of scoping. Counting
+    // them would let the guard bless the exact queries it exists to catch.
+    ['a NOT on the tenant key', { NOT: { teamId: 't1' } }],
+    ['a not operator on the tenant key', { teamId: { not: 't1' } }],
+    ['a `none` relation filter', { memberships: { none: { userId: 'u1' } } }],
+    // A MemoryItem with no channel is still owned by a team, so this selects
+    // every team's non-channel lessons.
+    ['a null channelId', { channelId: null }],
   ])('rejects %s', (_label, where) => {
     expect(hasTenantPredicate(where)).toBe(false);
   });

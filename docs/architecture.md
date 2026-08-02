@@ -572,9 +572,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch. The shared Prisma singleton carries a `tenantGuard` extension — applied
-  in `db.ts`, so gateway and worker both get it — that fails a multi-row query (`findMany` /
-  `count` / `aggregate` / `groupBy` / `updateMany` / `deleteMany`) on a model with a
-  `teamId`/`orgId` when the query has no tenant predicate. Every
+  once, in `db.ts`, and everything else decorates or imports that singleton rather than building a
+  second client, so gateway and worker are covered by the same attachment. It fails a multi-row
+  query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` / `deleteMany`) on a model
+  with a `teamId`/`orgId` when the query has no tenant predicate. A predicate has to *narrow*:
+  `NOT`, a `not`/`none` operator, and a null `channelId` are all read as unscoped, since each
+  matches every tenant but one. Every
   call site is accounted for: a deliberate cross-tenant read declares itself with
   `runUnscoped(reason, models, fn)`, and the common `admin ? {} : filter` shape uses
   `asPlatformAdmin`,
@@ -593,9 +596,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   Prisma, so the extension never runs on them, and production defaults to `warn` — which means a
   forgotten filter can reach a log line nobody reads. `tenantGuard.coverage.test.ts` closes that by
   reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
-  `where`, or sit inside `runUnscoped`/`asPlatformAdmin`. It is a text heuristic, so a `where` hoisted
-  behind a variable or helper call is undecidable; those few sites are listed by name in the test
-  and verified by hand.
+  `where`, or sit inside a `runUnscoped`/`asPlatformAdmin` that names *that* model. It also fails if
+  any file outside a named allowlist constructs its own `PrismaClient`, since a second client is an
+  unguarded one. It is a text heuristic, so a `where` hoisted behind a variable, a helper call, or a
+  conditional spread is undecidable; those few sites are listed by name in the test and verified by
+  hand.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

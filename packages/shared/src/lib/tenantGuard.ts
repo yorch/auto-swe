@@ -53,10 +53,10 @@ const GUARDED_OPERATIONS = new Set([
 /**
  * Keys that scope a query to a tenant, directly or through a relation.
  *
- * `channelId` counts because a `SlackChannel` belongs to exactly one team, so
- * filtering on it is strictly narrower than filtering on `teamId` — the two
- * tenant-scoped models that carry the column (`MemoryItem`, `Agent`) both
- * inherit their tenant from the channel.
+ * `channelId` counts because a `SlackChannel` belongs to exactly one team, so a
+ * non-null channel id names exactly one tenant — the two tenant-scoped models
+ * that carry the column (`MemoryItem`, `Agent`) both inherit their tenant from
+ * the channel.
  */
 const TENANT_KEYS = new Set([
   'channelId',
@@ -67,6 +67,32 @@ const TENANT_KEYS = new Set([
   'teamId',
   'memberships',
 ]);
+
+/**
+ * Keys whose `null` still scopes, because null means "belongs to no tenant".
+ *
+ * `teamId: null` selects the GLOBAL rows — bundle export relies on it — and
+ * those are nobody's private data. `channelId: null` is the opposite: a
+ * `MemoryItem` with no channel is still owned by a team, so that predicate
+ * selects every team's non-channel lessons and must not count.
+ */
+const NULL_SCOPES_TENANT = new Set(['orgId', 'organizationId', 'teamId']);
+
+/** Relation/scalar operators that select everything *except* a tenant. */
+const NEGATING_OPERATORS = new Set(['none', 'not', 'isNot']);
+
+/** Does `value`, sitting under tenant key `key`, actually narrow to a tenant? */
+function narrowsToTenant(key: string, value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return NULL_SCOPES_TENANT.has(key);
+  }
+  if (typeof value === 'object') {
+    // `{ teamId: { not: x } }` and `{ memberships: { none: … } }` match every
+    // tenant but one, which is the opposite of scoping.
+    return !Object.keys(value as Record<string, unknown>).some((k) => NEGATING_OPERATORS.has(k));
+  }
+  return true;
+}
 
 const unscoped = new AsyncLocalStorage<{ reason: string; models: ReadonlySet<string> }>();
 
@@ -102,10 +128,18 @@ export function hasTenantPredicate(where: unknown): boolean {
     return false;
   }
   for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    if (TENANT_KEYS.has(key)) {
-      return true;
+    // `NOT: { teamId: x }` matches every tenant except x. Descending into it
+    // would read the tenant key inside as scoping and invert the guard.
+    if (key === 'NOT') {
+      continue;
     }
-    // Recurse through *any* nested object, not just AND/OR/NOT. Tenancy is
+    if (TENANT_KEYS.has(key)) {
+      if (narrowsToTenant(key, value)) {
+        return true;
+      }
+      continue;
+    }
+    // Recurse through *any* nested object, not just AND/OR. Tenancy is
     // routinely reached through a relation two or three levels down —
     // `{ repository: { team: { memberships: { some: … } } } }` is how the
     // lessons routes scope, and treating that as unscoped would be a false
