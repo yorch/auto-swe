@@ -1,8 +1,83 @@
+import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { resolveDocLink } from '@/lib/docLinks';
 import { cn } from '@/lib/utils';
 
-export function Markdown({ children, className }: { children: string; className?: string }) {
+/**
+ * Anchor renderer for the docs surface.
+ *
+ * Docs are authored to be read as files, so their cross-references are
+ * filesystem-relative. Left raw, every one of them 404s as a URL — see
+ * `lib/docLinks.ts`. A link we cannot serve degrades to plain text with a
+ * tooltip, because a link that goes nowhere is worse than prose.
+ */
+function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
+  // `node` is react-markdown's mdast node. It is not a DOM attribute, and
+  // spreading it onto the element stamps node="[object Object]" into the HTML.
+  return ({ children, href, node: _node, ...rest }) => {
+    const resolved = resolveDocLink(href ?? '', servedSlugs);
+
+    if (resolved.kind === 'unserved') {
+      return (
+        <span
+          className="text-paper-400 underline decoration-dotted underline-offset-2"
+          title={`${href} — ${resolved.reason}. It lives in the repository.`}
+        >
+          {children}
+        </span>
+      );
+    }
+
+    const external = /^[a-z][a-z0-9+.-]*:|^\/\//i.test(resolved.href);
+    return (
+      <a
+        href={resolved.href}
+        {...(external ? { rel: 'noopener noreferrer', target: '_blank' } : {})}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  };
+}
+
+/**
+ * Fenced-code renderer.
+ *
+ * The docs carry mermaid diagrams, and nothing here renders them — the library
+ * costs 79 packages and ~123 MiB installed to draw eight diagrams in two docs,
+ * which is a dependency decision on its own, not a side effect of fixing links.
+ * Until that call is made, say plainly that the block is diagram source instead
+ * of dropping a reader into unexplained syntax.
+ */
+const docCode: Components['code'] = ({ children, className, node: _node, ...rest }) => {
+  const language = /language-([\w-]+)/.exec(className ?? '')?.[1];
+  return (
+    <code className={className} {...rest}>
+      {language === 'mermaid' ? (
+        <span className="block mb-2 pb-2 border-b border-white/10 text-[0.9em] not-italic text-paper-400">
+          Mermaid diagram source — renders as a diagram in the repository
+        </span>
+      ) : null}
+      {children}
+    </code>
+  );
+};
+
+export function Markdown({
+  children,
+  className,
+  servedSlugs,
+}: {
+  children: string;
+  className?: string;
+  /**
+   * Doc slugs `/docs/[slug]` will render. Supplied only by the docs surface —
+   * without it, relative links are left exactly as authored.
+   */
+  servedSlugs?: ReadonlySet<string>;
+}) {
   return (
     <div
       className={cn(
@@ -29,7 +104,12 @@ export function Markdown({ children, className }: { children: string; className?
         className
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        components={servedSlugs ? { a: docAnchor(servedSlugs), code: docCode } : undefined}
+        remarkPlugins={[remarkGfm]}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }

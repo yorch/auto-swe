@@ -12,35 +12,25 @@ export type Doc = DocMeta & {
   content: string;
 };
 
+/**
+ * Only the top level of `docs/` is served. `docs/history/` is frozen by
+ * convention — publishing it to product users would advertise superseded
+ * behaviour as current — and `docs/redesign/` is image reference material.
+ */
 const DOCS_DIR = path.resolve(process.cwd(), '../../docs');
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
 
+/**
+ * Titles the doc's own `# heading` gets wrong. Keep this empty unless a doc
+ * genuinely cannot title itself: an entry here silently wins over the file, so
+ * a stale one outlives the doc it describes. The previous set named six files
+ * that had since moved to `docs/history/`, which `readdir` no longer returns.
+ */
 const TITLE_OVERRIDES: Record<string, { title: string; description: string }> = {
-  'configurable-workflows': {
-    description: 'Roadmap for the configurable-workflow engine',
-    title: 'Configurable Workflows',
-  },
-  'data-and-infra': {
-    description: 'Embedding pipeline, executor images, security review',
-    title: 'Data & Infra',
-  },
-  'gateway-and-auth': {
-    description: 'JWT auth, RBAC, Team API, Slack OAuth, full API spec',
-    title: 'Gateway & Auth',
-  },
-  'mvp-architecture': {
-    description: 'Core architecture, component design, data flow',
-    title: 'MVP Architecture',
-  },
-  README: { description: 'Index of design documents', title: 'Overview' },
-  wireframes: {
-    description: 'Web dashboard wireframes and page layouts',
-    title: 'Wireframes',
-  },
-  'workflow-and-activities': {
-    description: 'Review network, CI fix loop, memory commit',
-    title: 'Workflows & Activities',
+  README: {
+    description: 'Index of the living documentation — start here',
+    title: 'Overview',
   },
 };
 
@@ -74,6 +64,15 @@ export const listDocs = cache(async (): Promise<DocMeta[]> => {
       })
   );
   return docs.sort((a, b) => a.title.localeCompare(b.title));
+});
+
+/**
+ * Slugs `/docs/[slug]` will render. The Markdown renderer needs this to tell a
+ * cross-doc link it can rewrite from one it must degrade to plain text.
+ */
+export const servedDocSlugs = cache(async (): Promise<ReadonlySet<string>> => {
+  const docs = await listDocs();
+  return new Set(docs.map((d) => d.slug));
 });
 
 export const getDoc = cache(async (slug: string): Promise<Doc | null> => {

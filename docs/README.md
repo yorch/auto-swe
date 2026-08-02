@@ -40,6 +40,21 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
 (dashboard design screenshots).
 
+## These files ship
+
+The dashboard renders this directory at `/docs`, linked in the sidebar for every role, so a doc is
+a product surface and not only a file in a checkout. Two consequences when you edit one:
+
+- **Only the top level is served.** `history/` and `redesign/` are deliberately not published —
+  frozen docs presented to a product user read as current behaviour. A link into them renders as
+  plain text rather than a dead link, as does a link that leaves `docs/` (`../AGENTS.md`).
+- **Cross-doc links are rewritten**, so `[agents.md](./agents.md)` works both as a file path and as
+  `/docs/agents`. Write them relative, as normal; `packages/web/src/lib/docLinks.ts` handles the
+  translation and is unit-tested against every shape in this tree.
+
+Mermaid blocks render as labelled diagram source in the dashboard, not as diagrams — the renderer
+is a 79-package dependency that has not been taken on.
+
 ## Where known gaps are documented
 
 Gaps live **next to the feature they belong to**, not in a central list — a central list is what
