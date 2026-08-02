@@ -47,11 +47,19 @@ const EXEMPT_WRAPPERS = new Set(['runUnscoped', 'asPlatformAdmin']);
  * Keep this list short. A new entry means someone put a `where` behind an
  * indirection that can no longer be read off the page — inline it, or mark the
  * call, before adding it here. The runtime guard still covers every one of them.
+ *
+ * **The count is load-bearing.** Keyed on file + delegate + operation alone, one
+ * blessed `agent.findMany` would bless every other `agent.findMany` in the same
+ * file — an allowlist that widens with no one editing it, which is the one way
+ * it can rot that reading it cannot catch. A line number would be unique but
+ * churns on every edit above it, so the entry declares how many call sites it
+ * covers instead: adding one fails here until someone raises the number, and
+ * raising it is the moment they have to look at the new query.
  */
-const HAND_VERIFIED = new Set([
-  'packages/gateway/src/lib/agentLibraryService.ts:agent.findMany',
-  'packages/gateway/src/lib/agentLibraryService.ts:agent.updateMany',
-  'packages/gateway/src/routes/skills.ts:skill.findMany',
+const HAND_VERIFIED = new Map([
+  ['packages/gateway/src/lib/agentLibraryService.ts:agent.findMany', 1],
+  ['packages/gateway/src/lib/agentLibraryService.ts:agent.updateMany', 1],
+  ['packages/gateway/src/routes/skills.ts:skill.findMany', 1],
 ]);
 
 /**
@@ -292,9 +300,24 @@ describe('tenant-scoped mass queries are filtered or marked', () => {
 
   it('keeps the hand-verified exceptions honest', () => {
     // A stale entry is as bad as a missing one: it reads as "checked" while the
-    // call site it named is gone.
-    const seen = new Set(sites.filter((s) => s.verdict === 'hand-verified').map((s) => s.id));
-    expect([...HAND_VERIFIED].filter((id) => !seen.has(id))).toEqual([]);
+    // call site it named is gone. And an entry covering fewer sites than exist
+    // is worse than either — the extra ones were never verified by anyone.
+    const counted = new Map<string, number>();
+    for (const site of sites) {
+      if (site.verdict === 'hand-verified') {
+        counted.set(site.id, (counted.get(site.id) ?? 0) + 1);
+      }
+    }
+    const wrong = [...HAND_VERIFIED].flatMap(([id, expected]) => {
+      const actual = counted.get(id) ?? 0;
+      if (actual === expected) {
+        return [];
+      }
+      return actual === 0
+        ? [`${id} — no such call site any more; drop the entry`]
+        : [`${id} — entry covers ${expected} call site(s), found ${actual}`];
+    });
+    expect(wrong).toEqual([]);
   });
 });
 
