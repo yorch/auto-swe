@@ -91,7 +91,12 @@ async function buildCatalog(teamId: string | null, allowShell: boolean): Promise
       isActive: true,
       // Only GLOBAL + the requester's TEAM-scoped agents — not ORGANIZATION /
       // CHANNEL / WORKFLOW_TEMPLATE rows that merely carry the same teamId.
-      OR: [{ scope: 'GLOBAL' as const }, ...(teamId ? [{ scope: 'TEAM' as const, teamId }] : [])],
+      // Both branches name `teamId`, so this stays scoped with or without a
+      // team: GLOBAL rows carry none, and a null `teamId` matches no TEAM row.
+      OR: [
+        { scope: 'GLOBAL' as const, teamId: null },
+        { scope: 'TEAM' as const, teamId },
+      ],
     },
   });
   // Dedupe by key (a team override + the GLOBAL row share a key) — keep the first

@@ -8,12 +8,15 @@ import {
   resolveSlackConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName, generateWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import {
+  fetchSlackChannelIsPrivate,
   openSlackView,
   postSlackMessage,
   publishAppHome,
@@ -1083,6 +1086,25 @@ async function provisionChannel(
   orgId: string;
   followupSessionEnabled: boolean;
 } | null> {
+  // The overwhelming majority of events are for a channel that already exists.
+  // Answer those from one joined read: everything below — the workflow defaults,
+  // the team lookup, the workspace upsert (a write) and the Slack call — is only
+  // needed to create a channel for the first time. `findFirst` is not a guarded
+  // operation, and the query names the channel outright.
+  const CHANNEL_FIELDS = {
+    followupSessionEnabled: true,
+    id: true,
+    orgId: true,
+    teamId: true,
+  } as const;
+  const existing = await fastify.prisma.slackChannel.findFirst({
+    select: CHANNEL_FIELDS,
+    where: { slackChannelId, workspace: { slackTeamId } },
+  });
+  if (existing) {
+    return existing;
+  }
+
   const { defaultTeamSlug } = await resolveWorkflowDefaults();
   const defaultTeam = await fastify.prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
   if (!defaultTeam) {
@@ -1117,37 +1139,46 @@ async function provisionChannel(
   const channelWhere = {
     workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id },
   };
-  const channel = await fastify.prisma.slackChannel
-    .upsert({
-      // `isPrivate` is set on CREATE only — never on update — so a best-effort
-      // provision-time default can't silently undo a later admin override.
-      create: {
-        isPrivate: opts.isPrivate ?? false,
+
+  // Ask Slack rather than trusting the caller's heuristic. This flag decides
+  // whether the channel's memory can ever be read by another channel, and it is
+  // written on create only — so neither source can undo a later admin override,
+  // and the round-trip is paid once per channel rather than once per mention.
+  const token = (await resolveSlackBotTokenForWorkspace(slackTeamId)) ?? undefined;
+  const authoritative = await fetchSlackChannelIsPrivate(slackChannelId, token);
+  const isPrivate = authoritative ?? opts.isPrivate ?? false;
+  if (authoritative === null && token) {
+    // Falling back to the payload heuristic is the old behaviour, but silently:
+    // a missing `groups:read` scope or a flaky call would mark a private channel
+    // public *permanently*, since the flag is written on create only.
+    fastify.log.warn(
+      { isPrivate, slackChannelId },
+      'could not read is_private from Slack — provisioning the channel from the payload heuristic'
+    );
+  }
+
+  // A plain create, since the existence check above already ran. Two concurrent
+  // first-mentions can still both get here; the loser re-reads.
+  return await fastify.prisma.slackChannel
+    .create({
+      data: {
+        isPrivate,
         orgId: workspace.orgId,
         slackChannelId,
         teamId: defaultTeam.id,
         workspaceId: workspace.id,
       },
-      update: {},
-      where: channelWhere,
+      select: CHANNEL_FIELDS,
     })
     .catch(async (err) => {
       if (isUniqueConstraintError(err)) {
-        return fastify.prisma.slackChannel.findUnique({ where: channelWhere });
+        return fastify.prisma.slackChannel.findUnique({
+          select: CHANNEL_FIELDS,
+          where: channelWhere,
+        });
       }
       throw err;
     });
-  if (!channel) {
-    fastify.log.error({ slackChannelId }, 'failed to resolve Slack channel after race');
-    return null;
-  }
-
-  return {
-    followupSessionEnabled: channel.followupSessionEnabled,
-    id: channel.id,
-    orgId: channel.orgId,
-    teamId: channel.teamId,
-  };
 }
 
 // ── HITL resolve button (block_actions, action_id `hitl_resolve[:…]`) ───────
@@ -1304,11 +1335,18 @@ async function listVisibleTemplates(
       : {
           OR: [{ teamId: null }, { team: { memberships: { some: { userId: user.id } } } }],
         };
-  const rows = await fastify.prisma.workflowTemplate.findMany({
-    include: { team: { select: { id: true, name: true, slug: true } } },
-    orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-    where,
-  });
+  // `where` is `{}` for a platform admin — the deliberate cross-tenant branch.
+  const rows = await asPlatformAdmin(
+    user,
+    "admin lists every team's templates",
+    ['WorkflowTemplate'],
+    () =>
+      fastify.prisma.workflowTemplate.findMany({
+        include: { team: { select: { id: true, name: true, slug: true } } },
+        orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+        where,
+      })
+  );
   return rows.map((r) => ({
     activeVersion: r.activeVersion,
     description: r.description,
@@ -1416,16 +1454,25 @@ async function buildRunModalView(
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
   const tpls = await listVisibleTemplates(fastify, user);
-  const repos = await fastify.prisma.connection.findMany({
-    select: {
-      id: true,
-      organizationName: true,
-      repoName: true,
-      team: { select: { memberships: { select: { userId: true }, where: { userId: user.id } } } },
-    },
-    // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
-    where: { isActive: true, type: 'git_repo' },
-  });
+  // Unscoped by design: the memberships selected here are what `accessibleRepos`
+  // below filters on, so the tenant decision is made from the rows, not the where.
+  const repos = await runUnscoped(
+    'access is decided from the memberships selected here, not by the where clause',
+    ['Connection'],
+    () =>
+      fastify.prisma.connection.findMany({
+        select: {
+          id: true,
+          organizationName: true,
+          repoName: true,
+          team: {
+            select: { memberships: { select: { userId: true }, where: { userId: user.id } } },
+          },
+        },
+        // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
+        where: { isActive: true, type: 'git_repo' },
+      })
+  );
   const accessibleRepos =
     user.role === 'ADMIN' ? repos : repos.filter((r) => r.team.memberships.length > 0);
   // The submission handler binds the repo via `selected_option.value` on a

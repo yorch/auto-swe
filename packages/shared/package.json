@@ -19,6 +19,7 @@
     "./lib/canary": "./dist/lib/canary.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/billing": "./dist/lib/billing.js",
+    "./lib/channelBudget": "./dist/lib/channelBudget.js",
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",

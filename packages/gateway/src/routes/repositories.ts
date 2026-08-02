@@ -95,11 +95,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // are already imported; scoped to the caller's teams it would report a
       // repo another team already imported as available, and importing it again
       // creates a duplicate Connection for the same repository.
-      const existing = await runUnscoped('import de-duplication must span every team', () =>
-        fastify.prisma.connection.findMany({
-          select: { organizationName: true, repoName: true },
-          where: { type: 'git_repo' },
-        })
+      const existing = await runUnscoped(
+        'import de-duplication must span every team',
+        ['Connection'],
+        () =>
+          fastify.prisma.connection.findMany({
+            select: { organizationName: true, repoName: true },
+            where: { type: 'git_repo' },
+          })
       );
       const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
 
@@ -129,20 +132,24 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
 
-      const [repos, total] = await asPlatformAdmin(user, "admin lists every team's repos", () =>
-        Promise.all([
-          fastify.prisma.connection.findMany({
-            include: {
-              _count: { select: { activeWorkflows: true } },
-              team: { select: { id: true, name: true, slug: true } },
-            },
-            orderBy: { repoName: 'asc' },
-            skip: offset,
-            take: limit,
-            where,
-          }),
-          fastify.prisma.connection.count({ where }),
-        ])
+      const [repos, total] = await asPlatformAdmin(
+        user,
+        "admin lists every team's repos",
+        ['Connection'],
+        () =>
+          Promise.all([
+            fastify.prisma.connection.findMany({
+              include: {
+                _count: { select: { activeWorkflows: true } },
+                team: { select: { id: true, name: true, slug: true } },
+              },
+              orderBy: { repoName: 'asc' },
+              skip: offset,
+              take: limit,
+              where,
+            }),
+            fastify.prisma.connection.count({ where }),
+          ])
       );
 
       return { data: repos, meta: { limit, offset, total } };

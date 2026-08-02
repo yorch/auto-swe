@@ -7,7 +7,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory, postSlackChannelMessage } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -181,16 +181,31 @@ export async function sweepChannelOpenItems(
       })
       .join('\n');
 
+    // The hold below is priced through `resolveAgent(..., { channelId })`; bind
+    // the pass with the same context so a channel-scoped override is not charged
+    // for and then ignored.
+    const agentCtx = { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId };
+
     // LLM call with structured output.
     const agent = new Agent({
       id: 'channel-open-item-sweeper',
       instructions: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT,
-      model: await getModel('commitToMemory'),
+      model: await getModel('commitToMemory', agentCtx),
       name: 'channel-open-item-sweeper',
     });
 
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
+
+    // Hold budget for this sweep before it spends. Released — or replaced by the
+    // real total — in the `finally` below.
+    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents, {
+      agentKey: 'commitToMemory',
+      ...agentCtx,
+    });
+    if (hold.overBudget) {
+      return emptyResult;
+    }
 
     try {
       const prompt = buildSweepPrompt(
@@ -311,9 +326,8 @@ export async function sweepChannelOpenItems(
       return sweepResult;
     } finally {
       await persistActivityTrace(tracer, 'commitToMemory');
-      if (totalCostUsd > 0) {
-        await accrueChannelUsage(channel.id, totalCostUsd, { countRun: false });
-      }
+      // Unconditional: a sweep that spent nothing still has to give its hold back.
+      await hold.settle(totalCostUsd, { countRun: false });
     }
   } catch (err) {
     console.error(

@@ -129,7 +129,10 @@ const CHECKS = [
   {
     actual: prismaModels,
     label: 'Prisma models',
-    patterns: [new RegExp(`${NUM}\\s+(?:Prisma\\s+)?models\\b`, 'gi')],
+    // A model is a table, and the deployment runbook counts them that way — the
+    // same fact stated in the other vocabulary, and it drifted precisely because
+    // only one spelling was checked.
+    patterns: [new RegExp(`${NUM}\\s+(?:Prisma\\s+)?(?:models|tables)\\b`, 'gi')],
     source: 'packages/shared/src/prisma/schema.prisma',
   },
   {

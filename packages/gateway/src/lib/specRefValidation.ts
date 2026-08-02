@@ -41,7 +41,7 @@ export async function validateSpecRefs(
     // Cross-scope on purpose: the warning below is precisely "no active Agent
     // at ANY scope", so a team-filtered lookup would warn about agents that do
     // resolve at run time through the cascade.
-    const found = await runUnscoped('agent keys resolve across every scope', () =>
+    const found = await runUnscoped('agent keys resolve across every scope', ['Agent'], () =>
       prisma.agent.findMany({ select: { key: true }, where: { isActive: true, key: { in: keys } } })
     );
     const present = new Set(found.map((a) => a.key));
@@ -60,7 +60,7 @@ export async function validateSpecRefs(
     const ids = [...new Set(mcpRefs.map((r) => r.connectionRef).filter((id) => UUID_RE.test(id)))];
     const found =
       ids.length > 0
-        ? await runUnscoped('existence check on author-supplied UUIDs', () =>
+        ? await runUnscoped('existence check on author-supplied UUIDs', ['Connection'], () =>
             prisma.connection.findMany({
               select: { id: true },
               where: { id: { in: ids }, isActive: true, type: 'mcp' },

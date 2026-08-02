@@ -10,7 +10,7 @@ import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -105,50 +105,77 @@ export async function passiveIngestChannelMemory(
     // Only process human top-level messages with non-empty text.
     const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
 
-    // Advance cursor to newest ts seen (even if there are no human messages, we
-    // still move past bot-only traffic so we don't re-read it next time).
-    if (messages.length > 0) {
-      const newestTs = messages[messages.length - 1]?.ts ?? null;
+    /** Move past everything just read, so the next fire doesn't re-read it. */
+    const advanceCursor = async () => {
+      const newestTs = messages.at(-1)?.ts;
       if (newestTs) {
         await prisma.slackChannel.update({
           data: { passiveIngestCursor: newestTs },
           where: { id: channelId },
         });
       }
-    }
+    };
 
+    // Nothing to ingest — advance past the bot-only traffic and stop before
+    // holding budget for a pass that will never call a model.
     if (humanMessages.length === 0) {
+      await advanceCursor();
       return EMPTY;
     }
 
-    // Build transcript for the LLM (oldest → newest, human only).
-    const transcript = humanMessages
-      .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
-      .join('\n');
-
-    // Resolve skills + build agent.
-    const skills = await loadAgentSkills('commitToMemory');
-    const skillSuffix = skills
-      .map((s) => s.promptText)
-      .filter(Boolean)
-      .join('\n\n');
-    const instructions = skillSuffix
-      ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
-      : CHANNEL_PASSIVE_INGEST_PROMPT;
-
-    const agent = new Agent({
-      id: 'channel-passive-ingestor',
-      instructions,
-      model: await getModel('commitToMemory'),
-      name: 'channel-passive-ingestor',
+    // Hold budget before the cursor moves. A refused ingest must leave the
+    // cursor where it was: advancing first and then bailing would skip this
+    // window of messages permanently, and a hold is refused more readily than
+    // the read above because it consumes headroom.
+    // Resolve at the CHANNEL tier explicitly, and bind the pass with the same
+    // context below: the hold is priced through `resolveAgent(..., { channelId })`,
+    // and the ambient Temporal context has no channelId, so binding without it
+    // would charge for a channel-scoped override the pass never uses.
+    const agentCtx = { channelId, orgId: channel.orgId, teamId: channel.teamId };
+    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null, {
+      agentKey: 'commitToMemory',
+      ...agentCtx,
     });
+    if (hold.overBudget) {
+      return EMPTY;
+    }
 
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
     let factsExtracted = 0;
     let factsWritten = 0;
 
+    // Everything that can throw between here and the settle sits inside the
+    // try, so the hold is given back even when agent construction fails — the
+    // outer catch would otherwise swallow the throw and strand it.
     try {
+      // Inside the try: the outer catch swallows a throw, so advancing here
+      // rather than above is what keeps a failed cursor write from stranding
+      // the hold for its full TTL.
+      await advanceCursor();
+
+      // Build transcript for the LLM (oldest → newest, human only).
+      const transcript = humanMessages
+        .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
+        .join('\n');
+
+      // Resolve skills + build agent.
+      const skills = await loadAgentSkills('commitToMemory', agentCtx);
+      const skillSuffix = skills
+        .map((s) => s.promptText)
+        .filter(Boolean)
+        .join('\n\n');
+      const instructions = skillSuffix
+        ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
+        : CHANNEL_PASSIVE_INGEST_PROMPT;
+
+      const agent = new Agent({
+        id: 'channel-passive-ingestor',
+        instructions,
+        model: await getModel('commitToMemory', agentCtx),
+        name: 'channel-passive-ingestor',
+      });
+
       const start = Date.now();
       const result = await agent.generate([{ content: transcript, role: 'user' }], {
         structuredOutput: { schema: PassiveIngestOutputSchema },
@@ -224,9 +251,8 @@ export async function passiveIngestChannelMemory(
       return { factsExtracted, factsWritten, messagesRead: humanMessages.length };
     } finally {
       await persistActivityTrace(tracer, 'commitToMemory');
-      if (totalCostUsd > 0) {
-        await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
-      }
+      // Unconditional: an ingest that spent nothing still has to give its hold back.
+      await hold.settle(totalCostUsd, { countRun: false });
     }
   } catch {
     return EMPTY;

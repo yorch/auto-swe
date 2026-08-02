@@ -129,7 +129,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── List datasets ──
   app.get('/evals', { onRequest: adminOnly }, async () => {
-    const rows = await runUnscoped('admin dataset listing spans every team', () =>
+    const rows = await runUnscoped('admin dataset listing spans every team', ['EvalDataset'], () =>
       fastify.prisma.evalDataset.findMany({
         include: { _count: { select: { cases: true } } },
         orderBy: { createdAt: 'desc' },
@@ -323,7 +323,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── List judge rubrics (P2) ──
   app.get('/evals/rubrics', { onRequest: adminOnly }, async () => {
-    const rows = await runUnscoped('admin rubric listing spans every team', () =>
+    const rows = await runUnscoped('admin rubric listing spans every team', ['EvalRubric'], () =>
       fastify.prisma.evalRubric.findMany({ orderBy: { createdAt: 'desc' } })
     );
     const data: EvalRubricDto[] = rows.map(toRubricDto);

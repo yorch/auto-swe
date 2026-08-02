@@ -35,6 +35,10 @@ vi.mock('../lib/models.js', () => ({
 const recordLlmUsageMock = vi.fn();
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
+  // The hold is priced through this; leaving it out makes every hold silently
+  // take the unknown-model fallback instead of the bound model's rate.
+  calculateCostUsd: (_spec: string, input: number, output: number) =>
+    (input * 5 + output * 25) / 1_000_000,
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
 }));
 
@@ -58,9 +62,12 @@ vi.mock('../lib/slackNotify.js', () => ({
   postSlackChannelMessage: (...args: unknown[]) => postSlackChannelMessageMock(...args),
 }));
 
+/** The hold's `settle` — where the sweep's real cost lands. */
+const settleMock = vi.fn();
+const reserveChannelTurnMock = vi.fn().mockResolvedValue({ overBudget: false, settle: settleMock });
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: vi.fn(),
   isChannelOverBudgetNow: vi.fn().mockResolvedValue(false),
+  reserveChannelTurn: (...args: unknown[]) => reserveChannelTurnMock(...args),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
@@ -97,6 +104,8 @@ function makeMessages(count = 2) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  settleMock.mockResolvedValue(undefined);
+  reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
   getModelMock.mockResolvedValue({});
   persistActivityTraceMock.mockResolvedValue(undefined);
   recordLlmUsageMock.mockResolvedValue({
@@ -164,6 +173,13 @@ describe('sweepChannelOpenItems', () => {
     });
 
     const result = await sweepChannelOpenItems({ channelId: 'chan-1' });
+    // The hold is priced off the agent the pass actually spends on; swapping
+    // orgId/teamId or the key silently prices it off the wrong scope.
+    expect(reserveChannelTurnMock).toHaveBeenCalledWith(
+      'chan-1',
+      null,
+      expect.objectContaining({ agentKey: 'commitToMemory', orgId: 'org-1', teamId: 'team-1' })
+    );
     expect(result.itemsCreated).toBe(1);
     expect(result.itemsResolved).toBe(0);
     expect(createManyOpenItems).toHaveBeenCalledWith({

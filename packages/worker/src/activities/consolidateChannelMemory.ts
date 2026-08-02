@@ -9,7 +9,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -77,8 +77,8 @@ const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
  *
  * BUDGET: this pass makes LLM calls, so it honours the channel's monthly budget
  * cap exactly like the digest — when the channel is over budget it returns early
- * without spending (same `isChannelOverBudgetNow` gate the digest uses). Its cost
- * accrues to `ChannelMonthlyUsage` (the per-channel budget) via `accrueChannelUsage`
+ * without spending (same cheap `isChannelOverBudgetNow` bail the digest uses). Its
+ * cost settles against `ChannelMonthlyUsage` (the per-channel budget) via the hold
  * with `countRun: false` — consolidation is maintenance, not a user-facing run, so
  * it must not inflate `runsCompleted`.
  */
@@ -97,6 +97,8 @@ export async function consolidateChannelMemory(
       consolidationMinClusterSize: true,
       consolidationSimilarityThreshold: true,
       monthlyBudgetUsdCents: true,
+      orgId: true,
+      teamId: true,
     },
     where: { id: channelId },
   });
@@ -167,7 +169,17 @@ export async function consolidateChannelMemory(
   // Resolve the consolidator agent. Bind AND price against `commitToMemory` (the
   // same role `consolidateLessons` uses) so the recorded cost matches the model
   // actually used — a mismatched pricing role can resolve to zero cost.
-  const consolidatorSkills = await loadAgentSkills('commitToMemory');
+  //
+  // Resolve at the CHANNEL tier explicitly: this pass runs on a channel's
+  // ledger, and its hold is priced through `resolveAgent(..., { channelId })`.
+  // The ambient Temporal context has no channelId, so without this a
+  // channel-scoped `commitToMemory` override would be priced but never used.
+  const agentCtx = {
+    channelId,
+    orgId: channel?.orgId ?? '',
+    teamId: channel?.teamId ?? '',
+  };
+  const consolidatorSkills = await loadAgentSkills('commitToMemory', agentCtx);
   const skillSuffix = consolidatorSkills
     .map((s) => s.promptText)
     .filter(Boolean)
@@ -179,12 +191,26 @@ export async function consolidateChannelMemory(
   const agent = new Agent({
     id: 'channel-memory-consolidator',
     instructions: consolidatorPrompt,
-    model: await getModel('commitToMemory'),
+    model: await getModel('commitToMemory', agentCtx),
     name: 'channel-memory-consolidator',
   });
 
   const tracer = new AgentTracer();
   let totalCostUsd = 0;
+
+  // Hold budget for this pass before it spends. One model call per qualifying
+  // cluster, so the hold covers the whole fan-out — a single-call hold would
+  // admit a 30-cluster pass on the headroom of one turn. Released — or replaced
+  // by the real total — in the `finally` below.
+  const hold = await reserveChannelTurn(channelId, channel?.monthlyBudgetUsdCents ?? null, {
+    agentKey: 'commitToMemory',
+    modelCalls: qualifying.length,
+    orgId: agentCtx.orgId,
+    teamId: agentCtx.teamId,
+  });
+  if (hold.overBudget) {
+    return EMPTY_RESULT;
+  }
 
   try {
     const clusterOutcomes = await Promise.all(
@@ -282,10 +308,9 @@ export async function consolidateChannelMemory(
     return finalResult;
   } finally {
     await persistActivityTrace(tracer, 'commitToMemory');
-    // Accrue consolidation cost to the channel's monthly budget WITHOUT counting
-    // it as a user-facing run (countRun: false).
-    if (totalCostUsd > 0) {
-      await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
-    }
+    // Settle consolidation cost against the channel's monthly budget WITHOUT
+    // counting it as a user-facing run (countRun: false). Unconditional: a pass
+    // that spent nothing still has to give its hold back.
+    await hold.settle(totalCostUsd, { countRun: false });
   }
 }

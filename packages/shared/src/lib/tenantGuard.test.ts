@@ -31,7 +31,8 @@ describe('hasTenantPredicate', () => {
     ['a team relation', { team: { memberships: { some: { userId: 'u1' } } } }],
     ['a memberships relation', { memberships: { some: { userId: 'u1' } } }],
     ['nested inside AND', { AND: [{ isActive: true }, { teamId: 't1' }] }],
-    ['nested inside NOT', { NOT: { teamId: 't1' } }],
+    // `teamId: null` selects the GLOBAL rows, which belong to no tenant.
+    ['a null teamId', { teamId: null }],
     // How the lessons routes scope: tenancy reached through a relation.
     ['through a relation', { repository: { team: { memberships: { some: { userId: 'u' } } } } }],
     ['through a list filter', { cases: { some: { dataset: { teamId: 't1' } } } }],
@@ -52,6 +53,14 @@ describe('hasTenantPredicate', () => {
     ['an unrelated filter', { status: 'ACTIVE' }],
     ['an id lookup', { id: 'abc' }],
     ['an OR with no tenant branch', { OR: [{ status: 'A' }, { status: 'B' }] }],
+    // Negations match every tenant but one — the opposite of scoping. Counting
+    // them would let the guard bless the exact queries it exists to catch.
+    ['a NOT on the tenant key', { NOT: { teamId: 't1' } }],
+    ['a not operator on the tenant key', { teamId: { not: 't1' } }],
+    ['a `none` relation filter', { memberships: { none: { userId: 'u1' } } }],
+    // A MemoryItem with no channel is still owned by a team, so this selects
+    // every team's non-channel lessons.
+    ['a null channelId', { channelId: null }],
   ])('rejects %s', (_label, where) => {
     expect(hasTenantPredicate(where)).toBe(false);
   });
@@ -108,23 +117,41 @@ describe('tenantGuardExtension', () => {
     }
   );
 
-  it('lets an explicitly unscoped call through', async () => {
+  it('lets an explicitly unscoped call through for a named model', async () => {
     const ext = tenantGuardExtension({ mode: 'throw' });
-    const result = await runUnscoped('admin listing', () => {
+    const result = await runUnscoped('admin listing', ['Connection'], () => {
       const { run } = intercept(ext, { model: 'Connection', operation: 'findMany' });
       return run;
     });
     expect(result).toBe('result');
   });
 
-  it('keeps the unscoped marker across an await', async () => {
+  it('still guards a model the exemption does not name', async () => {
+    // The point of naming models: a query added inside an existing exempt block
+    // later does not silently inherit the exemption.
+    const ext = tenantGuardExtension({ mode: 'throw' });
+    await expect(
+      runUnscoped('admin listing', ['Connection'], () => {
+        const { run } = intercept(ext, { model: 'MemoryItem', operation: 'findMany' });
+        return run;
+      })
+    ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
+  });
+
+  it('keeps the exemption across an await', async () => {
     // AsyncLocalStorage, not a flag — a plain boolean would leak into whatever
     // else was running concurrently.
-    await runUnscoped('admin listing', async () => {
+    await runUnscoped('admin listing', ['Connection'], async () => {
       await new Promise((r) => setTimeout(r, 5));
-      expect(isUnscoped()).toBe(true);
+      expect(isUnscoped('Connection')).toBe(true);
     });
-    expect(isUnscoped()).toBe(false);
+    expect(isUnscoped('Connection')).toBe(false);
+  });
+
+  it('names the offending model in the fix it suggests', async () => {
+    const ext = tenantGuardExtension({ mode: 'throw' });
+    const { run } = intercept(ext, { model: 'Skill', operation: 'findMany' });
+    await expect(run).rejects.toThrow(/\['Skill'\]/);
   });
 
   it('warns instead of throwing in warn mode', async () => {

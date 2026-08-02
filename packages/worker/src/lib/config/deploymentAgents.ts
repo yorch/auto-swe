@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
-import type { ModelBackedAgentKey } from './types.js';
 
 /**
  * The agent keys *this deployment* actually needs at boot.
@@ -27,10 +27,15 @@ import type { ModelBackedAgentKey } from './types.js';
 
 /** Step names reachable from the installed, runnable template versions. */
 export async function installedStepNames(): Promise<Set<string>> {
-  const templates = await prisma.workflowTemplate.findMany({
-    select: { activeVersion: true, experimentVersion: true, id: true },
-    where: { status: 'ACTIVE' },
-  });
+  const templates = await runUnscoped(
+    'the boot gate covers the whole deployment: any tenant installed template can run on this worker',
+    ['WorkflowTemplate'],
+    () =>
+      prisma.workflowTemplate.findMany({
+        select: { activeVersion: true, experimentVersion: true, id: true },
+        where: { status: 'ACTIVE' },
+      })
+  );
 
   // Both arms of an A/B split can run, so both count as installed.
   const wanted = templates.flatMap((t) =>
@@ -66,12 +71,47 @@ export async function installedStepNames(): Promise<Set<string>> {
   return steps;
 }
 
+/**
+ * The step names the boot gate actually walked, captured at boot.
+ *
+ * `flagUnregisteredAgentUsage` needs this to know whether a spending activity
+ * was ever in the gate's scope. Most LLM-spending activities are not steps at
+ * all — channel turns, the memory passes, the workflow authoring activities —
+ * and `assertConfigReady` covers those by other rules, so judging them against
+ * a *step* map would report drift on every healthy deployment.
+ *
+ * `null` until the gate runs (unit tests, direct activity calls), which the
+ * consumer reads as "cannot judge" rather than "not a step".
+ */
+let gatedSteps: Set<string> | null = null;
+
+/** The step names the boot gate walked, or `null` if it has not run. */
+export function gatedStepNames(): Set<string> | null {
+  return gatedSteps;
+}
+
 /** Empty when nothing runnable is installed — boot then has no agent gate. */
-export async function requiredAgentKeysForDeployment(): Promise<ModelBackedAgentKey[]> {
-  const steps = await installedStepNames();
-  const keys = new Set<ModelBackedAgentKey>();
+export async function requiredAgentKeysForDeployment(): Promise<string[]> {
+  // Independent reads on the worker's pre-poller boot path.
+  const [steps, channelCount] = await Promise.all([
+    installedStepNames(),
+    runUnscoped(
+      'a channel in any tenant means this worker can serve channel turns',
+      ['SlackChannel'],
+      () => prisma.slackChannel.count()
+    ),
+  ]);
+  gatedSteps = steps;
+  const keys = new Set<string>();
   for (const step of steps) {
-    for (const key of STEP_REQUIRED_AGENTS[step] ?? []) {
+    // Absent (resolves no model) and null (agent comes from the spec) are both
+    // "nothing to gate on here"; a dynamic step's agent is checked at template
+    // save instead.
+    const declared = STEP_REQUIRED_AGENTS[step];
+    if (!declared) {
+      continue;
+    }
+    for (const key of declared) {
       keys.add(key);
     }
   }
@@ -80,7 +120,7 @@ export async function requiredAgentKeysForDeployment(): Promise<ModelBackedAgent
   // calls `runAgent` directly, and the seeded channel template is a one-node
   // trace container. So walking specs cannot see this requirement; the presence
   // of a channel is what implies it.
-  if ((await prisma.slackChannel.count()) > 0) {
+  if (channelCount > 0) {
     keys.add('channelAssistant');
   }
 

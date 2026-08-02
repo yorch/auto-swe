@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 51 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 52 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline + a hand-written constraints/indexes migration |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -371,7 +371,7 @@ instead. Tenant isolation is enforced in the application layer, not by database 
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 51 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 52 models.
 
 ```mermaid
 erDiagram
@@ -428,7 +428,7 @@ erDiagram
 | Agent config | `Agent`, `AgentSkillRef`, `Skill` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback |
-| Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)` |
+| Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage`, `ChannelBudgetHold` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)`; a hold row is one turn's outstanding claim on a channel's remaining budget |
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
 | Distribution | `InstalledBundle` | Installed bundles as a managed base layer |
@@ -571,23 +571,36 @@ Current constraints of the system as built. Deliberate product boundaries are in
 
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
-  the database will catch. The gateway's Prisma client carries a `tenantGuard` extension that
-  fails a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
-  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate. Every
+  the database will catch. The shared Prisma singleton carries a `tenantGuard` extension — applied
+  once, in `db.ts`, and everything else decorates or imports that singleton rather than building a
+  second client, so gateway and worker are covered by the same attachment. It fails a multi-row
+  query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` / `deleteMany`) on a model
+  with a `teamId`/`orgId` when the query has no tenant predicate. A predicate has to *narrow*:
+  `NOT`, a `not`/`none` operator, and a null `channelId` are all read as unscoped, since each
+  matches every tenant but one. Every
   call site is accounted for: a deliberate cross-tenant read declares itself with
-  `runUnscoped(reason, fn)`, and the common `admin ? {} : filter` shape uses `asPlatformAdmin`,
+  `runUnscoped(reason, models, fn)`, and the common `admin ? {} : filter` shape uses
+  `asPlatformAdmin`,
   which keeps the guard live for everyone except the role meant to see everything. It throws
   outside production and warns inside it, so a false positive pages someone rather than taking the
   API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
   unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
   extension entirely. This is defence in depth, not the row-level security it stands in for.
-- **The tenant guard covers the gateway only.** It is applied where `fastify.prisma` is built, so
-  the worker — and the handful of gateway modules that import the `@auto-swe/shared/db` singleton
-  directly — run unguarded. That split is an artifact of where `$extends` is called, not a judgement
-  about which paths are tenant-sensitive; the worker is the half that puts `MemoryItem` rows into an
-  agent prompt. Moving it into `db.ts` would cover both, and requires triaging the worker's own
-  cross-tenant reads first (`getReposForConsolidation`, `planEpic`, `channelMemory`, the config
-  resolvers, and `keyRotation`, which sweeps two tenant-scoped tables by design).
+- **A `runUnscoped` exemption still covers repeat queries on the models it names.** It is an
+  `AsyncLocalStorage` region, so everything awaited inside inherits it; naming the models bounds
+  that — a query on anything else inside the block still fails — but a *second* query on an
+  already-named model does not. That is the residual hole, and it is deliberate: several call sites
+  legitimately wrap a `Promise.all` of two or three queries on the same model, so a
+  one-query-per-region rule would not fit them.
+- **The guard is enforced at run time but audited statically.** Route tests decorate a mocked
+  Prisma, so the extension never runs on them, and production defaults to `warn` — which means a
+  forgotten filter can reach a log line nobody reads. `tenantGuard.coverage.test.ts` closes that by
+  reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
+  `where`, or sit inside a `runUnscoped`/`asPlatformAdmin` that names *that* model. It also fails if
+  any file outside a named allowlist constructs its own `PrismaClient`, since a second client is an
+  unguarded one. It is a text heuristic, so a `where` hoisted behind a variable, a helper call, or a
+  conditional spread is undecidable; those few sites are listed by name in the test and verified by
+  hand.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

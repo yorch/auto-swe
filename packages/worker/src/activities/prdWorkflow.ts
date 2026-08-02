@@ -14,6 +14,7 @@ import {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
 } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,
@@ -298,10 +299,14 @@ export async function submitPrdWorkRequests(
   }
 
   // Pre-load all target repos so we can match repoHints and generate workflow IDs.
-  const repos = await prisma.connection.findMany({
-    select: { id: true, organizationName: true, repoName: true, teamId: true },
-    where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
-  });
+  // The ids come from the PRD work request, whose submit route already checked
+  // the caller's access to each one.
+  const repos = await runUnscoped('ids already authorised at submit time', ['Connection'], () =>
+    prisma.connection.findMany({
+      select: { id: true, organizationName: true, repoName: true, teamId: true },
+      where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
+    })
+  );
   if (repos.length === 0) {
     return { workRequestIds: [] };
   }

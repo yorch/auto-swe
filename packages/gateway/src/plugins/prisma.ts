@@ -1,6 +1,5 @@
-import { PrismaClient } from '@auto-swe/shared';
-import { tenantGuardExtension } from '@auto-swe/shared/lib/tenantGuard';
-import { PrismaPg } from '@prisma/adapter-pg';
+import type { PrismaClient } from '@auto-swe/shared';
+import { prisma } from '@auto-swe/shared/db';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 
@@ -10,30 +9,22 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * Decorates Fastify with the shared client rather than building a second one.
+ *
+ * The tenant guard is applied once, in `@auto-swe/shared/db`'s factory. A
+ * separate `new PrismaClient()` here would be unguarded — and would also open a
+ * second connection pool in the same process, since `betterAuth`, the
+ * system-config routes and the webhook routes already import the singleton.
+ * One client, one pool, one guard.
+ */
 const prismaPlugin: FastifyPluginAsync = async (fastify) => {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error('DATABASE_URL environment variable is required');
-  }
-  const base = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
-  await base.$connect();
-
-  // Defence in depth: org/team checks live on the routes, so a handler that
-  // forgets its filter is a data-exposure bug nothing else catches. The guard
-  // fails a multi-row query on a tenant-scoped model that carries no tenant
-  // predicate. Genuinely global queries opt out with `runUnscoped(reason, fn)`.
-  //
-  // It warns rather than throws in production: a violation should stop a test,
-  // but should not take a running deployment down over a query that has been
-  // serving traffic. See `lib/tenantGuard.ts`.
-  const prisma = base.$extends(tenantGuardExtension()) as unknown as PrismaClient;
+  await prisma.$connect();
 
   fastify.decorate('prisma', prisma);
 
   fastify.addHook('onClose', async () => {
-    await base.$disconnect();
+    await prisma.$disconnect();
   });
 };
 

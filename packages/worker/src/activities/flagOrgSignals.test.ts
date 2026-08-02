@@ -24,13 +24,14 @@ vi.mock('../lib/slackNotify.js', () => ({
   postSlackChannelMessage: (...a: unknown[]) => postSlackChannelMessageMock(...a),
 }));
 
-const runChannelAgentTurnMock = vi.fn();
-const accrueChannelUsageMock = vi.fn();
+/** The hold's `settle` — where the flag turn's real cost lands. */
+const settleMock = vi.fn();
+/** Resolves to null when the channel is at its cap; a held turn otherwise. */
+const runHeldChannelTurnMock = vi.fn();
 const isChannelOverBudgetNowMock = vi.fn();
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: (...a: unknown[]) => accrueChannelUsageMock(...a),
   isChannelOverBudgetNow: (...a: unknown[]) => isChannelOverBudgetNowMock(...a),
-  runChannelAgentTurn: (...a: unknown[]) => runChannelAgentTurnMock(...a),
+  runHeldChannelTurn: (...a: unknown[]) => runHeldChannelTurnMock(...a),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
@@ -60,6 +61,7 @@ beforeEach(() => {
   findChannel.mockResolvedValue(makeChannel() as never);
   updateChannel.mockResolvedValue({} as never);
   isChannelOverBudgetNowMock.mockResolvedValue(false);
+  settleMock.mockResolvedValue(undefined);
   recentChannelMemoryMock.mockResolvedValue([{ lessonSummary: 'we ship on fridays' }]);
   generateEmbeddingWithSpecMock.mockResolvedValue({ embedding: [0.1], spec: 'openai/x' });
   searchOrgChannelMemoryMock.mockResolvedValue([
@@ -71,8 +73,9 @@ beforeEach(() => {
       summary: 'migrating the deploy pipeline',
     },
   ]);
-  runChannelAgentTurnMock.mockResolvedValue({
+  runHeldChannelTurnMock.mockResolvedValue({
     costUsd: 0.01,
+    hold: { overBudget: false, settle: settleMock },
     reply:
       'Heads up — #payments is reworking the deploy pipeline, which may affect your Friday ships.',
   });
@@ -114,7 +117,7 @@ describe('flagOrgSignals', () => {
     findChannel.mockResolvedValue(makeChannel({ orgFlaggingEnabled: false }) as never);
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: false, reason: 'disabled' });
-    expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
+    expect(runHeldChannelTurnMock).not.toHaveBeenCalled();
   });
 
   it('skips the LLM while on cooldown', async () => {
@@ -124,7 +127,7 @@ describe('flagOrgSignals', () => {
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res.reason).toBe('cooldown');
     expect(searchOrgChannelMemoryMock).not.toHaveBeenCalled();
-    expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
+    expect(runHeldChannelTurnMock).not.toHaveBeenCalled();
   });
 
   it('honors a per-channel orgFlagCooldownHours override (shorter than the 20h default)', async () => {
@@ -145,7 +148,7 @@ describe('flagOrgSignals', () => {
     isChannelOverBudgetNowMock.mockResolvedValue(true);
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res.reason).toBe('over-budget');
-    expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
+    expect(runHeldChannelTurnMock).not.toHaveBeenCalled();
   });
 
   it('skips cheaply when the channel has no memory to match against', async () => {
@@ -159,7 +162,7 @@ describe('flagOrgSignals', () => {
     searchOrgChannelMemoryMock.mockResolvedValue([]);
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res.reason).toBe('no-signals');
-    expect(runChannelAgentTurnMock).not.toHaveBeenCalled();
+    expect(runHeldChannelTurnMock).not.toHaveBeenCalled();
     // The embedding + org search already ran, so the cooldown is advanced to avoid
     // re-paying them on every ambient fire.
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
@@ -179,17 +182,21 @@ describe('flagOrgSignals', () => {
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: true, reason: 'posted' });
     expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.01, { countRun: true });
+    expect(settleMock).toHaveBeenCalledWith(0.01, { countRun: true });
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
     expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
   });
 
   it('does NOT post but STILL stamps the cooldown when the agent replies SKIP', async () => {
-    runChannelAgentTurnMock.mockResolvedValue({ costUsd: 0.005, reply: 'SKIP' });
+    runHeldChannelTurnMock.mockResolvedValue({
+      costUsd: 0.005,
+      hold: { overBudget: false, settle: settleMock },
+      reply: 'SKIP',
+    });
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: false, reason: 'skip' });
     expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.005, { countRun: false });
+    expect(settleMock).toHaveBeenCalledWith(0.005, { countRun: false });
     // The cooldown is advanced on a SKIP too, so the next fire doesn't re-pay the LLM.
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
     expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');

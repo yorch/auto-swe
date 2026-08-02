@@ -3,10 +3,9 @@ import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channe
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
-  accrueChannelUsage,
   DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
-  runChannelAgentTurn,
+  runHeldChannelTurn,
 } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 
@@ -101,8 +100,8 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
       return;
     }
 
-    // Budget gate. Over budget → return quietly (no post, no spend). Shares the
-    // same pre-LLM gate as the assistant turn (no cap ⇒ no query, never over).
+    // Cheap pre-digest bail. The hold taken around the model call below is what
+    // enforces the cap; this just avoids the work when the answer is already no.
     if (await isChannelOverBudgetNow(channel.id, channel.monthlyBudgetUsdCents)) {
       return;
     }
@@ -118,15 +117,28 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
-    const { reply, costUsd } = await runChannelAgentTurn(
-      { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
+    // Holds budget across the model call, so concurrent digests and turns can't
+    // all pass the read above and blow past the cap together.
+    const turn = await runHeldChannelTurn(
+      {
+        agentKey,
+        id: channel.id,
+        monthlyBudgetUsdCents: channel.monthlyBudgetUsdCents,
+        orgId: channel.orgId,
+        personaPrompt,
+        teamId: channel.teamId,
+      },
       buildAmbientPrompt(memory),
       'llm.channel_ambient'
     );
+    if (!turn) {
+      return;
+    }
+    const { reply, costUsd } = turn;
 
-    // Accrue the turn's cost regardless of whether we post (the LLM call happened).
-    // Best-effort — accrueChannelUsage swallows its own failures.
-    await accrueChannelUsage(channel.id, costUsd);
+    // Settle the turn's cost regardless of whether we post (the LLM call happened).
+    // Best-effort — the ledger write swallows its own failures.
+    await turn.hold.settle(costUsd);
 
     if (!shouldPostDigest(reply)) {
       return;

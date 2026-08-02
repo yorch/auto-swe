@@ -25,6 +25,10 @@ vi.mock('../lib/models.js', () => ({
 const recordLlmUsageMock = vi.fn();
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
+  // The hold is priced through this; leaving it out makes every hold silently
+  // take the unknown-model fallback instead of the bound model's rate.
+  calculateCostUsd: (_spec: string, input: number, output: number) =>
+    (input * 5 + output * 25) / 1_000_000,
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
 }));
 
@@ -51,10 +55,12 @@ vi.mock('../lib/slackNotify.js', () => ({
 }));
 
 const isChannelOverBudgetNowMock = vi.fn();
-const accrueChannelUsageMock = vi.fn();
+/** The hold's `settle` — where the ingest's real cost lands. */
+const settleMock = vi.fn();
+const reserveChannelTurnMock = vi.fn();
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: (...args: unknown[]) => accrueChannelUsageMock(...args),
   isChannelOverBudgetNow: (...args: unknown[]) => isChannelOverBudgetNowMock(...args),
+  reserveChannelTurn: (...args: unknown[]) => reserveChannelTurnMock(...args),
 }));
 
 const generateEmbeddingWithSpecMock = vi.fn();
@@ -103,7 +109,8 @@ beforeEach(() => {
     outputTokens: 50,
   });
   persistActivityTraceMock.mockResolvedValue(undefined);
-  accrueChannelUsageMock.mockResolvedValue(undefined);
+  settleMock.mockResolvedValue(undefined);
+  reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
   generateEmbeddingWithSpecMock.mockResolvedValue({
     embedding: [0.1, 0.2],
     spec: 'openai/text-embedding-3-large',
@@ -174,6 +181,13 @@ describe('passiveIngestChannelMemory', () => {
     });
 
     const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+    // The hold is priced off the agent the pass actually spends on; swapping
+    // orgId/teamId or the key silently prices it off the wrong scope.
+    expect(reserveChannelTurnMock).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      null,
+      expect.objectContaining({ agentKey: 'commitToMemory', orgId: 'org-1', teamId: 'team-1' })
+    );
     expect(result.messagesRead).toBe(2);
     expect(result.factsExtracted).toBe(1);
     expect(result.factsWritten).toBe(1);
@@ -222,7 +236,7 @@ describe('passiveIngestChannelMemory', () => {
     });
 
     await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith(CHANNEL_ID, 0.005, { countRun: false });
+    expect(settleMock).toHaveBeenCalledWith(0.005, { countRun: false });
   });
 
   it('persists activity trace and returns empty on LLM error', async () => {

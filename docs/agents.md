@@ -513,6 +513,24 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
+- **`STEP_REQUIRED_AGENTS` drift is caught late in one direction.** A stale key — naming a step
+  that no longer exists — fails `stepRequiredAgents.coverage.test.ts` in CI. A *missing* key, the
+  damaging direction, cannot be inferred statically: one activity module hosts several activities,
+  so walking imports for `recordLlmUsage` reports `runLint` as an LLM step because its module also
+  holds the gate-fix loop. `recordLlmUsage` therefore checks it at runtime instead — it is the only
+  place that knows both the executing activity and the agent key just spent on — and logs a warning
+  plus an `llm.step_agent_unregistered` span attribute. That fires the first time the step runs, not
+  at merge, so a new model-resolving step should be added to the map deliberately rather than
+  discovered. Steps whose agent comes from the spec rather than the map — `runAgentNode`, which
+  binds whatever `agentRef` a template node names — carry `null` in the map itself and skip the
+  check, because no static entry could ever exist for them and the warning would be constant.
+  The check only judges activities the boot gate actually walked: most LLM-spending activities are
+  not step executors at all (channel turns, the memory passes, the workflow-authoring activities) and
+  are covered by `assertConfigReady`'s other rules, so measuring them against a map of *steps* would
+  warn on every healthy deployment. It follows that an activity outside the gate's scope gets no
+  drift check here at all. The warning is also once per (step, agent) per process, so a drifted entry
+  on a hot step cannot bury itself; the `llm.step_agent_unregistered` span attribute is set on every
+  affected run.
 - **The boot gate reflects install state at boot, not forever.** `requiredAgentKeysForDeployment()`
   reads the installed templates once, at startup. Activating a template afterwards — or adding a
   Slack channel — does not re-run the check, so a newly reachable agent with no credential fails at

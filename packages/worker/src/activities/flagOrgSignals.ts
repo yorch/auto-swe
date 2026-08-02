@@ -6,11 +6,7 @@ import {
 } from '../lib/channelMemory.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
-import {
-  accrueChannelUsage,
-  isChannelOverBudgetNow,
-  runChannelAgentTurn,
-} from './channelAssistant.js';
+import { isChannelOverBudgetNow, runHeldChannelTurn } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 
 /** Input for the org-flagging activity (mirrors the workflow arg). */
@@ -163,7 +159,7 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
       return { posted: false, reason: 'cooldown' };
     }
 
-    // Budget gate.
+    // Cheap pre-LLM bail. The hold taken around the model call below enforces it.
     if (await isChannelOverBudgetNow(channel.id, channel.monthlyBudgetUsdCents)) {
       return { posted: false, reason: 'over-budget' };
     }
@@ -203,10 +199,13 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
     }
 
     const agentKey = channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY;
-    const { reply, costUsd } = await runChannelAgentTurn(
+    // Holds budget across the model call, so concurrent fires can't all pass
+    // the read above and blow past the cap together.
+    const turn = await runHeldChannelTurn(
       {
         agentKey,
         id: channel.id,
+        monthlyBudgetUsdCents: channel.monthlyBudgetUsdCents,
         orgId: channel.orgId,
         personaPrompt: channel.personaPrompt,
         teamId: channel.teamId,
@@ -214,11 +213,15 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
       buildOrgFlagPrompt(interestSummaries, candidates),
       'llm.channel_org_flag'
     );
+    if (!turn) {
+      return { posted: false, reason: 'over-budget' };
+    }
+    const { reply, costUsd } = turn;
 
     const posted = shouldPostOrgFlag(reply);
 
-    // Accrue the LLM cost (it happened); count a run only when we actually post.
-    await accrueChannelUsage(channel.id, costUsd, { countRun: posted });
+    // Settle the LLM cost (it happened); count a run only when we actually post.
+    await turn.hold.settle(costUsd, { countRun: posted });
 
     if (posted) {
       // Best-effort: the cost + cooldown are already committed, so a delivery

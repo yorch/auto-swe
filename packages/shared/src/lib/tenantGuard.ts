@@ -41,7 +41,7 @@ export const TENANT_SCOPED_MODELS = new Set([
 ]);
 
 /** Operations that can touch many tenants' rows in one call. */
-const GUARDED_OPERATIONS = new Set([
+export const GUARDED_OPERATIONS = new Set([
   'aggregate',
   'count',
   'deleteMany',
@@ -50,8 +50,16 @@ const GUARDED_OPERATIONS = new Set([
   'updateMany',
 ]);
 
-/** Keys that scope a query to a tenant, directly or through a relation. */
+/**
+ * Keys that scope a query to a tenant, directly or through a relation.
+ *
+ * `channelId` counts because a `SlackChannel` belongs to exactly one team, so a
+ * non-null channel id names exactly one tenant — the two tenant-scoped models
+ * that carry the column (`MemoryItem`, `Agent`) both inherit their tenant from
+ * the channel.
+ */
 const TENANT_KEYS = new Set([
+  'channelId',
   'orgId',
   'organization',
   'organizationId',
@@ -60,21 +68,58 @@ const TENANT_KEYS = new Set([
   'memberships',
 ]);
 
-const unscoped = new AsyncLocalStorage<{ reason: string }>();
+/**
+ * Keys whose `null` still scopes, because null means "belongs to no tenant".
+ *
+ * `teamId: null` selects the GLOBAL rows — bundle export relies on it — and
+ * those are nobody's private data. `channelId: null` is the opposite: a
+ * `MemoryItem` with no channel is still owned by a team, so that predicate
+ * selects every team's non-channel lessons and must not count.
+ */
+const NULL_SCOPES_TENANT = new Set(['orgId', 'organizationId', 'teamId']);
+
+/** Relation/scalar operators that select everything *except* a tenant. */
+const NEGATING_OPERATORS = new Set(['none', 'not', 'isNot']);
+
+/** Does `value`, sitting under tenant key `key`, actually narrow to a tenant? */
+function narrowsToTenant(key: string, value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return NULL_SCOPES_TENANT.has(key);
+  }
+  if (typeof value === 'object') {
+    // `{ teamId: { not: x } }` and `{ memberships: { none: … } }` match every
+    // tenant but one, which is the opposite of scoping.
+    return !Object.keys(value as Record<string, unknown>).some((k) => NEGATING_OPERATORS.has(k));
+  }
+  return true;
+}
+
+const unscoped = new AsyncLocalStorage<{ reason: string; models: ReadonlySet<string> }>();
 
 /**
- * Marks a genuinely cross-tenant query as intentional.
+ * Marks a genuinely cross-tenant query as intentional, for named models only.
  *
  * Plenty are: admin listings, startup sync, seeds, the worker's global config
  * resolvers. The point is not to forbid them but to make each one a written
  * decision with a reason attached, so the unmarked ones stand out.
+ *
+ * **`models` is what keeps the exemption honest.** This is an
+ * `AsyncLocalStorage` region, so everything awaited inside inherits it —
+ * including a query added to the block later, or one issued by a helper it
+ * calls. Several call sites legitimately wrap a `Promise.all` of two or three
+ * queries, so a one-query-per-region rule would not fit. Naming the models
+ * bounds it instead: a query on anything else still fails, and the exemption
+ * states what it was granted for rather than "whatever happens in here". A
+ * second query on an already-named model does still inherit it — a deliberately
+ * narrower hole than the unbounded region had.
  */
-export function runUnscoped<T>(reason: string, fn: () => T): T {
-  return unscoped.run({ reason }, fn);
+export function runUnscoped<T>(reason: string, models: readonly string[], fn: () => T): T {
+  return unscoped.run({ models: new Set(models), reason }, fn);
 }
 
-export function isUnscoped(): boolean {
-  return unscoped.getStore() !== undefined;
+/** Is `model` covered by an active exemption? */
+export function isUnscoped(model: string): boolean {
+  return unscoped.getStore()?.models.has(model) ?? false;
 }
 
 /** Does this `where` clause constrain the query to a tenant? */
@@ -83,10 +128,18 @@ export function hasTenantPredicate(where: unknown): boolean {
     return false;
   }
   for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    if (TENANT_KEYS.has(key)) {
-      return true;
+    // `NOT: { teamId: x }` matches every tenant except x. Descending into it
+    // would read the tenant key inside as scoping and invert the guard.
+    if (key === 'NOT') {
+      continue;
     }
-    // Recurse through *any* nested object, not just AND/OR/NOT. Tenancy is
+    if (TENANT_KEYS.has(key)) {
+      if (narrowsToTenant(key, value)) {
+        return true;
+      }
+      continue;
+    }
+    // Recurse through *any* nested object, not just AND/OR. Tenancy is
     // routinely reached through a relation two or three levels down —
     // `{ repository: { team: { memberships: { some: … } } } }` is how the
     // lessons routes scope, and treating that as unscoped would be a false
@@ -111,7 +164,7 @@ export class UnscopedTenantQueryError extends Error {
     super(
       `${model}.${operation}() ran with no tenant predicate. ${model} carries a teamId/orgId, ` +
         'so an unfiltered query crosses tenants. Add the filter, or wrap the call in ' +
-        "runUnscoped('why this is global', () => …) if it is meant to be."
+        `runUnscoped('why this is global', ['${model}'], () => …) if it is meant to be.`
     );
     this.name = 'UnscopedTenantQueryError';
   }
@@ -159,7 +212,7 @@ export function tenantGuardExtension(opts?: TenantGuardOptions) {
           if (
             TENANT_SCOPED_MODELS.has(model) &&
             GUARDED_OPERATIONS.has(operation) &&
-            !isUnscoped() &&
+            !isUnscoped(model) &&
             !hasTenantPredicate((args as { where?: unknown } | undefined)?.where)
           ) {
             const err = new UnscopedTenantQueryError(model, operation);

@@ -93,8 +93,13 @@ describe('STEP_REQUIRED_AGENTS', () => {
   it('reaches every model-backed agent key from some step', () => {
     // Completeness check on the catalog, not the boot gate — the gate is
     // `requiredAgentKeysForDeployment`, which is scoped to installed templates.
-    const all = [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];
-    expect(all.sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
+    //
+    // A subset check, not equality: `MODEL_BACKED_AGENT_KEYS` is the narrow
+    // pricing/UI convenience set, so the map legitimately names seeded agents
+    // outside it (`evalJudge`). Requiring equality kept those out of the gate.
+    const all = new Set(Object.values(STEP_REQUIRED_AGENTS).flat());
+    const unreachable = [...ALL_MODEL_BACKED_AGENT_KEYS].filter((k) => !all.has(k));
+    expect(unreachable, 'model-backed agents no step declares').toEqual([]);
   });
 });
 

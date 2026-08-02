@@ -556,6 +556,7 @@ model SlackChannel {
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   agents         Agent[]
+  budgetHolds    ChannelBudgetHold[]
   memoryItems    MemoryItem[]
   monthlyUsage   ChannelMonthlyUsage[]
   openItems      ChannelOpenItem[]
@@ -640,6 +641,37 @@ model ChannelMonthlyUsage {
   @@unique([channelId, yearMonth])
   @@index([channelId])
   @@map("channel_monthly_usage")
+}
+
+/// One in-flight claim on a channel's remaining monthly budget.
+///
+/// A turn's real cost is only known after the model answers, so it increments
+/// `channel_monthly_usage.cost_usd_accrued` by an estimate first and nets that
+/// out when it settles. The increment alone is enough to bound concurrency, but
+/// it is unrecoverable on its own: a worker that dies mid-turn never settles, and
+/// the estimate stays on the ledger for the rest of the calendar month.
+///
+/// This row is what makes the claim reversible. `settle` deletes it; a later
+/// reserve sweeps any row past `expires_at`, subtracting the amount it added
+/// back off the ledger. So a lost hold costs one expiry window, not one month.
+model ChannelBudgetHold {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId String       @map("channel_id") @db.Uuid
+  channel   SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  /// The ledger row this hold was added to — pinned, so a turn spanning a month
+  /// boundary settles against the row it claimed from.
+  yearMonth String       @map("year_month")
+  amountUsd Decimal      @map("amount_usd") @db.Decimal(12, 6)
+  /// After this instant the hold is presumed abandoned and is swept.
+  expiresAt DateTime     @map("expires_at") @db.Timestamptz
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([channelId, yearMonth])
+  /// The sweep filters `channelId` + `expiresAt`; a bare `expiresAt` index would
+  /// never be the access path, and this is the highest-churn table in the
+  /// channel path — one insert and one delete per turn.
+  @@index([channelId, expiresAt])
+  @@map("channel_budget_holds")
 }
 
 model User {

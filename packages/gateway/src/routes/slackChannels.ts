@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -263,12 +264,16 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     const user = requireUser(request);
     const where: Prisma.SlackChannelWhereInput =
       user.role === 'ADMIN' ? {} : { team: { memberships: { some: { userId: user.sub } } } };
-    const rows = await asPlatformAdmin(user, "admin lists every team's channels", () =>
-      fastify.prisma.slackChannel.findMany({
-        include: channelInclude,
-        orderBy: { createdAt: 'desc' },
-        where,
-      })
+    const rows = await asPlatformAdmin(
+      user,
+      "admin lists every team's channels",
+      ['SlackChannel'],
+      () =>
+        fastify.prisma.slackChannel.findMany({
+          include: channelInclude,
+          orderBy: { createdAt: 'desc' },
+          where,
+        })
     );
     // Batch this month's usage for all listed channels in one query, then map
     // by channelId — avoids an N+1 (one findUnique per row).
@@ -288,20 +293,25 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   // its masked last-four + install metadata. Static path, declared before `/:id`
   // so Fastify routes it as a literal (not a channel id).
   app.get('/workspaces', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.slackWorkspace.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: {
-        _count: { select: { channels: true } },
-        botTokenLastFour: true,
-        createdAt: true,
-        id: true,
-        installedAt: true,
-        isActive: true,
-        name: true,
-        orgId: true,
-        slackTeamId: true,
-      },
-    });
+    const rows = await runUnscoped(
+      'admin lists every installed Slack workspace',
+      ['SlackWorkspace'],
+      () =>
+        fastify.prisma.slackWorkspace.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            _count: { select: { channels: true } },
+            botTokenLastFour: true,
+            createdAt: true,
+            id: true,
+            installedAt: true,
+            isActive: true,
+            name: true,
+            orgId: true,
+            slackTeamId: true,
+          },
+        })
+    );
     const data = rows.map((r) => ({
       channelCount: r._count.channels,
       createdAt: r.createdAt,
@@ -371,6 +381,82 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /:id/budget/reset — drop this month's outstanding budget holds.
+  //
+  // A turn increments `costUsdAccrued` by an estimate before it spends and nets
+  // that out when it settles, recording the claim as a `ChannelBudgetHold` row.
+  // A worker that dies in between never settles. The worker's own sweep reclaims
+  // expired holds, but only from the path that was about to refuse a turn — a
+  // channel comfortably under its cap never pays for a sweep, so its abandoned
+  // holds sit until something pushes it to the cap. This is the operator's way
+  // to clear them on demand rather than waiting for that.
+  //
+  // Deliberately NOT a "zero the month" button: it subtracts exactly what the
+  // outstanding holds added and leaves real spend alone, so recovering from a
+  // crash never doubles as disabling the cap.
+  app.post(
+    '/:id/budget/reset',
+    { onRequest: adminOnly, schema: { params: IdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const row = await fastify.prisma.slackChannel.findUnique({
+        select: { id: true, name: true },
+        where: { id: request.params.id },
+      });
+      if (!row) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      const yearMonth = currentYearMonth();
+      const [holdsOutstanding, usageBefore] = await Promise.all([
+        fastify.prisma.channelBudgetHold.count({ where: { channelId: row.id, yearMonth } }),
+        fastify.prisma.channelMonthlyUsage.findUnique({
+          where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
+        }),
+      ]);
+
+      // The refund protocol itself is shared with the worker's TTL sweep — one
+      // transaction per hold, delete before decrement, credit the hold's own
+      // month. When each side had a copy they had already diverged on that last
+      // point, and a bug there credits real spend back and loosens the cap.
+      const { reclaimedUsd, released: holdsReleased } = await releaseChannelBudgetHolds(
+        fastify.prisma,
+        row.id,
+        {
+          expiredOnly: false,
+          yearMonth,
+        }
+      );
+
+      const usage = await fastify.prisma.channelMonthlyUsage.findUnique({
+        where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: {
+          costUsdAccrued: usage ? Number(usage.costUsdAccrued) : 0,
+          holdsReleased,
+          yearMonth,
+        },
+        before: {
+          costUsdAccrued: usageBefore ? Number(usageBefore.costUsdAccrued) : 0,
+          holdsOutstanding,
+          yearMonth,
+        },
+        entityId: row.id,
+        entityType: 'SlackChannel',
+      });
+      return {
+        channelId: row.id,
+        currentMonthUsage: serializeUsage(usage),
+        holdsReleased,
+        reclaimedUsd,
+      };
+    }
+  );
+
   // GET /:id/memory — list this channel's memory items (channel assistant, Phase 2).
   // By default returns only active (un-consolidated) items. Pass
   // `?includeConsolidated=true` to include soft-deleted (consolidated) rows so
@@ -404,24 +490,27 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       // added `teamId` predicate would look stronger and is not: `MemoryItem`
       // denormalises the team at write time, so re-parenting a channel would
       // silently hide everything written under its old team.
-      const items = await runUnscoped('bounded to one pre-authorised channelId', () =>
-        fastify.prisma.memoryItem.findMany({
-          orderBy: { createdAt: 'desc' },
-          select: {
-            agentKey: true,
-            consolidatedAt: true,
-            createdAt: true,
-            id: true,
-            lessonSummary: true,
-            metadata: true,
-            rationale: true,
-          },
-          take: 200,
-          where: {
-            channelId: request.params.id,
-            ...(showConsolidated ? {} : { consolidatedAt: null }),
-          },
-        })
+      const items = await runUnscoped(
+        'bounded to one pre-authorised channelId',
+        ['MemoryItem'],
+        () =>
+          fastify.prisma.memoryItem.findMany({
+            orderBy: { createdAt: 'desc' },
+            select: {
+              agentKey: true,
+              consolidatedAt: true,
+              createdAt: true,
+              id: true,
+              lessonSummary: true,
+              metadata: true,
+              rationale: true,
+            },
+            take: 200,
+            where: {
+              channelId: request.params.id,
+              ...(showConsolidated ? {} : { consolidatedAt: null }),
+            },
+          })
       );
       return { data: items };
     }

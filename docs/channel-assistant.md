@@ -24,6 +24,7 @@ channel they already work in rather than a separate console.
 | `ChannelThreadSession` | `lastAssistantAt` per `(channelId, threadTs)` — the freshness anchor for follow-up sessions. |
 | `ChannelOpenItem` | A tracked open item, deduped by `sourceTs`. `ChannelOpenItemStatus` is `OPEN` → `RESOLVED` or `DISMISSED`; `lastNudgedAt` rate-limits stale-item nudges. |
 | `ChannelMonthlyUsage` | Per-channel monthly cost ledger, unique on `(channelId, yearMonth)`. |
+| `ChannelBudgetHold` | One in-flight claim on that ledger — the row that makes a hold reversible when the worker holding it dies. Swept past `expiresAt`. |
 | `MemoryItem` | Gains `channelId` / `teamId` / `orgId` for channel-scoped memory. |
 | `Agent` | Gains `channelId` for `CHANNEL`-scoped rows; partial-unique `(key, version, channelId) WHERE scope='CHANNEL'`. |
 
@@ -133,10 +134,15 @@ by the same pgvector search as everything else.
 
 - **Retrieval** — `retrieveChannelMemory` reads the channel's own memory and sibling channels on the
   same team, auto-injected as turn context.
-- **Cross-channel reads exclude private sources.** `searchTeamChannelMemory` and
-  `searchOrgChannelMemory` join `slack_channels` and filter `is_private = false`. `isPrivate`
-  defaults from Slack's `channel_type: 'group'` at provision and is admin-editable. A private
-  channel's memory is never a source for another channel.
+- **Cross-channel reads are bounded twice.** `searchTeamChannelMemory` and `searchOrgChannelMemory`
+  filter on the reading channel's `team_id` / `org_id`, and join `slack_channels` to exclude
+  `is_private = true` sources. A private channel's memory is never a source for another channel, and
+  no read crosses an org.
+- **`isPrivate` comes from Slack.** At provision time the gateway calls `conversations.info` for the
+  authoritative `is_private`. When Slack cannot answer — no token, no `groups:read` scope, a network
+  failure — it falls back to the payload heuristic (`channel_type: 'group'` on the events path, a
+  `G`-prefixed id on the shortcut path). The flag is written on CREATE only and is admin-editable
+  afterwards, so neither source can undo an override.
 - **Passive ingestion** — with `passiveIngestEnabled`, `passiveIngestChannelMemory` silently
   extracts up to five salient facts from human messages on each ambient fire, advancing a
   `passiveIngestCursor` and de-duplicating at 0.85 similarity. Accrues with `countRun: false`.
@@ -157,10 +163,68 @@ Consolidation and lesson consolidation share `clusterByEmbedding` (`lib/embeddin
 `ChannelMonthlyUsage` mirrors `OrgMonthlyUsage` and backs `monthlyBudgetUsdCents`. Channel spend is
 tracked in the channel ledger and is *not* double-counted into `OrgMonthlyUsage`.
 
-The cap is a soft gate, not a hard reservation: pre-flight cost reservation is not achievable for
-post-hoc LLM cost, so the guarantee is a Serializable-transaction read ensuring **at most one
-in-flight turn can overshoot**. `isChannelOverBudgetNow` gates conversational and proactive turns;
-`isChannelOverBudgetForTask` gates the heavier delegated task runs.
+A turn's real cost is only known after the model answers, so a turn takes a **hold** against the cap
+before it runs and settles that hold for the true cost afterwards (`reserveChannelTurn` →
+`ChannelBudgetHold.settle`). The hold is an atomic increment on the ledger row, and each turn decides
+on the total *before* its own increment — so remaining headroom is a resource turns consume rather
+than a number they all read, which matters because turn workflow ids are per-event and a busy channel
+runs many at once. It is pinned to the month it was taken in, and scaled by the number of model calls
+the held work will make — an assistant turn holds for two (the reply and the memory summarizer that
+follows it, which settle against the same hold), and the passes that fan out over a batch hold for
+the batch size.
+
+**The hold is priced, not guessed at.** `estimateHoldUsd` resolves the agent the channel is bound to
+and prices a nominal turn envelope (8K in / 1.5K out) through `calculateCostUsd`, the same helper the
+run ledger prices real calls with — so an Opus channel holds ~$0.078 per call and a Haiku channel
+~$0.016, rather than sharing one number that is ~5x wrong for one of them, and the hold cannot drift
+from the cost it is netted against. `CHANNEL_TURN_RESERVATION_USD` ($0.05) survives only as the
+fallback for a model with no known price, since a zero hold would bound nothing.
+
+Every channel pass resolves its agent at the **CHANNEL tier** — `{ channelId, orgId, teamId }`
+threaded explicitly into `resolveAgent`, `getModel` and `loadAgentSkills`. The ambient Temporal
+context carries no `channelId`, so a pass that priced its hold at that tier and bound its model
+without it would charge for a channel-scoped override it never used.
+
+With `H` USD of headroom, at most `H / estimate` calls are admitted, and each can overshoot by however
+far its real cost exceeds its hold — so the aggregate overshoot is bounded by admitted concurrency,
+not unbounded by it as a plain read gate was.
+
+**A hold is a row, not just an increment.** The increment is what bounds concurrency; the
+`ChannelBudgetHold` row beside it — written in the same transaction — is what makes the claim
+reversible. A worker that dies mid-turn never settles, and without the row its estimate would sit on
+the ledger for the rest of the calendar month. Instead a sweep reclaims any row past `expiresAt`
+(`CHANNEL_HOLD_TTL_MS`, 30 minutes), subtracting exactly what it added. Deleting the row *is* the
+claim, so a sweeper and a settling turn racing the same hold cannot both refund it — and a turn whose
+hold was swept settles its full cost rather than netting against a reservation that is already gone.
+
+**The sweep runs from the refusal, not the happy path.** The accrued total a gate reads *includes*
+outstanding holds, so the state the sweep exists to repair — a channel pushed over its cap by holds
+nobody is spending against — is exactly the state that refuses every subsequent turn. Both
+`isChannelOverBudgetNow` and `reserveChannelTurn` therefore sweep from inside their refusal branch,
+and re-decide only when the sweep actually reclaimed something. A channel under its cap never pays
+the extra round-trips; a channel that has genuinely spent its budget — for which refusal is the
+*steady* state, not a rare path — pays one query and no re-read.
+
+The corollary is that a channel comfortably under its cap never sweeps at all, so its abandoned holds
+sit until something pushes it to the cap.
+`POST /api/v1/admin/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
+control in the admin UI. It reports how many holds it actually released, and is deliberately not a
+"zero the month" button: it subtracts exactly what the holds added and leaves real spend alone, so
+recovering from a crash never doubles as disabling the cap.
+
+**The refund protocol has one implementation**, `releaseChannelBudgetHolds` in
+`@auto-swe/shared/lib/channelBudget`, shared by the sweep and the reset. One transaction per hold,
+delete before decrement, credit the *hold's own* month, never touch `runsCompleted`. It lives in
+`shared` because it is a data-model invariant rather than route logic: a bug there credits real spend
+back and quietly loosens the cap it exists to enforce.
+
+One path still spends on the channel ledger **without** a hold: `finalizeChannelTaskRun`. A delegated
+task run spends across a whole workflow, not inside one activity, so there is nothing in-process to
+hold. `isChannelOverBudgetForTask` gates its *launch* with a plain read, and its summed cost lands on
+the channel ledger when the run finalizes.
+
+`isChannelOverBudgetNow` is that read. It also runs as a cheap bail before a held path does any
+prompt-building work — it decides nothing on its own there; the hold is what enforces the cap.
 
 ---
 
@@ -183,9 +247,11 @@ full tool-call sequence. Read access uses the same `assertChannelAccess` guard a
 items.
 
 Channels are configured at `/admin/slack-channels` over
-`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/audit`, and the memory and open-item
+`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
+memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
-and a channel picker.
+and a channel picker. `/:id/budget/reset` has no UI control — it is called directly, by an admin who
+knows a worker crashed mid-turn.
 
 **Schedule lifecycle.** `provisionChannel` registers a channel on first contact, defaulting
 `isPrivate` from Slack's `channel_type`. Toggling ambient or reactive mode calls
@@ -220,7 +286,12 @@ sustained use. No code closes this — it needs an install, a pilot channel, and
 the proactivity features especially (ambient digests, reactive interjection, org-wide flagging) as
 unproven on real traffic, and turn them on one channel at a time.
 
-- **No hard budget cap.** See §7 — the gate allows at most one in-flight overshoot.
+- **The budget cap is bounded, not exact.** See §7 — the hold prices a *nominal* turn envelope
+  against the bound model, so a turn with an unusually long prompt or reply overshoots by the
+  difference, and the aggregate overshoot still scales with how many calls the remaining headroom
+  admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
+  crash over-counts the channel until the sweep reclaims it — which only happens once the channel
+  reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.
@@ -235,13 +306,12 @@ unproven on real traffic, and turn them on one channel at a time.
   work. The scanner coverage gaps in [agents.md §11](./agents.md#11-limitations) apply here too:
   a `bash` call is checked only against `SHELL_COMMAND` patterns, and the write-path scanners gate
   the `writeFile` tool only.
-- **`isPrivate` is a best-effort default, and it is the whole isolation guarantee.** Cross-channel
-  and org-wide memory reads exclude private sources by filtering `is_private = false`, so if the
-  flag is wrong for a channel, that channel's memory becomes readable org-wide. It is defaulted by
-  two different heuristics depending on the provisioning path — `channel_type === 'group'` on the
-  Slack event path, and a `G`-prefixed channel ID on the other — both marked best-effort in the
-  source, and neither is authoritative for every Slack channel shape. Verify the flag on any
-  channel holding sensitive discussion rather than trusting the default.
+- **`isPrivate` is captured once, at provision.** It is read from `conversations.info` when Slack
+  answers, but nothing re-checks it afterwards: a channel converted to private in Slack keeps the
+  value it was provisioned with, and its memory stays a cross-channel source until an admin flips
+  the flag. Where Slack cannot answer, the payload heuristics still apply and neither is
+  authoritative for every channel shape. Verify the flag on any channel holding sensitive
+  discussion rather than trusting the default.
 
 ---
 

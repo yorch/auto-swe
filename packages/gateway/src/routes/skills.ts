@@ -58,7 +58,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     '/skills',
     { onRequest: adminOnly, schema: { querystring: ListSkillsQuery } },
     async () => {
-      const skills = await runUnscoped('admin skill library spans every team', () =>
+      const skills = await runUnscoped('admin skill library spans every team', ['Skill'], () =>
         fastify.prisma.skill.findMany({
           include: { _count: { select: { agentSkillRefs: true } } },
           orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],

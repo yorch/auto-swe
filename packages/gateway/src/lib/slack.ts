@@ -106,6 +106,51 @@ export async function postSlackMessage(
   }
 }
 
+interface SlackConversationsInfoResponse {
+  ok: boolean;
+  error?: string;
+  channel?: { is_private?: boolean };
+}
+
+/**
+ * Ask Slack whether a channel is private.
+ *
+ * `SlackChannel.isPrivate` decides whether a channel's memory can ever be read
+ * by another channel, and the alternative is guessing from the shape of the
+ * payload that provisioned it — `channel_type === 'group'` on the events path, a
+ * `G`-prefixed id on the shortcut path. Neither is authoritative for every Slack
+ * channel shape; `conversations.info` is.
+ *
+ * Returns `null` when Slack cannot answer — no token, a missing `groups:read`
+ * scope, a network failure. The caller falls back to its heuristic rather than
+ * guessing "public", so a deployment whose bot lacks the scope keeps working
+ * exactly as it did.
+ */
+export async function fetchSlackChannelIsPrivate(
+  slackChannelId: string,
+  token: string | undefined
+): Promise<boolean | null> {
+  if (!token) {
+    return null;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://slack.com/api/conversations.info?channel=${encodeURIComponent(slackChannelId)}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal }
+    );
+    const data = (await res.json()) as SlackConversationsInfoResponse;
+    return data.ok && typeof data.channel?.is_private === 'boolean'
+      ? data.channel.is_private
+      : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface SlackViewsOpenOptions {
   triggerId: string;
   view: unknown;

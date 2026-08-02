@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -48,22 +49,30 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Validate all repos exist, are active git_repo connections, and the user
       // has access (mirrors the epic-submission route).
-      const repos = await fastify.prisma.connection.findMany({
-        select: {
-          id: true,
-          organizationName: true,
-          repoName: true,
-          team: {
+      // Unscoped by design, same as the epic route: the memberships selected
+      // here are the access decision, so filtering by team up front would turn
+      // "you cannot see this repo" into "no such repo".
+      const repos = await runUnscoped(
+        'access is decided from the memberships selected here, not by the where clause',
+        ['Connection'],
+        () =>
+          fastify.prisma.connection.findMany({
             select: {
-              memberships: {
-                select: { userId: true },
-                where: { userId: user.sub },
+              id: true,
+              organizationName: true,
+              repoName: true,
+              team: {
+                select: {
+                  memberships: {
+                    select: { userId: true },
+                    where: { userId: user.sub },
+                  },
+                },
               },
             },
-          },
-        },
-        where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
-      });
+            where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
+          })
+      );
 
       const foundIds = new Set(repos.map((r) => r.id));
       const missingIds = repoIds.filter((id) => !foundIds.has(id));

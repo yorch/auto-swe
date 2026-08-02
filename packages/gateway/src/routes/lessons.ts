@@ -50,27 +50,31 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       // `accessFilter` is `{}` for a platform admin, which is the intent — but
       // written that way it is indistinguishable from a forgotten filter.
-      const [lessons, total] = await asPlatformAdmin(user, "admin sees every team's lessons", () =>
-        Promise.all([
-          fastify.prisma.memoryItem.findMany({
-            orderBy: { createdAt: 'desc' },
-            select: {
-              consolidatedAt: true,
-              createdAt: true,
-              failureType: true,
-              id: true,
-              lessonSummary: true,
-              metadata: true,
-              rationale: true,
-              repository: { select: { id: true, organizationName: true, repoName: true } },
-              workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
-            },
-            skip: offset,
-            take: limit,
-            where,
-          }),
-          fastify.prisma.memoryItem.count({ where }),
-        ])
+      const [lessons, total] = await asPlatformAdmin(
+        user,
+        "admin sees every team's lessons",
+        ['MemoryItem'],
+        () =>
+          Promise.all([
+            fastify.prisma.memoryItem.findMany({
+              orderBy: { createdAt: 'desc' },
+              select: {
+                consolidatedAt: true,
+                createdAt: true,
+                failureType: true,
+                id: true,
+                lessonSummary: true,
+                metadata: true,
+                rationale: true,
+                repository: { select: { id: true, organizationName: true, repoName: true } },
+                workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+              },
+              skip: offset,
+              take: limit,
+              where,
+            }),
+            fastify.prisma.memoryItem.count({ where }),
+          ])
       );
 
       return { data: lessons, meta: { limit, offset, total } };
@@ -109,26 +113,29 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // Bounded to the single `repoId` the caller was just authorised for
       // above, which is narrower than a team filter — but `repoId` is not a
       // tenant column, so the guard cannot see it.
-      const lessons = await runUnscoped('bounded to one pre-authorised repoId', () =>
-        fastify.prisma.memoryItem.findMany({
-          orderBy: { createdAt: 'desc' },
-          select: {
-            createdAt: true,
-            failureType: true,
-            id: true,
-            lessonSummary: true,
-            rationale: true,
-          },
-          take: limit,
-          where: {
-            OR: [
-              { lessonSummary: { contains: q, mode: 'insensitive' } },
-              { rationale: { contains: q, mode: 'insensitive' } },
-            ],
-            ...(!includeConsolidated && { consolidatedAt: null }),
-            repoId,
-          },
-        })
+      const lessons = await runUnscoped(
+        'bounded to one pre-authorised repoId',
+        ['MemoryItem'],
+        () =>
+          fastify.prisma.memoryItem.findMany({
+            orderBy: { createdAt: 'desc' },
+            select: {
+              createdAt: true,
+              failureType: true,
+              id: true,
+              lessonSummary: true,
+              rationale: true,
+            },
+            take: limit,
+            where: {
+              OR: [
+                { lessonSummary: { contains: q, mode: 'insensitive' } },
+                { rationale: { contains: q, mode: 'insensitive' } },
+              ],
+              ...(!includeConsolidated && { consolidatedAt: null }),
+              repoId,
+            },
+          })
       );
 
       return { data: lessons };
@@ -182,6 +189,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     // every repo, and the per-repo "Run now" control is built from it.
     const [repos, totalGroups, activeGroups] = await runUnscoped(
       'admin memory-health stats span every team',
+      ['Connection', 'MemoryItem'],
       () =>
         Promise.all([
           // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
