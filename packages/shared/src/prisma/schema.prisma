@@ -667,7 +667,10 @@ model ChannelBudgetHold {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([channelId, yearMonth])
-  @@index([expiresAt])
+  /// The sweep filters `channelId` + `expiresAt`; a bare `expiresAt` index would
+  /// never be the access path, and this is the highest-churn table in the
+  /// channel path — one insert and one delete per turn.
+  @@index([channelId, expiresAt])
   @@map("channel_budget_holds")
 }
 

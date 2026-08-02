@@ -1145,7 +1145,7 @@ CREATE UNIQUE INDEX "channel_monthly_usage_channel_id_year_month_key" ON "channe
 CREATE INDEX "channel_budget_holds_channel_id_year_month_idx" ON "channel_budget_holds"("channel_id", "year_month");
 
 -- CreateIndex
-CREATE INDEX "channel_budget_holds_expires_at_idx" ON "channel_budget_holds"("expires_at");
+CREATE INDEX "channel_budget_holds_channel_id_expires_at_idx" ON "channel_budget_holds"("channel_id", "expires_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
