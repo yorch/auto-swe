@@ -574,17 +574,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   overshoot its tier before `BUDGET_EXCEEDED` fires. Pre-flight reservation is not possible for
   cost that is only known after the call returns.
 - **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.
-- **Determinism is covered behaviourally, not by replay.** Workflow tests run against
-  `TestWorkflowEnvironment` with fake activities, which catches logic errors but not the actual
-  V8-isolate failure mode. There is no `Replayer`-based test replaying recorded history against
-  current workflow code, so a non-deterministic change can pass CI and break on replay in
-  production.
-- **`specSnapshot` spills large values rather than storing them inline.** Strings over 4 KB are
-  written to a `WorkflowArtifact` and replaced by a reference, so the snapshot stays complete while
-  `workflow_runs` rows stay small. Past 20 spills in one run the remainder are truncated, and the
-  placeholder says so.
-- **CI wait mode is an env var, not DB config.** `CI_WAIT_MODE` (`signal` / `poll`) and its polling
-  intervals are read from the environment, the one integration knob that has not moved to the
-  DB-backed config the rest of the system uses.
-- **The Linear tracker cannot transition issues.** `transitionIssue` is a no-op — Linear models
-  workflow states differently from Jira and the mapping is unimplemented. Reads and comments work.
+- **`specSnapshot` still truncates past the spill cap.** Strings over 4 KB go to a
+  `WorkflowArtifact` and are replaced by a reference, but only for the first 20 per run; beyond that
+  the remainder are truncated. The placeholder says which case applies.
+- **Linear status sync resolves by state *type* when names differ.** Linear teams name workflow
+  states freely, so an exact name match is tried first and otherwise the target maps through
+  Linear's five canonical state types. A status with neither an exact name nor a type mapping
+  no-ops rather than failing the run.
+- **Replay coverage is one recorded history, not the whole surface.** The determinism guard replays
+  a fixture exercising a step, a `cond` and a terminate. A non-deterministic change on a path that
+  fixture does not walk — fan-out, HITL, signals — is not caught.
