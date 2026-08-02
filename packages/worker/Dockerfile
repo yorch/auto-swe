@@ -44,10 +44,18 @@ RUN yarn workspaces focus @auto-swe/worker --production \
  && mkdir -p packages/shared/node_modules packages/worker/node_modules
 
 # ── Stage 3: Runtime ──
-FROM node:24-alpine
+# glibc base, NOT alpine. @temporalio/core-bridge ships only `-gnu` prebuilds
+# (x86_64/aarch64-unknown-linux-gnu) — there is no musl build — so on alpine the
+# worker died at startup with:
+#   Error loading shared library ld-linux-x86-64.so.2 ... core-bridge/.../index.node
+# `gcompat` is not enough: the shim loads but then fails symbol relocation.
+FROM node:24-slim
+
 # Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
-# the host Docker socket group at runtime with DOCKER_GID.
-RUN apk add --no-cache docker-cli
+# the host Docker socket group at runtime with DOCKER_GID. Taken from the
+# official CLI image rather than apt, which keeps it pinned and avoids pulling
+# the whole docker.io package (daemon included) into the runtime.
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 
 ARG APP_VERSION=unknown
@@ -69,7 +77,7 @@ ENV APP_VERSION=${APP_VERSION} \
 # Production node_modules (hoisted root deps). Includes the @prisma/client +
 # @prisma/adapter-pg runtime (both are prod deps of @auto-swe/shared); the
 # `prisma` CLI is dev-only and not needed here (the worker doesn't migrate).
-COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 
 # Prisma generated client. The `prisma-client` provider in
 # packages/shared/src/prisma/schema.prisma outputs to a CUSTOM path
@@ -77,25 +85,29 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 # — NOT `node_modules/.prisma` (the older `prisma-client-js` location). The
 # shared package's compiled dist imports from `./src/generated/prisma`, so that
 # path must exist at runtime.
-COPY --from=builder /app/packages/shared/src/generated ./packages/shared/src/generated
+COPY --from=builder --chown=node:node /app/packages/shared/src/generated ./packages/shared/src/generated
 
 # Workspace package.json files (for symlink resolution)
-COPY --from=builder /app/packages/shared/package.json ./packages/shared/
-COPY --from=builder /app/packages/worker/package.json ./packages/worker/
+COPY --from=builder --chown=node:node /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder --chown=node:node /app/packages/worker/package.json ./packages/worker/
 
 # Built output
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/worker/dist ./packages/worker/dist
+COPY --from=builder --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=node:node /app/packages/worker/dist ./packages/worker/dist
 
 # Workspace node_modules (symlinks)
-COPY --from=prod-deps /app/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=prod-deps /app/packages/worker/node_modules ./packages/worker/node_modules
+COPY --from=prod-deps --chown=node:node /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=prod-deps --chown=node:node /app/packages/worker/node_modules ./packages/worker/node_modules
 
 # Root package.json (for workspace symlink resolution)
-COPY package.json ./
+COPY --chown=node:node package.json ./
 
 ENV NODE_ENV=production
 
-RUN chown -R node:node /app
+# Ownership is set on each COPY above. The recursive form rewrites every
+# file's metadata into a new layer, storing the whole tree — node_modules
+# included — a second time; it cost 608MB in this image. The WORKDIR itself
+# is still created by root, so chown that one directory (single inode).
+RUN chown node:node /app
 USER node
 CMD ["node", "packages/worker/dist/index.js"]
