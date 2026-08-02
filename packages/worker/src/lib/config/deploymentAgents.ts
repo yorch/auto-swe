@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
-import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
+import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /**
  * The agent keys *this deployment* actually needs at boot.
@@ -71,6 +71,25 @@ export async function installedStepNames(): Promise<Set<string>> {
   return steps;
 }
 
+/**
+ * The step names the boot gate actually walked, captured at boot.
+ *
+ * `flagUnregisteredAgentUsage` needs this to know whether a spending activity
+ * was ever in the gate's scope. Most LLM-spending activities are not steps at
+ * all — channel turns, the memory passes, the workflow authoring activities —
+ * and `assertConfigReady` covers those by other rules, so judging them against
+ * a *step* map would report drift on every healthy deployment.
+ *
+ * `null` until the gate runs (unit tests, direct activity calls), which the
+ * consumer reads as "cannot judge" rather than "not a step".
+ */
+let gatedSteps: Set<string> | null = null;
+
+/** The step names the boot gate walked, or `null` if it has not run. */
+export function gatedStepNames(): Set<string> | null {
+  return gatedSteps;
+}
+
 /** Empty when nothing runnable is installed — boot then has no agent gate. */
 export async function requiredAgentKeysForDeployment(): Promise<string[]> {
   // Independent reads on the worker's pre-poller boot path.
@@ -82,13 +101,14 @@ export async function requiredAgentKeysForDeployment(): Promise<string[]> {
       () => prisma.slackChannel.count()
     ),
   ]);
+  gatedSteps = steps;
   const keys = new Set<string>();
   for (const step of steps) {
+    // Absent (resolves no model) and null (agent comes from the spec) are both
+    // "nothing to gate on here"; a dynamic step's agent is checked at template
+    // save instead.
     const declared = STEP_REQUIRED_AGENTS[step];
-    // `DYNAMIC_AGENT` is a string, and iterating it would add its characters as
-    // agent keys. A dynamic step's agent comes from the spec and is checked at
-    // template save, not here.
-    if (!declared || declared === DYNAMIC_AGENT) {
+    if (!declared) {
       continue;
     }
     for (const key of declared) {

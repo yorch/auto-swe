@@ -32,7 +32,7 @@
  * convenience set, silently kept seeded agents like `evalJudge` out of the gate.
  */
 /**
- * A step whose agent comes from the spec, not from this map.
+ * `null` marks a step whose agent comes from the spec, not from this map.
  *
  * `runAgentNode` binds whatever `agentRef` a template node names, so no static
  * entry could exist for it — `requiredAgentKeysForDeployment` documents
@@ -41,10 +41,12 @@
  * Saying so here rather than in a second set beside this one keeps the answer
  * where a reader is already looking, and makes "declared *and* exempt"
  * unrepresentable instead of something a test has to forbid.
+ *
+ * `null` rather than a string sentinel because a sentinel string is still
+ * iterable: `for (const key of declared)` would quietly add `'d'`, `'y'`, `'n'`
+ * … to the boot gate, and every consumer would need a guard to prevent it.
  */
-export const DYNAMIC_AGENT = 'dynamic';
-
-export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | typeof DYNAMIC_AGENT> = {
+export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   commitToMemory: ['commitToMemory'],
   executeCIFixImplementation: ['implementer', 'securityReview'],
   executeGateFixImplementation: ['implementer', 'securityReview'],
@@ -53,7 +55,7 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | typeof DYN
   planChannelTask: ['channelAssistant'],
   planDecomposition: ['planner'],
   resolveMergeConflict: ['implementer'],
-  runAgentNode: DYNAMIC_AGENT,
+  runAgentNode: null,
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
   runReviewNetwork: ['reviewer'],

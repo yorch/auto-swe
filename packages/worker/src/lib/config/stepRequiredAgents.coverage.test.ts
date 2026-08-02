@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
+import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /**
  * `STEP_REQUIRED_AGENTS` is hand-maintained, carries a "keep this in sync with
@@ -65,6 +65,19 @@ describe('STEP_REQUIRED_AGENTS tracks the step executors', () => {
     // `runAgentNode` binds an `agentRef` from the spec, so it can never carry a
     // key list — but leaving it out of the map entirely is indistinguishable
     // from drift, and `flagUnregisteredAgentUsage` would warn on every run.
-    expect(STEP_REQUIRED_AGENTS.runAgentNode).toBe(DYNAMIC_AGENT);
+    expect(STEP_REQUIRED_AGENTS).toHaveProperty('runAgentNode');
+    expect(STEP_REQUIRED_AGENTS.runAgentNode).toBeNull();
+  });
+
+  it('declares agent lists as arrays, never a bare string', () => {
+    // A string value would satisfy `readonly string[] | null` at no type error
+    // if it were ever widened, and `for (const key of declared)` would then add
+    // its individual characters to the boot gate. Cheap to assert, silent to
+    // debug otherwise.
+    for (const [step, declared] of Object.entries(STEP_REQUIRED_AGENTS)) {
+      if (declared !== null) {
+        expect(Array.isArray(declared), `${step} must declare an array`).toBe(true);
+      }
+    }
   });
 });

@@ -5,7 +5,8 @@ import { type Span, trace } from '@opentelemetry/api';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
-import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
+import { gatedStepNames } from './config/deploymentAgents.js';
+import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -277,6 +278,14 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
  * module hosts several activities — but here both facts are in hand: which
  * activity is executing, and which agent key it just spent on.
  *
+ * **Scoped to what the gate walked.** Most LLM-spending activities are not step
+ * executors — channel turns, the memory passes, the workflow-authoring
+ * activities — and `assertConfigReady` covers those by separate rules (a
+ * channel implies `channelAssistant`, and so on). Judging them against a map of
+ * *steps* would report drift on every healthy deployment, which is how an
+ * advisory signal becomes noise nobody reads. So an activity the gate never
+ * walked is not judged here.
+ *
  * Advisory by construction. This is bookkeeping; it must never fail a run that
  * has already paid the provider. The span attribute is the durable signal.
  */
@@ -289,14 +298,19 @@ function flagUnregisteredAgentUsage(role: string, span: Span): void {
   } catch {
     return; // Outside an activity (tests, direct calls) — nothing to check.
   }
+  // `null` means the gate has not run in this process, so there is no basis to
+  // judge anything — stay quiet rather than guess.
+  if (!gatedStepNames()?.has(activity)) {
+    return;
+  }
   const declared = STEP_REQUIRED_AGENTS[activity];
-  if (declared === DYNAMIC_AGENT) {
+  if (declared === null) {
     return; // Its agent comes from the spec — no static entry can exist.
   }
   // No entry at all means the step resolves no model *as far as the map knows*;
   // an entry that omits this role means the map is incomplete for it. Both are
   // drift, and only steps that actually reach here can be judged.
-  if (declared?.includes(role as (typeof declared)[number])) {
+  if (declared?.includes(role)) {
     return;
   }
   // The span attribute is per-run and free, so it stays unconditional. The log

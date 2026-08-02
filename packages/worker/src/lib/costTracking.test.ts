@@ -60,6 +60,15 @@ vi.mock('./activityContext.js', () => ({
   currentWorkflowId: () => 'wf-temporal-1',
 }));
 
+// The unregistered-agent check only judges activities the boot gate walked, so
+// it needs the gate to have run. `gatedStepNames()` returns null in a bare
+// process, which is "cannot judge" — a test asserting the warning has to say
+// the step was gated.
+const gatedStepsMock = vi.fn<() => Set<string> | null>(() => new Set(['commitToMemory']));
+vi.mock('./config/deploymentAgents.js', () => ({
+  gatedStepNames: () => gatedStepsMock(),
+}));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({
     budgetTiers: {
@@ -330,6 +339,27 @@ describe('recordLlmUsage', () => {
   it('stays quiet when the step declares the agent it used', async () => {
     ledger({});
     await recordLlmUsage('wf-temporal-1', 'commitToMemory', { inputTokens: 1, outputTokens: 1 });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet for an activity the boot gate never walked', async () => {
+    // Most LLM-spending activities are not step executors — channel turns, the
+    // memory passes, the workflow-authoring activities — and `assertConfigReady`
+    // covers those by other rules. Judging them against a map of *steps* would
+    // warn on every healthy deployment, which is how an advisory signal becomes
+    // noise nobody reads.
+    ledger({});
+    gatedStepsMock.mockReturnValueOnce(new Set(['executeImplementation']));
+    await recordLlmUsage('wf-temporal-1', 'evalJudge', { inputTokens: 1, outputTokens: 1 });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the boot gate has not run in this process', async () => {
+    // No gate means no basis to judge; guessing would warn on every direct
+    // activity call and every unit test that reaches the ledger.
+    ledger({});
+    gatedStepsMock.mockReturnValueOnce(null);
+    await recordLlmUsage('wf-temporal-1', 'securityReview', { inputTokens: 1, outputTokens: 1 });
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
