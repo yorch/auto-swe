@@ -133,10 +133,15 @@ by the same pgvector search as everything else.
 
 - **Retrieval** — `retrieveChannelMemory` reads the channel's own memory and sibling channels on the
   same team, auto-injected as turn context.
-- **Cross-channel reads exclude private sources.** `searchTeamChannelMemory` and
-  `searchOrgChannelMemory` join `slack_channels` and filter `is_private = false`. `isPrivate`
-  defaults from Slack's `channel_type: 'group'` at provision and is admin-editable. A private
-  channel's memory is never a source for another channel.
+- **Cross-channel reads are bounded twice.** `searchTeamChannelMemory` and `searchOrgChannelMemory`
+  filter on the reading channel's `team_id` / `org_id`, and join `slack_channels` to exclude
+  `is_private = true` sources. A private channel's memory is never a source for another channel, and
+  no read crosses an org.
+- **`isPrivate` comes from Slack.** At provision time the gateway calls `conversations.info` for the
+  authoritative `is_private`. When Slack cannot answer — no token, no `groups:read` scope, a network
+  failure — it falls back to the payload heuristic (`channel_type: 'group'` on the events path, a
+  `G`-prefixed id on the shortcut path). The flag is written on CREATE only and is admin-editable
+  afterwards, so neither source can undo an override.
 - **Passive ingestion** — with `passiveIngestEnabled`, `passiveIngestChannelMemory` silently
   extracts up to five salient facts from human messages on each ambient fire, advancing a
   `passiveIngestCursor` and de-duplicating at 0.85 similarity. Accrues with `countRun: false`.
@@ -245,13 +250,12 @@ unproven on real traffic, and turn them on one channel at a time.
   work. The scanner coverage gaps in [agents.md §11](./agents.md#11-limitations) apply here too:
   a `bash` call is checked only against `SHELL_COMMAND` patterns, and the write-path scanners gate
   the `writeFile` tool only.
-- **`isPrivate` is a best-effort default, and it is the whole isolation guarantee.** Cross-channel
-  and org-wide memory reads exclude private sources by filtering `is_private = false`, so if the
-  flag is wrong for a channel, that channel's memory becomes readable org-wide. It is defaulted by
-  two different heuristics depending on the provisioning path — `channel_type === 'group'` on the
-  Slack event path, and a `G`-prefixed channel ID on the other — both marked best-effort in the
-  source, and neither is authoritative for every Slack channel shape. Verify the flag on any
-  channel holding sensitive discussion rather than trusting the default.
+- **`isPrivate` is captured once, at provision.** It is read from `conversations.info` when Slack
+  answers, but nothing re-checks it afterwards: a channel converted to private in Slack keeps the
+  value it was provisioned with, and its memory stays a cross-channel source until an admin flips
+  the flag. Where Slack cannot answer, the payload heuristics still apply and neither is
+  authoritative for every channel shape. Verify the flag on any channel holding sensitive
+  discussion rather than trusting the default.
 
 ---
 

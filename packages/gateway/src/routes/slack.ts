@@ -16,6 +16,7 @@ import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.j
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import {
+  fetchSlackChannelIsPrivate,
   openSlackView,
   postSlackMessage,
   publishAppHome,
@@ -1119,12 +1120,31 @@ async function provisionChannel(
   const channelWhere = {
     workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id },
   };
+
+  // Ask Slack directly rather than trusting the caller's heuristic. Only on the
+  // create path: the flag decides whether this channel's memory can be read by
+  // another, so it is worth a round-trip once, and re-checking on every mention
+  // would put a Slack API call on the hot path of every turn. `isPrivate` is
+  // still set on CREATE only, so neither source can undo a later admin override.
+  let isPrivate = opts.isPrivate ?? false;
+  const existing = await fastify.prisma.slackChannel.findUnique({
+    select: { id: true },
+    where: channelWhere,
+  });
+  if (!existing) {
+    const authoritative = await fetchSlackChannelIsPrivate(
+      slackChannelId,
+      (await resolveSlackBotTokenForWorkspace(slackTeamId)) ?? undefined
+    );
+    if (authoritative !== null) {
+      isPrivate = authoritative;
+    }
+  }
+
   const channel = await fastify.prisma.slackChannel
     .upsert({
-      // `isPrivate` is set on CREATE only — never on update — so a best-effort
-      // provision-time default can't silently undo a later admin override.
       create: {
-        isPrivate: opts.isPrivate ?? false,
+        isPrivate,
         orgId: workspace.orgId,
         slackChannelId,
         teamId: defaultTeam.id,

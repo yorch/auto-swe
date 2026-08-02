@@ -9,6 +9,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // the real PrismaClient singleton (which requires DATABASE_URL at import).
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'Prisma.DbNull' } } }));
 
+/**
+ * `provisionChannel` asks Slack for a new channel's authoritative `is_private`.
+ * Stubbed so these tests never reach the network; `null` is the "Slack could not
+ * answer" case, which falls back to the caller's heuristic.
+ */
+const fetchSlackChannelIsPrivateMock = vi.fn<() => Promise<boolean | null>>(async () => null);
+vi.mock('../lib/slack.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/slack.js')>()),
+  fetchSlackChannelIsPrivate: () => fetchSlackChannelIsPrivateMock(),
+}));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveSlackBotTokenForSlackChannel: vi.fn(async () => 'xoxb-test'),
   resolveSlackBotTokenForWorkspace: vi.fn(async () => 'xoxb-test'),
@@ -154,6 +165,9 @@ function buildApp(state: FakeState): FastifyInstance {
       delete: async () => ({}),
     },
     slackChannel: {
+      // No row yet → provisionChannel takes its create path, where it asks
+      // Slack for the authoritative `is_private`.
+      findUnique: async () => null,
       upsert: async () => ({
         followupSessionEnabled: false,
         id: 'chan-1',
@@ -751,6 +765,61 @@ describe('POST /api/v1/auth/slack/events — channel assistant teammate', () => 
     expect(res.statusCode).toBe(401);
   });
 
+  /** Provision a channel via an app_mention and return the row `create` args. */
+  async function provisionViaMention(channelType: string): Promise<Record<string, unknown>> {
+    const creates: Record<string, unknown>[] = [];
+    const prisma = (app as unknown as { prisma: Record<string, unknown> }).prisma;
+    prisma.slackChannel = {
+      findUnique: async () => null,
+      upsert: async ({ create }: { create: Record<string, unknown> }) => {
+        creates.push(create);
+        return { followupSessionEnabled: false, id: 'chan-1', orgId: 'org-1', teamId: 'team-x' };
+      },
+    };
+    const body = JSON.stringify({
+      event: {
+        channel: 'C9',
+        channel_type: channelType,
+        team: 'T1',
+        text: '<@UBOT> hello',
+        ts: '1700000000.000700',
+        type: 'app_mention',
+        user: 'UME',
+      },
+      team_id: 'T1',
+      type: 'event_callback',
+    });
+    const { ts, sig } = signRequest(body);
+    await app.inject({
+      headers: {
+        'content-type': 'application/json',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/events',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return creates[0] ?? {};
+  }
+
+  it("provisions isPrivate from Slack's answer, not the channel_type guess", async () => {
+    // `channel_type: 'channel'` is the heuristic's "public" signal. Slack says
+    // otherwise, and Slack is the one that knows — getting this wrong makes the
+    // channel's memory readable by every other channel in the org.
+    fetchSlackChannelIsPrivateMock.mockResolvedValue(true);
+    expect(await provisionViaMention('channel')).toMatchObject({ isPrivate: true });
+  });
+
+  it('falls back to the channel_type guess when Slack cannot answer', async () => {
+    // No `groups:read` scope, no token, network failure — behaviour is what it
+    // was before Slack was consulted at all.
+    fetchSlackChannelIsPrivateMock.mockResolvedValue(null);
+    expect(await provisionViaMention('group')).toMatchObject({ isPrivate: true });
+    expect(await provisionViaMention('channel')).toMatchObject({ isPrivate: false });
+  });
+
   it('acks and starts the assistant workflow for an app_mention', async () => {
     const body = JSON.stringify({
       event: {
@@ -1028,6 +1097,7 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
         findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 60_000) }),
       },
       slackChannel: {
+        findUnique: async () => null,
         upsert: async () => ({
           followupSessionEnabled: true,
           id: 'chan-1',
@@ -1068,6 +1138,7 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
         findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
       },
       slackChannel: {
+        findUnique: async () => null,
         upsert: async () => ({
           followupSessionEnabled: true,
           id: 'chan-1',
