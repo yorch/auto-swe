@@ -384,9 +384,11 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   //
   // A turn increments `costUsdAccrued` by an estimate before it spends and nets
   // that out when it settles, recording the claim as a `ChannelBudgetHold` row.
-  // A worker that dies in between never settles; the worker's own sweep reclaims
-  // those once they expire, so this is the impatient version of the same thing —
-  // for an operator who does not want to wait out the TTL.
+  // A worker that dies in between never settles. The worker's own sweep reclaims
+  // expired holds, but only from the path that was about to refuse a turn — a
+  // channel comfortably under its cap never pays for a sweep, so its abandoned
+  // holds sit until something pushes it to the cap. This is the operator's way
+  // to clear them on demand rather than waiting for that.
   //
   // Deliberately NOT a "zero the month" button: it subtracts exactly what the
   // outstanding holds added and leaves real spend alone, so recovering from a

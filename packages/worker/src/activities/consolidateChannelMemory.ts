@@ -169,7 +169,17 @@ export async function consolidateChannelMemory(
   // Resolve the consolidator agent. Bind AND price against `commitToMemory` (the
   // same role `consolidateLessons` uses) so the recorded cost matches the model
   // actually used — a mismatched pricing role can resolve to zero cost.
-  const consolidatorSkills = await loadAgentSkills('commitToMemory');
+  //
+  // Resolve at the CHANNEL tier explicitly: this pass runs on a channel's
+  // ledger, and its hold is priced through `resolveAgent(..., { channelId })`.
+  // The ambient Temporal context has no channelId, so without this a
+  // channel-scoped `commitToMemory` override would be priced but never used.
+  const agentCtx = {
+    channelId,
+    orgId: channel?.orgId ?? '',
+    teamId: channel?.teamId ?? '',
+  };
+  const consolidatorSkills = await loadAgentSkills('commitToMemory', agentCtx);
   const skillSuffix = consolidatorSkills
     .map((s) => s.promptText)
     .filter(Boolean)
@@ -181,7 +191,7 @@ export async function consolidateChannelMemory(
   const agent = new Agent({
     id: 'channel-memory-consolidator',
     instructions: consolidatorPrompt,
-    model: await getModel('commitToMemory'),
+    model: await getModel('commitToMemory', agentCtx),
     name: 'channel-memory-consolidator',
   });
 
@@ -195,8 +205,8 @@ export async function consolidateChannelMemory(
   const hold = await reserveChannelTurn(channelId, channel?.monthlyBudgetUsdCents ?? null, {
     agentKey: 'commitToMemory',
     modelCalls: qualifying.length,
-    orgId: channel?.orgId ?? '',
-    teamId: channel?.teamId ?? '',
+    orgId: agentCtx.orgId,
+    teamId: agentCtx.teamId,
   });
   if (hold.overBudget) {
     return EMPTY_RESULT;

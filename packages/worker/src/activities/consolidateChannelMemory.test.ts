@@ -65,6 +65,8 @@ vi.mock('../lib/embeddings.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { getModel } from '../lib/models.js';
 import { consolidateChannelMemory } from './consolidateChannelMemory.js';
 
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
@@ -170,11 +172,13 @@ describe('consolidateChannelMemory', () => {
     // And the hold really was taken, rather than silently degrading to the
     // read-only gate — which is what this file used to assert against.
     expect(vi.mocked(prisma.channelBudgetHold.create)).toHaveBeenCalledTimes(1);
-    expect(resolveAgentMock).toHaveBeenCalledWith('commitToMemory', {
-      channelId: CHANNEL_ID,
-      orgId: 'org-1',
-      teamId: 'team-1',
-    });
+    const channelCtx = { channelId: CHANNEL_ID, orgId: 'org-1', teamId: 'team-1' };
+    expect(resolveAgentMock).toHaveBeenCalledWith('commitToMemory', channelCtx);
+    // The pass must bind at the tier its hold was priced at. The ambient
+    // Temporal context has no channelId, so a channel-scoped `commitToMemory`
+    // override would otherwise be priced against but never actually used.
+    expect(vi.mocked(getModel)).toHaveBeenCalledWith('commitToMemory', channelCtx);
+    expect(vi.mocked(loadAgentSkills)).toHaveBeenCalledWith('commitToMemory', channelCtx);
   });
 
   it('writes no usage row for an uncapped channel that spent nothing', async () => {

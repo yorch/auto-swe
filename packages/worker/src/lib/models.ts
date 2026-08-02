@@ -4,7 +4,10 @@ import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
-import type { ModelBackedAgentKey as ConfigModelBackedAgentKey } from './config/types.js';
+import type {
+  ModelBackedAgentKey as ConfigModelBackedAgentKey,
+  ResolveCtx,
+} from './config/types.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
 // All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
@@ -32,10 +35,17 @@ export async function getModelSpec(role: ModelBackedAgentKey): Promise<string> {
  * resolution semantics as `getModelSpec`. Throws if config is missing.
  * Process-local cache keeps us from rebuilding a fresh provider client on
  * every call to the same role+context combo.
+ *
+ * `ctx` overrides fields on the ambient activity context — channel-resident
+ * callers pass `{ channelId }` so the CHANNEL tier fires, which the Temporal
+ * context cannot supply. Same optional-override shape as `loadAgentSkills`.
  */
-export async function getModel(role: ModelBackedAgentKey): Promise<LanguageModel> {
-  const ctx = await currentRequestContext();
-  const { model } = await resolveAgent(role, ctx);
+export async function getModel(
+  role: ModelBackedAgentKey,
+  ctx?: Partial<ResolveCtx>
+): Promise<LanguageModel> {
+  const resolveCtx = { ...(await currentRequestContext()), ...ctx };
+  const { model } = await resolveAgent(role, resolveCtx);
   return buildModel(model.spec, model.apiKey, model.apiBase);
 }
 

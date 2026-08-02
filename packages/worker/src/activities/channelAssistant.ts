@@ -427,7 +427,7 @@ export interface ChannelBudgetHold {
  * the row is what makes it reversible. A worker that dies between reserving and
  * settling leaves both behind, and without this the increment would sit on the
  * channel's ledger for the rest of the calendar month — a deploy during a busy
- * hour would silence the channel with no way back but editing the database.
+ * hour would silence the channel until an admin reset its budget by hand.
  *
  * Each refund is one transaction: the delete is the claim, so two workers
  * sweeping the same row concurrently cannot both refund it (the loser's delete
@@ -626,6 +626,12 @@ function makeHold(
           await upsertChannelUsage(tx, channelId, yearMonth, costUsd - reservedUsd, countRun);
         });
       } catch {
+        // Two ways in, one right answer. Either the delete raised because the
+        // hold is gone (swept, or released by an admin reset) and the
+        // reservation is already off the ledger; or the whole transaction rolled
+        // back, leaving the hold in place to be swept at its TTL. Both owe the
+        // full cost, un-netted — netting here would either double-refund the
+        // reservation or charge against a hold that no longer exists.
         await addChannelUsage(channelId, yearMonth, costUsd, countRun);
       }
     },
@@ -744,13 +750,13 @@ export async function runHeldChannelTurn(
  * Agent library with the CHANNEL config tier active (`ctx.channelId`), and
  * generate a reply to the user's message.
  *
- * Per-channel budget (Phase 1):
- *  - Pre-turn: if the channel has a `monthlyBudgetUsdCents` cap and the current
- *    month's accrued spend has reached it, skip the LLM call entirely and return
- *    a friendly "budget reached" reply. No further cost is accrued.
- *  - Post-turn: best-effort increment `ChannelMonthlyUsage` for the current
- *    month with this turn's USD cost + one completed run. A failure to record
- *    usage must never break the reply (wrapped in try/catch).
+ * Per-channel budget:
+ *  - Pre-turn: a cheap read bails an already-capped channel with a friendly
+ *    "budget reached" reply, then {@link reserveChannelTurn} holds for the two
+ *    model calls this turn can make — the reply and the memory summarizer — so
+ *    concurrent turns cannot all pass the same read.
+ *  - Post-turn: the hold settles to the real cost of both calls, best-effort. A
+ *    failure to record usage must never break the reply.
  *
  * Trace persistence + the workflow-level `recordLlmUsage` accounting are handled
  * inside {@link runAgent}; the channel-monthly accrual below is an independent,
