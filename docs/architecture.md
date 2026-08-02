@@ -581,6 +581,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
   unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
   extension entirely. This is defence in depth, not the row-level security it stands in for.
+- **The tenant guard covers the gateway only.** It is applied where `fastify.prisma` is built, so
+  the worker — and the handful of gateway modules that import the `@auto-swe/shared/db` singleton
+  directly — run unguarded. That split is an artifact of where `$extends` is called, not a judgement
+  about which paths are tenant-sensitive; the worker is the half that puts `MemoryItem` rows into an
+  agent prompt. Moving it into `db.ts` would cover both, and requires triaging the worker's own
+  cross-tenant reads first (`getReposForConsolidation`, `planEpic`, `channelMemory`, the config
+  resolvers, and `keyRotation`, which sweeps two tenant-scoped tables by design).
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

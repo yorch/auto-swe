@@ -655,8 +655,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const summary = (fields?.summary as string | undefined) ?? ticketId;
       // Resolve the default repo + workflow template in parallel — they're
       // independent lookups, so the RunInput is processable without paying two
-      // sequential round trips. Use the module-level `prisma` (the singleton) for
-      // consistency with the rest of this handler — `fastify.prisma` is the same.
+      // sequential round trips. These use the module-level `prisma`, which is
+      // NOT `fastify.prisma`: the latter carries the `tenantGuard` extension.
+      // Both reads are single-row `findFirst`s, which the guard does not cover
+      // anyway, so the two are equivalent here — but they are no longer the
+      // same client, and a multi-row query added below would escape the guard.
       const [defaultRepo, defaultTemplate] = await Promise.all([
         prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
         prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),

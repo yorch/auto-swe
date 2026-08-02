@@ -230,8 +230,7 @@ const depVersion = (name) => {
 };
 
 /** `4.18` and `4.18.0` both satisfy `4.18.0`; `4.17` and `4.1` do not. */
-const isVersionPrefix = (claimed, actual) =>
-  actual === claimed || actual.startsWith(`${claimed}.`);
+const isVersionPrefix = (claimed, actual) => actual === claimed || actual.startsWith(`${claimed}.`);
 
 const VERSIONED_DEPS = [
   { actual: rootPkg.packageManager.replace(/^yarn@/, ''), name: 'Yarn', pattern: 'Yarn' },
@@ -262,7 +261,7 @@ const VERSIONED_DEPS = [
 const VERSION = '(\\d+(?:\\.\\d+)*)';
 
 /** Every version-looking token in a string, e.g. "16.2.7 / 19.2.7" → both. */
-const versionsIn = (cell) => (cell.match(/\d+(?:\.\d+)*/g) ?? []);
+const versionsIn = (cell) => cell.match(/\d+(?:\.\d+)*/g) ?? [];
 
 const versionFailures = [];
 const checkVersions = (file, line, lineNo) => {
