@@ -137,7 +137,7 @@ prose has no compiler and status prose rots silently.
 - **Framework:** Vitest (`vitest.config.ts` at root)
 - **Gateway routes:** Fastify's built-in `light-my-request` via `app.inject()`
 - **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment (time-skipping) with fake activities — see `packages/worker/src/workflows/runnable.workflow.test.ts`. The shared interpreter is additionally unit-tested directly. First run downloads the test-server binary.
-- **Workflow determinism:** `runnable.replay.test.ts` replays a committed history fixture against current workflow code via `Worker.runReplayHistory`. Running forward against fakes cannot catch a change that takes a *different path on replay* — the failure that strands a production workflow. **If it fails, do not re-record the fixture to make it pass**; re-record (`packages/worker/scripts/recordReplayHistory.ts`) only when the workflow's structure changed intentionally.
+- **Workflow determinism:** `runnable.replay.test.ts` replays committed history fixtures — one per control-flow shape (linear, fan-out, signal, HITL) — against current workflow code via `Worker.runReplayHistory`. Replay only guards paths a recorded history walked, so a new control-flow shape needs a new fixture. Running forward against fakes cannot catch a change that takes a *different path on replay* — the failure that strands a production workflow. **If it fails, do not re-record the fixture to make it pass**; re-record (`packages/worker/scripts/recordReplayHistory.ts`) only when the workflow's structure changed intentionally.
 - **Activities:** Mock Prisma client + mock Docker exec calls
 - **Pattern:** Co-locate test files next to source (e.g., `workRequests.test.ts`)
 
