@@ -64,7 +64,21 @@ describe('RunnableWorkflow — history replay', () => {
   it('has a fixture for every control-flow shape worth guarding', () => {
     // Named explicitly: silently losing one would quietly narrow the guard
     // while the suite stayed green.
-    expect(fixtures.map((f) => f.name)).toEqual(['fan-out', 'human-approval', 'linear', 'signal']);
+    expect(fixtures.map((f) => f.name)).toEqual([
+      'agent-node',
+      'container-step',
+      'context-spill',
+      'eval',
+      'fan-out',
+      'human-approval',
+      'human-decision',
+      'human-input',
+      'human-review',
+      'linear',
+      'mcp',
+      'shell',
+      'signal',
+    ]);
   });
 
   it.each(fixtures)('replays $name without a determinism violation', async ({ history }) => {
@@ -87,7 +101,13 @@ describe('RunnableWorkflow — history replay', () => {
     // If a signal had been delivered before the interpreter reached its wait
     // node the run would have timed out instead, and the history would record
     // no signal at all — leaving the park/resume boundary unguarded.
-    for (const name of ['signal', 'human-approval']) {
+    for (const name of [
+      'signal',
+      'human-approval',
+      'human-decision',
+      'human-input',
+      'human-review',
+    ]) {
       const history = fixtures.find((f) => f.name === name)?.history;
       const types = (history?.events ?? []).map((e) => e.eventType);
       expect(types, name).toContain(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED);
@@ -102,5 +122,43 @@ describe('RunnableWorkflow — history replay', () => {
     // Three branch items plus the run's own bookkeeping activities; a fixture
     // that collapsed to one branch would not exercise the worker pool.
     expect(scheduled.length).toBeGreaterThan(3);
+  });
+
+  it('covers every node type the interpreter can dispatch', () => {
+    // Replay only guards paths a recorded history walked, so an uncovered node
+    // type is an unguarded one. This asserts the *intent* of the fixture set:
+    // adding a node type to the spec union without a fixture should be a
+    // deliberate, visible choice rather than an oversight.
+    const covered = new Set(fixtures.map((f) => f.name));
+    const expected = [
+      'agent-node', // agent
+      'container-step', // containerStep
+      'eval', // eval
+      'fan-out', // fanOut
+      'human-approval', // humanApproval
+      'human-decision', // humanDecision
+      'human-input', // humanInput
+      'human-review', // humanReview
+      'linear', // step + cond + terminate
+      'mcp', // mcp
+      'shell', // shell
+      'signal', // signal
+      'context-spill', // set + the finalization spill path
+    ];
+    for (const name of expected) {
+      expect(covered, name).toContain(name);
+    }
+  });
+
+  it('the context-spill fixture actually spilled', () => {
+    // Finalization only calls the spill activity when something exceeds the
+    // inline limit; a fixture whose value shrank below it would replay the
+    // no-spill path and guard nothing.
+    const history = fixtures.find((f) => f.name === 'context-spill')?.history;
+    const scheduled = (history?.events ?? []).filter(
+      (e) => e.eventType === EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    );
+    const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
+    expect(names).toContain('storeContextOverflowBatch');
   });
 });

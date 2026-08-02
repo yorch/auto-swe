@@ -598,7 +598,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   states freely, so an exact name match is tried first and otherwise the target maps through
   Linear's five canonical state types. A status with neither an exact name nor a type mapping
   no-ops rather than failing the run.
-- **Replay guards command shape, not data.** The determinism fixtures cover the linear, fan-out,
-  signal and HITL paths, but Temporal compares command type and sequence rather than activity
-  arguments — permuting same-type branch activities replays clean. Node types with no fixture
-  (`mcp`, `eval`, `containerStep`, `shell`, the other three HITL kinds) are unguarded.
+- **Replay guards command shape, not data.** The determinism fixtures now cover every node type
+  the interpreter dispatches, plus the finalization spill path, but Temporal compares command type
+  and sequence rather than activity arguments — permuting same-type branch activities replays
+  clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
+  needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
+  fails loudly rather than quietly narrowing the guard.
