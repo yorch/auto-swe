@@ -170,10 +170,13 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
   app.get('/credentials', { onRequest: adminOnly }, async () => {
     // Deliberately every scope: this page is where an admin sees which teams
     // and orgs have their own credentials, so filtering it would hide the point.
-    const rows = await runUnscoped('admin credential listing spans every scope', () =>
-      fastify.prisma.providerCredential.findMany({
-        orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
-      })
+    const rows = await runUnscoped(
+      'admin credential listing spans every scope',
+      ['ProviderCredential'],
+      () =>
+        fastify.prisma.providerCredential.findMany({
+          orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
+        })
     );
     return { data: rows.map(redactCredential) };
   });

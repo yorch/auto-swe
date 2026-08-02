@@ -13,6 +13,12 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
  * path that matters. This keeps the guard live for everyone except the role
  * that is supposed to see everything.
  */
-export function asPlatformAdmin<T>(user: { role: string }, reason: string, fn: () => T): T {
-  return user.role === 'ADMIN' ? runUnscoped(reason, fn) : fn();
+export function asPlatformAdmin<T>(
+  user: { role: string },
+  reason: string,
+  /** Models the admin branch may read across tenants — see `runUnscoped`. */
+  models: readonly string[],
+  fn: () => T
+): T {
+  return user.role === 'ADMIN' ? runUnscoped(reason, models, fn) : fn();
 }

@@ -739,12 +739,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
       };
       // `teamMembershipFilter` is `{}` for a platform admin.
-      const templates = await asPlatformAdmin(user, "admin lists every team's templates", () =>
-        fastify.prisma.workflowTemplate.findMany({
-          include: TEMPLATE_INCLUDE,
-          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-          where,
-        })
+      const templates = await asPlatformAdmin(
+        user,
+        "admin lists every team's templates",
+        ['WorkflowTemplate'],
+        () =>
+          fastify.prisma.workflowTemplate.findMany({
+            include: TEMPLATE_INCLUDE,
+            orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+            where,
+          })
       );
       const lastRuns = await loadLastRuns(
         fastify,

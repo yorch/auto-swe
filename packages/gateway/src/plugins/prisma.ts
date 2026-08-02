@@ -23,7 +23,8 @@ const prismaPlugin: FastifyPluginAsync = async (fastify) => {
   // Defence in depth: org/team checks live on the routes, so a handler that
   // forgets its filter is a data-exposure bug nothing else catches. The guard
   // fails a multi-row query on a tenant-scoped model that carries no tenant
-  // predicate. Genuinely global queries opt out with `runUnscoped(reason, fn)`.
+  // predicate. Genuinely global queries opt out with `runUnscoped(reason, models, fn)`,
+  // which exempts only the models it names.
   //
   // It warns rather than throws in production: a violation should stop a test,
   // but should not take a running deployment down over a query that has been

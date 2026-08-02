@@ -60,21 +60,32 @@ const TENANT_KEYS = new Set([
   'memberships',
 ]);
 
-const unscoped = new AsyncLocalStorage<{ reason: string }>();
+const unscoped = new AsyncLocalStorage<{ reason: string; models: ReadonlySet<string> }>();
 
 /**
- * Marks a genuinely cross-tenant query as intentional.
+ * Marks a genuinely cross-tenant query as intentional, for named models only.
  *
  * Plenty are: admin listings, startup sync, seeds, the worker's global config
  * resolvers. The point is not to forbid them but to make each one a written
  * decision with a reason attached, so the unmarked ones stand out.
+ *
+ * **`models` is what keeps the exemption honest.** This is an
+ * `AsyncLocalStorage` region, so everything awaited inside inherits it —
+ * including a query added to the block later, or one issued by a helper it
+ * calls. Several call sites legitimately wrap a `Promise.all` of two or three
+ * queries, so a one-query-per-region rule would not fit. Naming the models
+ * bounds it instead: a query on anything else still fails, and the exemption
+ * states what it was granted for rather than "whatever happens in here". A
+ * second query on an already-named model does still inherit it — a deliberately
+ * narrower hole than the unbounded region had.
  */
-export function runUnscoped<T>(reason: string, fn: () => T): T {
-  return unscoped.run({ reason }, fn);
+export function runUnscoped<T>(reason: string, models: readonly string[], fn: () => T): T {
+  return unscoped.run({ models: new Set(models), reason }, fn);
 }
 
-export function isUnscoped(): boolean {
-  return unscoped.getStore() !== undefined;
+/** Is `model` covered by an active exemption? */
+export function isUnscoped(model: string): boolean {
+  return unscoped.getStore()?.models.has(model) ?? false;
 }
 
 /** Does this `where` clause constrain the query to a tenant? */
@@ -111,7 +122,7 @@ export class UnscopedTenantQueryError extends Error {
     super(
       `${model}.${operation}() ran with no tenant predicate. ${model} carries a teamId/orgId, ` +
         'so an unfiltered query crosses tenants. Add the filter, or wrap the call in ' +
-        "runUnscoped('why this is global', () => …) if it is meant to be."
+        `runUnscoped('why this is global', ['${model}'], () => …) if it is meant to be.`
     );
     this.name = 'UnscopedTenantQueryError';
   }
@@ -159,7 +170,7 @@ export function tenantGuardExtension(opts?: TenantGuardOptions) {
           if (
             TENANT_SCOPED_MODELS.has(model) &&
             GUARDED_OPERATIONS.has(operation) &&
-            !isUnscoped() &&
+            !isUnscoped(model) &&
             !hasTenantPredicate((args as { where?: unknown } | undefined)?.where)
           ) {
             const err = new UnscopedTenantQueryError(model, operation);

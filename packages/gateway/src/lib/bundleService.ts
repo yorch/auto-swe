@@ -144,8 +144,11 @@ export async function exportBundle(
   }
 
   // Bundle export is an admin operation and selects by `origin`, not tenant.
-  const skillRows = await runUnscoped('bundle export selects by origin, not tenant', () =>
-    prisma.skill.findMany({ orderBy: { name: 'asc' }, where: { isActive: true, ...originWhere } })
+  const skillRows = await runUnscoped(
+    'bundle export selects by origin, not tenant',
+    ['Skill'],
+    () =>
+      prisma.skill.findMany({ orderBy: { name: 'asc' }, where: { isActive: true, ...originWhere } })
   );
   const skills: BundleSkill[] = skillRows.map((s) => ({
     description: s.description,

@@ -581,13 +581,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
   unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
   extension entirely. This is defence in depth, not the row-level security it stands in for.
-- **A `runUnscoped` exemption is a region, not a marker.** It is implemented with
-  `AsyncLocalStorage`, so everything awaited inside the callback inherits the exemption — including
-  a query added to that block later, or one issued by a helper it calls. Several sites already wrap
-  a `Promise.all` of two or three queries. Nothing in a diff signals that a new query has joined an
-  exempt region, which is the guard's own failure mode one level up. Making the exemption an
-  argument to the query (a stripped symbol on `where`, or a derived client) would bound it to the
-  call it was written for.
+- **A `runUnscoped` exemption still covers repeat queries on the models it names.** It is an
+  `AsyncLocalStorage` region, so everything awaited inside inherits it; naming the models bounds
+  that — a query on anything else inside the block still fails — but a *second* query on an
+  already-named model does not. That is the residual hole, and it is deliberate: several call sites
+  legitimately wrap a `Promise.all` of two or three queries on the same model, so a
+  one-query-per-region rule would not fit them.
 - **The tenant guard covers the gateway only.** It is applied where `fastify.prisma` is built, so
   the worker — and the handful of gateway modules that import the `@auto-swe/shared/db` singleton
   directly — run unguarded. That split is an artifact of where `$extends` is called, not a judgement

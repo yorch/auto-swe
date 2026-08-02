@@ -263,12 +263,16 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     const user = requireUser(request);
     const where: Prisma.SlackChannelWhereInput =
       user.role === 'ADMIN' ? {} : { team: { memberships: { some: { userId: user.sub } } } };
-    const rows = await asPlatformAdmin(user, "admin lists every team's channels", () =>
-      fastify.prisma.slackChannel.findMany({
-        include: channelInclude,
-        orderBy: { createdAt: 'desc' },
-        where,
-      })
+    const rows = await asPlatformAdmin(
+      user,
+      "admin lists every team's channels",
+      ['SlackChannel'],
+      () =>
+        fastify.prisma.slackChannel.findMany({
+          include: channelInclude,
+          orderBy: { createdAt: 'desc' },
+          where,
+        })
     );
     // Batch this month's usage for all listed channels in one query, then map
     // by channelId — avoids an N+1 (one findUnique per row).
@@ -404,24 +408,27 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       // added `teamId` predicate would look stronger and is not: `MemoryItem`
       // denormalises the team at write time, so re-parenting a channel would
       // silently hide everything written under its old team.
-      const items = await runUnscoped('bounded to one pre-authorised channelId', () =>
-        fastify.prisma.memoryItem.findMany({
-          orderBy: { createdAt: 'desc' },
-          select: {
-            agentKey: true,
-            consolidatedAt: true,
-            createdAt: true,
-            id: true,
-            lessonSummary: true,
-            metadata: true,
-            rationale: true,
-          },
-          take: 200,
-          where: {
-            channelId: request.params.id,
-            ...(showConsolidated ? {} : { consolidatedAt: null }),
-          },
-        })
+      const items = await runUnscoped(
+        'bounded to one pre-authorised channelId',
+        ['MemoryItem'],
+        () =>
+          fastify.prisma.memoryItem.findMany({
+            orderBy: { createdAt: 'desc' },
+            select: {
+              agentKey: true,
+              consolidatedAt: true,
+              createdAt: true,
+              id: true,
+              lessonSummary: true,
+              metadata: true,
+              rationale: true,
+            },
+            take: 200,
+            where: {
+              channelId: request.params.id,
+              ...(showConsolidated ? {} : { consolidatedAt: null }),
+            },
+          })
       );
       return { data: items };
     }

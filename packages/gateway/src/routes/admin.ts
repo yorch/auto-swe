@@ -127,8 +127,10 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const cutoff = new Date(Date.now() - request.query.days * 24 * 60 * 60 * 1000);
       // Retention applies to the whole table; pruning per tenant would leave
       // other teams' audit rows growing forever.
-      const { count } = await runUnscoped('audit retention sweep is table-wide', () =>
-        fastify.prisma.workflowShellAudit.deleteMany({ where: { createdAt: { lt: cutoff } } })
+      const { count } = await runUnscoped(
+        'audit retention sweep is table-wide',
+        ['WorkflowShellAudit'],
+        () => fastify.prisma.workflowShellAudit.deleteMany({ where: { createdAt: { lt: cutoff } } })
       );
       return { data: { deleted: count, olderThanDays: request.query.days } };
     }

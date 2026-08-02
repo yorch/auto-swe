@@ -349,7 +349,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Name lookup for ids the caller was already authorised for above
       // (non-admins fail `accessibleRepoIds` and 404 before reaching here).
-      const repos = await runUnscoped('ids already authorised above', () =>
+      const repos = await runUnscoped('ids already authorised above', ['Connection'], () =>
         fastify.prisma.connection.findMany({
           select: { id: true, organizationName: true, repoName: true },
           where: { id: { in: knownRepoIds } },

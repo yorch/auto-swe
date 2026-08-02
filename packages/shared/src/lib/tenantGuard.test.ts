@@ -111,23 +111,41 @@ describe('tenantGuardExtension', () => {
     await expect(run).rejects.toBeInstanceOf(UnscopedTenantQueryError);
   });
 
-  it('lets an explicitly unscoped call through', async () => {
+  it('lets an explicitly unscoped call through for a named model', async () => {
     const ext = tenantGuardExtension({ mode: 'throw' });
-    const result = await runUnscoped('admin listing', () => {
+    const result = await runUnscoped('admin listing', ['Connection'], () => {
       const { run } = intercept(ext, { model: 'Connection', operation: 'findMany' });
       return run;
     });
     expect(result).toBe('result');
   });
 
-  it('keeps the unscoped marker across an await', async () => {
+  it('still guards a model the exemption does not name', async () => {
+    // The point of naming models: a query added inside an existing exempt block
+    // later does not silently inherit the exemption.
+    const ext = tenantGuardExtension({ mode: 'throw' });
+    await expect(
+      runUnscoped('admin listing', ['Connection'], () => {
+        const { run } = intercept(ext, { model: 'MemoryItem', operation: 'findMany' });
+        return run;
+      })
+    ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
+  });
+
+  it('keeps the exemption across an await', async () => {
     // AsyncLocalStorage, not a flag — a plain boolean would leak into whatever
     // else was running concurrently.
-    await runUnscoped('admin listing', async () => {
+    await runUnscoped('admin listing', ['Connection'], async () => {
       await new Promise((r) => setTimeout(r, 5));
-      expect(isUnscoped()).toBe(true);
+      expect(isUnscoped('Connection')).toBe(true);
     });
-    expect(isUnscoped()).toBe(false);
+    expect(isUnscoped('Connection')).toBe(false);
+  });
+
+  it('names the offending model in the fix it suggests', async () => {
+    const ext = tenantGuardExtension({ mode: 'throw' });
+    const { run } = intercept(ext, { model: 'Skill', operation: 'findMany' });
+    await expect(run).rejects.toThrow(/\['Skill'\]/);
   });
 
   it('warns instead of throwing in warn mode', async () => {
