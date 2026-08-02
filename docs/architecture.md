@@ -599,10 +599,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a
   call's cost is not known until it returns. A true reservation needs a declared max-output-token
   budget per call site, which the agent configs do not carry.
-- **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.
-- **`specSnapshot` still truncates past the spill cap.** Strings over 4 KB go to a
-  `WorkflowArtifact` and are replaced by a reference, but only for the first 20 per run; beyond that
-  the remainder are truncated. The placeholder says which case applies.
+- **Rotating `CONFIG_ENCRYPTION_KEY` needs both keys present.** `rotateEncryptionKey` re-encrypts
+  every row, but the old key must stay in `CONFIG_ENCRYPTION_KEY_PREVIOUS` until it reports nothing
+  left to move. Dropping it while rows remain at the old version makes those secrets unrecoverable —
+  the run exits non-zero and names them for exactly this reason. Only one previous version is held,
+  so two rotations cannot overlap.
 - **Linear status sync resolves by state *type* when names differ.** Linear teams name workflow
   states freely, so an exact name match is tried first and otherwise the target maps through
   Linear's five canonical state types. A status with neither an exact name nor a type mapping
