@@ -1,9 +1,11 @@
 import { Prisma } from '@auto-swe/shared';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -89,10 +91,16 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
 
-      const existing = await fastify.prisma.connection.findMany({
-        select: { organizationName: true, repoName: true },
-        where: { type: 'git_repo' },
-      });
+      // Deliberately every team's connections. This marks which GitHub repos
+      // are already imported; scoped to the caller's teams it would report a
+      // repo another team already imported as available, and importing it again
+      // creates a duplicate Connection for the same repository.
+      const existing = await runUnscoped('import de-duplication must span every team', () =>
+        fastify.prisma.connection.findMany({
+          select: { organizationName: true, repoName: true },
+          where: { type: 'git_repo' },
+        })
+      );
       const importedSet = new Set(existing.map((c) => `${c.organizationName}/${c.repoName}`));
 
       return {
@@ -121,19 +129,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
 
-      const [repos, total] = await Promise.all([
-        fastify.prisma.connection.findMany({
-          include: {
-            _count: { select: { activeWorkflows: true } },
-            team: { select: { id: true, name: true, slug: true } },
-          },
-          orderBy: { repoName: 'asc' },
-          skip: offset,
-          take: limit,
-          where,
-        }),
-        fastify.prisma.connection.count({ where }),
-      ]);
+      const [repos, total] = await asPlatformAdmin(user, "admin lists every team's repos", () =>
+        Promise.all([
+          fastify.prisma.connection.findMany({
+            include: {
+              _count: { select: { activeWorkflows: true } },
+              team: { select: { id: true, name: true, slug: true } },
+            },
+            orderBy: { repoName: 'asc' },
+            skip: offset,
+            take: limit,
+            where,
+          }),
+          fastify.prisma.connection.count({ where }),
+        ])
+      );
 
       return { data: repos, meta: { limit, offset, total } };
     }

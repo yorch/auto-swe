@@ -169,7 +169,194 @@ const SCENARIOS: Scenario[] = [
       'mark'
     ),
   },
+  {
+    // Declarative `agent` node → runAgentNode.
+    name: 'agent-node',
+    spec: spec(
+      {
+        ask: { agentRef: 'implementer', next: 'done', type: 'agent', userMessage: 'hi' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      'ask'
+    ),
+  },
+  {
+    // Container-contract coded capability.
+    name: 'container-step',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        run: { image: 'node:24-alpine', next: 'done', type: 'containerStep' },
+      },
+      'run'
+    ),
+  },
+  {
+    // User-authored shell command in an ephemeral container.
+    name: 'shell',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        run: {
+          command: 'echo fixture',
+          image: 'node:24-alpine',
+          next: 'done',
+          type: 'shell',
+        },
+      },
+      'run'
+    ),
+  },
+  {
+    // Eval node — scorers plus the judge threshold.
+    name: 'eval',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        score: {
+          next: 'done',
+          // `assert` keeps the fixture self-contained — a `judge` scorer would
+          // pull in a rubric and an LLM call for no extra control-flow shape.
+          scorers: [{ expr: '$.context.ready', kind: 'assert' }],
+          target: { literal: 'fixture' },
+          type: 'eval',
+        },
+        seed: { next: 'score', type: 'set', values: { 'context.ready': { literal: true } } },
+      },
+      'seed'
+    ),
+  },
+  {
+    // MCP tool call.
+    name: 'mcp',
+    spec: spec(
+      {
+        call: { connectionRef: 'fixture-mcp', next: 'done', tool: 'echo', type: 'mcp' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      'call'
+    ),
+  },
+  {
+    drive: async (handle, states) => {
+      await waitForState(states, 'AWAITING_HUMAN');
+      await handle.signal('hitl_pick', { action: 'ship' });
+    },
+    // humanDecision routes on which option came back, not approve/reject.
+    name: 'human-decision',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        hold: { status: 'FAILED', type: 'terminate' },
+        mark: marker('AWAITING_HUMAN', 'pick'),
+        pick: {
+          onTimeout: 'hold',
+          options: [
+            { next: 'done', value: 'ship' },
+            { next: 'hold', value: 'hold' },
+          ],
+          timeout: '24h',
+          title: 'Ship it?',
+          type: 'humanDecision',
+        },
+      },
+      'mark'
+    ),
+  },
+  {
+    drive: async (handle, states) => {
+      await waitForState(states, 'AWAITING_HUMAN');
+      await handle.signal('hitl_form', { action: 'submit', values: { note: 'ok' } });
+    },
+    // humanInput folds a structured payload back into context.
+    name: 'human-input',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        form: {
+          fields: [{ key: 'note', label: 'Note', type: 'text' }],
+          next: 'done',
+          onTimeout: 'done',
+          timeout: '24h',
+          title: 'Add a note',
+          type: 'humanInput',
+        },
+        mark: marker('AWAITING_HUMAN', 'form'),
+      },
+      'mark'
+    ),
+  },
+  {
+    drive: async (handle, states) => {
+      await waitForState(states, 'AWAITING_HUMAN');
+      await handle.signal('hitl_look', { action: 'submit', annotations: [] });
+    },
+    // humanReview — annotated review of a value already in context. Unlike the
+    // other three it routes on `onSubmit`, not approve/reject.
+    name: 'human-review',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        look: {
+          contentFrom: '$.context.diff',
+          onSubmit: 'done',
+          onTimeout: 'timedOut',
+          storeAs: 'reviewNotes',
+          timeout: '24h',
+          title: 'Review the diff',
+          type: 'humanReview',
+        },
+        mark: marker('AWAITING_HUMAN', 'look'),
+        seed: { next: 'mark', type: 'set', values: { 'context.diff': { literal: 'a diff' } } },
+        timedOut: { status: 'FAILED', type: 'terminate' },
+      },
+      'seed'
+    ),
+  },
+  {
+    // Finalization spills oversized context to artifacts. No other fixture
+    // walks that path, so a change to the spill batching replays clean
+    // everywhere else — which is exactly how the batching change slipped past
+    // the suite when it landed.
+    name: 'context-spill',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        seed: {
+          next: 'done',
+          type: 'set',
+          values: { 'context.big': { literal: 'x'.repeat(9000) } },
+        },
+      },
+      'seed'
+    ),
+  },
 ];
+
+/**
+ * A scenario whose spec fails validation parks on an activity Temporal keeps
+ * retrying, so the recorder used to hang with no clue which scenario was at
+ * fault. Bound each one and name it in the error instead.
+ */
+const SCENARIO_TIMEOUT_MS = 90_000;
+
+function withTimeout<T>(name: string, work: Promise<T>): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `scenario '${name}' did not finish in ${SCENARIO_TIMEOUT_MS / 1000}s — ` +
+                'usually an invalid spec, which the run retries rather than failing'
+            )
+          ),
+        SCENARIO_TIMEOUT_MS
+      ).unref()
+    ),
+  ]);
+}
 
 async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise<number> {
   const states: string[] = [];
@@ -181,9 +368,15 @@ async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise
       createWorkflowRun: async () => ({ runId: `replay-${scenario.name}`, spec: scenario.spec }),
       executeImplementation: async () => ({ ok: true, summary: 'fixture' }),
       finalizeWorkflowRun: async () => {},
+      mcpCallTool: async () => ({ ok: true, result: 'fixture' }),
       recordWorkflowStep: async () => {},
       resolveHumanStep: async () => {},
-      storeContextOverflow: async () => null,
+      runAgentNode: async () => ({ output: 'fixture', text: 'fixture' }),
+      runContainerStep: async () => ({ passed: true, result: { ok: true } }),
+      runEvalNode: async () => ({ passed: true, scores: [{ name: 'judge', value: 1 }] }),
+      runShellStep: async () => ({ exitCode: 0, passed: true, summary: 'fixture' }),
+      storeContextOverflowBatch: async (input: { values: unknown[] }) =>
+        input.values.map((_, i) => ({ artifactId: `art-${i}`, sizeBytes: 1 })),
       updateDomainState: async (_wf: string, status: string) => {
         states.push(status);
       },
@@ -235,7 +428,7 @@ async function main(): Promise<void> {
   const env = await TestWorkflowEnvironment.createTimeSkipping();
   try {
     for (const scenario of SCENARIOS) {
-      const events = await record(scenario, env);
+      const events = await withTimeout(scenario.name, record(scenario, env));
       console.log(`${scenario.name.padEnd(16)} ${events} events`);
     }
   } finally {

@@ -1,9 +1,14 @@
 import type { ModelBackedAgentKey } from './types.js';
 
 /**
- * The model-role(s) each runnable step resolves at execution time — the data
- * `assertConfigReady` uses to compute *what the worker actually needs* instead
- * of a hardcoded list.
+ * The model-role(s) each runnable step resolves at execution time.
+ *
+ * `requiredAgentKeysForDeployment` (lib/config/deploymentAgents.ts) maps the
+ * step nodes of every installed template through this to compute the boot gate,
+ * so a missing entry here means an agent a runnable template needs is not
+ * checked at boot and the run fails mid-flight instead — exactly what
+ * `assertConfigReady` exists to prevent. `stepRequiredAgents.coverage.test.ts`
+ * checks the keys against the executors registered in `runnable.ts`.
  *
  * This is the import-safe companion to the step registry in
  * `workflows/runnable.ts`: `assertConfigReady` runs at Node boot and must not
@@ -24,16 +29,6 @@ import type { ModelBackedAgentKey } from './types.js';
  *   - `planChannelTask` + `runChannelSubtasks` (general-route decomposition) both
  *     run the channel's `channelAssistant` model (planner/subtask/synthesis calls).
  *
- * Scope note: `requiredAgentKeys()` flattens this whole map — it is the union over
- * every registered step, NOT the steps some particular template uses. The worker has
- * no template in hand at boot and any template may be launched against it, so the
- * hard-fail set is the catalog's, and a deployment that only runs non-SWE workflows
- * must still configure the SWE agents.
- *
- * Worked example: at boot, `assertConfigReady` calls `resolveAgent` for each key; if the
- * GLOBAL `reviewer` Agent has a `modelSpec` but no `ProviderCredential` for its provider,
- * boot throws `ConfigMissingError` naming `reviewer` and the worker never starts polling —
- * instead of failing the review step mid-run.
  */
 export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]> = {
   commitToMemory: ['commitToMemory'],
@@ -48,19 +43,3 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]
   runReviewNetwork: ['reviewer'],
   validateContext: ['validateContext'],
 };
-
-/**
- * The deduplicated set of model-backed agent keys required by *some* registered
- * step. `assertConfigReady` requires a GLOBAL `Agent` (with a `modelSpec`) +
- * resolvable credential for each of these. Keys no registered step needs are ignored.
- *
- * Degrade-don't-crash: this is the static, executor-declared hard-fail set.
- * Templates that reference arbitrary `agentRef`s / `mcp` `connectionRef`s (P1/P2)
- * are NOT validated here — they're checked on a *separate, non-fatal* surface at
- * template save (`gateway/lib/specRefValidation.ts`, returns warnings) and finally
- * resolved at run time per node (`resolveAgent` throws `ConfigMissingError` for
- * that node only). A bad template edit fails that template/node, never worker boot.
- */
-export function requiredAgentKeys(): ModelBackedAgentKey[] {
-  return [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];
-}

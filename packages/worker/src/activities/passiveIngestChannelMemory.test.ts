@@ -24,6 +24,7 @@ vi.mock('../lib/models.js', () => ({
 
 const recordLlmUsageMock = vi.fn();
 vi.mock('../lib/costTracking.js', () => ({
+  assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: (...args: unknown[]) => recordLlmUsageMock(...args),
 }));
 

@@ -10,6 +10,7 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 
@@ -34,7 +35,7 @@ async function doCreateOrUpdatePullRequest(
   tracer: AgentTracer
 ): Promise<{ prNumber: number; prUrl: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
-    where: { id: request.repoId },
+    where: { id: requireRepoId(request, 'createOrUpdatePullRequest') },
   });
 
   const workflowDefaults = await resolveWorkflowDefaults();

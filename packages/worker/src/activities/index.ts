@@ -69,8 +69,11 @@ export type { ConsolidateLessonsInput, ConsolidateLessonsResult } from './consol
 export { consolidateLessons } from './consolidateLessons.js';
 export type { ContainerStepInput, ContainerStepResult } from './containerStep.js';
 export { runContainerStep } from './containerStep.js';
-export type { ContextOverflowRef, StoreContextOverflowInput } from './contextOverflow.js';
-export { CONTEXT_OVERFLOW_KIND, storeContextOverflow } from './contextOverflow.js';
+export type { ContextOverflowRef, StoreContextOverflowBatchInput } from './contextOverflow.js';
+// `storeContextOverflow` is deliberately not re-exported: no workflow proxies
+// it any more, and everything in this file reads as an activity some workflow
+// invokes. It stays a module-local helper behind the batch entry point.
+export { CONTEXT_OVERFLOW_KIND, storeContextOverflowBatch } from './contextOverflow.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export type {
   MergeBranchesInput,

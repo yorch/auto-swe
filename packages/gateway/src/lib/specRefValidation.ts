@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,10 +38,12 @@ export async function validateSpecRefs(
 
   if (agentRefs.length > 0) {
     const keys = [...new Set(agentRefs.map((r) => r.key))];
-    const found = await prisma.agent.findMany({
-      select: { key: true },
-      where: { isActive: true, key: { in: keys } },
-    });
+    // Cross-scope on purpose: the warning below is precisely "no active Agent
+    // at ANY scope", so a team-filtered lookup would warn about agents that do
+    // resolve at run time through the cascade.
+    const found = await runUnscoped('agent keys resolve across every scope', () =>
+      prisma.agent.findMany({ select: { key: true }, where: { isActive: true, key: { in: keys } } })
+    );
     const present = new Set(found.map((a) => a.key));
     for (const r of agentRefs) {
       if (!present.has(r.key)) {
@@ -57,10 +60,12 @@ export async function validateSpecRefs(
     const ids = [...new Set(mcpRefs.map((r) => r.connectionRef).filter((id) => UUID_RE.test(id)))];
     const found =
       ids.length > 0
-        ? await prisma.connection.findMany({
-            select: { id: true },
-            where: { id: { in: ids }, isActive: true, type: 'mcp' },
-          })
+        ? await runUnscoped('existence check on author-supplied UUIDs', () =>
+            prisma.connection.findMany({
+              select: { id: true },
+              where: { id: { in: ids }, isActive: true, type: 'mcp' },
+            })
+          )
         : [];
     const present = new Set(found.map((c) => c.id));
     for (const r of mcpRefs) {

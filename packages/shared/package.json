@@ -50,7 +50,9 @@
     "./workflow/signalSlots": "./dist/workflow/signalSlots.js",
     "./workflow/stepRegistry": "./dist/workflow/stepRegistry.js",
     "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
-    "./workflow/testHelpers": "./dist/workflow/testHelpers.js"
+    "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
+    "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
+    "./lib/keyRotation": "./dist/lib/keyRotation.js"
   },
   "scripts": {
     "db:generate": "DATABASE_URL=dummy prisma generate",
@@ -63,7 +65,8 @@
     "build": "yarn db:generate && tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",

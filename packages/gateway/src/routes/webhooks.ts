@@ -531,10 +531,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Extract well-known fields from the payload (same as POST /:id/runs).
       const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
       const description = typeof payload.description === 'string' ? payload.description : '';
-      const externalTicketId =
-        typeof payload.ticketId === 'string' ? payload.ticketId : `webhook-${Date.now()}`;
-
       const workRequestId = crypto.randomUUID();
+      // Correlation key, not a ticket — see the note on the template-run route.
+      const externalTicketId =
+        typeof payload.ticketId === 'string' ? payload.ticketId : workRequestId;
       const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
       // An Idempotency-Key makes the ID a pure function of the key, so a sender
       // that retries (or fires twice) collapses onto one run instead of two.
@@ -575,7 +575,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               budgetTier: 'STANDARD',
               description,
               externalTicketId,
-              repoId: connectionId ?? '',
+              repoId: connectionId,
               requestPayload: JSON.stringify(payload),
               workRequestId,
             },
@@ -655,8 +655,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const summary = (fields?.summary as string | undefined) ?? ticketId;
       // Resolve the default repo + workflow template in parallel — they're
       // independent lookups, so the RunInput is processable without paying two
-      // sequential round trips. Use the module-level `prisma` (the singleton) for
-      // consistency with the rest of this handler — `fastify.prisma` is the same.
+      // sequential round trips. These use the module-level `prisma`, which is
+      // NOT `fastify.prisma`: the latter carries the `tenantGuard` extension.
+      // Both reads are single-row `findFirst`s, which the guard does not cover
+      // anyway, so the two are equivalent here — but they are no longer the
+      // same client, and a multi-row query added below would escape the guard.
       const [defaultRepo, defaultTemplate] = await Promise.all([
         prisma.connection.findFirst({ where: { isActive: true, type: 'git_repo' } }),
         prisma.workflowTemplate.findFirst({ where: { isDefault: true, status: 'ACTIVE' } }),

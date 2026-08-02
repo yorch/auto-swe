@@ -3,7 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 
 const otelTracer = trace.getTracer('auto-swe-worker');
 
@@ -71,6 +71,7 @@ export async function runAgent<T = unknown>(
           tools: spec.tools,
         });
 
+        await assertBudgetAvailable(`agent.${spec.agentKey}`);
         const genResult = spec.outputSchema
           ? await agent.generate([{ content: userMessage, role: 'user' }], {
               structuredOutput: { schema: spec.outputSchema },

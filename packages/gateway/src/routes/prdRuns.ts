@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -39,7 +40,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'LEAD' }),
-      schema: { body: CreatePrdRunSchema },
+      schema: { body: CreatePrdRunSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
       const { prdTitle, prdContent, repoIds, projectKey } = request.body;
@@ -106,10 +107,25 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const workRequestId = crypto.randomUUID();
-      const prdWorkflowId = `${PRD_WORKFLOW_ID_PREFIX}${prdTitle
+      // The title slug is for humans reading the Temporal UI; the suffix is what
+      // makes the id unique. It used to be a slice of a fresh UUID, which meant
+      // the PRD_RUN_ALREADY_EXISTS branch below could never actually fire —
+      // every submission minted a new id, so a double-clicked PRD started two
+      // decompositions. With an Idempotency-Key the suffix is a function of the
+      // key, so the unique index on ActiveWorkflow.temporalWorkflowId becomes a
+      // real gate; without one, behaviour is unchanged.
+      const titleSlug = prdTitle
         .slice(0, 40)
         .replace(/[^a-z0-9-]/gi, '-')
-        .toLowerCase()}-${workRequestId.slice(0, 8)}`;
+        .toLowerCase();
+      const idempotencyKey = request.headers['idempotency-key'];
+      //
+      // Scoped by the title slug rather than a constant, so reusing a key across
+      // two genuinely different PRDs starts two runs instead of silently merging
+      // them; a real retry carries the same title and collapses as intended.
+      const prdWorkflowId = idempotencyKey
+        ? workflowIdFromIdempotencyKey('prd', titleSlug, idempotencyKey)
+        : `${PRD_WORKFLOW_ID_PREFIX}${titleSlug}-${workRequestId.slice(0, 8)}`;
       const requestPayload = JSON.stringify({
         prdContent,
         prdTitle,
@@ -138,8 +154,8 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       // `launchTrackedWorkflow`. A PRD run keeps no `ActiveWorkflow` ledger (its
       // spend is summed from `AgentTrace` at finalize, and the per-repo children
       // it submits carry their own rows), so there is no unique index to dedup
-      // on; `prdWorkflowId` carries a random suffix anyway, so the DUPLICATE
-      // branch below only ever fires on Temporal's own already-started error.
+      // on — the DUPLICATE branch below fires on Temporal's own already-started
+      // error, which a deterministic id above makes reachable.
       const launch = await launchTrackedWorkflow(
         fastify.prisma,
         {

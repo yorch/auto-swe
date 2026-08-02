@@ -3,6 +3,7 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
+import { currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
@@ -182,6 +183,89 @@ export interface LlmAttribution {
   costUsd: number;
 }
 
+/**
+ * Refuses an LLM call for a workflow that has already spent its tier.
+ *
+ * `recordLlmUsage` can only enforce *after* the provider has been paid — the
+ * cost of a call is not known until it returns. That bounds a single call's
+ * overshoot, but says nothing about calls already in flight beside it: the
+ * review network fires three reviewers at once and `fanOut` runs branches in
+ * parallel, so once one of them trips the limit the others would each still
+ * spend a full call before their own post-check fired.
+ *
+ * Called before `generate()`, this turns that into one overshooting call rather
+ * than one per concurrent branch. It is a gate, not a reservation: a workflow
+ * sitting just under its limit is still allowed one more call of unknown size.
+ * A true reservation needs a declared max-output-token budget per call site,
+ * which the agent configs do not carry.
+ *
+ * Silent no-op when the workflow has no `ActiveWorkflow` ledger row (channel
+ * tasks, PRD runs), matching `recordLlmUsage`.
+ */
+/**
+ * Resolves a workflow's tier and its token caps, DB override first.
+ *
+ * Both the pre-flight gate and the post-call check need this, and they used to
+ * derive it separately — which had already drifted: the gate returned silently
+ * on an unknown tier while the check threw, so a misconfigured tier quietly
+ * disabled the gate at every call site. One definition, one behaviour.
+ */
+async function resolveTierLimits(
+  budgetTier: string | null
+): Promise<{ tier: BudgetTier; limits: { inputTokens: number; outputTokens: number } }> {
+  const tier = (budgetTier ?? 'STANDARD') as BudgetTier;
+  const budgetTiers = await resolveBudgetTiers();
+  const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
+  if (!limits) {
+    throw new Error(
+      `Unknown budget tier "${tier}" — update the workflow-defaults budget tiers / BUDGET_LIMITS in costTracking.ts`
+    );
+  }
+  return { limits, tier };
+}
+
+export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
+  // The workflow id comes from Temporal activity context, not the caller.
+  // Passing it in invited exactly one bug: a call site supplied a literal
+  // string that matched no ledger row, so its gate was a permanent silent
+  // no-op. `persistActivityTrace` resolves its run the same way.
+  const temporalWorkflowId = currentWorkflowId();
+  const [workflow, _] = await Promise.all([
+    prisma.activeWorkflow.findFirst({
+      select: {
+        budgetTier: true,
+        costUsdAccrued: true,
+        tokensInputUsed: true,
+        tokensOutputUsed: true,
+      },
+      where: { temporalWorkflowId },
+    }),
+    // Independent of the row read; usually a cache hit, a second round trip
+    // when the ~30 s TTL has expired.
+    resolveBudgetTiers(),
+  ]);
+  if (!workflow) {
+    return;
+  }
+
+  const { limits, tier } = await resolveTierLimits(workflow.budgetTier);
+  const usedInput = Number(workflow.tokensInputUsed);
+  const usedOutput = Number(workflow.tokensOutputUsed);
+  // `>=` here, `>` in the post-check below, deliberately: a call that lands
+  // exactly on the cap has spent its budget and is allowed, but the next call
+  // has nothing left to spend.
+  if (usedInput >= limits.inputTokens || usedOutput >= limits.outputTokens) {
+    throw ApplicationFailure.nonRetryable(
+      `Budget already exhausted for tier ${tier} before ${label}: ` +
+        `${usedInput}/${limits.inputTokens} input tokens, ` +
+        `${usedOutput}/${limits.outputTokens} output tokens used ` +
+        `($${workflow.costUsdAccrued.toFixed(4)})`,
+      'BUDGET_EXCEEDED',
+      { label, tier, usedInput, usedOutput }
+    );
+  }
+}
+
 export async function recordLlmUsage(
   temporalWorkflowId: string,
   role: string,
@@ -220,31 +304,62 @@ export async function recordLlmUsage(
           span.setAttribute('llm.spec_resolution_failed', true);
           span.recordException(specResolutionError as Error);
         }
-        const workflow = await prisma.activeWorkflow.findFirst({
-          select: {
-            budgetTier: true,
-            costUsdAccrued: true,
-            id: true,
-            tokensInputUsed: true,
-            tokensOutputUsed: true,
-          },
-          where: { temporalWorkflowId },
-        });
-
-        if (!workflow) {
-          // Non-fatal: workflow record may not exist in test/dev scenarios
+        // Atomic increments, not read-modify-write.
+        //
+        // This used to read the counters, add locally, and write the sums back.
+        // LLM calls are routinely concurrent — the review network runs three
+        // reviewers under one `Promise.allSettled`, and `fanOut` branches run in
+        // parallel, possibly on different workers — so interleaved read/write
+        // pairs silently dropped increments. Budget enforcement then under-counted
+        // exactly when spend was highest, and no in-process lock could fix it
+        // because the writers are different processes. Postgres does the addition
+        // now, and the returned row is the authoritative post-increment total.
+        //
+        // ARCH-8: cost is a Float column, so the *delta* is rounded to
+        // micro-dollars before accumulating, keeping each increment exactly
+        // representable. (A Decimal column was considered and rejected: Prisma
+        // Decimal serializes as a string, silently changing the wire format of
+        // every endpoint that returns raw rows.)
+        //
+        // Keyed on `temporalWorkflowId`, which is `@unique` — the same index the
+        // launch path deduplicates on. Reading the row first to get its `id`
+        // would double the round trips on the hottest path in the worker for
+        // nothing.
+        const costDelta = Math.round(callCost * 1e6) / 1e6;
+        let updated: {
+          budgetTier: string | null;
+          costUsdAccrued: number;
+          tokensInputUsed: bigint;
+          tokensOutputUsed: bigint;
+        };
+        try {
+          updated = await prisma.activeWorkflow.update({
+            data: {
+              costUsdAccrued: { increment: costDelta },
+              tokensInputUsed: { increment: inputTokens },
+              tokensOutputUsed: { increment: outputTokens },
+            },
+            select: {
+              budgetTier: true,
+              costUsdAccrued: true,
+              tokensInputUsed: true,
+              tokensOutputUsed: true,
+            },
+            where: { temporalWorkflowId },
+          });
+        } catch (err) {
+          // P2025 — no ledger row. Non-fatal: channel tasks and PRD runs keep
+          // none, and test/dev runs may not have one either.
+          if ((err as { code?: string })?.code !== 'P2025') {
+            throw err;
+          }
           span.setAttribute('llm.workflow_found', false);
           return { costUsd: callCost, inputTokens, modelSpec, outputTokens };
         }
 
-        const newInput = Number(workflow.tokensInputUsed) + inputTokens;
-        const newOutput = Number(workflow.tokensOutputUsed) + outputTokens;
-        // ARCH-8: cost is a Float column accumulated incrementally; round each
-        // accumulation to micro-dollars so FP representation error can't drift
-        // across thousands of increments. (A Decimal column was considered and
-        // rejected: Prisma Decimal serializes as a string, silently changing
-        // the wire format of every endpoint that returns raw rows.)
-        const newCost = Math.round((workflow.costUsdAccrued + callCost) * 1e6) / 1e6;
+        const newInput = Number(updated.tokensInputUsed);
+        const newOutput = Number(updated.tokensOutputUsed);
+        const newCost = updated.costUsdAccrued;
 
         span.setAttributes({
           'llm.cost_pricing_known': known,
@@ -253,29 +368,16 @@ export async function recordLlmUsage(
           'llm.model': modelSpec,
           'llm.output_tokens': outputTokens,
           'llm.role': role,
-          'workflow.budget_tier': workflow.budgetTier,
+          'workflow.budget_tier': updated.budgetTier ?? 'STANDARD',
           'workflow.cost_usd_cumulative': newCost,
           'workflow.tokens_input_cumulative': newInput,
           'workflow.tokens_output_cumulative': newOutput,
         });
 
-        // Write usage to DB before checking the budget limit.
-        // This is intentional: we record actual consumption even when the limit
-        // is breached, so the UI shows the real overage rather than the last
-        // value before the limit was hit.
-        await prisma.activeWorkflow.update({
-          data: { costUsdAccrued: newCost, tokensInputUsed: newInput, tokensOutputUsed: newOutput },
-          where: { id: workflow.id },
-        });
-
-        const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
-        const budgetTiers = await resolveBudgetTiers();
-        const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
-        if (!limits) {
-          throw new Error(
-            `Unknown budget tier "${tier}" — update the workflow-defaults budget tiers / BUDGET_LIMITS in costTracking.ts`
-          );
-        }
+        // The write above happens before the limit check, deliberately: actual
+        // consumption is recorded even when the limit is breached, so the UI
+        // shows the real overage rather than the last value under the limit.
+        const { limits, tier } = await resolveTierLimits(updated.budgetTier);
 
         span.setAttributes({
           'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,

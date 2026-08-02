@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
@@ -147,6 +147,12 @@ export async function runReviewNetwork(
     (performanceSkillSuffix ? `\n\n${performanceSkillSuffix}` : '');
 
   // Run all three reviewers in parallel
+  // One gate for the fan-out, not one per reviewer. All three start at the same
+  // instant, before any has recorded usage, so three concurrent reads of the
+  // same row reach the same verdict — the check that matters is the one before
+  // the fan-out begins.
+  await assertBudgetAvailable('review');
+
   const results = await Promise.allSettled([
     runReviewerAgent(securityPrompt, 'SECURITY', codeResult, tracer),
     runReviewerAgent(domainLogicPrompt, 'DOMAIN_LOGIC', codeResult, tracer),

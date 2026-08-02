@@ -27,6 +27,7 @@ import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { recordGateEval } from '../lib/evalCapture.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -117,7 +118,7 @@ export async function resolveCommand(
 
   const repo = await prisma.connection.findUniqueOrThrow({
     select: { gateCommands: true },
-    where: { id: request.repoId },
+    where: { id: requireRepoId(request, 'qualityGate') },
   });
   const repoOverrides = (repo.gateCommands ?? null) as Record<string, string> | null;
   if (repoOverrides && typeof repoOverrides[gate] === 'string' && repoOverrides[gate].length > 0) {
@@ -141,7 +142,7 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.connection.findUniqueOrThrow({ where: { id: request.repoId } }),
+    prisma.connection.findUniqueOrThrow({ where: { id: requireRepoId(request, 'qualityGate') } }),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;

@@ -60,7 +60,7 @@ const stateActivities = proxyActivities<
     | 'createHumanStep'
     | 'resolveHumanStep'
     | 'cancelPendingHumanSteps'
-    | 'storeContextOverflow'
+    | 'storeContextOverflowBatch'
   >
 >({
   retry: RETRY_STATE,
@@ -812,11 +812,50 @@ async function runWithCancellation<T>(
 const CONTEXT_INLINE_LIMIT = 4000;
 
 /**
- * Cap on spills per run. A pathological context (hundreds of large values)
- * would otherwise turn finalization into hundreds of activity calls; past the
- * cap we fall back to truncating, and say so in the placeholder.
+ * Per-activity payload budget for spilled values, in UTF-16 code units.
+ *
+ * Temporal caps how large a single activity input may be, and a run that
+ * exceeds it fails at finalization — after all the real work is done. Well
+ * under the limit on purpose: this is a floor on round trips, not an attempt to
+ * pack the payload.
  */
-const MAX_CONTEXT_SPILLS = 20;
+const SPILL_CHUNK_BUDGET = 1_000_000;
+
+/**
+ * Ceiling on how much a single run may spill in total, across all chunks.
+ *
+ * Activity *inputs* are recorded in workflow history, so spilling is not free
+ * the way a plain artifact write would be: every byte sent through
+ * `storeContextOverflowBatch` also lands in the run's history, which Temporal
+ * caps. The old 20-value cap bounded this incidentally; removing it removed the
+ * bound too. Past this, values fall back to truncation — the same degradation
+ * the cap used to apply, but keyed on the resource that actually runs out.
+ */
+const SPILL_TOTAL_BUDGET = 8_000_000;
+
+/**
+ * Groups values into chunks whose combined length stays under the budget.
+ * A value bigger than the budget on its own occupies a chunk by itself, which
+ * is the same payload it had when every value was sent individually.
+ */
+function chunkBySize<T extends { value: string }>(items: T[]): T[][] {
+  const chunks: T[][] = [];
+  let current: T[] = [];
+  let size = 0;
+  for (const item of items) {
+    if (current.length > 0 && size + item.value.length > SPILL_CHUNK_BUDGET) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(item);
+    size += item.value.length;
+  }
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
+}
 
 function truncatedPlaceholder(value: string, note: string): string {
   return `${value.slice(0, CONTEXT_INLINE_LIMIT)}… [truncated ${value.length} bytes — ${note}]`;
@@ -860,15 +899,43 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
   };
   walk(ctx, '');
 
+  // Batched, but size-bounded. Spilling one value per activity used to cost a
+  // round trip each, which is why this was capped at 20 and truncated the rest.
+  // Batching removes that reason — but putting *every* value in one activity
+  // input would push a large context past Temporal's payload limit and fail the
+  // run at its final step, which is strictly worse than the truncation it
+  // replaced. So chunk by accumulated size instead.
+  //
+  // A single value larger than the budget still goes alone, exactly as it did
+  // when every value went alone.
+  // Past the total ceiling, stop spilling and truncate the remainder — the
+  // placeholder says which case applied, so a reader can tell a failed write
+  // from a run that simply produced more context than history can hold.
+  const spillable: typeof oversized = [];
+  let budget = SPILL_TOTAL_BUDGET;
+  for (const item of oversized) {
+    if (item.value.length > budget) {
+      break;
+    }
+    budget -= item.value.length;
+    spillable.push(item);
+  }
+
   const spilled = new Map<string, string>();
-  for (const { path, value } of oversized.slice(0, MAX_CONTEXT_SPILLS)) {
-    const ref = await stateActivities.storeContextOverflow({ content: value, path, runId });
-    spilled.set(
-      path,
-      ref
-        ? `[stored as artifact ${ref.artifactId} — ${ref.sizeBytes} bytes]`
-        : truncatedPlaceholder(value, 'artifact write failed')
-    );
+  for (const chunk of chunkBySize(spillable)) {
+    const refs = await stateActivities.storeContextOverflowBatch({
+      runId,
+      values: chunk.map(({ path, value }) => ({ content: value, path })),
+    });
+    chunk.forEach(({ path, value }, i) => {
+      const ref = refs[i];
+      spilled.set(
+        path,
+        ref
+          ? `[stored as artifact ${ref.artifactId} — ${ref.sizeBytes} bytes]`
+          : truncatedPlaceholder(value, 'artifact write failed')
+      );
+    });
   }
 
   // Second pass: substitute by path, so two identical strings at different
@@ -878,8 +945,9 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
       if (value.length <= CONTEXT_INLINE_LIMIT) {
         return value;
       }
+      // A value with no `spilled` entry is one the total ceiling stopped at.
       return (
-        spilled.get(path) ?? truncatedPlaceholder(value, `over ${MAX_CONTEXT_SPILLS} spill cap`)
+        spilled.get(path) ?? truncatedPlaceholder(value, 'run exceeded its total spill budget')
       );
     }
     if (Array.isArray(value)) {

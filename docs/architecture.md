@@ -571,7 +571,23 @@ Current constraints of the system as built. Deliberate product boundaries are in
 
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
-  the database will catch.
+  the database will catch. The gateway's Prisma client carries a `tenantGuard` extension that
+  fails a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
+  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate. Every
+  call site is accounted for: a deliberate cross-tenant read declares itself with
+  `runUnscoped(reason, fn)`, and the common `admin ? {} : filter` shape uses `asPlatformAdmin`,
+  which keeps the guard live for everyone except the role meant to see everything. It throws
+  outside production and warns inside it, so a false positive pages someone rather than taking the
+  API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
+  unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
+  extension entirely. This is defence in depth, not the row-level security it stands in for.
+- **The tenant guard covers the gateway only.** It is applied where `fastify.prisma` is built, so
+  the worker — and the handful of gateway modules that import the `@auto-swe/shared/db` singleton
+  directly — run unguarded. That split is an artifact of where `$extends` is called, not a judgement
+  about which paths are tenant-sensitive; the worker is the half that puts `MemoryItem` rows into an
+  agent prompt. Moving it into `db.ts` would cover both, and requires triaging the worker's own
+  cross-tenant reads first (`getReposForConsolidation`, `planEpic`, `channelMemory`, the config
+  resolvers, and `keyRotation`, which sweeps two tenant-scoped tables by design).
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
@@ -585,18 +601,23 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
-- **Budget enforcement is post-hoc.** `recordLlmUsage` accrues then checks, so a single call can
-  overshoot its tier before `BUDGET_EXCEEDED` fires. Pre-flight reservation is not possible for
-  cost that is only known after the call returns.
-- **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.
-- **`specSnapshot` still truncates past the spill cap.** Strings over 4 KB go to a
-  `WorkflowArtifact` and are replaced by a reference, but only for the first 20 per run; beyond that
-  the remainder are truncated. The placeholder says which case applies.
+- **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
+  workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
+  A workflow sitting just under its limit is still allowed one more call of unknown size, because a
+  call's cost is not known until it returns. A true reservation needs a declared max-output-token
+  budget per call site, which the agent configs do not carry.
+- **Rotating `CONFIG_ENCRYPTION_KEY` needs both keys present.** `rotateEncryptionKey` re-encrypts
+  every row, but the old key must stay in `CONFIG_ENCRYPTION_KEY_PREVIOUS` until it reports nothing
+  left to move. Dropping it while rows remain at the old version makes those secrets unrecoverable —
+  the run exits non-zero and names them for exactly this reason. Only one previous version is held,
+  so two rotations cannot overlap.
 - **Linear status sync resolves by state *type* when names differ.** Linear teams name workflow
   states freely, so an exact name match is tried first and otherwise the target maps through
   Linear's five canonical state types. A status with neither an exact name nor a type mapping
   no-ops rather than failing the run.
-- **Replay guards command shape, not data.** The determinism fixtures cover the linear, fan-out,
-  signal and HITL paths, but Temporal compares command type and sequence rather than activity
-  arguments — permuting same-type branch activities replays clean. Node types with no fixture
-  (`mcp`, `eval`, `containerStep`, `shell`, the other three HITL kinds) are unguarded.
+- **Replay guards command shape, not data.** The determinism fixtures now cover every node type
+  the interpreter dispatches, plus the finalization spill path, but Temporal compares command type
+  and sequence rather than activity arguments — permuting same-type branch activities replays
+  clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
+  needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
+  fails loudly rather than quietly narrowing the guard.

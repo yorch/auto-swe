@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '../providerUtils.js';
 import { resolveAgent } from './agentResolver.js';
-import { requiredAgentKeys } from './stepRequiredAgents.js';
+import { requiredAgentKeysForDeployment } from './deploymentAgents.js';
 
 /// Walks every required Agent and confirms the worker has everything it needs
 /// to run an activity. Throws a single error listing EVERY missing piece so the
@@ -9,20 +9,21 @@ import { requiredAgentKeys } from './stepRequiredAgents.js';
 /// throws, the process exits non-zero with the message visible.
 ///
 /// Checked invariants:
-///   - Every agent key a registered step resolves (`requiredAgentKeys()`) has
-///     an active GLOBAL `Agent` whose model resolves — i.e. a `modelSpec` (or an
-///     `inheritsModelFrom` chain to one) AND a `ProviderCredential` for that
-///     provider. `resolveAgent` performs exactly this resolution, so we just run
-///     it and collect failures.
+///   - Every agent key the *installed* templates can reach
+///     (`requiredAgentKeysForDeployment()`) has an active GLOBAL `Agent` whose
+///     model resolves — i.e. a `modelSpec` (or an `inheritsModelFrom` chain to
+///     one) AND a `ProviderCredential` for that provider. `resolveAgent`
+///     performs exactly this resolution, so we just run it and collect failures.
 ///   - The singleton `EmbeddingConfig` row exists, and its provider has a
 ///     resolvable GLOBAL credential.
 export async function assertConfigReady(): Promise<void> {
   const missing: string[] = [];
 
-  // Per-agent checks — only the keys some registered step needs. resolveAgent
-  // throws ConfigMissingError when the Agent, its model, or its credential is
-  // absent; collect the messages instead of failing on the first.
-  for (const role of requiredAgentKeys()) {
+  // Per-agent checks — the keys reachable from what this deployment has
+  // installed, not the whole SWE step catalog. resolveAgent throws
+  // ConfigMissingError when the Agent, its model, or its credential is absent;
+  // collect the messages instead of failing on the first.
+  for (const role of await requiredAgentKeysForDeployment()) {
     try {
       await resolveAgent(role);
     } catch (err) {

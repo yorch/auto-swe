@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -737,11 +738,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         ...teamMembershipFilter(user),
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
       };
-      const templates = await fastify.prisma.workflowTemplate.findMany({
-        include: TEMPLATE_INCLUDE,
-        orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-        where,
-      });
+      // `teamMembershipFilter` is `{}` for a platform admin.
+      const templates = await asPlatformAdmin(user, "admin lists every team's templates", () =>
+        fastify.prisma.workflowTemplate.findMany({
+          include: TEMPLATE_INCLUDE,
+          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+          where,
+        })
+      );
       const lastRuns = await loadLastRuns(
         fastify,
         templates.map((t) => t.id)
@@ -1391,17 +1395,22 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
       const description =
         typeof payload.description === 'string' ? payload.description : (request.body.label ?? '');
+      const workRequestId = crypto.randomUUID();
       const budgetTier = (
         ['STANDARD', 'LARGE', 'EPIC'].includes(payload.budget as string)
           ? (payload.budget as BudgetTier)
           : 'STANDARD'
       ) satisfies BudgetTier;
+      // Correlation key, not a ticket. A timestamp fallback used to make this
+      // unique but useless — two runs a millisecond apart were indistinguishable
+      // in the run list and nothing linked the key back to the run it named.
+      // The work-request id is already unique and already the thing you would
+      // look up.
       const externalTicketId =
         typeof payload.ticketId === 'string'
           ? payload.ticketId
-          : (request.body.label ?? `run-${Date.now()}`);
+          : (request.body.label ?? workRequestId);
 
-      const workRequestId = crypto.randomUUID();
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
       // With an Idempotency-Key the ID is a pure function of the key, so the
       // unique index on ActiveWorkflow.temporalWorkflowId becomes a real dedup
@@ -1415,7 +1424,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier,
         description,
         externalTicketId,
-        repoId: connectionId ?? '',
+        repoId: connectionId,
         requestPayload: JSON.stringify(request.body),
         workRequestId,
       };

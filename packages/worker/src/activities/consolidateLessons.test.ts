@@ -27,7 +27,10 @@ vi.mock('../lib/models.js', () => ({
   getModel: vi.fn(),
   resolveSystemPrompt: vi.fn().mockResolvedValue(''),
 }));
-vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage: vi.fn() }));
+vi.mock('../lib/costTracking.js', () => ({
+  assertBudgetAvailable: vi.fn(async () => {}),
+  recordLlmUsage: vi.fn(),
+}));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
 vi.mock('../lib/agentTracer.js', () => ({
   AgentTracer: vi.fn().mockImplementation(function (this: Record<string, unknown>) {

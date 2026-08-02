@@ -5,6 +5,7 @@ import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 
 /**
  * Container-contract coded step (P4/WS4 + P5 transports). Runs `image` in the
@@ -64,7 +65,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   // Team allowlists: a container step is governed exactly like a shell step.
   const conn = await prisma.connection.findUnique({
     include: { team: { select: { egressAllowlist: true, shellImageAllowlist: true } } },
-    where: { id: input.request.repoId },
+    where: { id: requireRepoId(input.request, 'containerStep') },
   });
   const imageAllowlist = (conn?.team?.shellImageAllowlist as string[] | null) ?? [];
   const egressAllowlist = (conn?.team?.egressAllowlist as string[] | null) ?? [];

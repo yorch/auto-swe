@@ -21,10 +21,11 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { detectTestCommand, parseDiffToFileChanges, parseTestOutput } from './utils.js';
 import { createWorkspace, shellQuote } from './workspace.js';
@@ -87,7 +88,7 @@ export async function executeImplementation(
   systemPromptOverride?: string
 ): Promise<CodeResult> {
   const repo = await prisma.connection.findUniqueOrThrow({
-    where: { id: request.repoId },
+    where: { id: requireRepoId(request, 'executeImplementation') },
   });
 
   const workflowDefaults = await resolveWorkflowDefaults();
@@ -147,7 +148,7 @@ export async function executeImplementation(
     try {
       const lessons = await retrieveSimilarLessons(
         request.description,
-        request.repoId,
+        requireRepoId(request, 'executeImplementation'),
         workflowDefaults.lessonRetrievalLimit,
         workflowDefaults.lessonRetrievalThreshold
       );
@@ -235,6 +236,7 @@ export async function executeImplementation(
             }
           : {}),
       });
+      await assertBudgetAvailable(`implementer.iteration_${iteration}`);
       const genResult = await agent.generate(
         [
           { content: llmSystemPrompt, role: 'system' },
@@ -374,7 +376,7 @@ export async function executeImplementation(
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
       implementationNotes: `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
-      repoId: request.repoId,
+      repoId: requireRepoId(request, 'executeImplementation'),
       testResults: testResult,
     };
   } finally {

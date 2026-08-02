@@ -1,3 +1,4 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -57,10 +58,12 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     '/skills',
     { onRequest: adminOnly, schema: { querystring: ListSkillsQuery } },
     async () => {
-      const skills = await fastify.prisma.skill.findMany({
-        include: { _count: { select: { agentSkillRefs: true } } },
-        orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
-      });
+      const skills = await runUnscoped('admin skill library spans every team', () =>
+        fastify.prisma.skill.findMany({
+          include: { _count: { select: { agentSkillRefs: true } } },
+          orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
+        })
+      );
       return { data: skills.map((s) => ({ ...s, usedByCount: s._count.agentSkillRefs })) };
     }
   );

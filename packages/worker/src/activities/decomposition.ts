@@ -28,8 +28,9 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
+import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -281,7 +282,7 @@ export async function resolveMergeConflict(
         lessonSummary: `Auto-resolved merge conflicts when merging ${merged.length} branch(es) into ${targetBranch}: ${merged.join(', ')}`,
         metadata: { mergedBranches: merged, targetBranch },
         rationale: `Implementer agent rewrote conflict markers and the resolution passed git diff --check + diff-filter=U.`,
-        repoId: request.repoId,
+        repoId: requireRepoId(request, 'resolveMergeConflict'),
         temporalWorkflowId: currentWorkflowId(),
       });
     }
@@ -314,7 +315,9 @@ async function provisionMergeWorkspace(
   sourceBranches: string[],
   label: string
 ): Promise<{ workspace: Workspace; log: string[] }> {
-  const repo = await prisma.connection.findUniqueOrThrow({ where: { id: request.repoId } });
+  const repo = await prisma.connection.findUniqueOrThrow({
+    where: { id: requireRepoId(request, 'decomposition') },
+  });
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
@@ -410,6 +413,7 @@ async function mergeOneWithResolver(
       activityCtx
     );
     try {
+      await assertBudgetAvailable('decomposition');
       const result = await agent.generate(
         [
           {

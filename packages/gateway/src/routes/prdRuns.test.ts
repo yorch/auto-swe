@@ -83,6 +83,14 @@ async function buildHarness(): Promise<Harness> {
       if (h.startError) {
         throw h.startError;
       }
+      // A PRD run writes no ActiveWorkflow row, so the unique index cannot
+      // dedup it — Temporal's own already-started error is the only gate. The
+      // fake has to model that or the dedup test passes vacuously.
+      if (h.started.includes(id)) {
+        const err = new Error('already started');
+        err.name = 'WorkflowExecutionAlreadyStartedError';
+        throw err;
+      }
       h.started.push(id);
     },
   } as unknown as never);
@@ -92,9 +100,9 @@ async function buildHarness(): Promise<Harness> {
   return h;
 }
 
-function submit(h: Harness) {
+function submit(h: Harness, key?: string) {
   return h.app.inject({
-    headers: { authorization: 'Bearer t' },
+    headers: { authorization: 'Bearer t', ...(key ? { 'idempotency-key': key } : {}) },
     method: 'POST',
     payload: {
       prdContent: 'As a user I want …',
@@ -138,6 +146,37 @@ describe('POST /prd-runs', () => {
     expect(res.statusCode).toBe(500);
     // Without compensation this row would point at a workflow that never ran.
     expect(h.runInputs).toHaveLength(0);
+  });
+
+  it('mints a fresh run per submission when no Idempotency-Key is sent', async () => {
+    await submit(h);
+    await submit(h);
+    expect(h.started).toHaveLength(2);
+    expect(h.started[0]).not.toBe(h.started[1]);
+  });
+
+  it('collapses a resubmission with the same Idempotency-Key', async () => {
+    const first = await submit(h, 'prd-42');
+    const second = await submit(h, 'prd-42');
+
+    expect(first.statusCode).toBe(201);
+    // Before this the suffix was a slice of a fresh UUID, so every submission
+    // minted a new id and this branch was unreachable — a double-clicked PRD
+    // started two decompositions.
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe('PRD_RUN_ALREADY_EXISTS');
+    expect(h.started).toHaveLength(1);
+  });
+
+  it('keeps the title slug in the id so the Temporal UI stays readable', async () => {
+    await submit(h, 'prd-42');
+    expect(h.started[0]).toMatch(/^prd-payments-revamp-[0-9a-f]{16}$/);
+  });
+
+  it('treats different keys as different runs', async () => {
+    await submit(h, 'prd-1');
+    await submit(h, 'prd-2');
+    expect(h.started).toHaveLength(2);
   });
 
   it('rejects a repo the caller cannot see before writing anything', async () => {

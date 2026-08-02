@@ -14,6 +14,7 @@ import {
   verifyBundleSignature,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /**
  * Bundle export/install service (P4/WS1+WS2). A bundle is a versioned, secret-free
@@ -142,10 +143,10 @@ export async function exportBundle(
     });
   }
 
-  const skillRows = await prisma.skill.findMany({
-    orderBy: { name: 'asc' },
-    where: { isActive: true, ...originWhere },
-  });
+  // Bundle export is an admin operation and selects by `origin`, not tenant.
+  const skillRows = await runUnscoped('bundle export selects by origin, not tenant', () =>
+    prisma.skill.findMany({ orderBy: { name: 'asc' }, where: { isActive: true, ...originWhere } })
+  );
   const skills: BundleSkill[] = skillRows.map((s) => ({
     description: s.description,
     isVerified: s.isVerified,

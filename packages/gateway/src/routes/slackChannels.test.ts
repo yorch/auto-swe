@@ -596,6 +596,8 @@ describe('slackChannelRoutes', () => {
     expect(data[0].id).toBe('mem-1');
     expect(data[0].lessonSummary).toBe('Prefer feature flags');
     // Scoped to this channel's active rows (no includeConsolidated param).
+    // Deliberately no `teamId`: MemoryItem denormalises the team at write time,
+    // so a re-parented channel would silently lose its older memory.
     expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         take: 200,
