@@ -281,6 +281,49 @@ describe('systemConfig resolvers', () => {
 
       expect(config.ciWaitMode).toBe('signal');
     });
+
+    it('prefers the DB row over the CI env vars', async () => {
+      findWorkflowDefaults.mockResolvedValue({
+        ciPollDeadlineSec: 900,
+        ciPollGraceSec: 30,
+        ciPollIntervalSec: 5,
+        ciWaitMode: 'poll',
+      } as never);
+      // Env says the opposite of every DB value, so a passing assertion can
+      // only come from the DB path.
+      vi.stubEnv('CI_WAIT_MODE', 'signal');
+      vi.stubEnv('CI_POLL_INTERVAL_SEC', '99');
+      vi.stubEnv('CI_POLL_GRACE_SEC', '99');
+      vi.stubEnv('CI_POLL_DEADLINE_SEC', '99');
+
+      const config = await resolveWorkflowDefaults();
+
+      expect(config.ciWaitMode).toBe('poll');
+      expect(config.ciPollIntervalSec).toBe(5);
+      expect(config.ciPollGraceSec).toBe(30);
+      expect(config.ciPollDeadlineSec).toBe(900);
+    });
+
+    it('falls back to the env var per-column when the DB column is null', async () => {
+      // Nullable columns are the migration's compatibility contract: a
+      // deployment driving these from the environment keeps working until an
+      // admin saves the form, and a partially-filled row mixes both sources.
+      findWorkflowDefaults.mockResolvedValue({
+        ciPollDeadlineSec: null,
+        ciPollGraceSec: null,
+        ciPollIntervalSec: 7,
+        ciWaitMode: null,
+      } as never);
+      vi.stubEnv('CI_WAIT_MODE', 'poll');
+      vi.stubEnv('CI_POLL_GRACE_SEC', '45');
+
+      const config = await resolveWorkflowDefaults();
+
+      expect(config.ciPollIntervalSec).toBe(7); // from the DB
+      expect(config.ciWaitMode).toBe('poll'); // from the env
+      expect(config.ciPollGraceSec).toBe(45); // from the env
+      expect(config.ciPollDeadlineSec).toBe(14_400); // baked-in default
+    });
   });
 
   describe('resolveStorageConfig', () => {

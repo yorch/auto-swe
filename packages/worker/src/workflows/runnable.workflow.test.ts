@@ -28,7 +28,14 @@ const calls: {
   finalize: FinalizeCall[];
   domainStates: string[];
   cancelledHumanSteps: string[];
-} = { cancelledHumanSteps: [], createWorkflowRun: [], domainStates: [], finalize: [] };
+  contextOverflows: { path: string; bytes: number }[];
+} = {
+  cancelledHumanSteps: [],
+  contextOverflows: [],
+  createWorkflowRun: [],
+  domainStates: [],
+  finalize: [],
+};
 
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
 let currentSpec: Record<string, unknown> = {};
@@ -63,6 +70,10 @@ const fakeActivities = {
   },
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
+  storeContextOverflow: async (input: { path: string; content: string }) => {
+    calls.contextOverflows.push({ bytes: input.content.length, path: input.path });
+    return { artifactId: `art-${calls.contextOverflows.length}`, sizeBytes: input.content.length };
+  },
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
 };
@@ -236,5 +247,44 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
         calls.domainStates.push(status);
       };
     }
+  }, 120_000);
+});
+
+describe('RunnableWorkflow — oversized context values', () => {
+  it('spills a large string to an artifact instead of truncating it', async () => {
+    calls.contextOverflows.length = 0;
+    const big = 'x'.repeat(9000);
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        seed: { next: 'done', type: 'set', values: { 'context.bigDiff': { literal: big } } },
+      },
+      'seed'
+    );
+
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-overflow')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+
+    // The whole value reaches the artifact — the point of the change is that
+    // nothing is silently discarded.
+    const spill = calls.contextOverflows.find((o) => o.path.includes('bigDiff'));
+    expect(spill).toBeDefined();
+    expect(spill?.bytes).toBe(9000);
+  }, 120_000);
+
+  it('leaves small values inline', async () => {
+    calls.contextOverflows.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        seed: { next: 'done', type: 'set', values: { 'context.small': { literal: 'hello' } } },
+      },
+      'seed'
+    );
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-no-overflow'));
+    expect(calls.contextOverflows).toHaveLength(0);
   }, 120_000);
 });

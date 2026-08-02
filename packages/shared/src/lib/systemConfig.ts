@@ -372,6 +372,16 @@ function envPositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/**
+ * DB value wins; otherwise fall back to the env var. Anything other than
+ * `'poll'` resolves to `'signal'` at both levels, so a typo degrades to the
+ * safe webhook-driven default rather than silently enabling polling.
+ */
+function resolveCiWaitMode(dbValue: string | null | undefined): CiWaitMode {
+  const value = dbValue ?? process.env.CI_WAIT_MODE;
+  return value === 'poll' ? 'poll' : 'signal';
+}
+
 export async function resolveWorkflowDefaults(
   _opts?: ResolveOpts
 ): Promise<ResolvedWorkflowDefaults> {
@@ -395,10 +405,15 @@ export async function resolveWorkflowDefaults(
         outputTokens: row?.budgetStandardOutputTokens ?? 500_000,
       },
     },
-    ciPollDeadlineSec: envPositiveInt(process.env.CI_POLL_DEADLINE_SEC, 14_400),
-    ciPollGraceSec: envPositiveInt(process.env.CI_POLL_GRACE_SEC, 60),
-    ciPollIntervalSec: envPositiveInt(process.env.CI_POLL_INTERVAL_SEC, 15),
-    ciWaitMode: process.env.CI_WAIT_MODE === 'poll' ? 'poll' : 'signal',
+    // DB-primary with an env fallback, like every other integration setting.
+    // A null column means "not configured here", so an existing deployment
+    // driving these from the environment keeps working until an admin saves.
+    ciPollDeadlineSec:
+      row?.ciPollDeadlineSec ?? envPositiveInt(process.env.CI_POLL_DEADLINE_SEC, 14_400),
+    ciPollGraceSec: row?.ciPollGraceSec ?? envPositiveInt(process.env.CI_POLL_GRACE_SEC, 60),
+    ciPollIntervalSec:
+      row?.ciPollIntervalSec ?? envPositiveInt(process.env.CI_POLL_INTERVAL_SEC, 15),
+    ciWaitMode: resolveCiWaitMode(row?.ciWaitMode),
     defaultTeamSlug: row?.defaultTeamSlug ?? process.env.DEFAULT_TEAM_SLUG ?? 'default',
     evalHealthMaxFlakeRate: row?.evalHealthMaxFlakeRate ?? 0.1,
     evalHealthMaxStaleRate: row?.evalHealthMaxStaleRate ?? 0.1,

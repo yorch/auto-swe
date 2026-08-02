@@ -189,6 +189,10 @@ export interface WorkflowDefaultsConfig {
   evalHealthMaxStaleRate?: number;
   evalHealthMinKappa?: number;
   evalJudgeThreshold?: number;
+  ciWaitMode?: 'signal' | 'poll' | null;
+  ciPollIntervalSec?: number | null;
+  ciPollGraceSec?: number | null;
+  ciPollDeadlineSec?: number | null;
 }
 
 export interface WorkflowDefaultsInput {
@@ -215,6 +219,10 @@ export interface WorkflowDefaultsInput {
   evalHealthMaxStaleRate?: number;
   evalHealthMinKappa?: number;
   evalJudgeThreshold?: number;
+  ciWaitMode?: 'signal' | 'poll' | null;
+  ciPollIntervalSec?: number | null;
+  ciPollGraceSec?: number | null;
+  ciPollDeadlineSec?: number | null;
 }
 
 export function useWorkflowDefaultsConfig() {

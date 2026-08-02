@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   useUpdateWorkflowDefaultsConfig,
@@ -42,6 +43,10 @@ interface FormState {
   evalHealthMaxStaleRate: number;
   evalHealthMinKappa: number;
   evalJudgeThreshold: number;
+  ciWaitMode: 'signal' | 'poll';
+  ciPollIntervalSec: number;
+  ciPollGraceSec: number;
+  ciPollDeadlineSec: number;
 }
 
 const DEFAULTS: FormState = {
@@ -52,6 +57,10 @@ const DEFAULTS: FormState = {
   budgetLargeOutputTokens: 2_000_000,
   budgetStandardInputTokens: 2_000_000,
   budgetStandardOutputTokens: 500_000,
+  ciPollDeadlineSec: 14_400,
+  ciPollGraceSec: 60,
+  ciPollIntervalSec: 15,
+  ciWaitMode: 'signal',
   defaultTeamSlug: '',
   evalHealthMaxFlakeRate: 0.1,
   evalHealthMaxStaleRate: 0.1,
@@ -81,6 +90,10 @@ function fromResolved(data: WorkflowDefaultsConfig): FormState {
     budgetLargeOutputTokens: tiers?.LARGE.outputTokens ?? DEFAULTS.budgetLargeOutputTokens,
     budgetStandardInputTokens: tiers?.STANDARD.inputTokens ?? DEFAULTS.budgetStandardInputTokens,
     budgetStandardOutputTokens: tiers?.STANDARD.outputTokens ?? DEFAULTS.budgetStandardOutputTokens,
+    ciPollDeadlineSec: data.ciPollDeadlineSec ?? DEFAULTS.ciPollDeadlineSec,
+    ciPollGraceSec: data.ciPollGraceSec ?? DEFAULTS.ciPollGraceSec,
+    ciPollIntervalSec: data.ciPollIntervalSec ?? DEFAULTS.ciPollIntervalSec,
+    ciWaitMode: data.ciWaitMode ?? DEFAULTS.ciWaitMode,
     defaultTeamSlug: data.defaultTeamSlug ?? DEFAULTS.defaultTeamSlug,
     evalHealthMaxFlakeRate: data.evalHealthMaxFlakeRate ?? DEFAULTS.evalHealthMaxFlakeRate,
     evalHealthMaxStaleRate: data.evalHealthMaxStaleRate ?? DEFAULTS.evalHealthMaxStaleRate,
@@ -110,6 +123,10 @@ function toBody(form: FormState): WorkflowDefaultsInput {
     budgetLargeOutputTokens: form.budgetLargeOutputTokens,
     budgetStandardInputTokens: form.budgetStandardInputTokens,
     budgetStandardOutputTokens: form.budgetStandardOutputTokens,
+    ciPollDeadlineSec: form.ciPollDeadlineSec,
+    ciPollGraceSec: form.ciPollGraceSec,
+    ciPollIntervalSec: form.ciPollIntervalSec,
+    ciWaitMode: form.ciWaitMode,
     evalHealthMaxFlakeRate: form.evalHealthMaxFlakeRate,
     evalHealthMaxStaleRate: form.evalHealthMaxStaleRate,
     evalHealthMinKappa: form.evalHealthMinKappa,
@@ -298,6 +315,47 @@ export function WorkflowDefaultsForm() {
               min={1}
               onChange={num('budgetEpicOutputTokens')}
               value={form.budgetEpicOutputTokens}
+            />
+          </FieldGroup>
+
+          <FieldGroup label="CI wait strategy">
+            <FieldWrapper
+              hint="`signal` waits for a GitHub webhook. Use `poll` only where no inbound webhook can reach the gateway (local dev, air-gapped)."
+              id="ci-wait-mode"
+              label="Wait mode"
+            >
+              <Select
+                id="ci-wait-mode"
+                onChange={(e) => setField('ciWaitMode', e.target.value as 'signal' | 'poll')}
+                value={form.ciWaitMode}
+              >
+                <option value="signal">signal (webhook)</option>
+                <option value="poll">poll (query the CI API)</option>
+              </Select>
+            </FieldWrapper>
+            <NumberField
+              hint="Seconds between CI polls. Only used in poll mode."
+              id="ci-poll-interval"
+              label="Poll interval (s)"
+              min={1}
+              onChange={num('ciPollIntervalSec')}
+              value={form.ciPollIntervalSec}
+            />
+            <NumberField
+              hint="After this long with no checks present, the poller concludes passed."
+              id="ci-poll-grace"
+              label="Grace period (s)"
+              min={1}
+              onChange={num('ciPollGraceSec')}
+              value={form.ciPollGraceSec}
+            />
+            <NumberField
+              hint="Give up waiting for CI after this long."
+              id="ci-poll-deadline"
+              label="Deadline (s)"
+              min={1}
+              onChange={num('ciPollDeadlineSec')}
+              value={form.ciPollDeadlineSec}
             />
           </FieldGroup>
 

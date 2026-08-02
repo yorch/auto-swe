@@ -31,6 +31,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@temporalio/proto": "1.17.2",
     "@temporalio/testing": "1.17.2",
     "tsx": "4.22.4",
     "typescript": "6.0.3"

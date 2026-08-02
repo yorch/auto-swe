@@ -137,6 +137,7 @@ prose has no compiler and status prose rots silently.
 - **Framework:** Vitest (`vitest.config.ts` at root)
 - **Gateway routes:** Fastify's built-in `light-my-request` via `app.inject()`
 - **Temporal workflows:** `@temporalio/testing` TestWorkflowEnvironment (time-skipping) with fake activities — see `packages/worker/src/workflows/runnable.workflow.test.ts`. The shared interpreter is additionally unit-tested directly. First run downloads the test-server binary.
+- **Workflow determinism:** `runnable.replay.test.ts` replays a committed history fixture against current workflow code via `Worker.runReplayHistory`. Running forward against fakes cannot catch a change that takes a *different path on replay* — the failure that strands a production workflow. **If it fails, do not re-record the fixture to make it pass**; re-record (`packages/worker/scripts/recordReplayHistory.ts`) only when the workflow's structure changed intentionally.
 - **Activities:** Mock Prisma client + mock Docker exec calls
 - **Pattern:** Co-locate test files next to source (e.g., `workRequests.test.ts`)
 
@@ -209,7 +210,7 @@ fallback. **Never read these from `process.env` directly in new code.**
 | `/admin/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
 | `/admin/integrations → Figma` | read-only Figma design connector | `resolveFigmaConfig()` |
 | `/admin/integrations → OAuth` | Google OAuth client ID/secret | `resolveGoogleOAuthConfig()` |
-| `/admin/workflow` | branch prefix, PR templates, default team slug, consolidation + eval schedules, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
+| `/admin/workflow` | branch prefix, PR templates, default team slug, consolidation + eval schedules, CI wait strategy, Tier-2 defaults | `resolveWorkflowDefaults()` and friends |
 
 Every config table is a singleton: one row, `id = 'default'`, enforced by a `CHECK` constraint.
 Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
@@ -232,6 +233,7 @@ accept a self-hosted base URL on a private or internal address.
 | `workspaceMemory` / `workspaceCpus` / `workspacePidsLimit` / `workspaceImage` | `4g` / 2 / 512 / `node:24-alpine` | `workspace.ts` container caps + default base image (an explicit `image` arg still wins) |
 | `lessonRetrievalLimit` / `lessonRetrievalThreshold` | 5 / 0.7 | `executeImplementation.ts` `retrieveSimilarLessons` |
 | `evalHealthMaxFlakeRate` / `evalHealthMaxStaleRate` / `evalHealthMinKappa` / `evalJudgeThreshold` | 0.1 / 0.1 / 0.4 / 0.5 | eval health gates / `runEvalNode.ts` judge scorer |
+| `ciWaitMode` / `ciPollIntervalSec` / `ciPollGraceSec` / `ciPollDeadlineSec` | `signal` / 15 / 60 / 14400 | CI wait strategy. **Nullable** — a null column falls back to `CI_WAIT_MODE` / `CI_POLL_*`, so a deployment driving these from the environment keeps working until an admin saves |
 
 The hot-path budget read is memoized behind the ~30 s config cache; coarser consumers
 (`workspace.ts`, `evalHarness.ts`, `runEvalNode.ts`) call the resolver directly once per invocation
@@ -329,7 +331,7 @@ Six scanners run during agent execution, each independently advisory or blocking
 | **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 
-**Built-in patterns:** 59 patterns in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION,
+**Built-in patterns:** 58 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 

@@ -1,3 +1,7 @@
+import {
+  checkContentSecurity,
+  SECURITY_CHECK_FAILED_PREFIX,
+} from '../agents/preWriteSecurityCheck.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
 import { checkSensitiveFilePath } from './sensitiveFileScanner.js';
 
@@ -79,6 +83,60 @@ export function extractShellWriteTargets(command: string): string[] {
   return [...targets];
 }
 
+/** A literal write whose content is visible in the command text. */
+export interface ShellWrite {
+  target: string;
+  content: string;
+}
+
+/**
+ * `echo`/`printf` into a redirect, and here-docs. These are the shapes where
+ * the *content* being written is present in the command text, so the pre-write
+ * content rules can inspect it — the OWASP-style checks otherwise stop at the
+ * `writeFile` tool boundary and a secret hardcoded through `bash` sails past.
+ */
+const ECHO_REDIRECT_RE =
+  /\b(?:echo|printf)\b\s+(?:-[a-zA-Z]+\s+)*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>]+))[^;&|<>]*?>{1,2}\s*(?:'([^']+)'|"([^"]+)"|([^\s;&|)<>'"]+))/g;
+
+/** `cmd > file <<'EOF' … EOF` and `cmd <<EOF … EOF > file`. */
+const HEREDOC_RE =
+  /<<-?\s*(?:'([A-Za-z_][\w]*)'|"([A-Za-z_][\w]*)"|([A-Za-z_][\w]*))([\s\S]*?)^\3?\2?\1?$/gm;
+
+/**
+ * Best-effort extraction of literal content a command writes, paired with its
+ * destination. Only handles content that is *inline* in the command — a write
+ * fed from a pipe, a variable, or another process is invisible here by
+ * construction. Same posture as {@link extractShellWriteTargets}: it raises the
+ * floor, it is not a containment boundary.
+ */
+export function extractShellWrites(command: string): ShellWrite[] {
+  const writes: ShellWrite[] = [];
+
+  ECHO_REDIRECT_RE.lastIndex = 0;
+  for (const m of command.matchAll(ECHO_REDIRECT_RE)) {
+    const content = m[1] ?? m[2] ?? m[3];
+    const target = m[4] ?? m[5] ?? m[6];
+    if (content !== undefined && target && !isUninterestingTarget(target)) {
+      writes.push({ content, target });
+    }
+  }
+
+  // A here-doc's body is the content; its target is whatever the same command
+  // redirects to, so reuse the redirect extraction for the destination.
+  HEREDOC_RE.lastIndex = 0;
+  for (const m of command.matchAll(HEREDOC_RE)) {
+    const body = m[4];
+    if (!body) {
+      continue;
+    }
+    for (const target of extractShellWriteTargets(command)) {
+      writes.push({ content: body, target });
+    }
+  }
+
+  return writes;
+}
+
 /**
  * Checks a shell command against active SHELL_COMMAND scanner patterns, then
  * against the SENSITIVE_FILE policy for anything the command writes to.
@@ -107,6 +165,21 @@ export async function scanShellCommand(command: string): Promise<string | null> 
         `Command blocked: it writes to '${target}', which matches the sensitive-file policy.\n` +
         `  ${truncate()}\n` +
         'Store secrets in environment variables or a secrets manager, not in source files.'
+      );
+    }
+  }
+
+  // Same CRITICAL-only bar as the writeFile tool: `passed` is false only when a
+  // CRITICAL rule fired, so warnings do not block a legitimate command.
+  for (const { content, target } of extractShellWrites(command)) {
+    const { passed, violations } = checkContentSecurity(target, content);
+    if (!passed) {
+      const critical = violations.filter((v) => v.severity === 'CRITICAL');
+      const detail = critical.map((v) => `  - [${v.ruleId}] ${v.description}`).join('\n');
+      return (
+        `${SECURITY_CHECK_FAILED_PREFIX}: the content written to '${target}' violates a critical rule.\n${detail}\n` +
+        `  ${truncate()}\n` +
+        `${critical[0]?.suggestedFix ?? 'Remove the flagged content and retry.'}`
       );
     }
   }

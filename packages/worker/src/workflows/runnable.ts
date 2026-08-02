@@ -60,6 +60,7 @@ const stateActivities = proxyActivities<
     | 'createHumanStep'
     | 'resolveHumanStep'
     | 'cancelPendingHumanSteps'
+    | 'storeContextOverflow'
   >
 >({
   retry: RETRY_STATE,
@@ -362,7 +363,7 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     ? (outcome.status as 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED')
     : 'FAILED';
   const finalContext = outcome
-    ? summarizeContext(outcome.finalContext)
+    ? await snapshotContext(outcome.finalContext, runId)
     : { error: String(runError) };
   // Cancel any PENDING human-step rows before finalizing. This cleans up steps
   // left waiting by a workflow cancellation, hard failure, or other abnormal exit
@@ -807,18 +808,90 @@ async function runWithCancellation<T>(
   }
 }
 
+/** Strings longer than this are spilled to a `WorkflowArtifact`. */
+const CONTEXT_INLINE_LIMIT = 4000;
+
 /**
- * Strip large fields from the context before persisting so we don't bloat the
- * workflow_runs row. Phase 2 will move diffs/logs to WorkflowArtifact entirely;
- * for now we just truncate strings >4KB in the snapshot.
+ * Cap on spills per run. A pathological context (hundreds of large values)
+ * would otherwise turn finalization into hundreds of activity calls; past the
+ * cap we fall back to truncating, and say so in the placeholder.
  */
-function summarizeContext(ctx: Context): unknown {
-  return JSON.parse(
-    JSON.stringify(ctx, (_k, v) => {
-      if (typeof v === 'string' && v.length > 4000) {
-        return `${v.slice(0, 4000)}… [truncated ${v.length} bytes]`;
+const MAX_CONTEXT_SPILLS = 20;
+
+function truncatedPlaceholder(value: string, note: string): string {
+  return `${value.slice(0, CONTEXT_INLINE_LIMIT)}… [truncated ${value.length} bytes — ${note}]`;
+}
+
+/**
+ * Keep the persisted run snapshot small without losing anything.
+ *
+ * The snapshot exists so a run is reproducible, and the values most worth
+ * keeping — diffs, gate logs, agent output — are exactly the ones that used to
+ * be clipped at 4KB. Oversized strings are now written to a `WorkflowArtifact`
+ * and replaced by a reference the run viewer can resolve, so `workflow_runs`
+ * rows stay small and the content survives.
+ *
+ * Spilling is best-effort: if the artifact write fails we degrade to the old
+ * truncation rather than failing the run at its final step.
+ */
+async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
+  const oversized: { path: string; value: string }[] = [];
+
+  // First pass: find what needs spilling, recording each value's path so the
+  // placeholder can say where it came from.
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === 'string') {
+      if (value.length > CONTEXT_INLINE_LIMIT) {
+        oversized.push({ path, value });
       }
-      return v;
-    })
-  );
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => {
+        walk(v, `${path}[${i}]`);
+      });
+      return;
+    }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        walk(v, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  walk(ctx, '');
+
+  const spilled = new Map<string, string>();
+  for (const { path, value } of oversized.slice(0, MAX_CONTEXT_SPILLS)) {
+    const ref = await stateActivities.storeContextOverflow({ content: value, path, runId });
+    spilled.set(
+      path,
+      ref
+        ? `[stored as artifact ${ref.artifactId} — ${ref.sizeBytes} bytes]`
+        : truncatedPlaceholder(value, 'artifact write failed')
+    );
+  }
+
+  // Second pass: substitute by path, so two identical strings at different
+  // paths cannot collide.
+  const rebuild = (value: unknown, path: string): unknown => {
+    if (typeof value === 'string') {
+      if (value.length <= CONTEXT_INLINE_LIMIT) {
+        return value;
+      }
+      return (
+        spilled.get(path) ?? truncatedPlaceholder(value, `over ${MAX_CONTEXT_SPILLS} spill cap`)
+      );
+    }
+    if (Array.isArray(value)) {
+      return value.map((v, i) => rebuild(v, `${path}[${i}]`));
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k, rebuild(v, path ? `${path}.${k}` : k)])
+      );
+    }
+    return value;
+  };
+
+  return rebuild(ctx, '');
 }
