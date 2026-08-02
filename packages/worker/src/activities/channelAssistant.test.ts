@@ -834,8 +834,9 @@ describe('runChannelAssistantTurn', () => {
 
     // One write, carrying both costs: the turn ($0.02) and the summarizer ($0.001).
     expect(upsertUsage).toHaveBeenCalledTimes(1);
-    const accrued = (upsertUsage.mock.calls[0]?.[0] as { create: { costUsdAccrued: number } })
-      .create.costUsdAccrued;
+    const accrued = (
+      upsertUsage.mock.calls[0]?.[0] as { create: { costUsdAccrued: number } } | undefined
+    )?.create.costUsdAccrued;
     expect(accrued).toBeCloseTo(0.021, 6);
   });
 
@@ -864,8 +865,9 @@ describe('runChannelAssistantTurn', () => {
     await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
 
     expect(upsertUsage).toHaveBeenCalledTimes(1);
-    const accrued = (upsertUsage.mock.calls[0]?.[0] as { create: { costUsdAccrued: number } })
-      .create.costUsdAccrued;
+    const accrued = (
+      upsertUsage.mock.calls[0]?.[0] as { create: { costUsdAccrued: number } } | undefined
+    )?.create.costUsdAccrued;
     expect(accrued).toBeCloseTo(0.024, 6);
   });
 
