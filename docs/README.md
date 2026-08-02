@@ -1,5 +1,10 @@
 # Documentation
 
+auto-swe is a durable, governed multi-agent workflow platform for software engineering teams. Its
+flagship use case — ticket in, reviewed draft pull request out — is one workflow template built from
+the same node types any team can author, and the Slack channel teammate is both a headline
+capability and the surface teams drive the platform from.
+
 These docs describe **how auto-swe works now**, in present tense. There is no status column here
 and no roadmap: what shipped when lives in git history, and completed plans live in
 [`history/`](./history/).
@@ -18,7 +23,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 |-----|--------|
 | [hitl-workflows.md](./hitl-workflows.md) | Human-in-the-loop nodes (approval / decision / input / review), signal flow, the inbox, API |
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
-| [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — turns, ambient and reactive modes, channel memory, personas, budgets |
+| [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 

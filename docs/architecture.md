@@ -47,12 +47,16 @@ flowchart LR
     GW -->|Magic-link email| EMAIL
 ```
 
-Three invariants shape everything else:
+Two invariants shape everything else:
 
 - **The gateway is stateless.** All durable state lives in Temporal and Postgres.
 - **The worker drives all execution.** No LLM call ever happens in the gateway.
-- **Humans merge.** The system opens pull requests and never merges them; a Temporal signal bridges
-  the GitHub merge webhook back to the waiting workflow.
+
+A third property holds across everything the platform ships, though it is a property of the
+activity catalog rather than an enforced boundary: **nothing merges a pull request.** No activity
+calls the GitHub merge API, and no seeded template merges — the SWE flow opens a PR and parks, and a
+Temporal signal bridges the GitHub merge webhook back to the waiting workflow. See §10 for where
+that stops being a guarantee.
 
 ---
 
@@ -166,6 +170,11 @@ workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s.
 ---
 
 ## 3. Run Lifecycle
+
+The engine walks whatever DAG the run's `WorkflowSpec` declares — the sequence below is the shape of
+the seeded `default-engineering` template, not a fixed pipeline. It is worth reading in full because
+it exercises nearly every mechanism (agent activities, sandboxes, gates, signals, memory); a
+template that omits half of it is equally valid.
 
 End-to-end, from API call to merged pull request:
 
@@ -550,7 +559,7 @@ The load-bearing ones, with rationale:
 | Docker-in-Docker, not K8s | Same isolation model with zero cluster dependency; runs under Docker Compose |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
-| Human-governed merges | The system opens PRs and never merges; a signal bridges the merge webhook |
+| Human-governed merges | Nothing shipped merges a PR; a signal bridges the merge webhook (see §10) |
 
 ---
 
@@ -564,6 +573,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   the database will catch.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
+- **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
+  merge API and no seeded template merges, but `shell` and `containerStep` nodes take
+  `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
+  supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
+  is not enforced against what a team authors.
 - **The agent workspace keeps network access** — git and package installs need it — so its egress is
   not default-deny. The metadata blackhole (§8) is best-effort, env-gated, and exercised only
   against argument construction, not a live Docker daemon.

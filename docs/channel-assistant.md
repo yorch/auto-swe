@@ -5,6 +5,14 @@ delegate work; it carries channel-scoped memory, tools, budget, and persona, and
 proactively. It is built on the platform's existing pieces — the agent resolver, semantic memory,
 MCP tool binding, the Slack app, and org/team RBAC — rather than a parallel stack.
 
+It plays two roles at once, and both matter. It is a capability a team uses directly — answering
+questions with repo and run context, summarising a thread, tracking open items — and it is the
+platform's **conversational control surface**: workflows are started from a run modal or the "Run a
+workflow" shortcut (§9), progress is reported in-channel, HITL gates are answered with Slack
+buttons ([hitl-workflows.md](./hitl-workflows.md)), and workflow drafts are refined in a thread
+([nl-workflow-authoring.md](./nl-workflow-authoring.md)). Teams manage their automation from the
+channel they already work in rather than a separate console.
+
 ---
 
 ## 1. Data model

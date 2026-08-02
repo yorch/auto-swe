@@ -251,7 +251,7 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 | ----------------------------- | ------------------------------------------------------------------------------- |
 | Docker-in-Docker (not K8s)    | No cluster required; same isolation, zero extra infra                           |
 | Temporal.io for orchestration | Durable execution — workflows survive crashes and wait days for human signals   |
-| Human-governed merges         | The system never auto-merges; all PRs require explicit human review             |
+| Human-governed merges         | Nothing the platform ships merges a PR; a human always merges                   |
 | PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |
 | pgvector for agent memory     | Semantic similarity search surfaces relevant past lessons into agent context    |
 | Mastra + Vercel AI SDK        | Mastra uses AI SDK under the hood; direct `@ai-sdk/anthropic` import is simpler |

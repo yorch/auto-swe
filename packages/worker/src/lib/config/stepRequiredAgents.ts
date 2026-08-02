@@ -24,12 +24,15 @@ import type { ModelBackedAgentKey } from './types.js';
  *   - `planChannelTask` + `runChannelSubtasks` (general-route decomposition) both
  *     run the channel's `channelAssistant` model (planner/subtask/synthesis calls).
  *
- * Worked example: a template whose steps are `executeImplementation` →
- * `runReviewNetwork` → `runLint` → `createOrUpdatePullRequest`. `requiredAgentKeys()`
- * returns `['implementer', 'securityReview', 'reviewer']` (the last two steps resolve
- * no model). At boot, `assertConfigReady` calls `resolveAgent` for each; if the GLOBAL
- * `reviewer` Agent has a `modelSpec` but no `ProviderCredential` for its provider, boot
- * throws `ConfigMissingError` naming `reviewer` and the worker never starts polling —
+ * Scope note: `requiredAgentKeys()` flattens this whole map — it is the union over
+ * every registered step, NOT the steps some particular template uses. The worker has
+ * no template in hand at boot and any template may be launched against it, so the
+ * hard-fail set is the catalog's, and a deployment that only runs non-SWE workflows
+ * must still configure the SWE agents.
+ *
+ * Worked example: at boot, `assertConfigReady` calls `resolveAgent` for each key; if the
+ * GLOBAL `reviewer` Agent has a `modelSpec` but no `ProviderCredential` for its provider,
+ * boot throws `ConfigMissingError` naming `reviewer` and the worker never starts polling —
  * instead of failing the review step mid-run.
  */
 export const STEP_REQUIRED_AGENTS: Record<string, readonly ModelBackedAgentKey[]> = {

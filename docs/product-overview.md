@@ -23,9 +23,10 @@ surface.** It is a channel-resident assistant an engineering team talks to direc
 assistant starts, watches, and reports on the workflows above, so teams manage their automation
 from the channel they already work in rather than a separate console.
 
-One constraint holds across every workflow, as a product choice rather than a limitation: **the
-system never auto-merges.** It operates as a contributor that opens PRs; a human always merges.
-That makes auto-swe an *amplifier* of an engineering team rather than a replacement for it.
+One constraint runs through everything the platform ships, as a product choice rather than a
+limitation: **nothing auto-merges.** auto-swe operates as a contributor that opens PRs; a human
+always merges. That makes it an *amplifier* of an engineering team rather than a replacement for
+it. (§7 states precisely how far that guarantee reaches.)
 
 ---
 
@@ -193,9 +194,10 @@ What sets auto-swe apart from simpler "AI coding" tools:
 
 ## 7. Non-Goals / Out of Scope
 
-These are architecturally enforced, not just policy:
+Most of these are architecturally enforced rather than policy; where a boundary rests on shipped
+content instead, it says so.
 
-- **No auto-merge.** The system opens PRs and never merges them; a Temporal signal bridges the GitHub merge webhook to the waiting workflow.
+- **No auto-merge.** Nothing the platform ships merges a pull request: no activity calls the GitHub merge API, and no seeded template merges. The SWE flow opens a PR and parks until a Temporal signal bridges the GitHub merge webhook to the waiting workflow. This is a property of the activity catalog and the shipped templates — a team that allowlists the GitHub API host for a `shell` or `containerStep` node can author a DAG that merges (see [architecture.md §10](./architecture.md#10-limitations)).
 - **No Kubernetes.** Docker-in-Docker is the workspace isolation model; works inside Docker Compose.
 - **No repo-admin actions.** auto-swe acts as a contributor — no branch-protection bypass, approval, or auto-merge on target repos.
 - **No IP-level egress filtering for shell steps.** DNS-based filtering only; IP-direct connections are out of scope (would require host iptables).
