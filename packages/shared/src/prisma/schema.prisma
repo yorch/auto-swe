@@ -313,6 +313,7 @@ model Organization {
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
 
   @@map("organizations")
+  skills            Skill[]
 }
 
 model Team {
@@ -357,6 +358,7 @@ model Team {
 
   @@index([orgId])
   @@map("teams")
+  skills            Skill[]
 }
 
 model TeamMembership {
@@ -1623,11 +1625,24 @@ model Skill {
   isBuiltIn   Boolean  @default(false) @map("is_built_in")
   isVerified  Boolean  @default(false) @map("is_verified")
   isActive    Boolean  @default(true) @map("is_active")
+  /// Ownership, mirroring `ProviderCredential`/`Agent`. Built-ins seed as GLOBAL
+  /// and stay visible everywhere; a team- or org-authored skill is visible only
+  /// within its tenant. Without this a custom skill's `promptText` — which may
+  /// encode internal process or domain knowledge — was readable platform-wide.
+  scope        ConfigScope   @default(GLOBAL)
+  teamId       String?       @map("team_id") @db.Uuid
+  team         Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  orgId        String?       @map("org_id") @db.Uuid
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   agentSkillRefs AgentSkillRef[]
 
+  @@index([scope, teamId])
+  @@index([scope, orgId])
+  @@index([teamId])
+  @@index([orgId])
   @@map("skills")
 }
 

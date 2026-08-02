@@ -6,6 +6,7 @@ import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import {
   createSkill,
   getSkillEffectivenessReport,
+  skillVisibilityWhere,
   updateSkill,
 } from '../lib/skillLibraryService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -213,6 +214,10 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
       }
 
+      const team = await fastify.prisma.team.findUnique({
+        select: { orgId: true },
+        where: { id: teamId },
+      });
       const skills = await fastify.prisma.skill.findMany({
         orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
         select: {
@@ -222,6 +227,9 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
           name: true,
           promptText: true,
         },
+        // Tenant-scoped read: GLOBAL rows plus this team's and org's own.
+        // Unfiltered, this leaked every custom skill's promptText to any team.
+        where: skillVisibilityWhere({ orgId: team?.orgId, teamId }),
       });
       return { data: skills };
     }

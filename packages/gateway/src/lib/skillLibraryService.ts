@@ -9,21 +9,49 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 
 export type SkillRow = NonNullable<Awaited<ReturnType<PrismaClient['skill']['findFirst']>>>;
 
+/**
+ * Which skills a tenant may see: platform-wide GLOBAL rows, plus rows owned by
+ * its own team or org. Without this filter every caller could read every custom
+ * skill's `promptText`, which is the one field a team is most likely to encode
+ * internal process or domain knowledge into.
+ */
+export function skillVisibilityWhere(tenant: { teamId: string; orgId?: string | null }) {
+  return {
+    OR: [
+      { scope: 'GLOBAL' as const },
+      { scope: 'TEAM' as const, teamId: tenant.teamId },
+      ...(tenant.orgId ? [{ orgId: tenant.orgId, scope: 'ORGANIZATION' as const }] : []),
+    ],
+  };
+}
+
 /// Creates a non-built-in skill. Custom promptText is scanned for
 /// injection/exfiltration patterns — non-blocking; warnings are returned for
 /// the route to surface alongside the created row.
 export async function createSkill(
   prisma: PrismaClient,
-  input: { description?: string; name: string; promptText: string }
+  input: {
+    description?: string;
+    name: string;
+    promptText: string;
+    scope?: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
+    teamId?: string | null;
+    orgId?: string | null;
+  }
 ): Promise<{ scanWarnings: string[]; skill: SkillRow }> {
   const scanResult = await scanSkillContent(input.promptText);
+  // Default GLOBAL preserves the admin-curated library; a caller that supplies
+  // a tenant gets a scoped row. The DB CHECK rejects a mismatched combination.
   const skill = await prisma.skill.create({
     data: {
       description: input.description,
       isBuiltIn: false,
       isVerified: false,
       name: input.name,
+      orgId: input.scope === 'ORGANIZATION' ? input.orgId : null,
       promptText: input.promptText,
+      scope: input.scope ?? 'GLOBAL',
+      teamId: input.scope === 'TEAM' ? input.teamId : null,
     },
   });
   return { scanWarnings: scanResult.warnings, skill };
