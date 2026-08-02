@@ -136,6 +136,65 @@ describe('launchTrackedWorkflow', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  // PRD runs keep no ActiveWorkflow row — their spend is summed from AgentTrace
+  // at finalize. They still need ledger-before-start ordering.
+  describe('without an ActiveWorkflow row', () => {
+    const PRD_ROWS = { runInput: { id: 'ri-prd' }, temporalWorkflowId: 'prd-x-1234abcd' };
+
+    it('writes only the RunInput and reports a null activeWorkflowId', async () => {
+      const { prisma } = mockPrisma();
+
+      const res = await launchTrackedWorkflow(prisma as never, PRD_ROWS, async () => {});
+
+      expect(res).toEqual({ activeWorkflowId: null, ok: true });
+      expect(prisma.runInput.create).toHaveBeenCalledTimes(1);
+      expect(prisma.activeWorkflow.create).not.toHaveBeenCalled();
+    });
+
+    it('still writes the ledger before starting', async () => {
+      const { prisma } = mockPrisma();
+      const order: string[] = [];
+      prisma.$transaction.mockImplementation(async (ops: Promise<unknown>[]) => {
+        order.push('ledger');
+        return Promise.all(ops);
+      });
+
+      await launchTrackedWorkflow(prisma as never, PRD_ROWS, async () => {
+        order.push('start');
+      });
+
+      expect(order).toEqual(['ledger', 'start']);
+    });
+
+    it('compensates the RunInput when the start fails', async () => {
+      const { prisma, state } = mockPrisma();
+
+      await expect(
+        launchTrackedWorkflow(prisma as never, PRD_ROWS, async () => {
+          throw new Error('temporal unreachable');
+        })
+      ).rejects.toThrow('temporal unreachable');
+
+      expect(state.runInputDeletes).toEqual([{ where: { id: 'ri-prd' } }]);
+      expect(prisma.activeWorkflow.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  it('cleans up the RunInput even when the ActiveWorkflow delete fails', async () => {
+    // The two deletes are independent: a failure on the first must not strand
+    // the second, or a failed rollback leaves a half-written ledger.
+    const { prisma, state } = mockPrisma();
+    prisma.activeWorkflow.delete.mockRejectedValue(new Error('cleanup failed'));
+
+    await expect(
+      launchTrackedWorkflow(prisma as never, ROWS, async () => {
+        throw new Error('temporal unreachable');
+      })
+    ).rejects.toThrow('temporal unreachable');
+
+    expect(state.runInputDeletes).toEqual([{ where: { id: 'ri-1' } }]);
+  });
+
   it('logs and swallows a failed rollback, still surfacing the start error', async () => {
     const { prisma } = mockPrisma();
     prisma.activeWorkflow.delete.mockRejectedValue(new Error('cleanup failed'));

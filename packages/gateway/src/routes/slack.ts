@@ -19,6 +19,7 @@ import {
   publishAppHome,
   verifySlackSignature,
 } from '../lib/slack.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, hasRole, requireAuth, requireUser } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from './workRequests.js';
 
@@ -1603,44 +1604,45 @@ async function handleRunModalSubmission(
     workRequestId,
   };
 
-  try {
-    await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-      request: repoWorkRequest,
-      templateId: resolvedTemplate.templateId,
-      templateVersion: resolvedTemplate.version,
-    });
-  } catch (err) {
-    if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-      return {
-        errors: { ticket_block: `Workflow already running for ${ticket}` },
-        response_action: 'errors',
-      };
-    }
-    throw err;
+  // Ledger rows first, workflow second, rolled back if the start fails —
+  // see `launchTrackedWorkflow`. The workflow ID is deterministic per
+  // (org, repo, ticket), so the unique index is the real dedup gate here and a
+  // double-submitted modal loses the race rather than starting a second run.
+  const launch = await launchTrackedWorkflow(
+    fastify.prisma,
+    {
+      activeWorkflow: {
+        assignedBranch: branch,
+        budgetTier: 'STANDARD',
+        currentStatus: 'IMPLEMENTING',
+        repoId: repo.id,
+        temporalWorkflowId,
+        workRequestId,
+      },
+      runInput: {
+        description,
+        externalTicketId: ticket,
+        id: workRequestId,
+        requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
+        slackChannelId: metadata.channelId || null,
+        templateId: resolvedTemplate.templateId,
+        templateVersion: resolvedTemplate.version,
+      },
+    },
+    () =>
+      fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+        request: repoWorkRequest,
+        templateId: resolvedTemplate.templateId,
+        templateVersion: resolvedTemplate.version,
+      }),
+    { log: fastify.log }
+  );
+  if (!launch.ok) {
+    return {
+      errors: { ticket_block: `Workflow already running for ${ticket}` },
+      response_action: 'errors',
+    };
   }
-
-  await fastify.prisma.runInput.create({
-    data: {
-      description,
-      externalTicketId: ticket,
-      id: workRequestId,
-      requestPayload: JSON.stringify({ description, externalTicketId: ticket, source: 'slack' }),
-      slackChannelId: metadata.channelId || null,
-      templateId: resolvedTemplate.templateId,
-      templateVersion: resolvedTemplate.version,
-    },
-  });
-
-  await fastify.prisma.activeWorkflow.create({
-    data: {
-      assignedBranch: branch,
-      budgetTier: 'STANDARD',
-      currentStatus: 'IMPLEMENTING',
-      repoId: repo.id,
-      temporalWorkflowId,
-      workRequestId,
-    },
-  });
 
   // Closing the modal with no `response_action` dismisses it cleanly.
   return { response_action: 'clear' };

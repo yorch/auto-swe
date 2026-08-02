@@ -105,7 +105,8 @@ packages/
 | `src/plugins/auth.ts` | **Auth middleware** — `requireAuth({ requiredRole, requiredTeamRole, requiredOrgRole })`, role hierarchy |
 | `src/plugins/prisma.ts`, `src/plugins/temporal.ts` | Decorate `fastify.prisma` / `fastify.temporal` |
 | `src/lib/betterAuth.ts` | better-auth instance — email+password, GitHub/Google OAuth, magic-link, cookie sessions |
-| `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the intended launch path for a tracked run. Writes the `RunInput` + `ActiveWorkflow` ledger in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. Work requests and the webhook triggers go through it; three other launch sites do not (§10). |
+| `src/lib/workflowLaunch.ts` | `launchTrackedWorkflow` — the single launch path; every route that starts a run goes through it. Writes the `RunInput` (+ `ActiveWorkflow`, when the launch keeps one) in one transaction, **then** starts the Temporal workflow, deleting the rows if the start fails. The unique index on `ActiveWorkflow.temporalWorkflowId` is the atomic dedup gate, so a run cannot execute without a ledger row to attribute its spend and PRs to. |
+| `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on |
 | `src/lib/github.ts` | Octokit singleton + GitHub webhook HMAC verification |
 | `src/lib/slack.ts` | Slack client; slash-command, events, and interactive handlers |
 | `src/lib/ticketTracker.ts` | Read-only issue-tracker connectors (Jira / Linear / GitHub Issues); best-effort, never throws |
@@ -568,13 +569,6 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
-- **Three launch sites bypass `launchTrackedWorkflow`.** It exists so a run can never execute
-  without a ledger row: ledger inside a transaction, *then* start, compensating if the start fails.
-  `POST /workflow-templates/:id/runs`, the Slack run modal, and `POST /prd-runs` invert that — they
-  start Temporal first, then write `RunInput` and `ActiveWorkflow` as two separate un-compensated
-  creates. A DB failure after a successful start leaves a workflow running with nothing to attribute
-  its spend or pull requests to. The generic template-run endpoint is the weakest of the three: its
-  workflow ID is random rather than deterministic, so it has no dedup gate at all.
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch.

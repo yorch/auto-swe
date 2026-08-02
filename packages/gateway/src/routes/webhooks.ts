@@ -11,6 +11,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
+import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { postSlackMessage } from '../lib/slack.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 
@@ -487,7 +488,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   app.post(
     '/:token',
-    { schema: { body: z.record(z.string(), z.unknown()).optional(), params: TriggerParams } },
+    {
+      schema: {
+        body: z.record(z.string(), z.unknown()).optional(),
+        headers: IdempotencyHeaderSchema,
+        params: TriggerParams,
+      },
+    },
     async (request, reply) => {
       const { token } = request.params;
       const template = await fastify.prisma.workflowTemplate.findUnique({
@@ -529,7 +536,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       const workRequestId = crypto.randomUUID();
       const shortTplId = template.id.replace(/-/g, '').slice(0, 8);
-      const temporalWorkflowId = `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      // An Idempotency-Key makes the ID a pure function of the key, so a sender
+      // that retries (or fires twice) collapses onto one run instead of two.
+      // Without one, every delivery is a distinct run — the previous behaviour.
+      const idempotencyKey = request.headers['idempotency-key'];
+      const temporalWorkflowId = idempotencyKey
+        ? workflowIdFromIdempotencyKey('wh', shortTplId, idempotencyKey)
+        : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
       // Ledger rows first, workflow second, rolled back if the start fails —
       // see `launchTrackedWorkflow`.

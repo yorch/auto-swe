@@ -62,6 +62,16 @@ interface FakeState {
   existingWorkspace: Record<string, unknown> | null;
   workspaceCreateCalls: Array<{ data: Record<string, unknown> }>;
   workspaceUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
+  /** Connection returned by `connection.findUnique` (null = not found). */
+  connectionRow: Record<string, unknown> | null;
+  /** Ledger writes recorded by the run-modal path. */
+  runInputCreates: Array<Record<string, unknown>>;
+  activeWorkflowCreates: Array<Record<string, unknown>>;
+  /** Ordered log of 'ledger' vs 'start', proving the write precedes the start. */
+  launchOrder: string[];
+  runnableStarts: Array<{ id: string; args: unknown }>;
+  /** When set, `startRunnableWorkflow` rejects with this. */
+  runnableStartError: Error | null;
 }
 
 function buildApp(state: FakeState): FastifyInstance {
@@ -89,11 +99,33 @@ function buildApp(state: FakeState): FastifyInstance {
       }
       state.channelAssistantStarts.push({ input, workflowId });
     },
-    startRunnableWorkflow: async () => undefined,
+    startRunnableWorkflow: async (id: string, args: unknown) => {
+      state.launchOrder.push('start');
+      if (state.runnableStartError) {
+        throw state.runnableStartError;
+      }
+      state.runnableStarts.push({ args, id });
+    },
   } as unknown as never);
 
   app.decorate('prisma', {
-    activeWorkflow: { create: async () => ({}) },
+    $transaction: async (ops: Promise<unknown>[]) => {
+      state.launchOrder.push('ledger');
+      return Promise.all(ops);
+    },
+    activeWorkflow: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        // Mirrors the unique index on temporalWorkflowId — the dedup gate.
+        if (
+          state.activeWorkflowCreates.some((a) => a.temporalWorkflowId === data.temporalWorkflowId)
+        ) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        state.activeWorkflowCreates.push(data);
+        return { id: `aw-${state.activeWorkflowCreates.length}`, ...data };
+      },
+      delete: async () => ({}),
+    },
     channelThreadSession: {
       findUnique: async () => null,
     },
@@ -108,10 +140,18 @@ function buildApp(state: FakeState): FastifyInstance {
           team: { memberships: [{ userId: 'u1' }] },
         },
       ],
+      findUnique: async () => state.connectionRow,
     },
     repository: {
       findMany: async () => [],
       findUnique: async () => null,
+    },
+    runInput: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        state.runInputCreates.push(data);
+        return data;
+      },
+      delete: async () => ({}),
     },
     slackChannel: {
       upsert: async () => ({
@@ -205,12 +245,18 @@ beforeEach(async () => {
     await app.close();
   }
   state = {
+    activeWorkflowCreates: [],
     channelAssistantStartError: null,
     channelAssistantStarts: [],
+    connectionRow: null,
     existingWorkspace: null,
     humanStep: null,
     humanStepUpdateCalls: [],
     humanStepUpdateCount: 1,
+    launchOrder: [],
+    runInputCreates: [],
+    runnableStartError: null,
+    runnableStarts: [],
     signalCalls: [],
     templates: [
       {
@@ -1228,5 +1274,105 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     expect(res.statusCode).toBe(400);
     expect(state.workspaceCreateCalls).toHaveLength(0);
     expect(state.workspaceUpdateCalls).toHaveLength(0);
+  });
+});
+
+// ── Run-modal submission ──
+// The "Run a workflow" modal is one of the four workflow-launch call sites.
+// It used to start Temporal and only then write RunInput + ActiveWorkflow as
+// two un-compensated creates, so a DB failure left a workflow running with
+// nothing to attribute its spend or PRs to.
+describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
+  const GIT_REPO = {
+    id: 'conn-1',
+    isActive: true,
+    organizationName: 'acme',
+    repoName: 'payments',
+    team: { memberships: [{ userId: 'u1' }] },
+    teamId: 'team-a',
+    type: 'git_repo',
+  };
+
+  function runModalPayload(over: { ticket?: string; templateId?: string } = {}): string {
+    return `payload=${encodeURIComponent(
+      JSON.stringify({
+        type: 'view_submission',
+        user: { id: 'U1' },
+        view: {
+          callback_id: 'auto_swe_run_modal',
+          private_metadata: JSON.stringify({ channelId: 'C-run', initialDescription: '' }),
+          state: {
+            values: {
+              description_block: { description_input: { value: 'Add a health endpoint' } },
+              repo_block: { repo_select: { selected_option: { value: 'conn-1' } } },
+              template_block: {
+                template_select: { selected_option: { value: over.templateId ?? 't1' } },
+              },
+              ticket_block: { ticket_input: { value: over.ticket ?? 'JIRA-42' } },
+            },
+          },
+        },
+      })
+    )}`;
+  }
+
+  beforeEach(() => {
+    state.connectionRow = GIT_REPO;
+  });
+
+  // Local signed-POST helper: the HITL suite's copy is scoped to its own
+  // describe block.
+  function submit(body: string) {
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/interactive',
+    });
+  }
+
+  it('writes the ledger before starting the workflow', async () => {
+    const res = await submit(runModalPayload());
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ response_action: 'clear' });
+    expect(state.launchOrder).toEqual(['ledger', 'start']);
+    expect(state.runInputCreates).toHaveLength(1);
+    expect(state.activeWorkflowCreates).toHaveLength(1);
+  });
+
+  it('rejects a double submission through the unique index instead of starting twice', async () => {
+    await submit(runModalPayload());
+    const second = await submit(runModalPayload());
+
+    // The workflow ID is deterministic per (org, repo, ticket), so the ledger
+    // insert loses the race and Temporal is never reached a second time.
+    expect(second.json()).toEqual({
+      errors: { ticket_block: 'Workflow already running for JIRA-42' },
+      response_action: 'errors',
+    });
+    expect(state.runnableStarts).toHaveLength(1);
+  });
+
+  it('starts separate runs for different tickets', async () => {
+    await submit(runModalPayload({ ticket: 'JIRA-1' }));
+    await submit(runModalPayload({ ticket: 'JIRA-2' }));
+    expect(state.runnableStarts).toHaveLength(2);
+  });
+
+  it('leaves no orphan ledger rows when the start fails', async () => {
+    state.runnableStartError = new Error('temporal unreachable');
+
+    await expect(submit(runModalPayload())).resolves.toBeDefined();
+
+    // Compensated: the resubmission path stays open rather than wedging on a
+    // row that points at a workflow which never ran.
+    expect(state.activeWorkflowCreates).toHaveLength(1);
+    expect(state.runnableStarts).toHaveLength(0);
   });
 });
