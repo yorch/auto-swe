@@ -141,6 +141,15 @@ yarn keys:rotate
 # 4. Once it reports nothing left, drop CONFIG_ENCRYPTION_KEY_PREVIOUS and restart
 ```
 
+`yarn keys:rotate` runs through `tsx`, a devDependency, so it works from a checkout but not
+inside a production image (`yarn workspaces focus --production` strips it). There, run the
+compiled entry point directly:
+
+```bash
+node packages/shared/dist/scripts/rotateEncryptionKey.js --dry-run
+node packages/shared/dist/scripts/rotateEncryptionKey.js
+```
+
 Step 2 is what makes this safe against a live deployment: rows written under the old key still
 decrypt, while new writes are stamped with the new version. The rotation is resumable — a row
 already at the target version is skipped — and it never writes a row it could not read, so an
