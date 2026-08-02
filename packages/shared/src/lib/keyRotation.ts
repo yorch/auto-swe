@@ -36,137 +36,51 @@ export interface EncryptedField {
  * would otherwise be silently skipped by rotation and become unreadable the
  * moment the old key is dropped.
  */
+/**
+ * The four (or five) columns of one encrypted field, from its shared prefix.
+ *
+ * Every encrypted field in the schema follows `<prefix>Ciphertext` /`Nonce`
+ * /`AuthTag` /`KeyVersion` /`LastFour`. Spelling those out per field made a
+ * 130-line table in which a swapped `nonce`/`authTag` pair still satisfied the
+ * coverage test — it compares column *sets*, not roles. Deriving them makes
+ * that class of typo impossible for the regular case and leaves the one
+ * irregular row visibly irregular.
+ */
+function fieldsFor(prefix: string): EncryptedField {
+  return {
+    authTag: `${prefix}AuthTag`,
+    ciphertext: `${prefix}Ciphertext`,
+    keyVersion: `${prefix}KeyVersion`,
+    lastFour: `${prefix}LastFour`,
+    nonce: `${prefix}Nonce`,
+  };
+}
+
+/**
+ * Every encrypted field in the schema, by Prisma delegate.
+ *
+ * `keyRotation.coverage.test.ts` derives the same set from `schema.prisma` and
+ * fails when the two disagree — a new encrypted column that nobody adds here
+ * would otherwise be silently skipped by rotation and become unreadable the
+ * moment the old key is dropped.
+ */
 export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
-  figmaConfig: [
-    {
-      authTag: 'apiTokenAuthTag',
-      ciphertext: 'apiTokenCiphertext',
-      keyVersion: 'apiTokenKeyVersion',
-      lastFour: 'apiTokenLastFour',
-      nonce: 'apiTokenNonce',
-    },
-  ],
+  figmaConfig: [fieldsFor('apiToken')],
   gitHubConfig: [
-    {
-      authTag: 'tokenAuthTag',
-      ciphertext: 'tokenCiphertext',
-      keyVersion: 'tokenKeyVersion',
-      lastFour: 'tokenLastFour',
-      nonce: 'tokenNonce',
-    },
-    {
-      authTag: 'webhookSecretAuthTag',
-      ciphertext: 'webhookSecretCiphertext',
-      keyVersion: 'webhookSecretKeyVersion',
-      lastFour: 'webhookSecretLastFour',
-      nonce: 'webhookSecretNonce',
-    },
-    {
-      authTag: 'oauthClientSecretAuthTag',
-      ciphertext: 'oauthClientSecretCiphertext',
-      keyVersion: 'oauthClientSecretKeyVersion',
-      lastFour: 'oauthClientSecretLastFour',
-      nonce: 'oauthClientSecretNonce',
-    },
-    {
-      authTag: 'appClientSecretAuthTag',
-      ciphertext: 'appClientSecretCiphertext',
-      keyVersion: 'appClientSecretKeyVersion',
-      lastFour: 'appClientSecretLastFour',
-      nonce: 'appClientSecretNonce',
-    },
-    {
-      authTag: 'appPrivateKeyAuthTag',
-      ciphertext: 'appPrivateKeyCiphertext',
-      keyVersion: 'appPrivateKeyKeyVersion',
-      lastFour: 'appPrivateKeyLastFour',
-      nonce: 'appPrivateKeyNonce',
-    },
+    fieldsFor('token'),
+    fieldsFor('webhookSecret'),
+    fieldsFor('oauthClientSecret'),
+    fieldsFor('appClientSecret'),
+    fieldsFor('appPrivateKey'),
   ],
-  googleOAuthConfig: [
-    {
-      authTag: 'clientSecretAuthTag',
-      ciphertext: 'clientSecretCiphertext',
-      keyVersion: 'clientSecretKeyVersion',
-      lastFour: 'clientSecretLastFour',
-      nonce: 'clientSecretNonce',
-    },
-  ],
-  issueTrackerConfig: [
-    {
-      authTag: 'apiTokenAuthTag',
-      ciphertext: 'apiTokenCiphertext',
-      keyVersion: 'apiTokenKeyVersion',
-      lastFour: 'apiTokenLastFour',
-      nonce: 'apiTokenNonce',
-    },
-    {
-      authTag: 'webhookSecretAuthTag',
-      ciphertext: 'webhookSecretCiphertext',
-      keyVersion: 'webhookSecretKeyVersion',
-      lastFour: 'webhookSecretLastFour',
-      nonce: 'webhookSecretNonce',
-    },
-  ],
-  knowledgeBaseConfig: [
-    {
-      authTag: 'apiTokenAuthTag',
-      ciphertext: 'apiTokenCiphertext',
-      keyVersion: 'apiTokenKeyVersion',
-      lastFour: 'apiTokenLastFour',
-      nonce: 'apiTokenNonce',
-    },
-  ],
-  providerCredential: [
-    {
-      authTag: 'apiKeyAuthTag',
-      ciphertext: 'apiKeyCiphertext',
-      keyVersion: 'keyVersion',
-      lastFour: 'lastFour',
-      nonce: 'apiKeyNonce',
-    },
-  ],
-  slackConfig: [
-    {
-      authTag: 'clientSecretAuthTag',
-      ciphertext: 'clientSecretCiphertext',
-      keyVersion: 'clientSecretKeyVersion',
-      lastFour: 'clientSecretLastFour',
-      nonce: 'clientSecretNonce',
-    },
-    {
-      authTag: 'signingSecretAuthTag',
-      ciphertext: 'signingSecretCiphertext',
-      keyVersion: 'signingSecretKeyVersion',
-      lastFour: 'signingSecretLastFour',
-      nonce: 'signingSecretNonce',
-    },
-    {
-      authTag: 'botTokenAuthTag',
-      ciphertext: 'botTokenCiphertext',
-      keyVersion: 'botTokenKeyVersion',
-      lastFour: 'botTokenLastFour',
-      nonce: 'botTokenNonce',
-    },
-  ],
-  slackWorkspace: [
-    {
-      authTag: 'botTokenAuthTag',
-      ciphertext: 'botTokenCiphertext',
-      keyVersion: 'botTokenKeyVersion',
-      lastFour: 'botTokenLastFour',
-      nonce: 'botTokenNonce',
-    },
-  ],
-  storageConfig: [
-    {
-      authTag: 'awsSecretAccessKeyAuthTag',
-      ciphertext: 'awsSecretAccessKeyCiphertext',
-      keyVersion: 'awsSecretAccessKeyKeyVersion',
-      lastFour: 'awsSecretAccessKeyLastFour',
-      nonce: 'awsSecretAccessKeyNonce',
-    },
-  ],
+  googleOAuthConfig: [fieldsFor('clientSecret')],
+  issueTrackerConfig: [fieldsFor('apiToken'), fieldsFor('webhookSecret')],
+  knowledgeBaseConfig: [fieldsFor('apiToken')],
+  // The one irregular row: its version and last-four columns are unprefixed.
+  providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
+  slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],
+  slackWorkspace: [fieldsFor('botToken')],
+  storageConfig: [fieldsFor('awsSecretAccessKey')],
 };
 
 export interface RotationReport {
@@ -190,13 +104,16 @@ export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<
   const toVersion = currentKeyVersion();
   const report: RotationReport = { failed: [], rotated: {}, skipped: 0, toVersion };
 
+  // The one cast that lets a typo'd model name compile, named and hoisted so it
+  // is not buried in the loop body.
+  type Delegate = {
+    findMany: (a: unknown) => Promise<Row[]>;
+    update: (a: unknown) => Promise<unknown>;
+  };
+  const client = prisma as unknown as Record<string, Delegate | undefined>;
+
   for (const [model, fields] of Object.entries(ENCRYPTED_FIELDS)) {
-    const delegate = (
-      prisma as unknown as Record<
-        string,
-        { findMany: (a: unknown) => Promise<Row[]>; update: (a: unknown) => Promise<unknown> }
-      >
-    )[model];
+    const delegate = client[model];
     if (!delegate) {
       throw new Error(`ENCRYPTED_FIELDS names model '${model}', which is not on the Prisma client`);
     }

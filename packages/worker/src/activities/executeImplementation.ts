@@ -236,7 +236,7 @@ export async function executeImplementation(
             }
           : {}),
       });
-      await assertBudgetAvailable(currentWorkflowId(), `implementer.iteration_${iteration}`);
+      await assertBudgetAvailable(`implementer.iteration_${iteration}`);
       const genResult = await agent.generate(
         [
           { content: llmSystemPrompt, role: 'system' },

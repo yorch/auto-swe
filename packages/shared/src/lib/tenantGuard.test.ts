@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { modelsWithAnyColumn } from '../prisma/schemaModels.js';
 import {
   hasTenantPredicate,
   isUnscoped,
@@ -202,40 +203,11 @@ describe('tenantGuardExtension', () => {
 });
 
 describe('TENANT_SCOPED_MODELS', () => {
-  it('matches the models that carry teamId/orgId in the schema', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { dirname, join } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const schema = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '../prisma/schema.prisma'),
-      'utf8'
-    );
-
-    const fromSchema = new Set<string>();
-    let model: string | null = null;
-    let columns: string[] = [];
-    for (const line of schema.split('\n')) {
-      const start = /^model (\w+) \{/.exec(line);
-      if (start) {
-        model = start[1];
-        columns = [];
-        continue;
-      }
-      if (line.trim() === '}') {
-        if (model && columns.some((c) => c === 'teamId' || c === 'orgId')) {
-          fromSchema.add(model);
-        }
-        model = null;
-        continue;
-      }
-      const col = /^\s*(\w+)\s+\S/.exec(line);
-      if (col && model) {
-        columns.push(col[1]);
-      }
-    }
-
+  it('matches the models that carry teamId/orgId in the schema', () => {
     // A new tenant-scoped model that nobody adds here is unguarded, and the
     // omission is invisible — same failure mode as the docs allowlist.
-    expect([...TENANT_SCOPED_MODELS].sort()).toEqual([...fromSchema].sort());
+    // `modelsWithAnyColumn` throws if the schema parse comes back empty, so
+    // this cannot pass vacuously.
+    expect([...TENANT_SCOPED_MODELS].sort()).toEqual(modelsWithAnyColumn(['teamId', 'orgId']));
   });
 });

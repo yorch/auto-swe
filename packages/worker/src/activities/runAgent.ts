@@ -71,7 +71,7 @@ export async function runAgent<T = unknown>(
           tools: spec.tools,
         });
 
-        await assertBudgetAvailable(currentWorkflowId(), `agent.${spec.agentKey}`);
+        await assertBudgetAvailable(`agent.${spec.agentKey}`);
         const genResult = spec.outputSchema
           ? await agent.generate([{ content: userMessage, role: 'user' }], {
               structuredOutput: { schema: spec.outputSchema },

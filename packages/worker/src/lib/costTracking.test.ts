@@ -53,6 +53,10 @@ vi.mock('@auto-swe/shared/db', async () => {
 // Mock the workflow-defaults resolver — recordLlmUsage reads its per-tier
 // budgets from here (memoized through the shared config cache). Default returns
 // the baked-in tier numbers so existing budget tests behave unchanged.
+// `assertBudgetAvailable` now derives the workflow id from Temporal activity
+// context instead of trusting a caller-supplied string.
+vi.mock('./activityContext.js', () => ({ currentWorkflowId: () => 'wf-temporal-1' }));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({
     budgetTiers: {
@@ -240,22 +244,18 @@ describe('recordLlmUsage', () => {
 
   it('does not gate a workflow that is still under its tier', async () => {
     ledger({ tokensInputUsed: 10 });
-    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).resolves.toBeUndefined();
+    await expect(assertBudgetAvailable('implementer')).resolves.toBeUndefined();
   });
 
   it('refuses a call once the tier is already spent', async () => {
     ledger({ tokensInputUsed: 2_000_000 });
 
-    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).rejects.toThrow(
-      /Budget already exhausted/
-    );
+    await expect(assertBudgetAvailable('implementer')).rejects.toThrow(/Budget already exhausted/);
   });
 
   it('gates on the output ceiling too, not just input', async () => {
     ledger({ tokensOutputUsed: 500_000 });
-    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).rejects.toThrow(
-      /Budget already exhausted/
-    );
+    await expect(assertBudgetAvailable('implementer')).rejects.toThrow(/Budget already exhausted/);
   });
 
   it('never spends when the gate fires', async () => {
@@ -264,14 +264,14 @@ describe('recordLlmUsage', () => {
     // post-check fires.
     ledger({ tokensInputUsed: 2_000_000 });
 
-    await expect(assertBudgetAvailable('wf-temporal-1', 'review.security')).rejects.toThrow();
+    await expect(assertBudgetAvailable('review.security')).rejects.toThrow();
     expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
   });
 
   it('no-ops for a run with no ActiveWorkflow ledger row', async () => {
     // Channel tasks and PRD runs have none; they must not be blocked.
     (prisma.activeWorkflow.findFirst as unknown as Mock).mockResolvedValue(null);
-    await expect(assertBudgetAvailable('wf-none', 'x')).resolves.toBeUndefined();
+    await expect(assertBudgetAvailable('x')).resolves.toBeUndefined();
   });
 
   it('returns without error when workflow record is not found', async () => {

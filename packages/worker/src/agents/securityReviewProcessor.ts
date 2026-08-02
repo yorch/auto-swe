@@ -62,7 +62,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         name: 'security-review-gate',
       });
 
-      await assertBudgetAvailable(currentWorkflowId(), 'securityReview');
+      await assertBudgetAvailable('securityReview');
       const result = await agent.generate(
         [
           {

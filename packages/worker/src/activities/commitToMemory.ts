@@ -120,7 +120,7 @@ export async function commitToMemory(
   });
 
   try {
-    await assertBudgetAvailable(temporalWorkflowId, 'commitToMemory');
+    await assertBudgetAvailable('commitToMemory');
     const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
       structuredOutput: { schema: LessonOutputSchema },
     });

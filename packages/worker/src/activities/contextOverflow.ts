@@ -1,6 +1,6 @@
 import { putArtifact } from '../lib/artifactStore.js';
 
-export interface StoreContextOverflowInput {
+interface StoreContextOverflowInput {
   runId: string;
   /** Context path the value came from, e.g. `nodes.implement.output.diff`. */
   path: string;
@@ -23,7 +23,7 @@ export const CONTEXT_OVERFLOW_KIND = 'context-overflow';
  * keeping. Returns null on failure — losing an artifact must never fail the
  * run, and the caller falls back to the old truncation behaviour.
  */
-export async function storeContextOverflow(
+async function storeContextOverflow(
   input: StoreContextOverflowInput
 ): Promise<ContextOverflowRef | null> {
   try {

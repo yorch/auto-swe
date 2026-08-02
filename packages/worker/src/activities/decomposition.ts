@@ -413,7 +413,7 @@ async function mergeOneWithResolver(
       activityCtx
     );
     try {
-      await assertBudgetAvailable(currentWorkflowId(), 'decomposition');
+      await assertBudgetAvailable('decomposition');
       const result = await agent.generate(
         [
           {

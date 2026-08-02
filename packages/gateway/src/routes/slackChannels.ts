@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -399,28 +400,29 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       const showConsolidated = request.query.includeConsolidated === 'true';
-      const items = await fastify.prisma.memoryItem.findMany({
-        orderBy: { createdAt: 'desc' },
-        select: {
-          agentKey: true,
-          consolidatedAt: true,
-          createdAt: true,
-          id: true,
-          lessonSummary: true,
-          metadata: true,
-          rationale: true,
-        },
-        take: 200,
-        where: {
-          channelId: request.params.id,
-          // Redundant with `channelId` — a channel belongs to one team — but it
-          // costs nothing, `row.teamId` is already in hand from the access
-          // check above, and it keeps the query tenant-filtered in its own
-          // right rather than relying on that invariant holding forever.
-          teamId: row.teamId,
-          ...(showConsolidated ? {} : { consolidatedAt: null }),
-        },
-      });
+      // Bounded to the single channel the caller was just authorised for. An
+      // added `teamId` predicate would look stronger and is not: `MemoryItem`
+      // denormalises the team at write time, so re-parenting a channel would
+      // silently hide everything written under its old team.
+      const items = await runUnscoped('bounded to one pre-authorised channelId', () =>
+        fastify.prisma.memoryItem.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            agentKey: true,
+            consolidatedAt: true,
+            createdAt: true,
+            id: true,
+            lessonSummary: true,
+            metadata: true,
+            rationale: true,
+          },
+          take: 200,
+          where: {
+            channelId: request.params.id,
+            ...(showConsolidated ? {} : { consolidatedAt: null }),
+          },
+        })
+      );
       return { data: items };
     }
   );

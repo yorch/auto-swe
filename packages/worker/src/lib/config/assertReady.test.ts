@@ -32,7 +32,7 @@ vi.mock('./agentResolver.js', () => ({ resolveAgent: resolveAgentMock }));
 
 import { assertConfigReady } from './assertReady.js';
 import { installedStepNames, requiredAgentKeysForDeployment } from './deploymentAgents.js';
-import { requiredAgentKeys } from './stepRequiredAgents.js';
+import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /** A spec whose step nodes between them need every model-backed agent. */
 function specWithAllSweSteps() {
@@ -89,11 +89,12 @@ function fullyConfigured() {
   });
 }
 
-describe('requiredAgentKeys', () => {
-  it('computes the deduped union of every registered step’s required agents', () => {
-    // Completeness check on STEP_REQUIRED_AGENTS: every model-backed key is
-    // reachable from some step. This is the catalog, not the boot gate.
-    expect([...requiredAgentKeys()].sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
+describe('STEP_REQUIRED_AGENTS', () => {
+  it('reaches every model-backed agent key from some step', () => {
+    // Completeness check on the catalog, not the boot gate — the gate is
+    // `requiredAgentKeysForDeployment`, which is scoped to installed templates.
+    const all = [...new Set(Object.values(STEP_REQUIRED_AGENTS).flat())];
+    expect(all.sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
   });
 });
 
@@ -108,7 +109,7 @@ describe('requiredAgentKeysForDeployment', () => {
       },
     ]);
 
-    const { keys } = await requiredAgentKeysForDeployment();
+    const keys = await requiredAgentKeysForDeployment();
 
     // runLint resolves no model, so a lint-only deployment needs no agent at
     // all — it certainly does not need `implementer`.
@@ -116,7 +117,7 @@ describe('requiredAgentKeysForDeployment', () => {
   });
 
   it('requires the SWE agents when a SWE template is installed', async () => {
-    const { keys } = await requiredAgentKeysForDeployment();
+    const keys = await requiredAgentKeysForDeployment();
     expect([...keys].sort()).toEqual([...ALL_MODEL_BACKED_AGENT_KEYS].sort());
   });
 
@@ -127,7 +128,7 @@ describe('requiredAgentKeysForDeployment', () => {
       { spec: { nodes: { a: { step: 'executeImplementation', type: 'step' } } } },
     ]);
 
-    const { keys } = await requiredAgentKeysForDeployment();
+    const keys = await requiredAgentKeysForDeployment();
 
     // Either arm can serve a run, so the experiment arm's agents are required.
     expect(keys).toContain('implementer');
@@ -144,21 +145,18 @@ describe('requiredAgentKeysForDeployment', () => {
     installTemplates([{ nodes: { a: { step: 'runLint', type: 'step' } } }]);
     slackChannelCount.mockResolvedValue(1);
 
-    const { keys } = await requiredAgentKeysForDeployment();
+    const keys = await requiredAgentKeysForDeployment();
 
     // Channel turns call runAgent directly rather than through a step node, so
     // no spec walk can see this requirement.
     expect(keys).toEqual(['channelAssistant']);
   });
 
-  it('reports empty when nothing runnable is installed', async () => {
+  it('requires nothing when nothing runnable is installed', async () => {
     templateFindMany.mockResolvedValue([]);
     versionFindMany.mockResolvedValue([]);
 
-    const { empty, keys } = await requiredAgentKeysForDeployment();
-
-    expect(empty).toBe(true);
-    expect(keys).toEqual([]);
+    await expect(requiredAgentKeysForDeployment()).resolves.toEqual([]);
   });
 
   it('skips the version query entirely when no template is active', async () => {

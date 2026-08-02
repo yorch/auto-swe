@@ -135,7 +135,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     });
 
     const agentStart = Date.now();
-    await assertBudgetAvailable(currentWorkflowId(), input.usageEventName);
+    await assertBudgetAvailable(input.usageEventName);
     const genResult = await agent.generate(
       [
         { content: fullSystemPrompt, role: 'system' },

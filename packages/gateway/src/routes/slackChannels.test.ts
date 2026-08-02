@@ -595,13 +595,13 @@ describe('slackChannelRoutes', () => {
     const data = JSON.parse(res.payload).data;
     expect(data[0].id).toBe('mem-1');
     expect(data[0].lessonSummary).toBe('Prefer feature flags');
-    // Scoped to this channel's active rows (no includeConsolidated param), and
-    // tenant-filtered in its own right rather than leaning on the invariant
-    // that a channel belongs to exactly one team.
+    // Scoped to this channel's active rows (no includeConsolidated param).
+    // Deliberately no `teamId`: MemoryItem denormalises the team at write time,
+    // so a re-parented channel would silently lose its older memory.
     expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         take: 200,
-        where: { channelId: CHANNEL, consolidatedAt: null, teamId: TEAM },
+        where: { channelId: CHANNEL, consolidatedAt: null },
       })
     );
     // The embedding column must never be selected (Unsupported vector field).

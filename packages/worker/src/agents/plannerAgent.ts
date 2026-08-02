@@ -51,7 +51,7 @@ export async function decomposeEpic(
         });
 
         llmUserMessage = JSON.stringify({ availableRepos, epicDescription });
-        await assertBudgetAvailable(currentWorkflowId(), 'planner');
+        await assertBudgetAvailable('planner');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: PlannerOutputSchema },
         });

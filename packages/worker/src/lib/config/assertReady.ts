@@ -23,8 +23,7 @@ export async function assertConfigReady(): Promise<void> {
   // installed, not the whole SWE step catalog. resolveAgent throws
   // ConfigMissingError when the Agent, its model, or its credential is absent;
   // collect the messages instead of failing on the first.
-  const required = await requiredAgentKeysForDeployment();
-  for (const role of required.keys) {
+  for (const role of await requiredAgentKeysForDeployment()) {
     try {
       await resolveAgent(role);
     } catch (err) {

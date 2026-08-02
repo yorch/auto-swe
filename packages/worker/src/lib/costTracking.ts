@@ -3,6 +3,7 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
+import { currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
@@ -201,30 +202,53 @@ export interface LlmAttribution {
  * Silent no-op when the workflow has no `ActiveWorkflow` ledger row (channel
  * tasks, PRD runs), matching `recordLlmUsage`.
  */
-export async function assertBudgetAvailable(
-  temporalWorkflowId: string,
-  label = 'llm.call'
-): Promise<void> {
-  const workflow = await prisma.activeWorkflow.findFirst({
-    select: {
-      budgetTier: true,
-      costUsdAccrued: true,
-      tokensInputUsed: true,
-      tokensOutputUsed: true,
-    },
-    where: { temporalWorkflowId },
-  });
+/**
+ * Resolves a workflow's tier and its token caps, DB override first.
+ *
+ * Both the pre-flight gate and the post-call check need this, and they used to
+ * derive it separately — which had already drifted: the gate returned silently
+ * on an unknown tier while the check threw, so a misconfigured tier quietly
+ * disabled the gate at every call site. One definition, one behaviour.
+ */
+async function resolveTierLimits(
+  budgetTier: string | null
+): Promise<{ tier: BudgetTier; limits: { inputTokens: number; outputTokens: number } }> {
+  const tier = (budgetTier ?? 'STANDARD') as BudgetTier;
+  const budgetTiers = await resolveBudgetTiers();
+  const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
+  if (!limits) {
+    throw new Error(
+      `Unknown budget tier "${tier}" — update the workflow-defaults budget tiers / BUDGET_LIMITS in costTracking.ts`
+    );
+  }
+  return { limits, tier };
+}
+
+export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
+  // The workflow id comes from Temporal activity context, not the caller.
+  // Passing it in invited exactly one bug: a call site supplied a literal
+  // string that matched no ledger row, so its gate was a permanent silent
+  // no-op. `persistActivityTrace` resolves its run the same way.
+  const temporalWorkflowId = currentWorkflowId();
+  const [workflow, _] = await Promise.all([
+    prisma.activeWorkflow.findFirst({
+      select: {
+        budgetTier: true,
+        costUsdAccrued: true,
+        tokensInputUsed: true,
+        tokensOutputUsed: true,
+      },
+      where: { temporalWorkflowId },
+    }),
+    // Independent of the row read; usually a cache hit, a second round trip
+    // when the ~30 s TTL has expired.
+    resolveBudgetTiers(),
+  ]);
   if (!workflow) {
     return;
   }
 
-  const tier = (workflow.budgetTier ?? 'STANDARD') as BudgetTier;
-  const budgetTiers = await resolveBudgetTiers();
-  const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
-  if (!limits) {
-    return; // recordLlmUsage raises the descriptive error for an unknown tier.
-  }
-
+  const { limits, tier } = await resolveTierLimits(workflow.budgetTier);
   const usedInput = Number(workflow.tokensInputUsed);
   const usedOutput = Number(workflow.tokensOutputUsed);
   // `>=` here, `>` in the post-check below, deliberately: a call that lands
@@ -353,14 +377,7 @@ export async function recordLlmUsage(
         // The write above happens before the limit check, deliberately: actual
         // consumption is recorded even when the limit is breached, so the UI
         // shows the real overage rather than the last value under the limit.
-        const tier = (updated.budgetTier ?? 'STANDARD') as BudgetTier;
-        const budgetTiers = await resolveBudgetTiers();
-        const limits = budgetTiers[tier] ?? BUDGET_LIMITS[tier];
-        if (!limits) {
-          throw new Error(
-            `Unknown budget tier "${tier}" — update the workflow-defaults budget tiers / BUDGET_LIMITS in costTracking.ts`
-          );
-        }
+        const { limits, tier } = await resolveTierLimits(updated.budgetTier);
 
         span.setAttributes({
           'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,

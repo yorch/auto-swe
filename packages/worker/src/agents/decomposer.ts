@@ -83,7 +83,7 @@ export async function planDecomposition(
           externalTicketId: request.externalTicketId,
           maxSubtasks: MAX_SUBTASKS,
         });
-        await assertBudgetAvailable(currentWorkflowId(), 'decomposer');
+        await assertBudgetAvailable('decomposer');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: DecomposerOutputSchema },
         });

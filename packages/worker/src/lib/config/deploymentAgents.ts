@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 import type { ModelBackedAgentKey } from './types.js';
 
@@ -24,11 +25,6 @@ import type { ModelBackedAgentKey } from './types.js';
  * the same as any other late config change.
  */
 
-/** Spec shape this module needs; the full type lives in `@auto-swe/shared/workflow`. */
-interface MinimalSpec {
-  nodes?: Record<string, { type?: string; step?: string } | null>;
-}
-
 /** Step names reachable from the installed, runnable template versions. */
 export async function installedStepNames(): Promise<Set<string>> {
   const templates = await prisma.workflowTemplate.findMany({
@@ -53,12 +49,16 @@ export async function installedStepNames(): Promise<Set<string>> {
 
   const steps = new Set<string>();
   for (const { spec } of versions) {
-    const nodes = (spec as MinimalSpec | null)?.nodes;
+    // The real spec type, not a local shape: this is the sole input to the boot
+    // gate, so if the `step` discriminant is ever renamed this must stop
+    // compiling. A structural stand-in would keep compiling, quietly return no
+    // steps, and boot the worker with no LLM-config check at all.
+    const nodes = (spec as WorkflowSpec | null)?.nodes;
     if (!nodes) {
       continue;
     }
     for (const node of Object.values(nodes)) {
-      if (node?.type === 'step' && typeof node.step === 'string') {
+      if (node?.type === 'step') {
         steps.add(node.step);
       }
     }
@@ -66,13 +66,8 @@ export async function installedStepNames(): Promise<Set<string>> {
   return steps;
 }
 
-export interface DeploymentAgentRequirement {
-  keys: ModelBackedAgentKey[];
-  /** True when nothing runnable is installed — boot proceeds with no agent gate. */
-  empty: boolean;
-}
-
-export async function requiredAgentKeysForDeployment(): Promise<DeploymentAgentRequirement> {
+/** Empty when nothing runnable is installed — boot then has no agent gate. */
+export async function requiredAgentKeysForDeployment(): Promise<ModelBackedAgentKey[]> {
   const steps = await installedStepNames();
   const keys = new Set<ModelBackedAgentKey>();
   for (const step of steps) {
@@ -89,5 +84,5 @@ export async function requiredAgentKeysForDeployment(): Promise<DeploymentAgentR
     keys.add('channelAssistant');
   }
 
-  return { empty: steps.size === 0 && keys.size === 0, keys: [...keys] };
+  return [...keys];
 }

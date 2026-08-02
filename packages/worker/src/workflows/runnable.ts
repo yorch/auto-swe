@@ -822,6 +822,18 @@ const CONTEXT_INLINE_LIMIT = 4000;
 const SPILL_CHUNK_BUDGET = 1_000_000;
 
 /**
+ * Ceiling on how much a single run may spill in total, across all chunks.
+ *
+ * Activity *inputs* are recorded in workflow history, so spilling is not free
+ * the way a plain artifact write would be: every byte sent through
+ * `storeContextOverflowBatch` also lands in the run's history, which Temporal
+ * caps. The old 20-value cap bounded this incidentally; removing it removed the
+ * bound too. Past this, values fall back to truncation — the same degradation
+ * the cap used to apply, but keyed on the resource that actually runs out.
+ */
+const SPILL_TOTAL_BUDGET = 8_000_000;
+
+/**
  * Groups values into chunks whose combined length stays under the budget.
  * A value bigger than the budget on its own occupies a chunk by itself, which
  * is the same payload it had when every value was sent individually.
@@ -896,8 +908,21 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
   //
   // A single value larger than the budget still goes alone, exactly as it did
   // when every value went alone.
+  // Past the total ceiling, stop spilling and truncate the remainder — the
+  // placeholder says which case applied, so a reader can tell a failed write
+  // from a run that simply produced more context than history can hold.
+  const spillable: typeof oversized = [];
+  let budget = SPILL_TOTAL_BUDGET;
+  for (const item of oversized) {
+    if (item.value.length > budget) {
+      break;
+    }
+    budget -= item.value.length;
+    spillable.push(item);
+  }
+
   const spilled = new Map<string, string>();
-  for (const chunk of chunkBySize(oversized)) {
+  for (const chunk of chunkBySize(spillable)) {
     const refs = await stateActivities.storeContextOverflowBatch({
       runId,
       values: chunk.map(({ path, value }) => ({ content: value, path })),
@@ -920,11 +945,10 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
       if (value.length <= CONTEXT_INLINE_LIMIT) {
         return value;
       }
-      // Every oversized value gets a `spilled` entry (an artifact reference, or
-      // a truncation placeholder when that one write failed), so the fallback
-      // here is unreachable in practice — kept so a future walk/rebuild
-      // divergence degrades instead of emitting the raw multi-megabyte string.
-      return spilled.get(path) ?? truncatedPlaceholder(value, 'not spilled');
+      // A value with no `spilled` entry is one the total ceiling stopped at.
+      return (
+        spilled.get(path) ?? truncatedPlaceholder(value, 'run exceeded its total spill budget')
+      );
     }
     if (Array.isArray(value)) {
       return value.map((v, i) => rebuild(v, `${path}[${i}]`));

@@ -27,7 +27,12 @@ const DEFAULT_KEY_VERSION = 1;
  * version→key map would let arbitrarily many old keys linger, which is the
  * opposite of what rotating is for.
  */
-let cachedKeys: Map<number, Buffer> | undefined;
+/**
+ * Version and keys are cached together: they must agree, and deriving the
+ * version from the environment on every call while caching the map from the
+ * first would be two sources of truth for one fact.
+ */
+let cached: { version: number; keys: Map<number, Buffer> } | undefined;
 
 function decodeKey(raw: string, envName: string): Buffer {
   const decoded = Buffer.from(raw, 'base64');
@@ -55,9 +60,9 @@ export function currentKeyVersion(): number {
   return parsed;
 }
 
-function loadKeys(): Map<number, Buffer> {
-  if (cachedKeys) {
-    return cachedKeys;
+function loadKeys(): { version: number; keys: Map<number, Buffer> } {
+  if (cached) {
+    return cached;
   }
   const raw = process.env.CONFIG_ENCRYPTION_KEY?.trim();
   if (!raw) {
@@ -82,18 +87,8 @@ function loadKeys(): Map<number, Buffer> {
     keys.set(version - 1, decodeKey(previous, 'CONFIG_ENCRYPTION_KEY_PREVIOUS'));
   }
 
-  cachedKeys = keys;
-  return keys;
-}
-
-/** The write key. */
-function loadKey(): Buffer {
-  const version = currentKeyVersion();
-  const key = loadKeys().get(version);
-  if (!key) {
-    throw new Error(`No CONFIG_ENCRYPTION_KEY loaded for version ${version}`);
-  }
-  return key;
+  cached = { keys, version };
+  return cached;
 }
 
 export interface EncryptedSecret {
@@ -108,7 +103,8 @@ export function encryptSecret(plaintext: string): EncryptedSecret {
   if (plaintext.length === 0) {
     throw new Error('Cannot encrypt empty secret');
   }
-  const key = loadKey();
+  const { keys, version } = loadKeys();
+  const key = keys.get(version) as Buffer;
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, nonce);
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -116,7 +112,7 @@ export function encryptSecret(plaintext: string): EncryptedSecret {
   return {
     authTag: toArrayBufferUint8(authTag),
     ciphertext: toArrayBufferUint8(ciphertext),
-    keyVersion: currentKeyVersion(),
+    keyVersion: version,
     lastFour: plaintext.slice(-4),
     nonce: toArrayBufferUint8(nonce),
   };
@@ -139,7 +135,7 @@ export function decryptSecret(record: {
   authTag: Buffer | Uint8Array;
   keyVersion: number;
 }): string {
-  const keys = loadKeys();
+  const { keys } = loadKeys();
   const key = keys.get(record.keyVersion);
   if (!key) {
     throw new Error(
@@ -169,5 +165,5 @@ export function decryptSecret(record: {
 /// Test-only escape hatch. Resets the cached key so a test can swap
 /// CONFIG_ENCRYPTION_KEY between cases.
 export function _resetKeyCacheForTests(): void {
-  cachedKeys = undefined;
+  cached = undefined;
 }
