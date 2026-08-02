@@ -127,7 +127,11 @@ export async function passiveIngestChannelMemory(
     // cursor where it was: advancing first and then bailing would skip this
     // window of messages permanently, and a hold is refused more readily than
     // the read above because it consumes headroom.
-    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null);
+    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null, {
+      agentKey: 'commitToMemory',
+      orgId: channel.orgId,
+      teamId: channel.teamId,
+    });
     if (hold.overBudget) {
       return EMPTY;
     }

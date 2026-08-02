@@ -194,7 +194,11 @@ export async function sweepChannelOpenItems(
 
     // Hold budget for this sweep before it spends. Released — or replaced by the
     // real total — in the `finally` below.
-    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
+    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents, {
+      agentKey: 'commitToMemory',
+      orgId: channel.orgId,
+      teamId: channel.teamId,
+    });
     if (hold.overBudget) {
       return emptyResult;
     }

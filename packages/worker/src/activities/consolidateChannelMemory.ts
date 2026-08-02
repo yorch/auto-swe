@@ -97,6 +97,8 @@ export async function consolidateChannelMemory(
       consolidationMinClusterSize: true,
       consolidationSimilarityThreshold: true,
       monthlyBudgetUsdCents: true,
+      orgId: true,
+      teamId: true,
     },
     where: { id: channelId },
   });
@@ -190,11 +192,12 @@ export async function consolidateChannelMemory(
   // cluster, so the hold covers the whole fan-out — a single-call hold would
   // admit a 30-cluster pass on the headroom of one turn. Released — or replaced
   // by the real total — in the `finally` below.
-  const hold = await reserveChannelTurn(
-    channelId,
-    channel?.monthlyBudgetUsdCents ?? null,
-    qualifying.length
-  );
+  const hold = await reserveChannelTurn(channelId, channel?.monthlyBudgetUsdCents ?? null, {
+    agentKey: 'commitToMemory',
+    modelCalls: qualifying.length,
+    orgId: channel?.orgId ?? '',
+    teamId: channel?.teamId ?? '',
+  });
   if (hold.overBudget) {
     return EMPTY_RESULT;
   }

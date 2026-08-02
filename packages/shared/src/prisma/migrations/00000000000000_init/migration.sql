@@ -328,6 +328,18 @@ CREATE TABLE "channel_monthly_usage" (
 );
 
 -- CreateTable
+CREATE TABLE "channel_budget_holds" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "channel_id" UUID NOT NULL,
+    "year_month" TEXT NOT NULL,
+    "amount_usd" DECIMAL(12,6) NOT NULL,
+    "expires_at" TIMESTAMPTZ NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "channel_budget_holds_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "users" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "email" TEXT NOT NULL,
@@ -1130,6 +1142,12 @@ CREATE INDEX "channel_monthly_usage_channel_id_idx" ON "channel_monthly_usage"("
 CREATE UNIQUE INDEX "channel_monthly_usage_channel_id_year_month_key" ON "channel_monthly_usage"("channel_id", "year_month");
 
 -- CreateIndex
+CREATE INDEX "channel_budget_holds_channel_id_year_month_idx" ON "channel_budget_holds"("channel_id", "year_month");
+
+-- CreateIndex
+CREATE INDEX "channel_budget_holds_expires_at_idx" ON "channel_budget_holds"("expires_at");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
 -- CreateIndex
@@ -1383,6 +1401,9 @@ ALTER TABLE "channel_open_items" ADD CONSTRAINT "channel_open_items_channel_id_f
 
 -- AddForeignKey
 ALTER TABLE "channel_monthly_usage" ADD CONSTRAINT "channel_monthly_usage_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "channel_budget_holds" ADD CONSTRAINT "channel_budget_holds_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

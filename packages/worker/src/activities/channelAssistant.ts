@@ -19,9 +19,11 @@ import {
   GENERATE_WORKFLOW_TOOL_PROMPT_NOTE,
   REFINE_WORKFLOW_TOOL_PROMPT_NOTE,
 } from '../lib/channelTurnPrompts.js';
+import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { getModelPrice } from '../lib/costTracking.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -336,14 +338,59 @@ export async function isChannelOverBudgetNow(
 }
 
 /**
- * What one model call holds against the cap while it runs.
+ * Fallback hold for one model call when the bound model has no known price.
  *
- * The real cost is not known until the model has answered, so the hold is an
- * estimate — deliberately on the generous side of a single generate against the
- * channel agent, because the hold's job is to stop a stampede, and it is netted
- * out against the true cost the moment the turn settles.
+ * Everything else derives the hold from `MODEL_PRICES` — see
+ * {@link estimateHoldUsd} — because one flat number is wrong by ~5x in one
+ * direction or the other across the models a channel can be configured with.
  */
 export const CHANNEL_TURN_RESERVATION_USD = 0.05;
+
+/**
+ * The token envelope a channel turn is held against.
+ *
+ * Still an estimate: the hold's job is to stop a stampede, and it is netted out
+ * against the true cost the moment the turn settles. But the *price* half of
+ * that estimate is something the system knows, so it is looked up rather than
+ * guessed — a channel on Opus and a channel on Haiku differ by 5x per token.
+ */
+const HOLD_INPUT_TOKENS = 8_000;
+const HOLD_OUTPUT_TOKENS = 1_500;
+
+/**
+ * How long a hold survives unsettled before a later reserve sweeps it.
+ *
+ * The window bounds what a worker that dies mid-turn costs the channel. It has
+ * to clear the slowest held pass — consolidation fans out over a batch of
+ * clusters — so it is generous; the cost of being generous is only that a lost
+ * hold sits on the ledger a while longer.
+ */
+export const CHANNEL_HOLD_TTL_MS = 30 * 60_000;
+
+/** What one turn against `agentKey` is expected to cost, in USD. */
+async function estimateHoldUsd(
+  agentKey: string,
+  ctx: { channelId: string; orgId: string; teamId: string },
+  modelCalls: number
+): Promise<number> {
+  const calls = Math.max(1, modelCalls);
+  try {
+    const resolved = await resolveAgent(agentKey, ctx);
+    const { known, price } = getModelPrice(resolved.model.spec);
+    if (!known) {
+      return CHANNEL_TURN_RESERVATION_USD * calls;
+    }
+    const perCall =
+      (HOLD_INPUT_TOKENS * price.input + HOLD_OUTPUT_TOKENS * price.output) / 1_000_000;
+    // A zero-priced model would hold nothing, which bounds nothing.
+    return (perCall > 0 ? perCall : CHANNEL_TURN_RESERVATION_USD) * calls;
+  } catch {
+    // Resolution failed (missing row, decrypt failure). The turn itself will
+    // fail on the same lookup a moment later; hold the fallback rather than
+    // letting an unpriced turn through unbounded.
+    return CHANNEL_TURN_RESERVATION_USD * calls;
+  }
+}
 
 /** A turn's claim on the channel's remaining monthly budget. */
 export interface ChannelBudgetHold {
@@ -357,22 +404,65 @@ export interface ChannelBudgetHold {
 }
 
 /**
+ * Returns any expired holds' amounts to the ledger.
+ *
+ * A hold is an increment plus a row. The increment is what bounds concurrency;
+ * the row is what makes it reversible. A worker that dies between reserving and
+ * settling leaves both behind, and without this the increment would sit on the
+ * channel's ledger for the rest of the calendar month — a deploy during a busy
+ * hour would silence the channel with no way back but editing the database.
+ *
+ * Each refund is one transaction: the delete is the claim, so two workers
+ * sweeping the same row concurrently cannot both refund it (the loser's delete
+ * raises P2025 and it skips). Best-effort throughout — a failed sweep must not
+ * stop the turn that triggered it.
+ */
+async function sweepExpiredHolds(channelId: string): Promise<void> {
+  try {
+    const expired = await prisma.channelBudgetHold.findMany({
+      select: { amountUsd: true, id: true, yearMonth: true },
+      where: { channelId, expiresAt: { lt: new Date() } },
+    });
+    for (const hold of expired) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.channelBudgetHold.delete({ where: { id: hold.id } });
+          await tx.channelMonthlyUsage.update({
+            data: { costUsdAccrued: { decrement: Number(hold.amountUsd) } },
+            where: { channelId_yearMonth: { channelId, yearMonth: hold.yearMonth } },
+          });
+        });
+      } catch {
+        // Another sweeper won the row, or its ledger row is gone. Either way
+        // this hold is no longer ours to refund.
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[channelAssistant] failed to sweep expired budget holds for ${channelId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+/**
  * Claims budget for one turn, before the turn runs.
  *
  * A plain read-then-spend gate does not bound anything here: turn workflow ids
- * are per-event (`chan-<id>-<ts>`), so a busy channel runs many turns at once
- * and every one of them reads the same not-yet-incremented total and passes.
- * The overshoot is bounded by concurrency, which nothing bounds.
+ * are per-event, so a busy channel runs many turns at once and every one of them
+ * reads the same not-yet-incremented total and passes. The overshoot is bounded
+ * by concurrency, which nothing bounds.
  *
- * So the gate writes. Each turn atomically increments the accrued total by
- * {@link CHANNEL_TURN_RESERVATION_USD} and decides on the value *before* its own
- * increment, which makes the headroom a resource turns consume rather than a
- * number they all read: with `H` USD of headroom left, at most `H / RESERVATION`
- * turns can be in flight, whatever the concurrency. {@link ChannelBudgetHold.settle}
- * then swaps the hold for the real cost.
+ * So the gate writes. Each turn atomically increments the accrued total by its
+ * estimated cost and decides on the value *before* its own increment, which
+ * makes the headroom a resource turns consume rather than a number they all
+ * read: with `H` USD of headroom left, at most `H / estimate` turns can be in
+ * flight, whatever the concurrency. {@link ChannelBudgetHold.settle} then swaps
+ * the hold for the real cost.
  *
- * Overshoot is now bounded by how far a turn's actual cost exceeds its hold,
- * rather than by how many turns happened to start together.
+ * The increment is paired with a `ChannelBudgetHold` row in the same
+ * transaction, so an abandoned claim expires instead of persisting — see
+ * {@link sweepExpiredHolds}.
  *
  * No cap set means no hold and no extra round-trip — `settle` is then just the
  * post-turn accrual those channels already did.
@@ -380,13 +470,19 @@ export interface ChannelBudgetHold {
 export async function reserveChannelTurn(
   channelId: string,
   monthlyBudgetUsdCents: number | null,
-  /**
-   * How many model calls this hold covers. A single turn is one; the background
-   * passes that fan out over a batch pass their batch size, so the hold scales
-   * with what the pass will actually spend instead of under-holding by the fan-out
-   * factor.
-   */
-  modelCalls = 1
+  opts: {
+    /** Agent whose bound model prices the hold. */
+    agentKey: string;
+    orgId: string;
+    teamId: string;
+    /**
+     * How many model calls this hold covers. A single turn is one; the
+     * background passes that fan out over a batch pass their batch size, so the
+     * hold scales with what the pass will actually spend instead of
+     * under-holding by the fan-out factor.
+     */
+    modelCalls?: number;
+  }
 ): Promise<ChannelBudgetHold> {
   // Pin the month at reserve time. `currentYearMonth()` re-read at settle would
   // land the two halves on different rows across a UTC month boundary: the hold
@@ -394,27 +490,57 @@ export async function reserveChannelTurn(
   // negative balance.
   const yearMonth = currentYearMonth();
   if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
-    return makeHold(channelId, yearMonth, 0);
+    return makeHold(channelId, yearMonth, 0, null);
   }
 
-  const reservation = CHANNEL_TURN_RESERVATION_USD * Math.max(1, modelCalls);
-  const held = await addChannelUsage(channelId, yearMonth, reservation, false);
-  if (held === null) {
+  // Reclaim abandoned claims before deciding, so a channel is never refused on
+  // budget that nothing is actually spending.
+  await sweepExpiredHolds(channelId);
+
+  const reservation = await estimateHoldUsd(
+    opts.agentKey,
+    { channelId, orgId: opts.orgId, teamId: opts.teamId },
+    opts.modelCalls ?? 1
+  );
+
+  let claim: { accruedBefore: number; holdId: string } | null = null;
+  try {
+    claim = await prisma.$transaction(async (tx) => {
+      const row = await upsertChannelUsage(tx, channelId, yearMonth, reservation, false);
+      const hold = await tx.channelBudgetHold.create({
+        data: {
+          amountUsd: reservation,
+          channelId,
+          expiresAt: new Date(Date.now() + CHANNEL_HOLD_TTL_MS),
+          yearMonth,
+        },
+        select: { id: true },
+      });
+      // The post-increment total, so this is what the channel had spent before
+      // this turn laid claim to anything.
+      return { accruedBefore: Number(row.costUsdAccrued) - reservation, holdId: hold.id };
+    });
+  } catch (err) {
+    console.error(
+      `[channelAssistant] failed to reserve channel budget for ${channelId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  if (claim === null) {
     // The ledger write failed. Fall back to the read-only gate rather than
     // blocking the turn: this row backs a cap, not billing, and the run-level
     // ledger still records the spend.
     return (await isChannelOverBudgetNow(channelId, monthlyBudgetUsdCents))
       ? REFUSED_HOLD
-      : makeHold(channelId, yearMonth, 0);
+      : makeHold(channelId, yearMonth, 0, null);
   }
 
-  // `held` is the post-increment total, so this is what the channel had spent
-  // before this turn laid claim to anything.
-  if (isChannelOverBudget(held - reservation, monthlyBudgetUsdCents)) {
-    await addChannelUsage(channelId, yearMonth, -reservation, false);
+  if (isChannelOverBudget(claim.accruedBefore, monthlyBudgetUsdCents)) {
+    await releaseHold(channelId, yearMonth, claim.holdId, reservation);
     return REFUSED_HOLD;
   }
-  return makeHold(channelId, yearMonth, reservation);
+  return makeHold(channelId, yearMonth, reservation, claim.holdId);
 }
 
 /**
@@ -428,7 +554,32 @@ const REFUSED_HOLD: ChannelBudgetHold = {
   settle: async () => {},
 };
 
-function makeHold(channelId: string, yearMonth: string, reservedUsd: number): ChannelBudgetHold {
+/** Drops a hold row and takes its amount back off the ledger. */
+async function releaseHold(
+  channelId: string,
+  yearMonth: string,
+  holdId: string,
+  amountUsd: number
+): Promise<void> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.channelBudgetHold.delete({ where: { id: holdId } });
+      await upsertChannelUsage(tx, channelId, yearMonth, -amountUsd, false);
+    });
+  } catch (err) {
+    console.error(
+      `[channelAssistant] failed to release a budget hold for ${channelId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+function makeHold(
+  channelId: string,
+  yearMonth: string,
+  reservedUsd: number,
+  holdId: string | null
+): ChannelBudgetHold {
   let settled = false;
   return {
     overBudget: false,
@@ -438,13 +589,26 @@ function makeHold(channelId: string, yearMonth: string, reservedUsd: number): Ch
       }
       settled = true;
       const countRun = opts.countRun ?? true;
-      const delta = costUsd - reservedUsd;
-      // Nothing held and nothing spent: an uncapped channel whose background
-      // pass made no model call has no reason to materialise a usage row.
-      if (delta === 0 && !countRun) {
+      if (holdId === null) {
+        // Nothing held and nothing spent: an uncapped channel whose background
+        // pass made no model call has no reason to materialise a usage row.
+        if (costUsd === 0 && !countRun) {
+          return;
+        }
+        await addChannelUsage(channelId, yearMonth, costUsd, countRun);
         return;
       }
-      await addChannelUsage(channelId, yearMonth, delta, countRun);
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Deleting the row is what proves the hold was still ours. If a sweep
+          // beat us to it the reservation has already been refunded, so the
+          // real cost is owed in full rather than net of it.
+          await tx.channelBudgetHold.delete({ where: { id: holdId } });
+          await upsertChannelUsage(tx, channelId, yearMonth, costUsd - reservedUsd, countRun);
+        });
+      } catch {
+        await addChannelUsage(channelId, yearMonth, costUsd, countRun);
+      }
     },
   };
 }
@@ -534,9 +698,14 @@ export async function runHeldChannelTurn(
   },
   userMessage: string,
   spanName: string,
-  extras?: { tools?: AgentTools; promptNote?: string }
+  extras?: { tools?: AgentTools; promptNote?: string; modelCalls?: number }
 ): Promise<HeldChannelTurn | null> {
-  const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
+  const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents, {
+    agentKey: channel.agentKey || DEFAULT_CHANNEL_AGENT_KEY,
+    modelCalls: extras?.modelCalls,
+    orgId: channel.orgId,
+    teamId: channel.teamId,
+  });
   if (hold.overBudget) {
     return null;
   }
@@ -696,6 +865,8 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
     userMessage,
     'llm.channel_assistant',
     {
+      // The turn itself plus the post-turn memory summarizer.
+      modelCalls: 2,
       promptNote,
       tools: {
         delegateTask: delegateTool,
@@ -709,19 +880,12 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   }
   const { reply, costUsd } = turn;
 
-  // Swap the hold for the authoritative `costUsd` returned by runAgent (priced by
-  // the agent KEY's configured model) so the per-channel ledger prices identically
-  // to the run-level ledger rather than re-deriving cost from the raw spec string.
-  // Best-effort: a failure here must NOT break the reply — the workflow-level
-  // ledger (recordLlmUsage inside runAgent) is the source of truth for billing;
-  // this row only backs the per-channel cap.
-  await turn.hold.settle(costUsd);
-
   // Gap H intent gate: a follow-up turn that decided the message wasn't for it
   // (and didn't fire a tool) is suppressed — the cost already happened (budget
   // bounds it) but nothing is posted, so the assistant doesn't inject itself into
-  // human-to-human chatter. The cost is settled above, so the budget still sees it.
+  // human-to-human chatter. Settle before returning so the budget still sees it.
   if (input.followup && !delegate && !generate && !refine && SKIP_SENTINEL.test(reply)) {
+    await turn.hold.settle(costUsd);
     return { reply: '', suppressed: true };
   }
 
@@ -730,9 +894,20 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   // non-trivial replies (skip terse acknowledgements). Refinement: distill the
   // exchange into a durable fact via a cheap summarizer pass instead of storing
   // the raw transcript (see {@link summarizeAndStoreChannelMemory}).
-  if (reply.length > MIN_MEMORY_REPLY_LENGTH) {
-    await summarizeAndStoreChannelMemory(input, reply);
-  }
+  //
+  // The summarizer is a second model call on this channel, so its cost settles
+  // against the same hold — `runHeldChannelTurn` reserved for both. Settling
+  // after it, rather than before, is what keeps it inside the cap.
+  const summaryCostUsd =
+    reply.length > MIN_MEMORY_REPLY_LENGTH ? await summarizeAndStoreChannelMemory(input, reply) : 0;
+
+  // Swap the hold for the authoritative `costUsd` returned by runAgent (priced by
+  // the agent KEY's configured model) so the per-channel ledger prices identically
+  // to the run-level ledger rather than re-deriving cost from the raw spec string.
+  // Best-effort: a failure here must NOT break the reply — the workflow-level
+  // ledger (recordLlmUsage inside runAgent) is the source of truth for billing;
+  // this row only backs the per-channel cap.
+  await turn.hold.settle(costUsd + summaryCostUsd);
 
   // The action intents are mutually exclusive — the workflow handles each with an
   // early return, so a co-fired lower-precedence intent would be silently dropped.
@@ -778,7 +953,8 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
 async function summarizeAndStoreChannelMemory(
   input: ChannelAssistantTurnInput,
   reply: string
-): Promise<void> {
+): Promise<number> {
+  let costUsd = 0;
   try {
     const spec = await resolveAgentSpec(
       {
@@ -795,8 +971,10 @@ async function summarizeAndStoreChannelMemory(
       spanName: 'llm.channel_memory_summary',
     });
 
-    // The summarizer is a real LLM call on the channel — account its cost too.
-    await accrueChannelUsage(input.channelId, result.costUsd ?? 0);
+    // The summarizer is a real LLM call on the channel. Its cost goes back to the
+    // caller, which settles it against the same hold as the turn that triggered
+    // it — a second unheld call would spend outside the cap.
+    costUsd = result.costUsd ?? 0;
 
     const summary = result.object;
     if (!summary?.lessonSummary) {
@@ -835,6 +1013,7 @@ async function summarizeAndStoreChannelMemory(
       );
     }
   }
+  return costUsd;
 }
 
 /**
@@ -862,6 +1041,37 @@ export async function accrueChannelUsage(
 }
 
 /**
+ * The only statement that writes `ChannelMonthlyUsage`.
+ *
+ * Takes its client so the hold paths can run it inside the transaction that
+ * also writes the `ChannelBudgetHold` row — an increment without its row, or a
+ * row without its increment, is exactly the state the sweeper cannot reason
+ * about. Errors propagate; {@link addChannelUsage} is the best-effort wrapper.
+ */
+function upsertChannelUsage(
+  client: Pick<typeof prisma, 'channelMonthlyUsage'>,
+  channelId: string,
+  yearMonth: string,
+  deltaUsd: number,
+  countRun: boolean
+) {
+  return client.channelMonthlyUsage.upsert({
+    create: {
+      channelId,
+      costUsdAccrued: deltaUsd,
+      runsCompleted: countRun ? 1 : 0,
+      yearMonth,
+    },
+    select: { costUsdAccrued: true },
+    update: {
+      costUsdAccrued: { increment: deltaUsd },
+      ...(countRun ? { runsCompleted: { increment: 1 } } : {}),
+    },
+    where: { channelId_yearMonth: { channelId, yearMonth } },
+  });
+}
+
+/**
  * The one write to `ChannelMonthlyUsage`. Returns the row's new accrued total,
  * or `null` when the write failed — the budget row backs a cap, not billing, so
  * every caller degrades to "the turn still happens" rather than propagating.
@@ -879,20 +1089,7 @@ async function addChannelUsage(
   countRun: boolean
 ): Promise<number | null> {
   try {
-    const row = await prisma.channelMonthlyUsage.upsert({
-      create: {
-        channelId,
-        costUsdAccrued: deltaUsd,
-        runsCompleted: countRun ? 1 : 0,
-        yearMonth,
-      },
-      select: { costUsdAccrued: true },
-      update: {
-        costUsdAccrued: { increment: deltaUsd },
-        ...(countRun ? { runsCompleted: { increment: 1 } } : {}),
-      },
-      where: { channelId_yearMonth: { channelId, yearMonth } },
-    });
+    const row = await upsertChannelUsage(prisma, channelId, yearMonth, deltaUsd, countRun);
     return Number(row.costUsdAccrued);
   } catch (err) {
     // Best-effort: never let a budget-ledger write failure break the reply.

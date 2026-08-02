@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
-    channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
+    channelBudgetHold: {
+      create: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+      findMany: vi.fn(),
+    },
+    channelMonthlyUsage: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -21,6 +27,12 @@ vi.mock('@auto-swe/shared/lib/billing', () => ({
 const resolveAgentSpecMock = vi.fn();
 vi.mock('../lib/config/agentSpec.js', () => ({
   resolveAgentSpec: (...args: unknown[]) => resolveAgentSpecMock(...args),
+}));
+
+/** The hold is priced from the model this resolves to. */
+const resolveAgentMock = vi.fn();
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: (...args: unknown[]) => resolveAgentMock(...args),
 }));
 
 const runAgentMock = vi.fn();
@@ -112,6 +124,7 @@ beforeEach(() => {
   vi.mocked(AgentTracer).mockImplementation(makeTracerMock as never);
   // `clearAllMocks` also wipes this; the rollover test moves it forward.
   vi.mocked(currentYearMonth).mockReturnValue('2026-06');
+  resolveAgentMock.mockResolvedValue({ model: { spec: 'anthropic/claude-opus-4-8' } });
   resolveAgentSpecMock.mockResolvedValue({
     agentKey: 'channelAssistant',
     modelSpec: 'anthropic/claude-opus-4-8',
@@ -190,16 +203,26 @@ describe('isChannelOverBudget', () => {
   });
 });
 
+/** Hold priced from `MODEL_PRICES` for the default (Opus) channel agent. */
+const OPUS_HOLD = (8_000 * 5 + 1_500 * 25) / 1_000_000; // $0.0775
+/** The same envelope against Haiku — ~5x cheaper, which is the point. */
+const HAIKU_HOLD = (8_000 * 1 + 1_500 * 5) / 1_000_000; // $0.0155
+
+const RESERVE = { agentKey: 'channelAssistant', orgId: 'org-1', teamId: 'team-1' };
+
 describe('reserveChannelTurn', () => {
   /**
-   * A `channel_monthly_usage` row that actually accumulates, so a test can watch
-   * holds stack the way concurrent turns would. `upsert` returns the row's new
-   * total, which is what the reservation decides on.
+   * A `channel_monthly_usage` row that accumulates, plus the `channel_budget_holds`
+   * rows beside it, so a test can watch holds stack the way concurrent turns
+   * would and watch the sweeper take an abandoned one back.
    */
   function fakeLedger(startingUsd = 0) {
     // Keyed by yearMonth, and modelling the create branch too — a hold and its
     // settle landing on different rows is exactly the month-rollover bug.
     const rows = new Map<string, number>([['2026-06', startingUsd]]);
+    const holds = new Map<string, { amountUsd: number; expiresAt: Date; yearMonth: string }>();
+    let nextId = 1;
+
     upsertUsage.mockImplementation((async (args: {
       create: { costUsdAccrued: number };
       update: { costUsdAccrued: { increment: number } };
@@ -212,12 +235,51 @@ describe('reserveChannelTurn', () => {
       rows.set(month, next);
       return { costUsdAccrued: next };
     }) as never);
-    return { rows, total: () => rows.get('2026-06') ?? 0 };
+
+    vi.mocked(prisma.channelBudgetHold.create).mockImplementation((async (args: {
+      data: { amountUsd: number; expiresAt: Date; yearMonth: string };
+    }) => {
+      const id = `hold-${nextId++}`;
+      holds.set(id, { ...args.data });
+      return { id };
+    }) as never);
+
+    vi.mocked(prisma.channelBudgetHold.delete).mockImplementation((async (args: {
+      where: { id: string };
+    }) => {
+      if (!holds.delete(args.where.id)) {
+        // Prisma raises P2025 when the row is already gone — the signal that
+        // another sweeper claimed it first.
+        throw Object.assign(new Error('Record to delete does not exist'), { code: 'P2025' });
+      }
+      return { id: args.where.id };
+    }) as never);
+
+    vi.mocked(prisma.channelBudgetHold.findMany).mockImplementation((async (args: {
+      where: { expiresAt?: { lt: Date } };
+    }) => {
+      const cutoff = args.where.expiresAt?.lt;
+      return [...holds.entries()]
+        .filter(([, h]) => !cutoff || h.expiresAt < cutoff)
+        .map(([id, h]) => ({ amountUsd: h.amountUsd, id, yearMonth: h.yearMonth }));
+    }) as never);
+
+    vi.mocked(prisma.channelMonthlyUsage.update).mockImplementation((async (args: {
+      data: { costUsdAccrued: { decrement: number } };
+      where: { channelId_yearMonth: { yearMonth: string } };
+    }) => {
+      const month = args.where.channelId_yearMonth.yearMonth;
+      const next = (rows.get(month) ?? 0) - args.data.costUsdAccrued.decrement;
+      rows.set(month, next);
+      return { costUsdAccrued: next };
+    }) as never);
+
+    return { holds, rows, total: () => rows.get('2026-06') ?? 0 };
   }
 
   it('takes no hold and never blocks when the channel has no cap', async () => {
     const ledger = fakeLedger();
-    const hold = await reserveChannelTurn('chan-1', null);
+    const hold = await reserveChannelTurn('chan-1', null, RESERVE);
     expect(hold.overBudget).toBe(false);
     expect(upsertUsage).not.toHaveBeenCalled();
 
@@ -225,44 +287,101 @@ describe('reserveChannelTurn', () => {
     expect(ledger.total()).toBeCloseTo(0.02, 6);
   });
 
+  it('prices the hold from the model the channel is bound to', async () => {
+    // A flat estimate is ~5x wrong in one direction or the other; the price is
+    // something the system already knows.
+    const opus = fakeLedger(1);
+    await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    expect(opus.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
+
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'anthropic/claude-haiku-4-5-20251001' } });
+    const haiku = fakeLedger(1);
+    await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    expect(haiku.total()).toBeCloseTo(1 + HAIKU_HOLD, 6);
+    expect(HAIKU_HOLD).toBeLessThan(OPUS_HOLD);
+  });
+
+  it('falls back to a flat hold when the model has no known price', async () => {
+    resolveAgentMock.mockResolvedValue({ model: { spec: 'someone/unpriced-model' } });
+    const ledger = fakeLedger(1);
+    await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    // A zero hold would bound nothing.
+    expect(ledger.total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+  });
+
   it('holds while the turn runs, then settles to exactly the real cost', async () => {
     const ledger = fakeLedger(1);
-    const hold = await reserveChannelTurn('chan-1', 10000); // $100 cap
+    const hold = await reserveChannelTurn('chan-1', 10000, RESERVE); // $100 cap
     expect(hold.overBudget).toBe(false);
-    expect(ledger.total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
 
     await hold.settle(0.02);
     expect(ledger.total()).toBeCloseTo(1.02, 6);
+    expect(ledger.holds.size, 'a settled hold leaves no row behind').toBe(0);
   });
 
   it('releases its hold when the channel is already at the cap', async () => {
     const ledger = fakeLedger(5);
-    const hold = await reserveChannelTurn('chan-1', 500); // $5 cap, $5 spent
+    const hold = await reserveChannelTurn('chan-1', 500, RESERVE); // $5 cap, $5 spent
     expect(hold.overBudget).toBe(true);
     // Taken and given straight back — a refused turn must not leave the channel
     // looking more expensive than it was.
     expect(ledger.total()).toBeCloseTo(5, 6);
+    expect(ledger.holds.size).toBe(0);
   });
 
   it('bounds concurrent turns, which a read-only gate does not', async () => {
-    // $5 cap with $4.98 spent leaves room for one hold, not two. Turn workflow
-    // ids are per-event, so both of these really can be in flight at once — the
-    // whole point of holding rather than reading.
-    const ledger = fakeLedger(4.98);
+    // A $5 cap with $4.95 spent leaves room for one Opus hold, not two. Turn
+    // workflow ids are per-event, so both of these really can be in flight at
+    // once — the whole point of holding rather than reading.
+    const ledger = fakeLedger(4.95);
     const [first, second] = await Promise.all([
-      reserveChannelTurn('chan-1', 500),
-      reserveChannelTurn('chan-1', 500),
+      reserveChannelTurn('chan-1', 500, RESERVE),
+      reserveChannelTurn('chan-1', 500, RESERVE),
     ]);
 
     const refused = [first, second].filter((h) => h.overBudget);
     expect(refused).toHaveLength(1);
     // The refused turn gave its hold back; the admitted one still holds.
-    expect(ledger.total()).toBeCloseTo(4.98 + CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(4.95 + OPUS_HOLD, 6);
+    expect(ledger.holds.size).toBe(1);
+  });
+
+  it('sweeps an abandoned hold back onto the ledger', async () => {
+    // The failure a bare increment cannot recover from: a worker dies between
+    // reserving and settling, and without the row the estimate would sit on the
+    // channel for the rest of the calendar month.
+    const ledger = fakeLedger(1);
+    await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    expect(ledger.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
+
+    // That turn never settles. Age its hold past the TTL.
+    for (const hold of ledger.holds.values()) {
+      hold.expiresAt = new Date(Date.now() - 1);
+    }
+
+    // The next reserve sweeps it before deciding.
+    await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    // The abandoned hold is gone; only the new one remains.
+    expect(ledger.total()).toBeCloseTo(1 + OPUS_HOLD, 6);
+    expect(ledger.holds.size).toBe(1);
+  });
+
+  it('settles the full cost when a sweep already refunded its hold', async () => {
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, RESERVE);
+    // Simulate the sweeper winning: row gone, reservation already returned.
+    ledger.holds.clear();
+    ledger.rows.set('2026-06', 1);
+
+    await hold.settle(0.02);
+    // Net of the reservation would have under-charged by the hold amount.
+    expect(ledger.total()).toBeCloseTo(1.02, 6);
   });
 
   it('settles once, so a caller can settle on success and release in a finally', async () => {
     const ledger = fakeLedger(1);
-    const hold = await reserveChannelTurn('chan-1', 10000);
+    const hold = await reserveChannelTurn('chan-1', 10000, RESERVE);
     await hold.settle(0.02);
     await hold.settle(0); // the `finally` release
     expect(ledger.total()).toBeCloseTo(1.02, 6);
@@ -273,7 +392,7 @@ describe('reserveChannelTurn', () => {
     // re-read the clock, a turn spanning midnight on the 1st would leak its
     // hold on the old row and create the new month's row at a negative balance.
     const ledger = fakeLedger(1);
-    const hold = await reserveChannelTurn('chan-1', 10000);
+    const hold = await reserveChannelTurn('chan-1', 10000, RESERVE);
     vi.mocked(currentYearMonth).mockReturnValue('2026-07');
     await hold.settle(0.02);
 
@@ -285,9 +404,9 @@ describe('reserveChannelTurn', () => {
     // A background pass that fans out over a batch must not be admitted on the
     // headroom of a single turn.
     const ledger = fakeLedger(1);
-    const hold = await reserveChannelTurn('chan-1', 100_000, 4);
+    const hold = await reserveChannelTurn('chan-1', 100_000, { ...RESERVE, modelCalls: 4 });
     expect(hold.overBudget).toBe(false);
-    expect(ledger.total()).toBeCloseTo(1 + 4 * CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(1 + 4 * OPUS_HOLD, 6);
 
     await hold.settle(0.3);
     expect(ledger.total()).toBeCloseTo(1.3, 6);
@@ -295,7 +414,7 @@ describe('reserveChannelTurn', () => {
 
   it('writes nothing when there is no hold and no cost', async () => {
     const ledger = fakeLedger();
-    const hold = await reserveChannelTurn('chan-1', null);
+    const hold = await reserveChannelTurn('chan-1', null, RESERVE);
     await hold.settle(0, { countRun: false });
     expect(upsertUsage).not.toHaveBeenCalled();
     expect(ledger.total()).toBe(0);
@@ -304,10 +423,11 @@ describe('reserveChannelTurn', () => {
   it('lets the turn proceed when the ledger write fails', async () => {
     // The budget row backs a cap, not billing — a DB failure must not silence
     // the assistant. Falls back to the read-only gate.
+    fakeLedger(1);
     upsertUsage.mockRejectedValue(new Error('db down'));
     findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
 
-    const hold = await reserveChannelTurn('chan-1', 10000);
+    const hold = await reserveChannelTurn('chan-1', 10000, RESERVE);
     expect(hold.overBudget).toBe(false);
   });
 });
@@ -405,18 +525,22 @@ describe('runChannelAssistantTurn', () => {
       monthlyBudgetUsdCents: 10000, // $100 cap
     } as never);
     findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never); // $1 accrued
-    // Post-increment total the hold reads back: $1 accrued + its own hold.
-    upsertUsage.mockResolvedValue({
-      costUsdAccrued: 1 + CHANNEL_TURN_RESERVATION_USD,
-    } as never);
+    // The turn holds for two model calls: the reply and the memory summarizer.
+    const expectedHold = 2 * ((8_000 * 5 + 1_500 * 25) / 1_000_000);
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 1 + expectedHold } as never);
+    vi.mocked(prisma.channelBudgetHold.create).mockResolvedValue({ id: 'hold-1' } as never);
+    vi.mocked(prisma.channelBudgetHold.delete).mockResolvedValue({ id: 'hold-1' } as never);
+    vi.mocked(prisma.channelBudgetHold.findMany).mockResolvedValue([] as never);
 
     const result = await runChannelAssistantTurn(makeInput());
 
     expect(result.reply).toBe('hi there');
+    // The default reply is too short to be worth remembering, so the summarizer
+    // never runs — the hold still covered it, and the settle nets it back out.
     expect(runAgentMock).toHaveBeenCalledTimes(1);
 
     // Two writes: the hold taken before the model call, then the settle that
-    // swaps it for the turn's real cost.
+    // swaps it for the real cost of both calls.
     expect(upsertUsage).toHaveBeenCalledTimes(2);
     type UsageCall = {
       create: { costUsdAccrued: number; runsCompleted: number };
@@ -424,14 +548,14 @@ describe('runChannelAssistantTurn', () => {
       where: { channelId_yearMonth: { channelId: string; yearMonth: string } };
     };
     const [held, settled] = upsertUsage.mock.calls.map((c) => c[0] as UsageCall);
-    expect(held.update.costUsdAccrued).toEqual({ increment: CHANNEL_TURN_RESERVATION_USD });
+    expect(held.update.costUsdAccrued.increment).toBeCloseTo(expectedHold, 6);
     // A hold is not a completed run — only the settle counts one.
     expect(held.update.runsCompleted).toBeUndefined();
     expect(settled.update.runsCompleted).toEqual({ increment: 1 });
     expect(settled.where.channelId_yearMonth.yearMonth).toBe('2026-06');
 
-    // Net of the two: the authoritative `costUsd` returned by runAgent (not a
-    // local re-pricing of token usage), keeping the per-channel ledger in
+    // Net of the two: the authoritative `costUsd` from both runAgent calls (not
+    // a local re-pricing of token usage), keeping the per-channel ledger in
     // lockstep with the run-level ledger.
     const net = held.update.costUsdAccrued.increment + settled.update.costUsdAccrued.increment;
     expect(net).toBeCloseTo(0.0175, 6);
@@ -628,7 +752,9 @@ describe('runChannelAssistantTurn', () => {
     expect(writeArg.userSlackId).toBe('U999');
   });
 
-  it('accrues the summarizer call cost in addition to the turn cost', async () => {
+  it('settles the summarizer call against the turn hold, not outside it', async () => {
+    // The summarizer is a second model call on the channel. Accruing it
+    // separately let it spend past the cap; it now lands on the same hold.
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: null,
@@ -640,13 +766,11 @@ describe('runChannelAssistantTurn', () => {
 
     await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
 
-    // Two accruals: the turn ($0.02) and the summarizer ($0.001).
-    expect(upsertUsage).toHaveBeenCalledTimes(2);
-    const accrued = upsertUsage.mock.calls.map(
-      (c) => (c[0] as { create: { costUsdAccrued: number } }).create.costUsdAccrued
-    );
-    expect(accrued).toContain(0.02);
-    expect(accrued).toContain(0.001);
+    // One write, carrying both costs: the turn ($0.02) and the summarizer ($0.001).
+    expect(upsertUsage).toHaveBeenCalledTimes(1);
+    const accrued = (upsertUsage.mock.calls[0]?.[0] as { create: { costUsdAccrued: number } })
+      .create.costUsdAccrued;
+    expect(accrued).toBeCloseTo(0.021, 6);
   });
 
   it('falls back to storing the raw exchange when summarization fails', async () => {

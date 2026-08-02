@@ -3,11 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
-    channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
+    channelBudgetHold: {
+      create: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+      findMany: vi.fn(),
+    },
+    channelMonthlyUsage: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };
 });
+
+/** The hold is priced from the model the channel's agent resolves to. */
+const resolveAgentMock = vi.fn();
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: (...args: unknown[]) => resolveAgentMock(...args),
+}));
 
 vi.mock('@auto-swe/shared/lib/billing', () => ({
   currentYearMonth: vi.fn().mockReturnValue('2026-06'),
@@ -88,7 +100,14 @@ beforeEach(() => {
   recentChannelMemoryMock.mockResolvedValue([memoryRow('staging migration is pending')]);
   writeChannelMemoryMock.mockResolvedValue('mem-1');
   upsertUsage.mockResolvedValue({} as never);
+  resolveAgentMock.mockResolvedValue({ model: { spec: 'anthropic/claude-opus-4-8' } });
+  vi.mocked(prisma.channelBudgetHold.create).mockResolvedValue({ id: 'hold-1' } as never);
+  vi.mocked(prisma.channelBudgetHold.delete).mockResolvedValue({ id: 'hold-1' } as never);
+  vi.mocked(prisma.channelBudgetHold.findMany).mockResolvedValue([] as never);
 });
+
+/** Hold for one Opus call, from `MODEL_PRICES` — see `estimateHoldUsd`. */
+const OPUS_HOLD = (8_000 * 5 + 1_500 * 25) / 1_000_000;
 
 describe('shouldPostDigest', () => {
   it('rejects empty / whitespace replies', () => {
@@ -208,8 +227,8 @@ describe('runChannelAmbientDigest', () => {
     // concurrent turn took the last of the headroom before this one held.
     findChannel.mockResolvedValue(makeChannel({ monthlyBudgetUsdCents: 500 }) as never);
     findUsage.mockResolvedValue({ costUsdAccrued: 4.9 } as never);
-    // Post-increment total, so the pre-hold value ($5.05 − $0.05) is at the cap.
-    upsertUsage.mockResolvedValue({ costUsdAccrued: 5.05 } as never);
+    // Post-increment total, so the pre-hold value is already at the $5 cap.
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 5 + OPUS_HOLD } as never);
 
     await runChannelAmbientDigest({ channelId: 'chan-1' });
 
@@ -218,9 +237,12 @@ describe('runChannelAmbientDigest', () => {
     // Held, then released — a refused digest must not leave the channel looking
     // more expensive than it was.
     const deltas = upsertUsage.mock.calls.map(
-      (c) => (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+      (c) =>
+        (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+          .increment
     );
-    expect(deltas).toEqual([{ increment: 0.05 }, { increment: -0.05 }]);
+    expect(deltas[0]).toBeCloseTo(OPUS_HOLD, 6);
+    expect(deltas[1]).toBeCloseTo(-OPUS_HOLD, 6);
   });
 
   it('gives the hold back when the model call throws', async () => {
@@ -228,7 +250,7 @@ describe('runChannelAmbientDigest', () => {
     // and Temporal retries compound it.
     findChannel.mockResolvedValue(makeChannel({ monthlyBudgetUsdCents: 10000 }) as never);
     findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
-    upsertUsage.mockResolvedValue({ costUsdAccrued: 1.05 } as never);
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 1 + OPUS_HOLD } as never);
     runAgentMock.mockRejectedValue(new Error('provider down'));
 
     // The digest swallows its own failures by design; the hold must not survive
@@ -236,9 +258,12 @@ describe('runChannelAmbientDigest', () => {
     await runChannelAmbientDigest({ channelId: 'chan-1' });
 
     const deltas = upsertUsage.mock.calls.map(
-      (c) => (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+      (c) =>
+        (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+          .increment
     );
-    expect(deltas).toEqual([{ increment: 0.05 }, { increment: -0.05 }]);
+    expect(deltas[0]).toBeCloseTo(OPUS_HOLD, 6);
+    expect(deltas[1]).toBeCloseTo(-OPUS_HOLD, 6);
   });
 
   it('no-ops for a disabled (ambientEnabled=false) channel', async () => {
