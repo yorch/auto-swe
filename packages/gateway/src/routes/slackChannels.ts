@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
@@ -261,11 +262,13 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     const user = requireUser(request);
     const where: Prisma.SlackChannelWhereInput =
       user.role === 'ADMIN' ? {} : { team: { memberships: { some: { userId: user.sub } } } };
-    const rows = await fastify.prisma.slackChannel.findMany({
-      include: channelInclude,
-      orderBy: { createdAt: 'desc' },
-      where,
-    });
+    const rows = await asPlatformAdmin(user, "admin lists every team's channels", () =>
+      fastify.prisma.slackChannel.findMany({
+        include: channelInclude,
+        orderBy: { createdAt: 'desc' },
+        where,
+      })
+    );
     // Batch this month's usage for all listed channels in one query, then map
     // by channelId — avoids an N+1 (one findUnique per row).
     const usageRows = await fastify.prisma.channelMonthlyUsage.findMany({
@@ -410,6 +413,11 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         take: 200,
         where: {
           channelId: request.params.id,
+          // Redundant with `channelId` — a channel belongs to one team — but it
+          // costs nothing, `row.teamId` is already in hand from the access
+          // check above, and it keeps the query tenant-filtered in its own
+          // right rather than relying on that invariant holding forever.
+          teamId: row.teamId,
           ...(showConsolidated ? {} : { consolidatedAt: null }),
         },
       });

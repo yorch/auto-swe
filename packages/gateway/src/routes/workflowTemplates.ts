@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -737,11 +738,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         ...teamMembershipFilter(user),
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
       };
-      const templates = await fastify.prisma.workflowTemplate.findMany({
-        include: TEMPLATE_INCLUDE,
-        orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-        where,
-      });
+      // `teamMembershipFilter` is `{}` for a platform admin.
+      const templates = await asPlatformAdmin(user, "admin lists every team's templates", () =>
+        fastify.prisma.workflowTemplate.findMany({
+          include: TEMPLATE_INCLUDE,
+          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+          where,
+        })
+      );
       const lastRuns = await loadLastRuns(
         fastify,
         templates.map((t) => t.id)

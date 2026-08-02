@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -346,10 +347,14 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const repos = await fastify.prisma.connection.findMany({
-        select: { id: true, organizationName: true, repoName: true },
-        where: { id: { in: knownRepoIds } },
-      });
+      // Name lookup for ids the caller was already authorised for above
+      // (non-admins fail `accessibleRepoIds` and 404 before reaching here).
+      const repos = await runUnscoped('ids already authorised above', () =>
+        fastify.prisma.connection.findMany({
+          select: { id: true, organizationName: true, repoName: true },
+          where: { id: { in: knownRepoIds } },
+        })
+      );
       const repoById = new Map(repos.map((r) => [r.id, r]));
 
       interface ChildEntry {

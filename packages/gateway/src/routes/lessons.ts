@@ -1,8 +1,10 @@
 import type { Prisma } from '@auto-swe/shared';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ConsolidateBody = z.object({
@@ -46,26 +48,30 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         ...(!includeConsolidated && { consolidatedAt: null }),
       };
 
-      const [lessons, total] = await Promise.all([
-        fastify.prisma.memoryItem.findMany({
-          orderBy: { createdAt: 'desc' },
-          select: {
-            consolidatedAt: true,
-            createdAt: true,
-            failureType: true,
-            id: true,
-            lessonSummary: true,
-            metadata: true,
-            rationale: true,
-            repository: { select: { id: true, organizationName: true, repoName: true } },
-            workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
-          },
-          skip: offset,
-          take: limit,
-          where,
-        }),
-        fastify.prisma.memoryItem.count({ where }),
-      ]);
+      // `accessFilter` is `{}` for a platform admin, which is the intent — but
+      // written that way it is indistinguishable from a forgotten filter.
+      const [lessons, total] = await asPlatformAdmin(user, "admin sees every team's lessons", () =>
+        Promise.all([
+          fastify.prisma.memoryItem.findMany({
+            orderBy: { createdAt: 'desc' },
+            select: {
+              consolidatedAt: true,
+              createdAt: true,
+              failureType: true,
+              id: true,
+              lessonSummary: true,
+              metadata: true,
+              rationale: true,
+              repository: { select: { id: true, organizationName: true, repoName: true } },
+              workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+            },
+            skip: offset,
+            take: limit,
+            where,
+          }),
+          fastify.prisma.memoryItem.count({ where }),
+        ])
+      );
 
       return { data: lessons, meta: { limit, offset, total } };
     }
@@ -100,25 +106,30 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Semantic search requires the worker's embedding + pgvector query
       // For the gateway API, we do a text-based fallback search
-      const lessons = await fastify.prisma.memoryItem.findMany({
-        orderBy: { createdAt: 'desc' },
-        select: {
-          createdAt: true,
-          failureType: true,
-          id: true,
-          lessonSummary: true,
-          rationale: true,
-        },
-        take: limit,
-        where: {
-          OR: [
-            { lessonSummary: { contains: q, mode: 'insensitive' } },
-            { rationale: { contains: q, mode: 'insensitive' } },
-          ],
-          ...(!includeConsolidated && { consolidatedAt: null }),
-          repoId,
-        },
-      });
+      // Bounded to the single `repoId` the caller was just authorised for
+      // above, which is narrower than a team filter — but `repoId` is not a
+      // tenant column, so the guard cannot see it.
+      const lessons = await runUnscoped('bounded to one pre-authorised repoId', () =>
+        fastify.prisma.memoryItem.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            createdAt: true,
+            failureType: true,
+            id: true,
+            lessonSummary: true,
+            rationale: true,
+          },
+          take: limit,
+          where: {
+            OR: [
+              { lessonSummary: { contains: q, mode: 'insensitive' } },
+              { rationale: { contains: q, mode: 'insensitive' } },
+            ],
+            ...(!includeConsolidated && { consolidatedAt: null }),
+            repoId,
+          },
+        })
+      );
 
       return { data: lessons };
     }
@@ -167,25 +178,31 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   // list from the groupBy returned nothing and the admin table showed "No
   // repositories found" — and the per-repo "Run now" control vanished with it.
   app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const [repos, totalGroups, activeGroups] = await Promise.all([
-      // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
-      // servers), and a non-repo connection has no org/repo name to show.
-      fastify.prisma.connection.findMany({
-        select: { id: true, organizationName: true, repoName: true },
-        where: { type: 'git_repo' },
-      }),
-      fastify.prisma.memoryItem.groupBy({
-        _count: { _all: true },
-        _max: { consolidatedAt: true },
-        by: ['repoId'],
-        where: { repoId: { not: null } },
-      }),
-      fastify.prisma.memoryItem.groupBy({
-        _count: { _all: true },
-        by: ['repoId'],
-        where: { consolidatedAt: null, repoId: { not: null } },
-      }),
-    ]);
+    // Whole-fleet by design: this is the admin view of memory health across
+    // every repo, and the per-repo "Run now" control is built from it.
+    const [repos, totalGroups, activeGroups] = await runUnscoped(
+      'admin memory-health stats span every team',
+      () =>
+        Promise.all([
+          // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
+          // servers), and a non-repo connection has no org/repo name to show.
+          fastify.prisma.connection.findMany({
+            select: { id: true, organizationName: true, repoName: true },
+            where: { type: 'git_repo' },
+          }),
+          fastify.prisma.memoryItem.groupBy({
+            _count: { _all: true },
+            _max: { consolidatedAt: true },
+            by: ['repoId'],
+            where: { repoId: { not: null } },
+          }),
+          fastify.prisma.memoryItem.groupBy({
+            _count: { _all: true },
+            by: ['repoId'],
+            where: { consolidatedAt: null, repoId: { not: null } },
+          }),
+        ])
+    );
 
     const repoById = new Map(repos.map((r) => [r.id, r]));
     const totalByRepoId = new Map(

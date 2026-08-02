@@ -572,13 +572,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
   the database will catch. The gateway's Prisma client carries a `tenantGuard` extension that
-  flags a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
-  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate, but it
-  ships in **warn** mode — around 21 such call sites exist today, most of them legitimately global,
-  and none has been triaged. Run with `TENANT_GUARD_STRICT=1` to make them fail, mark the genuinely
-  global ones with `runUnscoped(reason, fn)`, fix the rest, then turn strict on for good. Single-row
-  lookups are deliberately unguarded, and raw SQL bypasses the extension entirely — this is defence
-  in depth, not the row-level security it stands in for.
+  fails a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
+  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate. Every
+  call site is accounted for: a deliberate cross-tenant read declares itself with
+  `runUnscoped(reason, fn)`, and the common `admin ? {} : filter` shape uses `asPlatformAdmin`,
+  which keeps the guard live for everyone except the role meant to see everything. It throws
+  outside production and warns inside it, so a false positive pages someone rather than taking the
+  API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
+  unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL bypasses the
+  extension entirely. This is defence in depth, not the row-level security it stands in for.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

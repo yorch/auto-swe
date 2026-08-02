@@ -86,10 +86,17 @@ export function hasTenantPredicate(where: unknown): boolean {
     if (TENANT_KEYS.has(key)) {
       return true;
     }
-    // AND/OR/NOT wrap nested clauses; a predicate inside any branch counts.
-    // OR is deliberately included: `OR: [{ teamId: null }, { team: … }]` is the
-    // standard "global rows plus mine" shape used across the gateway.
-    if ((key === 'AND' || key === 'OR' || key === 'NOT') && value) {
+    // Recurse through *any* nested object, not just AND/OR/NOT. Tenancy is
+    // routinely reached through a relation two or three levels down —
+    // `{ repository: { team: { memberships: { some: … } } } }` is how the
+    // lessons routes scope, and treating that as unscoped would be a false
+    // positive on correct code, which is the fastest way to get a guard
+    // switched off.
+    //
+    // OR counts as scoping: `OR: [{ teamId: null }, { team: … }]` is the
+    // standard "global rows plus mine" shape, and its unfiltered-looking branch
+    // is deliberate.
+    if (value && typeof value === 'object') {
       const branches = Array.isArray(value) ? value : [value];
       if (branches.some((b) => hasTenantPredicate(b))) {
         return true;
@@ -114,16 +121,14 @@ export interface TenantGuardOptions {
   /**
    * `'throw'` fails the query; `'warn'` logs and lets it through.
    *
-   * Defaults to `'warn'`, opt in to strict with `TENANT_GUARD_STRICT=1`.
+   * Defaults to `'throw'` outside production, `'warn'` inside it. Every gateway
+   * call site has been triaged — each cross-tenant query now declares itself
+   * through `runUnscoped` or `asPlatformAdmin` — so a new violation is a new
+   * bug and should stop a test rather than be logged and forgotten.
    *
-   * Warn is the default because the gateway has ~21 multi-row queries on
-   * tenant-scoped models with no visible tenant predicate, and most of them are
-   * legitimately global (admin listings, bundle sync, spec validation, a
-   * retention sweep). Marking them `runUnscoped` requires knowing each route's
-   * authorization model, and a wrong mark is worse than no mark — it
-   * permanently silences the guard on a route that did need scoping. So the
-   * guard ships observing: turn on strict in a dev or staging run, triage what
-   * it reports, mark or fix each one, then flip strict on for good.
+   * Production still warns: a guard false-positive on a query that has been
+   * serving traffic should page someone, not take the API down. Set
+   * `TENANT_GUARD_STRICT=1` to make production throw too.
    */
   mode?: 'throw' | 'warn';
   onViolation?: (err: UnscopedTenantQueryError) => void;
@@ -131,7 +136,11 @@ export interface TenantGuardOptions {
 
 /** The `$extends` argument. Kept separate from the client so it is unit-testable. */
 export function tenantGuardExtension(opts?: TenantGuardOptions) {
-  const mode = opts?.mode ?? (process.env.TENANT_GUARD_STRICT === '1' ? 'throw' : 'warn');
+  const mode =
+    opts?.mode ??
+    (process.env.TENANT_GUARD_STRICT === '1' || process.env.NODE_ENV !== 'production'
+      ? 'throw'
+      : 'warn');
   return {
     name: 'tenantGuard',
     query: {

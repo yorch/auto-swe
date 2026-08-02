@@ -1,3 +1,4 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -124,9 +125,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const cutoff = new Date(Date.now() - request.query.days * 24 * 60 * 60 * 1000);
-      const { count } = await fastify.prisma.workflowShellAudit.deleteMany({
-        where: { createdAt: { lt: cutoff } },
-      });
+      // Retention applies to the whole table; pruning per tenant would leave
+      // other teams' audit rows growing forever.
+      const { count } = await runUnscoped('audit retention sweep is table-wide', () =>
+        fastify.prisma.workflowShellAudit.deleteMany({ where: { createdAt: { lt: cutoff } } })
+      );
       return { data: { deleted: count, olderThanDays: request.query.days } };
     }
   );

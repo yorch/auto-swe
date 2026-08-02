@@ -31,6 +31,9 @@ describe('hasTenantPredicate', () => {
     ['a memberships relation', { memberships: { some: { userId: 'u1' } } }],
     ['nested inside AND', { AND: [{ isActive: true }, { teamId: 't1' }] }],
     ['nested inside NOT', { NOT: { teamId: 't1' } }],
+    // How the lessons routes scope: tenancy reached through a relation.
+    ['through a relation', { repository: { team: { memberships: { some: { userId: 'u' } } } } }],
+    ['through a list filter', { cases: { some: { dataset: { teamId: 't1' } } } }],
   ])('accepts %s', (_label, where) => {
     expect(hasTenantPredicate(where)).toBe(true);
   });
@@ -139,38 +142,60 @@ describe('tenantGuardExtension', () => {
     warn.mockRestore();
   });
 
-  it('defaults to warn — the existing unscoped queries are untriaged, not proven safe', async () => {
-    const prev = process.env.TENANT_GUARD_STRICT;
+  it('throws by default outside production — every call site is triaged, so a new one is a bug', async () => {
+    const prevStrict = process.env.TENANT_GUARD_STRICT;
+    const prevEnv = process.env.NODE_ENV;
+    try {
+      delete process.env.TENANT_GUARD_STRICT;
+      process.env.NODE_ENV = 'test';
+      const ext = tenantGuardExtension();
+      await expect(
+        intercept(ext, { model: 'Connection', operation: 'findMany' }).run
+      ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+      if (prevStrict !== undefined) {
+        process.env.TENANT_GUARD_STRICT = prevStrict;
+      }
+    }
+  });
+
+  it('warns in production, so a false positive does not take the API down', async () => {
+    const prevStrict = process.env.TENANT_GUARD_STRICT;
+    const prevEnv = process.env.NODE_ENV;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       delete process.env.TENANT_GUARD_STRICT;
+      process.env.NODE_ENV = 'production';
       const ext = tenantGuardExtension();
       await expect(
         intercept(ext, { model: 'Connection', operation: 'findMany' }).run
       ).resolves.toBe('result');
     } finally {
       warn.mockRestore();
-      if (prev === undefined) {
-        delete process.env.TENANT_GUARD_STRICT;
-      } else {
-        process.env.TENANT_GUARD_STRICT = prev;
+      process.env.NODE_ENV = prevEnv;
+      if (prevStrict !== undefined) {
+        process.env.TENANT_GUARD_STRICT = prevStrict;
       }
     }
   });
 
-  it('throws when TENANT_GUARD_STRICT=1', async () => {
-    const prev = process.env.TENANT_GUARD_STRICT;
+  it('throws in production too when TENANT_GUARD_STRICT=1', async () => {
+    const prevStrict = process.env.TENANT_GUARD_STRICT;
+    const prevEnv = process.env.NODE_ENV;
     try {
       process.env.TENANT_GUARD_STRICT = '1';
+      process.env.NODE_ENV = 'production';
       const ext = tenantGuardExtension();
       await expect(
         intercept(ext, { model: 'Connection', operation: 'findMany' }).run
       ).rejects.toBeInstanceOf(UnscopedTenantQueryError);
     } finally {
-      if (prev === undefined) {
+      process.env.NODE_ENV = prevEnv;
+      if (prevStrict === undefined) {
         delete process.env.TENANT_GUARD_STRICT;
       } else {
-        process.env.TENANT_GUARD_STRICT = prev;
+        process.env.TENANT_GUARD_STRICT = prevStrict;
       }
     }
   });

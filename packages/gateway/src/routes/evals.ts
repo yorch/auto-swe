@@ -9,6 +9,7 @@
  */
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type {
   EvalCaseDto,
   EvalDatasetDetail,
@@ -128,10 +129,12 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── List datasets ──
   app.get('/evals', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.evalDataset.findMany({
-      include: { _count: { select: { cases: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
+    const rows = await runUnscoped('admin dataset listing spans every team', () =>
+      fastify.prisma.evalDataset.findMany({
+        include: { _count: { select: { cases: true } } },
+        orderBy: { createdAt: 'desc' },
+      })
+    );
     const data: EvalDatasetSummary[] = rows.map((r) => ({
       caseCount: r._count.cases,
       createdAt: r.createdAt.toISOString(),
@@ -320,7 +323,9 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── List judge rubrics (P2) ──
   app.get('/evals/rubrics', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.evalRubric.findMany({ orderBy: { createdAt: 'desc' } });
+    const rows = await runUnscoped('admin rubric listing spans every team', () =>
+      fastify.prisma.evalRubric.findMany({ orderBy: { createdAt: 'desc' } })
+    );
     const data: EvalRubricDto[] = rows.map(toRubricDto);
     return { data };
   });

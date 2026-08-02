@@ -28,6 +28,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/tenantGuard',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/tenantGuard.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/keyRotation',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/keyRotation.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/credentialScope',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialScope.ts'),
       },

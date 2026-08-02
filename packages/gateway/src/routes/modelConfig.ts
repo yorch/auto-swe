@@ -1,4 +1,5 @@
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -167,9 +168,13 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
   // ── Provider credentials ───────────────────────────────────────────────
 
   app.get('/credentials', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.providerCredential.findMany({
-      orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
-    });
+    // Deliberately every scope: this page is where an admin sees which teams
+    // and orgs have their own credentials, so filtering it would hide the point.
+    const rows = await runUnscoped('admin credential listing spans every scope', () =>
+      fastify.prisma.providerCredential.findMany({
+        orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
+      })
+    );
     return { data: rows.map(redactCredential) };
   });
 
