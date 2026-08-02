@@ -1,8 +1,11 @@
 # Platform pivot — UI mocks
 
 Vision-pitch HTML mockups for the platform pivot described in
-[`docs/platform-pivot.md`](../docs/history/platform-pivot.md). Static, self-contained,
+[`docs/history/platform-pivot.md`](../docs/history/platform-pivot.md). Static, self-contained,
 no build step — open `index.html` in a browser.
+
+> Frozen alongside the RFC they illustrate: these are point-in-time artefacts, not a description of
+> the shipped UI. For the current dashboard see [`docs/redesign/`](../docs/redesign/README.md).
 
 > **Working name "Conductor" is a placeholder** for the generic platform identity. The
 > mocks use a fresh design system (not the current dashboard's look) to explore the

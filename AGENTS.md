@@ -28,9 +28,18 @@ system is put together see [`docs/architecture.md`](./docs/architecture.md).
 | Location | Contains |
 |---|---|
 | [`docs/`](./docs/README.md) | **Living references** — how the system works now. Start at `docs/README.md`. |
+| [`.claude/skills/`](./.claude/skills/) | **Load-on-demand gotchas** — narrow, high-cost traps that only matter while touching one thing. Read the matching skill before editing a Dockerfile or a Prisma migration. |
 | [`docs/history/`](./docs/history/) | **Frozen** — completed roadmaps, closed build plans, point-in-time reviews, research. Preserved for rationale; the code wins wherever they diverge. |
 
 Do not consult `docs/history/` to learn current behaviour, and do not update it.
+
+Skills exist so this file does not have to carry every trap: a gotcha that costs a rebuild but only
+applies to one file belongs in a skill, not in the context of every session.
+
+| Skill | Read it before |
+|---|---|
+| [`prisma-docker-migrations`](./.claude/skills/prisma-docker-migrations/SKILL.md) | Editing `packages/*/Dockerfile`, or when a built image fails at boot on a missing Prisma dependency |
+| [`prisma-pgvector-hnsw`](./.claude/skills/prisma-pgvector-hnsw/SKILL.md) | Changing `schema.prisma`, or running any `prisma migrate` command |
 
 ---
 
@@ -39,9 +48,9 @@ Do not consult `docs/history/` to learn current behaviour, and do not update it.
 | Component             | Technology                             | Version                |
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=24.0.0               |
-| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.17.0                 |
+| Package Manager       | Yarn 4 (Berry, via corepack)           | 4.18.0                 |
 | Language              | TypeScript                             | 6.0.3                  |
-| HTTP Framework        | Fastify                                | 5.8.5                  |
+| HTTP Framework        | Fastify                                | 5.11.0                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
 | Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.2                 |
 | Agent Framework       | Mastra                                 | 1.40.0                 |
@@ -125,11 +134,19 @@ prose has no compiler and status prose rots silently.
 - **Known gaps live next to the feature**, in that doc's `## Limitations` section — never in a
   central list, which is what drifted before. Product-level boundaries and overall maturity are the
   exception and belong in `docs/product-overview.md` §7 and §8.
-- Countable claims ("15 node types", "51 Prisma models") are enforced: `yarn docs:check` derives
-  each fact from source and fails on any living doc that disagrees. It also rejects broken doc
-  links and any capability doc missing its `## Limitations` section. It runs as its own CI job.
-  When you change the schema, the node-type union, the built-in skills, the scanner patterns, or
-  the seeded agents, run it and fix what it reports.
+- **`yarn docs:check` is the compiler for the rules above.** Prose has no type system, so the
+  checkable parts of these conventions are enforced in CI as their own job. It fails on:
+
+  | Check | Source of truth |
+  |---|---|
+  | Countable claims — "15 node types", "51 Prisma models", "28 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
+  | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
+  | A capability doc with no `## Limitations` section | the gap-locality rule above |
+  | Broken relative `.md` links, `docs/history/` included | the filesystem |
+
+  Run it after changing the schema, the node-type union, the built-in skills, the scanner patterns,
+  the seeded agents, or any dependency that a doc names by version.
 - `docs/history/` is exempt from the check and from edits.
 
 ### Testing
@@ -464,19 +481,11 @@ silently drops every trace record when the activity fails — exactly when you n
 - Dockerfiles use a **3-stage build** (builder → prod-deps → runtime)
 - `yarn workspaces focus <pkg> --production` strips devDependencies in the prod-deps stage
 - Dependencies are hoisted to root `node_modules/`; per-workspace `node_modules/` may be empty
-- Prisma generated client lives at **`packages/shared/src/generated/prisma`**, not
-  `node_modules/.prisma` — the `prisma-client` provider writes to the schema's `output`
-  path. Copy that directory from builder to runtime.
-- **If the runtime runs the Prisma CLI** (the gateway's migrate-on-boot entrypoint calls
-  `node_modules/prisma/build/index.js migrate deploy`), declare `prisma` in that package's
-  **`dependencies`**, so `yarn workspaces focus --production` resolves the CLI's own
-  transitive deps (`@prisma/config`, `effect`, …). Copying `node_modules/prisma` alone fails
-  at runtime, and overlaying the whole builder tree to dodge that costs ~2GB.
-- **Set ownership with `COPY --chown`, never a trailing `RUN chown -R /app`** — the
-  recursive form rewrites every file's metadata into a new layer, storing the entire tree
-  (node_modules included) twice.
-- Root `package.json` must be in the runtime image for workspace symlink resolution
-- **No `corepack enable`** needed in the runtime stage — it only runs `node`
+
+Every way this build breaks fails *after* the image is built, not during it — a missing transitive
+dependency, a generated client at the wrong path, a layer that stores `node_modules` twice. Read
+[`prisma-docker-migrations`](./.claude/skills/prisma-docker-migrations/SKILL.md) before editing any
+Dockerfile; it has the specific rules and what has already been tried and does not work.
 
 ---
 

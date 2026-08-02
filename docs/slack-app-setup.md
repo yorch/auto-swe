@@ -20,7 +20,7 @@ The `slack-app-manifest.json` next to this file is a [Slack app manifest](https:
 
 ## Endpoints the manifest assumes
 
-All under the gateway's `/api/v1/auth/slack` prefix (phase 7):
+All under the gateway's `/api/v1/auth/slack` prefix:
 
 | Endpoint | Used by |
 |---|---|

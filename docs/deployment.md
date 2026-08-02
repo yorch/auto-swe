@@ -19,7 +19,7 @@ Five long-running processes plus one Docker daemon:
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.8.1`                          | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | AWS S3 / Cloudflare R2 / `minio/minio` / etc.      | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
-The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request (see [`data-and-infra.md` §3.2](./history/data-and-infra.md#32-executor-image-selection)). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `workspaceImage` Tier-2 default at `/admin/workflow`; an explicit `image` on a node still wins (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
 > **Local-dev shortcut.** `yarn docker:infra:up` brings up MinIO (the `minio` + `minio-setup` containers in `docker-compose.infra.yml`) and pre-creates the `auto-swe-artifacts` bucket. Uncomment the `ARTIFACT_S3_*` and `AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY` blocks in `.env.example` (defaults match the MinIO container) to flip the worker onto S3 mode locally. Console at <http://localhost:9001> with `minioadmin`/`minioadmin`.
 
@@ -182,7 +182,7 @@ The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 49 tables, enums, FKs, Prisma-expressible indexes) |
+| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 51 tables, enums, FKs, Prisma-expressible indexes) |
 | `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
 
 New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.
@@ -201,9 +201,9 @@ yarn db:seed
 #      so the seeded admin can sign in via the password tab on /login.
 ```
 
-**Inside Docker.** If you build the gateway image and run migrations from there, see the [`prisma-7-docker-migrations`](https://github.com/) skill — the short version is the runtime image needs the full `prisma` CLI plus the `.bin/prisma` symlink intact. The simplest pattern is a one-shot init container.
+**Inside Docker.** If you build the gateway image and run migrations from there, the runtime image needs the full `prisma` CLI plus the `.bin/prisma` symlink intact — declare `prisma` in the package's `dependencies` (not `devDependencies`) so `yarn workspaces focus --production` resolves the CLI's own transitive deps. The simplest pattern is a one-shot init container. Details in the [`prisma-docker-migrations`](../.claude/skills/prisma-docker-migrations/SKILL.md) skill.
 
-For routine application thereafter, `prisma migrate deploy` is idempotent. **Never use `prisma migrate dev` in production** — it will silently try to drop the HNSW index every time unrelated schema changes are made (see the project skill `prisma-7-pgvector-hnsw-migrate-dev-drift`).
+For routine application thereafter, `prisma migrate deploy` is idempotent. **Never use `prisma migrate dev` in production** — it will silently try to drop the HNSW index every time unrelated schema changes are made. See the [`prisma-pgvector-hnsw`](../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill.
 
 ---
 
@@ -392,8 +392,13 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ## 11. Where this guide ends
 
-This doc covers infrastructure setup and the first happy-path workflow. For ongoing development:
-- New features → [`AGENTS.md`](../AGENTS.md) and [`STATUS.md`](./history/STATUS.md).
-- Workflow engine internals → [`configurable-workflows.md`](./history/configurable-workflows.md).
-- Auth deep-dive → [`gateway-and-auth.md`](./history/gateway-and-auth.md) + [`oauth-setup.md`](./oauth-setup.md).
-- Data layer / DinD details → [`data-and-infra.md`](./history/data-and-infra.md).
+This doc covers infrastructure setup and the first happy-path workflow. For everything else:
+
+| To understand… | Read |
+|---|---|
+| Conventions and implementation gotchas | [`AGENTS.md`](../AGENTS.md) |
+| Workflow engine, data model, auth, infrastructure | [`architecture.md`](./architecture.md) |
+| Agent roles, skills, tools, scanners, tracing | [`agents.md`](./agents.md) |
+| Model + credential configuration | [`model-configuration.md`](./model-configuration.md) |
+| OAuth providers and magic-link email | [`oauth-setup.md`](./oauth-setup.md) |
+| The full doc map | [`docs/README.md`](./README.md) |
