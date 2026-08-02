@@ -380,6 +380,51 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /:id/budget/reset — zero this month's accrued spend for the channel.
+  //
+  // A turn holds budget before it spends and settles the hold afterwards
+  // (`reserveChannelTurn`). A worker that dies in between never settles, and the
+  // hold stays on the ledger for the rest of the calendar month — silencing the
+  // channel once enough of them accumulate. This is the way back, and it is the
+  // only writer of `costUsdAccrued` outside the worker's own accounting.
+  app.post(
+    '/:id/budget/reset',
+    { onRequest: adminOnly, schema: { params: IdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const row = await fastify.prisma.slackChannel.findUnique({
+        select: { id: true, name: true },
+        where: { id: request.params.id },
+      });
+      if (!row) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      const yearMonth = currentYearMonth();
+      const before = await fastify.prisma.channelMonthlyUsage.findUnique({
+        where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
+      });
+      // `runsCompleted` is left alone: it counts turns that really happened, and
+      // the stuck value is the money, not the count.
+      const usage = before
+        ? await fastify.prisma.channelMonthlyUsage.update({
+            data: { costUsdAccrued: 0 },
+            where: { channelId_yearMonth: { channelId: row.id, yearMonth } },
+          })
+        : null;
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { costUsdAccrued: 0, yearMonth },
+        before: { costUsdAccrued: before ? Number(before.costUsdAccrued) : 0, yearMonth },
+        entityId: row.id,
+        entityType: 'SlackChannel',
+      });
+      return { channelId: row.id, currentMonthUsage: serializeUsage(usage) };
+    }
+  );
+
   // GET /:id/memory — list this channel's memory items (channel assistant, Phase 2).
   // By default returns only active (un-consolidated) items. Pass
   // `?includeConsolidated=true` to include soft-deleted (consolidated) rows so

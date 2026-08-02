@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
-    // The budget gate reads inside a Serializable $transaction; run the callback
-    // against the same mocked client so `channelMonthlyUsage.findUnique` backs it.
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
@@ -43,8 +41,8 @@ vi.mock('../lib/channelPersona.js', () => ({
   resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
 }));
 
-// accrueChannelUsage is the real implementation (it calls prisma.channelMonthlyUsage.upsert,
-// which is mocked above); isChannelOverBudget is the real pure predicate.
+// The budget hold/settle path is the real implementation (it calls
+// prisma.channelMonthlyUsage.upsert, mocked above), as is isChannelOverBudget.
 
 import { prisma } from '@auto-swe/shared/db';
 import { buildAmbientPrompt, runChannelAmbientDigest, shouldPostDigest } from './channelAmbient.js';
@@ -148,7 +146,7 @@ describe('runChannelAmbientDigest', () => {
     );
     // Top-level post takes exactly (channel, text) — never a thread arg.
     expect(postSlackChannelMessageMock.mock.calls[0]).toHaveLength(2);
-    // Usage accrued via the real accrueChannelUsage → upsert.
+    // Usage settled via the real hold → upsert.
     expect(upsertUsage).toHaveBeenCalledTimes(1);
     const args = upsertUsage.mock.calls[0]?.[0] as {
       create: { costUsdAccrued: number };
@@ -203,6 +201,44 @@ describe('runChannelAmbientDigest', () => {
 
     expect(runAgentMock).toHaveBeenCalledTimes(1);
     expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spend when the hold is refused, even though the read passed', async () => {
+    // The case a plain read gate cannot see: under the cap on read, but a
+    // concurrent turn took the last of the headroom before this one held.
+    findChannel.mockResolvedValue(makeChannel({ monthlyBudgetUsdCents: 500 }) as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 4.9 } as never);
+    // Post-increment total, so the pre-hold value ($5.05 − $0.05) is at the cap.
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 5.05 } as never);
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(runAgentMock).not.toHaveBeenCalled();
+    expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
+    // Held, then released — a refused digest must not leave the channel looking
+    // more expensive than it was.
+    const deltas = upsertUsage.mock.calls.map(
+      (c) => (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+    );
+    expect(deltas).toEqual([{ increment: 0.05 }, { increment: -0.05 }]);
+  });
+
+  it('gives the hold back when the model call throws', async () => {
+    // Without this the failed turn burns its hold for the rest of the month,
+    // and Temporal retries compound it.
+    findChannel.mockResolvedValue(makeChannel({ monthlyBudgetUsdCents: 10000 }) as never);
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+    upsertUsage.mockResolvedValue({ costUsdAccrued: 1.05 } as never);
+    runAgentMock.mockRejectedValue(new Error('provider down'));
+
+    // The digest swallows its own failures by design; the hold must not survive
+    // that.
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    const deltas = upsertUsage.mock.calls.map(
+      (c) => (c[0] as { update: { costUsdAccrued: { increment: number } } }).update.costUsdAccrued
+    );
+    expect(deltas).toEqual([{ increment: 0.05 }, { increment: -0.05 }]);
   });
 
   it('no-ops for a disabled (ambientEnabled=false) channel', async () => {

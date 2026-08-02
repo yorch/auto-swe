@@ -105,6 +105,15 @@ export async function passiveIngestChannelMemory(
     // Only process human top-level messages with non-empty text.
     const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
 
+    // Hold budget before the cursor moves. A refused ingest must leave the
+    // cursor where it was: advancing first and then bailing would skip this
+    // window of messages permanently, and a hold is refused more readily than
+    // the read above because it consumes headroom.
+    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null);
+    if (hold.overBudget) {
+      return EMPTY;
+    }
+
     // Advance cursor to newest ts seen (even if there are no human messages, we
     // still move past bot-only traffic so we don't re-read it next time).
     if (messages.length > 0) {
@@ -118,44 +127,41 @@ export async function passiveIngestChannelMemory(
     }
 
     if (humanMessages.length === 0) {
+      await hold.settle(0, { countRun: false });
       return EMPTY;
     }
-
-    // Build transcript for the LLM (oldest → newest, human only).
-    const transcript = humanMessages
-      .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
-      .join('\n');
-
-    // Resolve skills + build agent.
-    const skills = await loadAgentSkills('commitToMemory');
-    const skillSuffix = skills
-      .map((s) => s.promptText)
-      .filter(Boolean)
-      .join('\n\n');
-    const instructions = skillSuffix
-      ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
-      : CHANNEL_PASSIVE_INGEST_PROMPT;
-
-    const agent = new Agent({
-      id: 'channel-passive-ingestor',
-      instructions,
-      model: await getModel('commitToMemory'),
-      name: 'channel-passive-ingestor',
-    });
 
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
     let factsExtracted = 0;
     let factsWritten = 0;
 
-    // Hold budget for this ingest before it spends. Released — or replaced by the
-    // real total — in the `finally` below.
-    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null);
-    if (hold.overBudget) {
-      return EMPTY;
-    }
-
+    // Everything that can throw between here and the settle sits inside the
+    // try, so the hold is given back even when agent construction fails — the
+    // outer catch would otherwise swallow the throw and strand it.
     try {
+      // Build transcript for the LLM (oldest → newest, human only).
+      const transcript = humanMessages
+        .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
+        .join('\n');
+
+      // Resolve skills + build agent.
+      const skills = await loadAgentSkills('commitToMemory');
+      const skillSuffix = skills
+        .map((s) => s.promptText)
+        .filter(Boolean)
+        .join('\n\n');
+      const instructions = skillSuffix
+        ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
+        : CHANNEL_PASSIVE_INGEST_PROMPT;
+
+      const agent = new Agent({
+        id: 'channel-passive-ingestor',
+        instructions,
+        model: await getModel('commitToMemory'),
+        name: 'channel-passive-ingestor',
+      });
+
       const start = Date.now();
       const result = await agent.generate([{ content: transcript, role: 'user' }], {
         structuredOutput: { schema: PassiveIngestOutputSchema },

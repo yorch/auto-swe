@@ -162,17 +162,31 @@ Consolidation and lesson consolidation share `clusterByEmbedding` (`lib/embeddin
 `ChannelMonthlyUsage` mirrors `OrgMonthlyUsage` and backs `monthlyBudgetUsdCents`. Channel spend is
 tracked in the channel ledger and is *not* double-counted into `OrgMonthlyUsage`.
 
-A turn's real cost is only known after the model answers, so every spending path takes a **hold**
-against the cap before it runs and settles that hold for the true cost afterwards
-(`reserveChannelTurn` → `ChannelBudgetHold.settle`). The hold is an atomic increment on the ledger
-row and each turn decides on the total *before* its own increment, so remaining headroom is a
-resource turns consume rather than a number they all read — which matters because turn workflow ids
-are per-event and a busy channel runs many at once. Overshoot is bounded by how far a turn's actual
-cost exceeds its hold, not by how many turns started together.
+A turn's real cost is only known after the model answers, so a turn takes a **hold** against the cap
+before it runs and settles that hold for the true cost afterwards (`reserveChannelTurn` →
+`ChannelBudgetHold.settle`). The hold is an atomic increment on the ledger row, and each turn
+decides on the total *before* its own increment — so remaining headroom is a resource turns consume
+rather than a number they all read, which matters because turn workflow ids are per-event and a busy
+channel runs many at once. It is `CHANNEL_TURN_RESERVATION_USD` ($0.05) per model call, scaled by
+the batch size for passes that fan out, and pinned to the month it was taken in.
 
-`isChannelOverBudgetNow` remains a plain read, used for the cheap bail before a turn does any work
-and by `isChannelOverBudgetForTask`, which gates the heavier delegated task runs — those accrue to
-the run's own ledger rather than the channel's, so there is nothing to hold.
+With `H` USD of headroom, at most `H / 0.05` calls are admitted, and each can overshoot by however
+far its real cost exceeds its hold — so the aggregate overshoot is bounded by admitted concurrency,
+not unbounded by it as a plain read gate was.
+
+Two paths spend on the channel ledger **without** a hold, and neither is bounded by the cap:
+
+| Path | Why |
+|---|---|
+| `summarizeAndStoreChannelMemory` | A second, cheap call after a turn that already passed the gate; it accrues but does not hold. |
+| `finalizeChannelTaskRun` | A delegated task run spends across a whole workflow, not inside one activity, so there is nothing in-process to hold. `isChannelOverBudgetForTask` gates its *launch* with a plain read, and its summed cost lands on the channel ledger when the run finalizes. |
+
+`isChannelOverBudgetNow` is that plain read. It also runs as a cheap bail before a held path does
+any prompt-building work — it decides nothing on its own there; the hold is what enforces the cap.
+
+A hold whose worker dies is never settled and stays on the ledger for the rest of the month.
+`POST /api/v1/admin/slack-channels/:id/budget/reset` zeroes the current month's accrued spend
+(admin-only, audit-logged) and is the way back.
 
 ---
 
@@ -195,7 +209,8 @@ full tool-call sequence. Read access uses the same `assertChannelAccess` guard a
 items.
 
 Channels are configured at `/admin/slack-channels` over
-`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/audit`, and the memory and open-item
+`/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
+memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
 and a channel picker.
 
@@ -232,10 +247,12 @@ sustained use. No code closes this — it needs an install, a pilot channel, and
 the proactivity features especially (ambient digests, reactive interjection, org-wide flagging) as
 unproven on real traffic, and turn them on one channel at a time.
 
-- **The budget cap is bounded, not exact.** See §7 — a turn whose real cost exceeds its hold
-  overshoots by the difference, and the hold is a fixed estimate rather than a per-model one. A hold
-  is also lost if the worker dies between taking it and settling it, which over-counts that channel
-  until the month rolls over.
+- **The budget cap is bounded, not exact.** See §7 — each admitted call can overshoot by however far
+  its real cost exceeds its `$0.05` hold, and the hold is a flat estimate rather than a per-model
+  one, so the aggregate overshoot still scales with how many calls the remaining headroom admits.
+  Two paths (`summarizeAndStoreChannelMemory`, `finalizeChannelTaskRun`) spend on the ledger with no
+  hold at all. A hold is also lost if the worker dies before settling it, over-counting that channel
+  until an admin resets the month.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

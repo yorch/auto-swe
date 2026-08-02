@@ -2,9 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
-    // The budget gate now reads inside a Serializable $transaction; the mock runs
-    // the callback against the same mocked `tx` (the prisma object itself), so the
-    // existing `channelMonthlyUsage.findUnique` mock backs the transactional read.
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
@@ -75,10 +72,8 @@ vi.mock('../lib/channelPersona.js', () => ({
   resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
 }));
 
-// Accrual now consumes the authoritative `costUsd` returned by runAgent (mocked
-// here), so the channel-monthly ledger prices identically to the run-level ledger.
-
 import { prisma } from '@auto-swe/shared/db';
+import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
@@ -115,6 +110,8 @@ beforeEach(() => {
   // `clearAllMocks` wipes the AgentTracer mock implementation — re-establish it
   // so `new AgentTracer()` yields an object exposing the tracked addActivityEvent.
   vi.mocked(AgentTracer).mockImplementation(makeTracerMock as never);
+  // `clearAllMocks` also wipes this; the rollover test moves it forward.
+  vi.mocked(currentYearMonth).mockReturnValue('2026-06');
   resolveAgentSpecMock.mockResolvedValue({
     agentKey: 'channelAssistant',
     modelSpec: 'anthropic/claude-opus-4-8',
@@ -200,14 +197,22 @@ describe('reserveChannelTurn', () => {
    * total, which is what the reservation decides on.
    */
   function fakeLedger(startingUsd = 0) {
-    let accrued = startingUsd;
+    // Keyed by yearMonth, and modelling the create branch too — a hold and its
+    // settle landing on different rows is exactly the month-rollover bug.
+    const rows = new Map<string, number>([['2026-06', startingUsd]]);
     upsertUsage.mockImplementation((async (args: {
+      create: { costUsdAccrued: number };
       update: { costUsdAccrued: { increment: number } };
+      where: { channelId_yearMonth: { yearMonth: string } };
     }) => {
-      accrued += args.update.costUsdAccrued.increment;
-      return { costUsdAccrued: accrued };
+      const month = args.where.channelId_yearMonth.yearMonth;
+      const next = rows.has(month)
+        ? (rows.get(month) as number) + args.update.costUsdAccrued.increment
+        : args.create.costUsdAccrued;
+      rows.set(month, next);
+      return { costUsdAccrued: next };
     }) as never);
-    return () => accrued;
+    return Object.assign(() => rows.get('2026-06') ?? 0, { rows });
   }
 
   it('takes no hold and never blocks when the channel has no cap', async () => {
@@ -261,6 +266,39 @@ describe('reserveChannelTurn', () => {
     await hold.settle(0.02);
     await hold.settle(0); // the `finally` release
     expect(total()).toBeCloseTo(1.02, 6);
+  });
+
+  it('settles onto the month it held against, across a rollover', async () => {
+    // The hold is written under the month current at reserve time. If settle
+    // re-read the clock, a turn spanning midnight on the 1st would leak its
+    // hold on the old row and create the new month's row at a negative balance.
+    const ledger = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 10000);
+    vi.mocked(currentYearMonth).mockReturnValue('2026-07');
+    await hold.settle(0.02);
+
+    expect(ledger.rows.get('2026-06')).toBeCloseTo(1.02, 6);
+    expect(ledger.rows.has('2026-07'), 'the next month must not be touched').toBe(false);
+  });
+
+  it('scales the hold to the number of model calls it covers', async () => {
+    // A background pass that fans out over a batch must not be admitted on the
+    // headroom of a single turn.
+    const total = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 100_000, 4);
+    expect(hold.overBudget).toBe(false);
+    expect(total()).toBeCloseTo(1 + 4 * CHANNEL_TURN_RESERVATION_USD, 6);
+
+    await hold.settle(0.3);
+    expect(total()).toBeCloseTo(1.3, 6);
+  });
+
+  it('writes nothing when there is no hold and no cost', async () => {
+    const uncapped = fakeLedger();
+    const hold = await reserveChannelTurn('chan-1', null);
+    await hold.settle(0, { countRun: false });
+    expect(upsertUsage).not.toHaveBeenCalled();
+    expect(uncapped()).toBe(0);
   });
 
   it('lets the turn proceed when the ledger write fails', async () => {

@@ -77,8 +77,8 @@ const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
  *
  * BUDGET: this pass makes LLM calls, so it honours the channel's monthly budget
  * cap exactly like the digest — when the channel is over budget it returns early
- * without spending (same `isChannelOverBudgetNow` gate the digest uses). Its cost
- * accrues to `ChannelMonthlyUsage` (the per-channel budget) via `accrueChannelUsage`
+ * without spending (same cheap `isChannelOverBudgetNow` bail the digest uses). Its
+ * cost settles against `ChannelMonthlyUsage` (the per-channel budget) via the hold
  * with `countRun: false` — consolidation is maintenance, not a user-facing run, so
  * it must not inflate `runsCompleted`.
  */
@@ -186,9 +186,15 @@ export async function consolidateChannelMemory(
   const tracer = new AgentTracer();
   let totalCostUsd = 0;
 
-  // Hold budget for this pass before it spends. Released — or replaced by the
-  // real total — in the `finally` below.
-  const hold = await reserveChannelTurn(channelId, channel?.monthlyBudgetUsdCents ?? null);
+  // Hold budget for this pass before it spends. One model call per qualifying
+  // cluster, so the hold covers the whole fan-out — a single-call hold would
+  // admit a 30-cluster pass on the headroom of one turn. Released — or replaced
+  // by the real total — in the `finally` below.
+  const hold = await reserveChannelTurn(
+    channelId,
+    channel?.monthlyBudgetUsdCents ?? null,
+    qualifying.length
+  );
   if (hold.overBudget) {
     return EMPTY_RESULT;
   }

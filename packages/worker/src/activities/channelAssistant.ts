@@ -314,11 +314,12 @@ export function isChannelOverBudget(
 /**
  * Read-only budget gate: has this channel already reached its cap?
  *
- * Used where a turn is gated but its cost never lands on `ChannelMonthlyUsage`
- * — {@link isChannelOverBudgetForTask}, which decides whether to launch a task
- * run whose spend accrues to the *run's* ledger instead. Paths that spend on the
- * channel's own ledger use {@link reserveChannelTurn}, which holds against the
- * cap for the duration of the turn.
+ * Two callers, for two reasons. {@link isChannelOverBudgetForTask} gates a
+ * delegated task run, whose spend lands on the run's own ledger when it
+ * finalizes — there is nothing in-flight to hold. Every path that spends on the
+ * channel ledger calls this first only as a cheap bail, to skip prompt-building
+ * work when the answer is already no; the cap itself is enforced by
+ * {@link reserveChannelTurn}, which holds for the duration of the call.
  */
 export async function isChannelOverBudgetNow(
   channelId: string,
@@ -335,7 +336,7 @@ export async function isChannelOverBudgetNow(
 }
 
 /**
- * What one channel turn holds against the cap while it runs.
+ * What one model call holds against the cap while it runs.
  *
  * The real cost is not known until the model has answered, so the hold is an
  * estimate — deliberately on the generous side of a single generate against the
@@ -378,31 +379,53 @@ export interface ChannelBudgetHold {
  */
 export async function reserveChannelTurn(
   channelId: string,
-  monthlyBudgetUsdCents: number | null
+  monthlyBudgetUsdCents: number | null,
+  /**
+   * How many model calls this hold covers. A single turn is one; the background
+   * passes that fan out over a batch pass their batch size, so the hold scales
+   * with what the pass will actually spend instead of under-holding by the fan-out
+   * factor.
+   */
+  modelCalls = 1
 ): Promise<ChannelBudgetHold> {
+  // Pin the month at reserve time. `currentYearMonth()` re-read at settle would
+  // land the two halves on different rows across a UTC month boundary: the hold
+  // would leak on the old row and the release would create the new one at a
+  // negative balance.
+  const yearMonth = currentYearMonth();
   if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
-    return makeHold(channelId, 0, false);
+    return makeHold(channelId, yearMonth, 0, false);
   }
 
-  const held = await addChannelUsage(channelId, CHANNEL_TURN_RESERVATION_USD, false);
+  const reservation = CHANNEL_TURN_RESERVATION_USD * Math.max(1, modelCalls);
+  const held = await addChannelUsage(channelId, yearMonth, reservation, false);
   if (held === null) {
     // The ledger write failed. Fall back to the read-only gate rather than
     // blocking the turn: this row backs a cap, not billing, and the run-level
     // ledger still records the spend.
-    return makeHold(channelId, 0, await isChannelOverBudgetNow(channelId, monthlyBudgetUsdCents));
+    return makeHold(
+      channelId,
+      yearMonth,
+      0,
+      await isChannelOverBudgetNow(channelId, monthlyBudgetUsdCents)
+    );
   }
 
   // `held` is the post-increment total, so this is what the channel had spent
   // before this turn laid claim to anything.
-  const accruedBefore = held - CHANNEL_TURN_RESERVATION_USD;
-  if (isChannelOverBudget(accruedBefore, monthlyBudgetUsdCents)) {
-    await addChannelUsage(channelId, -CHANNEL_TURN_RESERVATION_USD, false);
-    return makeHold(channelId, 0, true);
+  if (isChannelOverBudget(held - reservation, monthlyBudgetUsdCents)) {
+    await addChannelUsage(channelId, yearMonth, -reservation, false);
+    return makeHold(channelId, yearMonth, 0, true);
   }
-  return makeHold(channelId, CHANNEL_TURN_RESERVATION_USD, false);
+  return makeHold(channelId, yearMonth, reservation, false);
 }
 
-function makeHold(channelId: string, reservedUsd: number, overBudget: boolean): ChannelBudgetHold {
+function makeHold(
+  channelId: string,
+  yearMonth: string,
+  reservedUsd: number,
+  overBudget: boolean
+): ChannelBudgetHold {
   let settled = false;
   return {
     overBudget,
@@ -411,7 +434,14 @@ function makeHold(channelId: string, reservedUsd: number, overBudget: boolean): 
         return;
       }
       settled = true;
-      await addChannelUsage(channelId, costUsd - reservedUsd, opts.countRun ?? true);
+      const countRun = opts.countRun ?? true;
+      const delta = costUsd - reservedUsd;
+      // Nothing held and nothing spent: an uncapped channel whose background
+      // pass made no model call has no reason to materialise a usage row.
+      if (delta === 0 && !countRun) {
+        return;
+      }
+      await addChannelUsage(channelId, yearMonth, delta, countRun);
     },
   };
 }
@@ -423,10 +453,8 @@ function makeHold(channelId: string, reservedUsd: number, overBudget: boolean): 
  * team/org cascading after), runs one generation against `userMessage`, and
  * returns the trimmed reply text plus the authoritative per-turn USD cost.
  *
- * Deliberately does NOT accrue channel usage — the two callers accrue at
- * different points (the assistant accrues after generate + before writing
- * memory; the ambient accrues before its should-post check), so each caller
- * owns its `accrueChannelUsage` call to preserve the existing ordering.
+ * Deliberately does NOT touch the channel budget: the caller holds before
+ * calling this and settles after, so the hold spans exactly the model call.
  */
 export async function runChannelAgentTurn(
   channel: {
@@ -781,7 +809,7 @@ export async function accrueChannelUsage(
   costUsd: number,
   opts: { countRun?: boolean } = {}
 ): Promise<void> {
-  await addChannelUsage(channelId, costUsd, opts.countRun ?? true);
+  await addChannelUsage(channelId, currentYearMonth(), costUsd, opts.countRun ?? true);
 }
 
 /**
@@ -792,14 +820,15 @@ export async function accrueChannelUsage(
  * `deltaUsd` may be negative: {@link reserveChannelTurn} releases a hold that
  * way, and {@link ChannelBudgetHold.settle} nets a hold against a smaller real
  * cost. The row can never go below what was actually spent, because a release
- * only ever removes an increment this process made.
+ * only ever removes an increment this process made to the same `yearMonth` row
+ * — which is why the caller passes the month rather than this re-reading it.
  */
 async function addChannelUsage(
   channelId: string,
+  yearMonth: string,
   deltaUsd: number,
   countRun: boolean
 ): Promise<number | null> {
-  const yearMonth = currentYearMonth();
   try {
     const row = await prisma.channelMonthlyUsage.upsert({
       create: {
