@@ -212,7 +212,10 @@ describe('evaluateReactiveInterjection', () => {
     const after = Date.now();
 
     const call = fetchChannelHistoryMock.mock.calls.at(-1);
-    const oldestTs = (call?.[1] as { oldestTs: string }).oldestTs;
+    if (!call) {
+      throw new Error('Expected channel history to be fetched');
+    }
+    const oldestTs = (call[1] as { oldestTs: string }).oldestTs;
     const oldestMs = parseFloat(oldestTs) * 1000;
     // Should be ~5 minutes before "now", not the 30-minute default.
     expect(oldestMs).toBeGreaterThanOrEqual(before - 5 * 60_000 - 1000);

@@ -99,17 +99,14 @@ describe('tenantGuardExtension', () => {
     }
   });
 
-  it.each([
-    'deleteMany',
-    'updateMany',
-    'count',
-    'aggregate',
-    'groupBy',
-  ])('guards %s, not just findMany', async (operation) => {
-    const ext = tenantGuardExtension({ mode: 'throw' });
-    const { run } = intercept(ext, { model: 'MemoryItem', operation });
-    await expect(run).rejects.toBeInstanceOf(UnscopedTenantQueryError);
-  });
+  it.each(['deleteMany', 'updateMany', 'count', 'aggregate', 'groupBy'])(
+    'guards %s, not just findMany',
+    async (operation) => {
+      const ext = tenantGuardExtension({ mode: 'throw' });
+      const { run } = intercept(ext, { model: 'MemoryItem', operation });
+      await expect(run).rejects.toBeInstanceOf(UnscopedTenantQueryError);
+    }
+  );
 
   it('lets an explicitly unscoped call through', async () => {
     const ext = tenantGuardExtension({ mode: 'throw' });

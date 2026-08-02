@@ -81,11 +81,15 @@ describe('RunnableWorkflow — history replay', () => {
     ]);
   });
 
-  it.each(fixtures)('replays $name without a determinism violation', async ({ history }) => {
-    await expect(
-      Worker.runReplayHistory({ workflowsPath: WORKFLOWS_PATH }, history)
-    ).resolves.toBeUndefined();
-  }, 120_000);
+  it.each(fixtures)(
+    'replays $name without a determinism violation',
+    async ({ history }) => {
+      await expect(
+        Worker.runReplayHistory({ workflowsPath: WORKFLOWS_PATH }, history)
+      ).resolves.toBeUndefined();
+    },
+    120_000
+  );
 
   it.each(fixtures)('$name fixture carries real workflow-task history', ({ history }) => {
     // A truncated fixture would make its replay pass vacuously.

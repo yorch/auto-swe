@@ -44,14 +44,12 @@ describe('normalizeCiStatus', () => {
     ).toBe('failed');
   });
 
-  it.each([
-    'cancelled',
-    'timed_out',
-    'action_required',
-    'stale',
-  ])('treats conclusion "%s" as failed', (conclusion) => {
-    expect(normalizeCiStatus([run('completed', conclusion)], noStatus)).toBe('failed');
-  });
+  it.each(['cancelled', 'timed_out', 'action_required', 'stale'])(
+    'treats conclusion "%s" as failed',
+    (conclusion) => {
+      expect(normalizeCiStatus([run('completed', conclusion)], noStatus)).toBe('failed');
+    }
+  );
 
   it('returns "failed" when combined status state is failure or error', () => {
     expect(normalizeCiStatus([], { state: 'failure', totalCount: 1 })).toBe('failed');

@@ -345,15 +345,12 @@ describe('extractShellWriteTargets', () => {
     expect(extractShellWriteTargets(command)).toEqual(expect.arrayContaining(expected));
   });
 
-  it.each([
-    'echo hi > /dev/null',
-    'ls -la',
-    'cat file.txt',
-    'grep -r foo .',
-    'echo hi >&2',
-  ])('finds nothing interesting in %j', (command) => {
-    expect(extractShellWriteTargets(command)).toEqual([]);
-  });
+  it.each(['echo hi > /dev/null', 'ls -la', 'cat file.txt', 'grep -r foo .', 'echo hi >&2'])(
+    'finds nothing interesting in %j',
+    (command) => {
+      expect(extractShellWriteTargets(command)).toEqual([]);
+    }
+  );
 });
 
 describe('scanShellCommand — sensitive-file policy applies to bash', () => {

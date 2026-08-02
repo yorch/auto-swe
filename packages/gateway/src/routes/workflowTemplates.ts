@@ -23,7 +23,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 /**
