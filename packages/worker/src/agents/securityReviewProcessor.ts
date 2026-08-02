@@ -10,7 +10,7 @@ import {
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
@@ -62,6 +62,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         name: 'security-review-gate',
       });
 
+      await assertBudgetAvailable(currentWorkflowId(), 'securityReview');
       const result = await agent.generate(
         [
           {

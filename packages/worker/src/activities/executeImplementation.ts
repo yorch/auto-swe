@@ -21,7 +21,7 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -235,6 +235,7 @@ export async function executeImplementation(
             }
           : {}),
       });
+      await assertBudgetAvailable(currentWorkflowId(), `implementer.iteration_${iteration}`);
       const genResult = await agent.generate(
         [
           { content: llmSystemPrompt, role: 'system' },

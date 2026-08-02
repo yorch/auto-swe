@@ -27,7 +27,7 @@ import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
@@ -83,6 +83,7 @@ export async function planDecomposition(
           externalTicketId: request.externalTicketId,
           maxSubtasks: MAX_SUBTASKS,
         });
+        await assertBudgetAvailable(currentWorkflowId(), 'decomposer');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: DecomposerOutputSchema },
         });

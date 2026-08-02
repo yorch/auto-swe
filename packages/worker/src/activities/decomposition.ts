@@ -28,7 +28,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorOutput } from '../lib/errors.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -410,6 +410,7 @@ async function mergeOneWithResolver(
       activityCtx
     );
     try {
+      await assertBudgetAvailable(currentWorkflowId(), 'decomposition');
       const result = await agent.generate(
         [
           {

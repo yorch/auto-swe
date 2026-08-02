@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getModel, getModelSpec } from '../lib/models.js';
 import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
@@ -67,6 +67,7 @@ async function runReviewerAgent(
           implementationNotes: codeResult.implementationNotes,
           testResults: codeResult.testResults,
         });
+        await assertBudgetAvailable(currentWorkflowId(), `review.${reviewerType.toLowerCase()}`);
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: ReviewVerdictSchema },
         });

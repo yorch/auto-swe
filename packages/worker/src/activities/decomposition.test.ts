@@ -105,6 +105,7 @@ vi.mock('../lib/models.js', () => ({
 }));
 
 vi.mock('../lib/costTracking.js', () => ({
+  assertBudgetAvailable: vi.fn(async () => {}),
   recordLlmUsage: vi.fn(),
 }));
 

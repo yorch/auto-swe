@@ -6,7 +6,7 @@ import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityConte
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, resolveSystemPrompt } from '../lib/models.js';
 
@@ -117,6 +117,7 @@ export async function commitToMemory(
   });
 
   try {
+    await assertBudgetAvailable(temporalWorkflowId, 'commitToMemory');
     const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
       structuredOutput: { schema: LessonOutputSchema },
     });

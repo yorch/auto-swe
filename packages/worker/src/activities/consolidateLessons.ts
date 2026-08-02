@@ -10,7 +10,7 @@ import { LESSON_CONSOLIDATOR_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
@@ -147,6 +147,7 @@ export async function consolidateLessons(
           .join('\n\n');
 
         const start = Date.now();
+        await assertBudgetAvailable('consolidateLessons', 'consolidateLessons');
         const result = await agent.generate([{ content: prompt, role: 'user' }], {
           structuredOutput: { schema: ConsolidatorOutputSchema },
         });

@@ -12,7 +12,7 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
-import { recordLlmUsage } from '../lib/costTracking.js';
+import { assertBudgetAvailable, recordLlmUsage } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -135,6 +135,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     });
 
     const agentStart = Date.now();
+    await assertBudgetAvailable(currentWorkflowId(), input.usageEventName);
     const genResult = await agent.generate(
       [
         { content: fullSystemPrompt, role: 'system' },

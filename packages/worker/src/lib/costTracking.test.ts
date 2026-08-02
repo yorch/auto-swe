@@ -1,5 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 // Mock prisma before importing the module under test. modelRoleConfig +
 // providerCredential return a healthy GLOBAL row + credential so
@@ -67,6 +67,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { _resetConfigCacheForTests } from './config/cache.js';
 import {
+  assertBudgetAvailable,
   BUDGET_LIMITS,
   calculateCostUsd,
   getModelPrice,
@@ -155,15 +156,44 @@ describe('BUDGET_LIMITS', () => {
 describe('recordLlmUsage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('updates DB and returns when under budget', async () => {
-    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      budgetTier: 'STANDARD',
-      costUsdAccrued: 0,
+  /**
+   * Wire `activeWorkflow.findFirst`/`update` to a tiny in-memory row that
+   * applies Prisma's `{ increment }` the way Postgres would. Returning a fixed
+   * object instead would make the counters untestable — and would hide the
+   * lost-update bug this replaced, since every caller would read the same
+   * pre-set totals.
+   */
+  function ledger(init: {
+    budgetTier?: string;
+    tokensInputUsed?: number;
+    tokensOutputUsed?: number;
+    costUsdAccrued?: number;
+  }) {
+    const row = {
+      budgetTier: init.budgetTier ?? 'STANDARD',
+      costUsdAccrued: init.costUsdAccrued ?? 0,
       id: 'wf-1',
-      tokensInputUsed: 0,
-      tokensOutputUsed: 0,
-    } as never);
-    vi.mocked(prisma.activeWorkflow.update).mockResolvedValue({} as never);
+      tokensInputUsed: init.tokensInputUsed ?? 0,
+      tokensOutputUsed: init.tokensOutputUsed ?? 0,
+    };
+    (prisma.activeWorkflow.findFirst as unknown as Mock).mockImplementation(async () => ({
+      ...row,
+    }));
+    (prisma.activeWorkflow.update as unknown as Mock).mockImplementation(async (args: unknown) => {
+      const data = (args as { data: Record<string, { increment?: number }> }).data;
+      for (const [field, op] of Object.entries(data)) {
+        if (typeof op?.increment === 'number') {
+          (row as Record<string, unknown>)[field] =
+            (row[field as keyof typeof row] as number) + op.increment;
+        }
+      }
+      return { ...row };
+    });
+    return row;
+  }
+
+  it('updates DB and returns when under budget', async () => {
+    const row = ledger({});
 
     await expect(
       recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
@@ -171,10 +201,77 @@ describe('recordLlmUsage', () => {
 
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ tokensInputUsed: 100, tokensOutputUsed: 50 }), // DB columns unchanged
+        data: expect.objectContaining({
+          tokensInputUsed: { increment: 100 },
+          tokensOutputUsed: { increment: 50 },
+        }),
         where: { id: 'wf-1' },
       })
     );
+    expect(row.tokensInputUsed).toBe(100);
+    expect(row.tokensOutputUsed).toBe(50);
+  });
+
+  it('does not lose usage when calls run concurrently', async () => {
+    // The review network fires three reviewers under one Promise.allSettled and
+    // fanOut branches run in parallel, so read-modify-write dropped increments
+    // exactly when spend was highest.
+    const row = ledger({});
+
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 50 })
+      )
+    );
+
+    expect(row.tokensInputUsed).toBe(300);
+    expect(row.tokensOutputUsed).toBe(150);
+  });
+
+  it('checks the budget against the post-increment total, not its own read', async () => {
+    // Under concurrency the value this call read may already be stale; the
+    // authoritative total is what the increment returned.
+    ledger({ tokensInputUsed: 1_999_950 });
+
+    await expect(
+      recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 100, outputTokens: 1 })
+    ).rejects.toThrow(/Budget exceeded/);
+  });
+
+  it('does not gate a workflow that is still under its tier', async () => {
+    ledger({ tokensInputUsed: 10 });
+    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).resolves.toBeUndefined();
+  });
+
+  it('refuses a call once the tier is already spent', async () => {
+    ledger({ tokensInputUsed: 2_000_000 });
+
+    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).rejects.toThrow(
+      /Budget already exhausted/
+    );
+  });
+
+  it('gates on the output ceiling too, not just input', async () => {
+    ledger({ tokensOutputUsed: 500_000 });
+    await expect(assertBudgetAvailable('wf-temporal-1', 'implementer')).rejects.toThrow(
+      /Budget already exhausted/
+    );
+  });
+
+  it('never spends when the gate fires', async () => {
+    // The whole point: with three reviewers in flight, the ones that have not
+    // called the provider yet must not each burn a call before their own
+    // post-check fires.
+    ledger({ tokensInputUsed: 2_000_000 });
+
+    await expect(assertBudgetAvailable('wf-temporal-1', 'review.security')).rejects.toThrow();
+    expect(prisma.activeWorkflow.update).not.toHaveBeenCalled();
+  });
+
+  it('no-ops for a run with no ActiveWorkflow ledger row', async () => {
+    // Channel tasks and PRD runs have none; they must not be blocked.
+    (prisma.activeWorkflow.findFirst as unknown as Mock).mockResolvedValue(null);
+    await expect(assertBudgetAvailable('wf-none', 'x')).resolves.toBeUndefined();
   });
 
   it('returns without error when workflow record is not found', async () => {
@@ -237,22 +334,16 @@ describe('recordLlmUsage', () => {
       toolKeys: null,
       version: 1,
     } as never);
-    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      budgetTier: 'STANDARD',
-      costUsdAccrued: 0,
-      id: 'wf-1',
-      tokensInputUsed: 0,
-      tokensOutputUsed: 0,
-    } as never);
+    ledger({});
 
     await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1000, outputTokens: 500 });
 
     expect(prisma.activeWorkflow.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          costUsdAccrued: 0,
-          tokensInputUsed: 1000,
-          tokensOutputUsed: 500,
+          costUsdAccrued: { increment: 0 },
+          tokensInputUsed: { increment: 1000 },
+          tokensOutputUsed: { increment: 500 },
         }),
       })
     );
@@ -274,13 +365,7 @@ describe('recordLlmUsage', () => {
       toolKeys: null,
       version: 1,
     } as never);
-    vi.mocked(prisma.activeWorkflow.findFirst).mockResolvedValue({
-      budgetTier: 'STANDARD',
-      costUsdAccrued: 0,
-      id: 'wf-1',
-      tokensInputUsed: 0,
-      tokensOutputUsed: 0,
-    } as never);
+    ledger({});
 
     // Must NOT reject — the workflow.update must still happen.
     await recordLlmUsage('wf-temporal-1', 'implementer', {
@@ -292,9 +377,9 @@ describe('recordLlmUsage', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           // Zero cost — unknown/unknown spec falls through to ZERO_PRICE.
-          costUsdAccrued: 0,
-          tokensInputUsed: 100_000,
-          tokensOutputUsed: 50_000,
+          costUsdAccrued: { increment: 0 },
+          tokensInputUsed: { increment: 100_000 },
+          tokensOutputUsed: { increment: 50_000 },
         }),
       })
     );

@@ -585,9 +585,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
-- **Budget enforcement is post-hoc.** `recordLlmUsage` accrues then checks, so a single call can
-  overshoot its tier before `BUDGET_EXCEEDED` fires. Pre-flight reservation is not possible for
-  cost that is only known after the call returns.
+- **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
+  workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
+  A workflow sitting just under its limit is still allowed one more call of unknown size, because a
+  call's cost is not known until it returns. A true reservation needs a declared max-output-token
+  budget per call site, which the agent configs do not carry.
 - **Credential rotation is not implemented.** `ProviderCredential.keyVersion` is reserved for it.
 - **`specSnapshot` still truncates past the spill cap.** Strings over 4 KB go to a
   `WorkflowArtifact` and are replaced by a reference, but only for the first 20 per run; beyond that
