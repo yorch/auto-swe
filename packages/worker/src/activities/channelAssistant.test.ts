@@ -324,6 +324,11 @@ describe('reserveChannelTurn', () => {
       return rows.has(month) ? { costUsdAccrued: rows.get(month) } : null;
     }) as never);
 
+    // The hold path uses interactive transactions precisely so this fake can
+    // model them: the callback runs against the same mocked delegates, and a
+    // throw partway through leaves the caller's catch to decide — exactly the
+    // "the sweep already took this hold" case below.
+
     return { holds, rows, total: () => rows.get('2026-06') ?? 0 };
   }
 
