@@ -464,7 +464,17 @@ silently drops every trace record when the activity fails — exactly when you n
 - Dockerfiles use a **3-stage build** (builder → prod-deps → runtime)
 - `yarn workspaces focus <pkg> --production` strips devDependencies in the prod-deps stage
 - Dependencies are hoisted to root `node_modules/`; per-workspace `node_modules/` may be empty
-- Prisma generated client lives in `node_modules/.prisma` — must be explicitly copied from builder to runtime
+- Prisma generated client lives at **`packages/shared/src/generated/prisma`**, not
+  `node_modules/.prisma` — the `prisma-client` provider writes to the schema's `output`
+  path. Copy that directory from builder to runtime.
+- **If the runtime runs the Prisma CLI** (the gateway's migrate-on-boot entrypoint calls
+  `node_modules/prisma/build/index.js migrate deploy`), declare `prisma` in that package's
+  **`dependencies`**, so `yarn workspaces focus --production` resolves the CLI's own
+  transitive deps (`@prisma/config`, `effect`, …). Copying `node_modules/prisma` alone fails
+  at runtime, and overlaying the whole builder tree to dodge that costs ~2GB.
+- **Set ownership with `COPY --chown`, never a trailing `RUN chown -R /app`** — the
+  recursive form rewrites every file's metadata into a new layer, storing the entire tree
+  (node_modules included) twice.
 - Root `package.json` must be in the runtime image for workspace symlink resolution
 - **No `corepack enable`** needed in the runtime stage — it only runs `node`
 
