@@ -127,15 +127,18 @@ export async function passiveIngestChannelMemory(
     // cursor where it was: advancing first and then bailing would skip this
     // window of messages permanently, and a hold is refused more readily than
     // the read above because it consumes headroom.
+    // Resolve at the CHANNEL tier explicitly, and bind the pass with the same
+    // context below: the hold is priced through `resolveAgent(..., { channelId })`,
+    // and the ambient Temporal context has no channelId, so binding without it
+    // would charge for a channel-scoped override the pass never uses.
+    const agentCtx = { channelId, orgId: channel.orgId, teamId: channel.teamId };
     const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null, {
       agentKey: 'commitToMemory',
-      orgId: channel.orgId,
-      teamId: channel.teamId,
+      ...agentCtx,
     });
     if (hold.overBudget) {
       return EMPTY;
     }
-    await advanceCursor();
 
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
@@ -146,13 +149,18 @@ export async function passiveIngestChannelMemory(
     // try, so the hold is given back even when agent construction fails — the
     // outer catch would otherwise swallow the throw and strand it.
     try {
+      // Inside the try: the outer catch swallows a throw, so advancing here
+      // rather than above is what keeps a failed cursor write from stranding
+      // the hold for its full TTL.
+      await advanceCursor();
+
       // Build transcript for the LLM (oldest → newest, human only).
       const transcript = humanMessages
         .map((m) => `[${m.user ?? 'unknown'}]: ${m.text.trim()}`)
         .join('\n');
 
       // Resolve skills + build agent.
-      const skills = await loadAgentSkills('commitToMemory');
+      const skills = await loadAgentSkills('commitToMemory', agentCtx);
       const skillSuffix = skills
         .map((s) => s.promptText)
         .filter(Boolean)
@@ -164,7 +172,7 @@ export async function passiveIngestChannelMemory(
       const agent = new Agent({
         id: 'channel-passive-ingestor',
         instructions,
-        model: await getModel('commitToMemory'),
+        model: await getModel('commitToMemory', agentCtx),
         name: 'channel-passive-ingestor',
       });
 

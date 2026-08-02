@@ -181,11 +181,16 @@ export async function sweepChannelOpenItems(
       })
       .join('\n');
 
+    // The hold below is priced through `resolveAgent(..., { channelId })`; bind
+    // the pass with the same context so a channel-scoped override is not charged
+    // for and then ignored.
+    const agentCtx = { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId };
+
     // LLM call with structured output.
     const agent = new Agent({
       id: 'channel-open-item-sweeper',
       instructions: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT,
-      model: await getModel('commitToMemory'),
+      model: await getModel('commitToMemory', agentCtx),
       name: 'channel-open-item-sweeper',
     });
 
@@ -196,8 +201,7 @@ export async function sweepChannelOpenItems(
     // real total — in the `finally` below.
     const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents, {
       agentKey: 'commitToMemory',
-      orgId: channel.orgId,
-      teamId: channel.teamId,
+      ...agentCtx,
     });
     if (hold.overBudget) {
       return emptyResult;
