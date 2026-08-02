@@ -58,9 +58,12 @@ vi.mock('../lib/slackNotify.js', () => ({
   postSlackChannelMessage: (...args: unknown[]) => postSlackChannelMessageMock(...args),
 }));
 
+/** The hold's `settle` — where the sweep's real cost lands. */
+const settleMock = vi.fn();
+const reserveChannelTurnMock = vi.fn().mockResolvedValue({ overBudget: false, settle: settleMock });
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: vi.fn(),
   isChannelOverBudgetNow: vi.fn().mockResolvedValue(false),
+  reserveChannelTurn: (...args: unknown[]) => reserveChannelTurnMock(...args),
 }));
 
 import { prisma } from '@auto-swe/shared/db';
@@ -97,6 +100,8 @@ function makeMessages(count = 2) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  settleMock.mockResolvedValue(undefined);
+  reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
   getModelMock.mockResolvedValue({});
   persistActivityTraceMock.mockResolvedValue(undefined);
   recordLlmUsageMock.mockResolvedValue({

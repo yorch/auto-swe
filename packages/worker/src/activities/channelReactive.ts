@@ -7,9 +7,9 @@ import {
   type SlackChannelMessage,
 } from '../lib/slackNotify.js';
 import {
-  accrueChannelUsage,
   DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
+  reserveChannelTurn,
   runChannelAgentTurn,
 } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
@@ -203,7 +203,8 @@ export async function evaluateReactiveInterjection(
       return { posted: false, reason: 'no-new-messages' };
     }
 
-    // Budget gate: over the cap ⇒ no LLM, no post (still advance the cursor).
+    // Cheap pre-LLM bail: over the cap ⇒ no LLM, no post (still advance the
+    // cursor). The hold taken around the model call below is what enforces it.
     if (await isChannelOverBudgetNow(channel.id, channel.monthlyBudgetUsdCents)) {
       await advanceCursor();
       return { posted: false, reason: 'over-budget' };
@@ -243,17 +244,31 @@ export async function evaluateReactiveInterjection(
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
-    const { reply, costUsd } = await runChannelAgentTurn(
-      { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
-      buildReactivePrompt(messages, memory),
-      'llm.channel_reactive'
-    );
+    // Hold budget before spending it, so concurrent ticks and turns can't all
+    // pass the read above and blow past the cap together.
+    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
+    if (hold.overBudget) {
+      await advanceCursor();
+      return { posted: false, reason: 'over-budget' };
+    }
+    let turn: { reply: string; costUsd: number };
+    try {
+      turn = await runChannelAgentTurn(
+        { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
+        buildReactivePrompt(messages, memory),
+        'llm.channel_reactive'
+      );
+    } catch (err) {
+      await hold.settle(0, { countRun: false });
+      throw err;
+    }
+    const { reply, costUsd } = turn;
 
     const posted = shouldPostInterjection(reply);
 
-    // Accrue the LLM cost (it happened). Count a run only when we actually post —
+    // Settle the LLM cost (it happened). Count a run only when we actually post —
     // a SKIP is a no-op evaluation, not a user-facing turn.
-    await accrueChannelUsage(channel.id, costUsd, { countRun: posted });
+    await hold.settle(costUsd, { countRun: posted });
 
     // Write cursor + cooldown anchor BEFORE the Slack call (at-most-once semantics):
     // a transient Slack failure after this write can't cause a duplicate post on

@@ -10,7 +10,7 @@ import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -148,6 +148,13 @@ export async function passiveIngestChannelMemory(
     let factsExtracted = 0;
     let factsWritten = 0;
 
+    // Hold budget for this ingest before it spends. Released — or replaced by the
+    // real total — in the `finally` below.
+    const hold = await reserveChannelTurn(channelId, channel.monthlyBudgetUsdCents ?? null);
+    if (hold.overBudget) {
+      return EMPTY;
+    }
+
     try {
       const start = Date.now();
       const result = await agent.generate([{ content: transcript, role: 'user' }], {
@@ -224,9 +231,8 @@ export async function passiveIngestChannelMemory(
       return { factsExtracted, factsWritten, messagesRead: humanMessages.length };
     } finally {
       await persistActivityTrace(tracer, 'commitToMemory');
-      if (totalCostUsd > 0) {
-        await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
-      }
+      // Unconditional: an ingest that spent nothing still has to give its hold back.
+      await hold.settle(totalCostUsd, { countRun: false });
     }
   } catch {
     return EMPTY;

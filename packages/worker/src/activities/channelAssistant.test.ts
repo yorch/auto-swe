@@ -83,10 +83,12 @@ import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow'
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
   CHANNEL_PLACEHOLDER_TEXT,
+  CHANNEL_TURN_RESERVATION_USD,
   formatMemoryContext,
   formatThreadContext,
   isChannelOverBudget,
   postChannelPlaceholder,
+  reserveChannelTurn,
   runChannelAssistantTurn,
   updateChannelReply,
 } from './channelAssistant.js';
@@ -191,6 +193,87 @@ describe('isChannelOverBudget', () => {
   });
 });
 
+describe('reserveChannelTurn', () => {
+  /**
+   * A `channel_monthly_usage` row that actually accumulates, so a test can watch
+   * holds stack the way concurrent turns would. `upsert` returns the row's new
+   * total, which is what the reservation decides on.
+   */
+  function fakeLedger(startingUsd = 0) {
+    let accrued = startingUsd;
+    upsertUsage.mockImplementation((async (args: {
+      update: { costUsdAccrued: { increment: number } };
+    }) => {
+      accrued += args.update.costUsdAccrued.increment;
+      return { costUsdAccrued: accrued };
+    }) as never);
+    return () => accrued;
+  }
+
+  it('takes no hold and never blocks when the channel has no cap', async () => {
+    const total = fakeLedger();
+    const hold = await reserveChannelTurn('chan-1', null);
+    expect(hold.overBudget).toBe(false);
+    expect(upsertUsage).not.toHaveBeenCalled();
+
+    await hold.settle(0.02);
+    expect(total()).toBeCloseTo(0.02, 6);
+  });
+
+  it('holds while the turn runs, then settles to exactly the real cost', async () => {
+    const total = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 10000); // $100 cap
+    expect(hold.overBudget).toBe(false);
+    expect(total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+
+    await hold.settle(0.02);
+    expect(total()).toBeCloseTo(1.02, 6);
+  });
+
+  it('releases its hold when the channel is already at the cap', async () => {
+    const total = fakeLedger(5);
+    const hold = await reserveChannelTurn('chan-1', 500); // $5 cap, $5 spent
+    expect(hold.overBudget).toBe(true);
+    // Taken and given straight back — a refused turn must not leave the channel
+    // looking more expensive than it was.
+    expect(total()).toBeCloseTo(5, 6);
+  });
+
+  it('bounds concurrent turns, which a read-only gate does not', async () => {
+    // $5 cap with $4.98 spent leaves room for one hold, not two. Turn workflow
+    // ids are per-event, so both of these really can be in flight at once — the
+    // whole point of holding rather than reading.
+    const total = fakeLedger(4.98);
+    const [first, second] = await Promise.all([
+      reserveChannelTurn('chan-1', 500),
+      reserveChannelTurn('chan-1', 500),
+    ]);
+
+    const refused = [first, second].filter((h) => h.overBudget);
+    expect(refused).toHaveLength(1);
+    // The refused turn gave its hold back; the admitted one still holds.
+    expect(total()).toBeCloseTo(4.98 + CHANNEL_TURN_RESERVATION_USD, 6);
+  });
+
+  it('settles once, so a caller can settle on success and release in a finally', async () => {
+    const total = fakeLedger(1);
+    const hold = await reserveChannelTurn('chan-1', 10000);
+    await hold.settle(0.02);
+    await hold.settle(0); // the `finally` release
+    expect(total()).toBeCloseTo(1.02, 6);
+  });
+
+  it('lets the turn proceed when the ledger write fails', async () => {
+    // The budget row backs a cap, not billing — a DB failure must not silence
+    // the assistant. Falls back to the read-only gate.
+    upsertUsage.mockRejectedValue(new Error('db down'));
+    findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never);
+
+    const hold = await reserveChannelTurn('chan-1', 10000);
+    expect(hold.overBudget).toBe(false);
+  });
+});
+
 describe('formatMemoryContext', () => {
   it('returns the user text unchanged when there are no items', () => {
     expect(formatMemoryContext([], 'what is the deploy command?')).toBe(
@@ -278,31 +361,42 @@ describe('runChannelAssistantTurn', () => {
     expect(upsertUsage).not.toHaveBeenCalled();
   });
 
-  it('runs the turn when under budget and accrues channel usage', async () => {
+  it('holds budget for the turn, then settles the hold at the real cost', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: 10000, // $100 cap
     } as never);
     findUsage.mockResolvedValue({ costUsdAccrued: 1 } as never); // $1 accrued
+    // Post-increment total the hold reads back: $1 accrued + its own hold.
+    upsertUsage.mockResolvedValue({
+      costUsdAccrued: 1 + CHANNEL_TURN_RESERVATION_USD,
+    } as never);
 
     const result = await runChannelAssistantTurn(makeInput());
 
     expect(result.reply).toBe('hi there');
     expect(runAgentMock).toHaveBeenCalledTimes(1);
-    expect(upsertUsage).toHaveBeenCalledTimes(1);
-    const args = upsertUsage.mock.calls[0]?.[0] as {
-      create: { costUsdAccrued: number; runsCompleted: number; channelId: string };
-      update: { costUsdAccrued: { increment: number }; runsCompleted: { increment: number } };
+
+    // Two writes: the hold taken before the model call, then the settle that
+    // swaps it for the turn's real cost.
+    expect(upsertUsage).toHaveBeenCalledTimes(2);
+    type UsageCall = {
+      create: { costUsdAccrued: number; runsCompleted: number };
+      update: { costUsdAccrued: { increment: number }; runsCompleted?: { increment: number } };
       where: { channelId_yearMonth: { channelId: string; yearMonth: string } };
     };
-    // Accrual uses the authoritative `costUsd` returned by runAgent (not a
-    // local re-pricing of token usage), keeping the per-channel ledger in lockstep
-    // with the run-level ledger.
-    expect(args.create.costUsdAccrued).toBeCloseTo(0.0175, 6);
-    expect(args.update.costUsdAccrued).toEqual({ increment: 0.0175 });
-    expect(args.create.runsCompleted).toBe(1);
-    expect(args.update.runsCompleted).toEqual({ increment: 1 });
-    expect(args.where.channelId_yearMonth.yearMonth).toBe('2026-06');
+    const [held, settled] = upsertUsage.mock.calls.map((c) => c[0] as UsageCall);
+    expect(held.update.costUsdAccrued).toEqual({ increment: CHANNEL_TURN_RESERVATION_USD });
+    // A hold is not a completed run — only the settle counts one.
+    expect(held.update.runsCompleted).toBeUndefined();
+    expect(settled.update.runsCompleted).toEqual({ increment: 1 });
+    expect(settled.where.channelId_yearMonth.yearMonth).toBe('2026-06');
+
+    // Net of the two: the authoritative `costUsd` returned by runAgent (not a
+    // local re-pricing of token usage), keeping the per-channel ledger in
+    // lockstep with the run-level ledger.
+    const net = held.update.costUsdAccrued.increment + settled.update.costUsdAccrued.increment;
+    expect(net).toBeCloseTo(0.0175, 6);
   });
 
   it('does not read usage or block when no cap is set', async () => {

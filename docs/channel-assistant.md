@@ -157,10 +157,17 @@ Consolidation and lesson consolidation share `clusterByEmbedding` (`lib/embeddin
 `ChannelMonthlyUsage` mirrors `OrgMonthlyUsage` and backs `monthlyBudgetUsdCents`. Channel spend is
 tracked in the channel ledger and is *not* double-counted into `OrgMonthlyUsage`.
 
-The cap is a soft gate, not a hard reservation: pre-flight cost reservation is not achievable for
-post-hoc LLM cost, so the guarantee is a Serializable-transaction read ensuring **at most one
-in-flight turn can overshoot**. `isChannelOverBudgetNow` gates conversational and proactive turns;
-`isChannelOverBudgetForTask` gates the heavier delegated task runs.
+A turn's real cost is only known after the model answers, so every spending path takes a **hold**
+against the cap before it runs and settles that hold for the true cost afterwards
+(`reserveChannelTurn` → `ChannelBudgetHold.settle`). The hold is an atomic increment on the ledger
+row and each turn decides on the total *before* its own increment, so remaining headroom is a
+resource turns consume rather than a number they all read — which matters because turn workflow ids
+are per-event and a busy channel runs many at once. Overshoot is bounded by how far a turn's actual
+cost exceeds its hold, not by how many turns started together.
+
+`isChannelOverBudgetNow` remains a plain read, used for the cheap bail before a turn does any work
+and by `isChannelOverBudgetForTask`, which gates the heavier delegated task runs — those accrue to
+the run's own ledger rather than the channel's, so there is nothing to hold.
 
 ---
 
@@ -220,7 +227,10 @@ sustained use. No code closes this — it needs an install, a pilot channel, and
 the proactivity features especially (ambient digests, reactive interjection, org-wide flagging) as
 unproven on real traffic, and turn them on one channel at a time.
 
-- **No hard budget cap.** See §7 — the gate allows at most one in-flight overshoot.
+- **The budget cap is bounded, not exact.** See §7 — a turn whose real cost exceeds its hold
+  overshoots by the difference, and the hold is a fixed estimate rather than a per-model one. A hold
+  is also lost if the worker dies between taking it and settling it, which over-counts that channel
+  until the month rolls over.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

@@ -7,7 +7,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory, postSlackChannelMessage } from '../lib/slackNotify.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +192,13 @@ export async function sweepChannelOpenItems(
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
 
+    // Hold budget for this sweep before it spends. Released — or replaced by the
+    // real total — in the `finally` below.
+    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
+    if (hold.overBudget) {
+      return emptyResult;
+    }
+
     try {
       const prompt = buildSweepPrompt(
         transcript,
@@ -311,9 +318,8 @@ export async function sweepChannelOpenItems(
       return sweepResult;
     } finally {
       await persistActivityTrace(tracer, 'commitToMemory');
-      if (totalCostUsd > 0) {
-        await accrueChannelUsage(channel.id, totalCostUsd, { countRun: false });
-      }
+      // Unconditional: a sweep that spent nothing still has to give its hold back.
+      await hold.settle(totalCostUsd, { countRun: false });
     }
   } catch (err) {
     console.error(

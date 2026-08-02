@@ -51,10 +51,12 @@ vi.mock('../lib/slackNotify.js', () => ({
 }));
 
 const isChannelOverBudgetNowMock = vi.fn();
-const accrueChannelUsageMock = vi.fn();
+/** The hold's `settle` — where the ingest's real cost lands. */
+const settleMock = vi.fn();
+const reserveChannelTurnMock = vi.fn();
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: (...args: unknown[]) => accrueChannelUsageMock(...args),
   isChannelOverBudgetNow: (...args: unknown[]) => isChannelOverBudgetNowMock(...args),
+  reserveChannelTurn: (...args: unknown[]) => reserveChannelTurnMock(...args),
 }));
 
 const generateEmbeddingWithSpecMock = vi.fn();
@@ -103,7 +105,8 @@ beforeEach(() => {
     outputTokens: 50,
   });
   persistActivityTraceMock.mockResolvedValue(undefined);
-  accrueChannelUsageMock.mockResolvedValue(undefined);
+  settleMock.mockResolvedValue(undefined);
+  reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
   generateEmbeddingWithSpecMock.mockResolvedValue({
     embedding: [0.1, 0.2],
     spec: 'openai/text-embedding-3-large',
@@ -222,7 +225,7 @@ describe('passiveIngestChannelMemory', () => {
     });
 
     await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith(CHANNEL_ID, 0.005, { countRun: false });
+    expect(settleMock).toHaveBeenCalledWith(0.005, { countRun: false });
   });
 
   it('persists activity trace and returns empty on LLM error', async () => {

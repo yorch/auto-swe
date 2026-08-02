@@ -9,7 +9,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
-import { accrueChannelUsage, isChannelOverBudgetNow } from './channelAssistant.js';
+import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -186,6 +186,13 @@ export async function consolidateChannelMemory(
   const tracer = new AgentTracer();
   let totalCostUsd = 0;
 
+  // Hold budget for this pass before it spends. Released — or replaced by the
+  // real total — in the `finally` below.
+  const hold = await reserveChannelTurn(channelId, channel?.monthlyBudgetUsdCents ?? null);
+  if (hold.overBudget) {
+    return EMPTY_RESULT;
+  }
+
   try {
     const clusterOutcomes = await Promise.all(
       qualifying.map(async (cluster) => {
@@ -282,10 +289,9 @@ export async function consolidateChannelMemory(
     return finalResult;
   } finally {
     await persistActivityTrace(tracer, 'commitToMemory');
-    // Accrue consolidation cost to the channel's monthly budget WITHOUT counting
-    // it as a user-facing run (countRun: false).
-    if (totalCostUsd > 0) {
-      await accrueChannelUsage(channelId, totalCostUsd, { countRun: false });
-    }
+    // Settle consolidation cost against the channel's monthly budget WITHOUT
+    // counting it as a user-facing run (countRun: false). Unconditional: a pass
+    // that spent nothing still has to give its hold back.
+    await hold.settle(totalCostUsd, { countRun: false });
   }
 }

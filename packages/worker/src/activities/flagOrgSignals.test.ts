@@ -25,11 +25,13 @@ vi.mock('../lib/slackNotify.js', () => ({
 }));
 
 const runChannelAgentTurnMock = vi.fn();
-const accrueChannelUsageMock = vi.fn();
+/** The hold's `settle` — where the flag turn's real cost lands. */
+const settleMock = vi.fn();
+const reserveChannelTurnMock = vi.fn();
 const isChannelOverBudgetNowMock = vi.fn();
 vi.mock('./channelAssistant.js', () => ({
-  accrueChannelUsage: (...a: unknown[]) => accrueChannelUsageMock(...a),
   isChannelOverBudgetNow: (...a: unknown[]) => isChannelOverBudgetNowMock(...a),
+  reserveChannelTurn: (...a: unknown[]) => reserveChannelTurnMock(...a),
   runChannelAgentTurn: (...a: unknown[]) => runChannelAgentTurnMock(...a),
 }));
 
@@ -60,6 +62,8 @@ beforeEach(() => {
   findChannel.mockResolvedValue(makeChannel() as never);
   updateChannel.mockResolvedValue({} as never);
   isChannelOverBudgetNowMock.mockResolvedValue(false);
+  settleMock.mockResolvedValue(undefined);
+  reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
   recentChannelMemoryMock.mockResolvedValue([{ lessonSummary: 'we ship on fridays' }]);
   generateEmbeddingWithSpecMock.mockResolvedValue({ embedding: [0.1], spec: 'openai/x' });
   searchOrgChannelMemoryMock.mockResolvedValue([
@@ -179,7 +183,7 @@ describe('flagOrgSignals', () => {
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: true, reason: 'posted' });
     expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.01, { countRun: true });
+    expect(settleMock).toHaveBeenCalledWith(0.01, { countRun: true });
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
     expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
   });
@@ -189,7 +193,7 @@ describe('flagOrgSignals', () => {
     const res = await flagOrgSignals({ channelId: 'chan-1' });
     expect(res).toEqual({ posted: false, reason: 'skip' });
     expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
-    expect(accrueChannelUsageMock).toHaveBeenCalledWith('chan-1', 0.005, { countRun: false });
+    expect(settleMock).toHaveBeenCalledWith(0.005, { countRun: false });
     // The cooldown is advanced on a SKIP too, so the next fire doesn't re-pay the LLM.
     const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
     expect(lastUpdate.data).toHaveProperty('lastOrgFlagCheckAt');
