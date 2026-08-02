@@ -171,13 +171,14 @@ function buildApp(state: FakeState): FastifyInstance {
     slackChannel: {
       // No row yet → provisionChannel takes its create path, where it asks
       // Slack for the authoritative `is_private`.
-      findUnique: async () => null,
-      upsert: async () => ({
+      create: async () => ({
         followupSessionEnabled: false,
         id: 'chan-1',
         orgId: 'org-1',
         teamId: 'team-default',
       }),
+      findFirst: async () => null,
+      findUnique: async () => null,
     },
     slackWorkspace: {
       create: async (args: { data: Record<string, unknown> }) => {
@@ -774,11 +775,12 @@ describe('POST /api/v1/auth/slack/events — channel assistant teammate', () => 
     const creates: Record<string, unknown>[] = [];
     const prisma = (app as unknown as { prisma: Record<string, unknown> }).prisma;
     prisma.slackChannel = {
-      findUnique: async () => null,
-      upsert: async ({ create }: { create: Record<string, unknown> }) => {
-        creates.push(create);
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        creates.push(data);
         return { followupSessionEnabled: false, id: 'chan-1', orgId: 'org-1', teamId: 'team-x' };
       },
+      findFirst: async () => null,
+      findUnique: async () => null,
     };
     const body = JSON.stringify({
       event: {
@@ -1103,13 +1105,14 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
         findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 60_000) }),
       },
       slackChannel: {
-        findUnique: async () => null,
-        upsert: async () => ({
+        create: async () => ({
           followupSessionEnabled: true,
           id: 'chan-1',
           orgId: 'org-1',
           teamId: 'team-default',
         }),
+        findFirst: async () => null,
+        findUnique: async () => null,
       },
     };
 
@@ -1144,13 +1147,14 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
         findUnique: async () => ({ lastAssistantAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
       },
       slackChannel: {
-        findUnique: async () => null,
-        upsert: async () => ({
+        create: async () => ({
           followupSessionEnabled: true,
           id: 'chan-1',
           orgId: 'org-1',
           teamId: 'team-default',
         }),
+        findFirst: async () => null,
+        findUnique: async () => null,
       },
     };
 

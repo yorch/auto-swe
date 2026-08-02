@@ -309,14 +309,22 @@ describe('recordLlmUsage', () => {
 
   it('flags a step that spends on an agent the boot gate does not know about', async () => {
     ledger({});
-    // `commitToMemory` is a registered step, but not for the `implementer` key.
-    await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 1, outputTokens: 1 });
+    // `commitToMemory` is a registered step, but not for the `planner` key. The
+    // role is deliberately one no earlier test in this file used: the warning is
+    // once per (step, agent) per process, so a shared pair would already be spent.
+    await recordLlmUsage('wf-temporal-1', 'planner', { inputTokens: 1, outputTokens: 1 });
 
     // Advisory, never fatal — the provider has already been paid.
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('STEP_REQUIRED_AGENTS'),
-      expect.objectContaining({ role: 'implementer' })
+      expect.objectContaining({ role: 'planner' })
     );
+
+    // A drifted entry on a hot step would otherwise repeat this line on every
+    // single call and bury itself.
+    warnSpy.mockClear();
+    await recordLlmUsage('wf-temporal-1', 'planner', { inputTokens: 1, outputTokens: 1 });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('stays quiet when the step declares the agent it used', async () => {

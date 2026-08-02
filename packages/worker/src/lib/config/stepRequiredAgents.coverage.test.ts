@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { DYNAMIC_AGENT_STEPS, STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
+import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /**
  * `STEP_REQUIRED_AGENTS` is hand-maintained, carries a "keep this in sync with
@@ -61,16 +61,10 @@ describe('STEP_REQUIRED_AGENTS tracks the step executors', () => {
     expect(stale, 'keys in STEP_REQUIRED_AGENTS with no executor in runnable.ts').toEqual([]);
   });
 
-  it('suppresses the runtime warning only for steps that still exist', () => {
-    // An entry here silences `flagUnregisteredAgentUsage` for that step. A stale
-    // one silences nothing but reads as if a decision were made; a step renamed
-    // out from under it silently re-enables the warning it was added to stop.
-    const stale = [...DYNAMIC_AGENT_STEPS].filter((step) => !steps.has(step));
-    expect(stale, 'keys in DYNAMIC_AGENT_STEPS with no executor in runnable.ts').toEqual([]);
-  });
-
-  it('does not both declare and exempt the same step', () => {
-    const both = [...DYNAMIC_AGENT_STEPS].filter((step) => step in STEP_REQUIRED_AGENTS);
-    expect(both, 'a step resolves its agent statically or dynamically, not both').toEqual([]);
+  it('marks a dynamic step rather than leaving it undeclared', () => {
+    // `runAgentNode` binds an `agentRef` from the spec, so it can never carry a
+    // key list — but leaving it out of the map entirely is indistinguishable
+    // from drift, and `flagUnregisteredAgentUsage` would warn on every run.
+    expect(STEP_REQUIRED_AGENTS.runAgentNode).toBe(DYNAMIC_AGENT);
   });
 });

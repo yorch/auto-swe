@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
-import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
+import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 
 /**
  * The agent keys *this deployment* actually needs at boot.
@@ -73,10 +73,25 @@ export async function installedStepNames(): Promise<Set<string>> {
 
 /** Empty when nothing runnable is installed — boot then has no agent gate. */
 export async function requiredAgentKeysForDeployment(): Promise<string[]> {
-  const steps = await installedStepNames();
+  // Independent reads on the worker's pre-poller boot path.
+  const [steps, channelCount] = await Promise.all([
+    installedStepNames(),
+    runUnscoped(
+      'a channel in any tenant means this worker can serve channel turns',
+      ['SlackChannel'],
+      () => prisma.slackChannel.count()
+    ),
+  ]);
   const keys = new Set<string>();
   for (const step of steps) {
-    for (const key of STEP_REQUIRED_AGENTS[step] ?? []) {
+    const declared = STEP_REQUIRED_AGENTS[step];
+    // `DYNAMIC_AGENT` is a string, and iterating it would add its characters as
+    // agent keys. A dynamic step's agent comes from the spec and is checked at
+    // template save, not here.
+    if (!declared || declared === DYNAMIC_AGENT) {
+      continue;
+    }
+    for (const key of declared) {
       keys.add(key);
     }
   }
@@ -85,11 +100,6 @@ export async function requiredAgentKeysForDeployment(): Promise<string[]> {
   // calls `runAgent` directly, and the seeded channel template is a one-node
   // trace container. So walking specs cannot see this requirement; the presence
   // of a channel is what implies it.
-  const channelCount = await runUnscoped(
-    'a channel in any tenant means this worker can serve channel turns',
-    ['SlackChannel'],
-    () => prisma.slackChannel.count()
-  );
   if (channelCount > 0) {
     keys.add('channelAssistant');
   }

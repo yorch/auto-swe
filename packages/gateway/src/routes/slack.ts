@@ -1086,6 +1086,25 @@ async function provisionChannel(
   orgId: string;
   followupSessionEnabled: boolean;
 } | null> {
+  // The overwhelming majority of events are for a channel that already exists.
+  // Answer those from one joined read: everything below — the workflow defaults,
+  // the team lookup, the workspace upsert (a write) and the Slack call — is only
+  // needed to create a channel for the first time. `findFirst` is not a guarded
+  // operation, and the query names the channel outright.
+  const CHANNEL_FIELDS = {
+    followupSessionEnabled: true,
+    id: true,
+    orgId: true,
+    teamId: true,
+  } as const;
+  const existing = await fastify.prisma.slackChannel.findFirst({
+    select: CHANNEL_FIELDS,
+    where: { slackChannelId, workspace: { slackTeamId } },
+  });
+  if (existing) {
+    return existing;
+  }
+
   const { defaultTeamSlug } = await resolveWorkflowDefaults();
   const defaultTeam = await fastify.prisma.team.findUnique({ where: { slug: defaultTeamSlug } });
   if (!defaultTeam) {
@@ -1121,28 +1140,14 @@ async function provisionChannel(
     workspaceId_slackChannelId: { slackChannelId, workspaceId: workspace.id },
   };
 
-  // Ask Slack directly rather than trusting the caller's heuristic. Only on the
-  // create path: the flag decides whether this channel's memory can be read by
-  // another, so it is worth a round-trip once, and re-checking on every mention
-  // would put a Slack API call on the hot path of every turn. `isPrivate` is
-  // still set on CREATE only, so neither source can undo a later admin override.
-  // Selecting the fields this function returns means the common path — a channel
-  // that already exists — answers from this read and skips the no-op upsert
-  // below, so consulting Slack costs a round-trip only on first sight.
-  const existing = await fastify.prisma.slackChannel.findUnique({
-    select: { followupSessionEnabled: true, id: true, orgId: true, teamId: true },
-    where: channelWhere,
-  });
-  if (existing) {
-    return existing;
-  }
-
-  let isPrivate = opts.isPrivate ?? false;
+  // Ask Slack rather than trusting the caller's heuristic. This flag decides
+  // whether the channel's memory can ever be read by another channel, and it is
+  // written on create only — so neither source can undo a later admin override,
+  // and the round-trip is paid once per channel rather than once per mention.
   const token = (await resolveSlackBotTokenForWorkspace(slackTeamId)) ?? undefined;
   const authoritative = await fetchSlackChannelIsPrivate(slackChannelId, token);
-  if (authoritative !== null) {
-    isPrivate = authoritative;
-  } else if (token) {
+  const isPrivate = authoritative ?? opts.isPrivate ?? false;
+  if (authoritative === null && token) {
     // Falling back to the payload heuristic is the old behaviour, but silently:
     // a missing `groups:read` scope or a flaky call would mark a private channel
     // public *permanently*, since the flag is written on create only.
@@ -1152,35 +1157,28 @@ async function provisionChannel(
     );
   }
 
-  const channel = await fastify.prisma.slackChannel
-    .upsert({
-      create: {
+  // A plain create, since the existence check above already ran. Two concurrent
+  // first-mentions can still both get here; the loser re-reads.
+  return await fastify.prisma.slackChannel
+    .create({
+      data: {
         isPrivate,
         orgId: workspace.orgId,
         slackChannelId,
         teamId: defaultTeam.id,
         workspaceId: workspace.id,
       },
-      update: {},
-      where: channelWhere,
+      select: CHANNEL_FIELDS,
     })
     .catch(async (err) => {
       if (isUniqueConstraintError(err)) {
-        return fastify.prisma.slackChannel.findUnique({ where: channelWhere });
+        return fastify.prisma.slackChannel.findUnique({
+          select: CHANNEL_FIELDS,
+          where: channelWhere,
+        });
       }
       throw err;
     });
-  if (!channel) {
-    fastify.log.error({ slackChannelId }, 'failed to resolve Slack channel after race');
-    return null;
-  }
-
-  return {
-    followupSessionEnabled: channel.followupSessionEnabled,
-    id: channel.id,
-    orgId: channel.orgId,
-    teamId: channel.teamId,
-  };
 }
 
 // ── HITL resolve button (block_actions, action_id `hitl_resolve[:…]`) ───────

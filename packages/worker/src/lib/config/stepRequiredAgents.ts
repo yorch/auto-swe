@@ -31,7 +31,20 @@
  * is typed to match. Narrowing it to `ModelBackedAgentKey`, the pricing/UI
  * convenience set, silently kept seeded agents like `evalJudge` out of the gate.
  */
-export const STEP_REQUIRED_AGENTS: Record<string, readonly string[]> = {
+/**
+ * A step whose agent comes from the spec, not from this map.
+ *
+ * `runAgentNode` binds whatever `agentRef` a template node names, so no static
+ * entry could exist for it — `requiredAgentKeysForDeployment` documents
+ * agentRef-reached agents as deliberately outside the boot gate (they are
+ * checked when the template is saved, and resolved per node at run time).
+ * Saying so here rather than in a second set beside this one keeps the answer
+ * where a reader is already looking, and makes "declared *and* exempt"
+ * unrepresentable instead of something a test has to forbid.
+ */
+export const DYNAMIC_AGENT = 'dynamic';
+
+export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | typeof DYNAMIC_AGENT> = {
   commitToMemory: ['commitToMemory'],
   executeCIFixImplementation: ['implementer', 'securityReview'],
   executeGateFixImplementation: ['implementer', 'securityReview'],
@@ -40,21 +53,9 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[]> = {
   planChannelTask: ['channelAssistant'],
   planDecomposition: ['planner'],
   resolveMergeConflict: ['implementer'],
+  runAgentNode: DYNAMIC_AGENT,
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
   runReviewNetwork: ['reviewer'],
   validateContext: ['validateContext'],
 };
-
-/**
- * Steps whose agent is named by the spec, not by this map.
- *
- * `runAgentNode` binds whatever `agentRef` the template node carries, so no
- * static map can list its keys — `requiredAgentKeysForDeployment` documents
- * agentRef-reached agents as deliberately outside the boot gate (they are
- * checked when the template is saved, and resolved per node at run time).
- * `flagUnregisteredAgentUsage` would otherwise warn on every single execution
- * of every `agent` node, telling the operator to add an entry that cannot
- * exist — and drowning the one signal the check is for.
- */
-export const DYNAMIC_AGENT_STEPS = new Set(['runAgentNode']);

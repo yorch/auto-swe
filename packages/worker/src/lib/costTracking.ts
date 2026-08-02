@@ -5,7 +5,7 @@ import { type Span, trace } from '@opentelemetry/api';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
-import { DYNAMIC_AGENT_STEPS, STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
+import { DYNAMIC_AGENT, STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -280,6 +280,8 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
  * Advisory by construction. This is bookkeeping; it must never fail a run that
  * has already paid the provider. The span attribute is the durable signal.
  */
+const warnedUnregistered = new Set<string>();
+
 function flagUnregisteredAgentUsage(role: string, span: Span): void {
   let activity: string;
   try {
@@ -287,17 +289,25 @@ function flagUnregisteredAgentUsage(role: string, span: Span): void {
   } catch {
     return; // Outside an activity (tests, direct calls) — nothing to check.
   }
-  if (DYNAMIC_AGENT_STEPS.has(activity)) {
+  const declared = STEP_REQUIRED_AGENTS[activity];
+  if (declared === DYNAMIC_AGENT) {
     return; // Its agent comes from the spec — no static entry can exist.
   }
-  const declared = STEP_REQUIRED_AGENTS[activity];
   // No entry at all means the step resolves no model *as far as the map knows*;
   // an entry that omits this role means the map is incomplete for it. Both are
   // drift, and only steps that actually reach here can be judged.
   if (declared?.includes(role as (typeof declared)[number])) {
     return;
   }
+  // The span attribute is per-run and free, so it stays unconditional. The log
+  // line is once per (step, agent) per process: a drifted entry on a hot step
+  // would otherwise repeat identically on every call and bury itself.
   span.setAttribute('llm.step_agent_unregistered', true);
+  const seen = `${activity}:${role}`;
+  if (warnedUnregistered.has(seen)) {
+    return;
+  }
+  warnedUnregistered.add(seen);
   log.warn(
     `Step '${activity}' recorded usage for agent '${role}', which is not in ` +
       'STEP_REQUIRED_AGENTS. The boot gate cannot validate that agent, so a ' +

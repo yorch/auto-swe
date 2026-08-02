@@ -14,7 +14,6 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type AuthoringCatalog,
   BUILTIN_SHELL_IMAGES,
