@@ -63,7 +63,8 @@
     "build": "yarn db:generate && tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
-    "prisma": "prisma"
+    "prisma": "prisma",
+    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",

@@ -118,7 +118,41 @@ Admin-only, from the Agent library at `/admin/agents/library`. Create an Agent f
 2. Paste the new key (the API key field is blank-by-default; an empty submission keeps the existing key).
 3. Save. The worker's cache picks up the new key within 30 seconds (or immediately if `CONFIG_CACHE_TTL_MS` is lower); workflows mid-run will use the new key on their next LLM call.
 
-There's no automatic key-version migration yet — the `key_version` column on `provider_credentials` is reserved for future multi-key support.
+This rotates the *provider's* key, not the master key auto-swe encrypts it with. For that, see below.
+
+### Rotating `CONFIG_ENCRYPTION_KEY`
+
+The master key wrapping every stored secret. `decryptSecret` picks its key by the row's
+`key_version`, so old and new can coexist for the length of a rotation:
+
+```bash
+# 1. New key
+openssl rand -base64 32
+
+# 2. Set on BOTH gateway and worker, then restart both
+CONFIG_ENCRYPTION_KEY=<new>
+CONFIG_ENCRYPTION_KEY_VERSION=<old version + 1>    # default is 1
+CONFIG_ENCRYPTION_KEY_PREVIOUS=<old>
+
+# 3. Check, then rotate
+yarn keys:rotate --dry-run
+yarn keys:rotate
+
+# 4. Once it reports nothing left, drop CONFIG_ENCRYPTION_KEY_PREVIOUS and restart
+```
+
+Step 2 is what makes this safe against a live deployment: rows written under the old key still
+decrypt, while new writes are stamped with the new version. The rotation is resumable — a row
+already at the target version is skipped — and it never writes a row it could not read, so an
+interrupted run leaves a mix of versions that a re-run finishes.
+
+`CONFIG_ENCRYPTION_KEY_PREVIOUS` holds exactly one older key, the version immediately below the
+current one. That is the only state a rotation passes through; a general version→key map would let
+arbitrarily many retired keys linger, which is the opposite of the point.
+
+**Do not drop the previous key while `yarn keys:rotate` still reports failures.** It exits non-zero
+and names each row it could not decrypt; those rows are left untouched and are unrecoverable if the
+key that wrote them is gone.
 
 ### Auditing changes
 

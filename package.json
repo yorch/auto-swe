@@ -35,7 +35,8 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
-    "format": "biome format . --write"
+    "format": "biome format . --write",
+    "keys:rotate": "yarn workspace @auto-swe/shared keys:rotate"
   },
   "engines": {
     "node": ">=24.0.0"
