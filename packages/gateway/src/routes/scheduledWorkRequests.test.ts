@@ -20,15 +20,12 @@ const SCHEDULE_ID = '00000000-0000-4000-8000-00000000000a';
 const WR_ID = '00000000-0000-4000-8000-00000000000b';
 
 describe('CRON_5_FIELD_RE', () => {
-  it.each([
-    '0 3 * * 0',
-    '*/15 * * * *',
-    '0 9-17 * * 1-5',
-    '30 2 1,15 * *',
-    '* * * * *',
-  ])('accepts %s', (expr) => {
-    expect(CRON_5_FIELD_RE.test(expr)).toBe(true);
-  });
+  it.each(['0 3 * * 0', '*/15 * * * *', '0 9-17 * * 1-5', '30 2 1,15 * *', '* * * * *'])(
+    'accepts %s',
+    (expr) => {
+      expect(CRON_5_FIELD_RE.test(expr)).toBe(true);
+    }
+  );
 
   it.each([
     '@weekly', // macros not allowed

@@ -14,17 +14,12 @@ describe('parseAgentRef', () => {
     expect(parseAgentRef('my-custom.agent_v2')).toEqual({ key: 'my-custom.agent_v2' });
   });
 
-  it.each([
-    'reviewer@0',
-    'reviewer@-1',
-    'reviewer@1.5',
-    'reviewer@',
-    'reviewer@abc',
-    '@2',
-    '',
-  ])('rejects the malformed ref %j', (ref) => {
-    expect(() => parseAgentRef(ref)).toThrow(/Invalid agentRef/);
-  });
+  it.each(['reviewer@0', 'reviewer@-1', 'reviewer@1.5', 'reviewer@', 'reviewer@abc', '@2', ''])(
+    'rejects the malformed ref %j',
+    (ref) => {
+      expect(() => parseAgentRef(ref)).toThrow(/Invalid agentRef/);
+    }
+  );
 });
 
 describe('formatAgentRef', () => {

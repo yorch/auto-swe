@@ -49,20 +49,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | --------------------- | -------------------------------------- | ---------------------- |
 | Runtime               | Node.js                                | >=24.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack)           | 4.18.0                 |
-| Language              | TypeScript                             | 6.0.3                  |
+| Language              | TypeScript                             | 7.0.2                  |
 | HTTP Framework        | Fastify                                | 5.11.0                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.0 + admin-tools 1.31 + ui 2.49.1 |
 | Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.17.2                 |
-| Agent Framework       | Mastra                                 | 1.40.0                 |
+| Agent Framework       | Mastra                                 | 1.55.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 6.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
-| ORM                   | Prisma                                 | 7.8.0                  |
+| ORM                   | Prisma                                 | 7.9.1                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.7 / 19.2.7 / 4.3.0 |
-| Server State          | TanStack Query                         | 5.101.0                |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.2.12 / 19.2.8 / 4.3.3 |
+| Server State          | TanStack Query                         | 5.101.4                |
 | Client State          | Zustand                                | 5.0.14                 |
 | Validation            | Zod                                    | 4.4.3                  |
-| Testing               | Vitest                                 | 4.1.8                  |
-| Lint / Format         | Biome                                  | 2.4.16                 |
+| Testing               | Vitest                                 | 4.1.10                  |
+| Lint / Format         | Biome                                  | 2.5.6                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.8.1 |
 
 ---

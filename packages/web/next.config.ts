@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
   // Inject build-time constants we want to surface in the UI. Keep these
   // small — anything under NEXT_PUBLIC_* ends up in the client bundle.
   env: { NEXT_PUBLIC_APP_VERSION: version },
+  experimental: { useTypeScriptCli: true },
   output: 'standalone',
   reactStrictMode: true,
 };
