@@ -9,8 +9,7 @@ import {
 import {
   DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
-  reserveChannelTurn,
-  runChannelAgentTurn,
+  runHeldChannelTurn,
 } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 
@@ -244,23 +243,23 @@ export async function evaluateReactiveInterjection(
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
-    // Hold budget before spending it, so concurrent ticks and turns can't all
-    // pass the read above and blow past the cap together.
-    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
-    if (hold.overBudget) {
+    // Holds budget across the model call, so concurrent ticks and turns can't
+    // all pass the read above and blow past the cap together.
+    const turn = await runHeldChannelTurn(
+      {
+        agentKey,
+        id: channel.id,
+        monthlyBudgetUsdCents: channel.monthlyBudgetUsdCents,
+        orgId: channel.orgId,
+        personaPrompt,
+        teamId: channel.teamId,
+      },
+      buildReactivePrompt(messages, memory),
+      'llm.channel_reactive'
+    );
+    if (!turn) {
       await advanceCursor();
       return { posted: false, reason: 'over-budget' };
-    }
-    let turn: { reply: string; costUsd: number };
-    try {
-      turn = await runChannelAgentTurn(
-        { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
-        buildReactivePrompt(messages, memory),
-        'llm.channel_reactive'
-      );
-    } catch (err) {
-      await hold.settle(0, { countRun: false });
-      throw err;
     }
     const { reply, costUsd } = turn;
 
@@ -268,7 +267,7 @@ export async function evaluateReactiveInterjection(
 
     // Settle the LLM cost (it happened). Count a run only when we actually post —
     // a SKIP is a no-op evaluation, not a user-facing turn.
-    await hold.settle(costUsd, { countRun: posted });
+    await turn.hold.settle(costUsd, { countRun: posted });
 
     // Write cursor + cooldown anchor BEFORE the Slack call (at-most-once semantics):
     // a transient Slack failure after this write can't cause a duplicate post on

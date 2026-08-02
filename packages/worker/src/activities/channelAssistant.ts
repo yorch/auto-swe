@@ -394,7 +394,7 @@ export async function reserveChannelTurn(
   // negative balance.
   const yearMonth = currentYearMonth();
   if (monthlyBudgetUsdCents == null || monthlyBudgetUsdCents <= 0) {
-    return makeHold(channelId, yearMonth, 0, false);
+    return makeHold(channelId, yearMonth, 0);
   }
 
   const reservation = CHANNEL_TURN_RESERVATION_USD * Math.max(1, modelCalls);
@@ -403,32 +403,35 @@ export async function reserveChannelTurn(
     // The ledger write failed. Fall back to the read-only gate rather than
     // blocking the turn: this row backs a cap, not billing, and the run-level
     // ledger still records the spend.
-    return makeHold(
-      channelId,
-      yearMonth,
-      0,
-      await isChannelOverBudgetNow(channelId, monthlyBudgetUsdCents)
-    );
+    return (await isChannelOverBudgetNow(channelId, monthlyBudgetUsdCents))
+      ? REFUSED_HOLD
+      : makeHold(channelId, yearMonth, 0);
   }
 
   // `held` is the post-increment total, so this is what the channel had spent
   // before this turn laid claim to anything.
   if (isChannelOverBudget(held - reservation, monthlyBudgetUsdCents)) {
     await addChannelUsage(channelId, yearMonth, -reservation, false);
-    return makeHold(channelId, yearMonth, 0, true);
+    return REFUSED_HOLD;
   }
-  return makeHold(channelId, yearMonth, reservation, false);
+  return makeHold(channelId, yearMonth, reservation);
 }
 
-function makeHold(
-  channelId: string,
-  yearMonth: string,
-  reservedUsd: number,
-  overBudget: boolean
-): ChannelBudgetHold {
+/**
+ * The answer when the channel is at its cap: nothing was held, so there is
+ * nothing to give back. Shared rather than built per refusal, which makes "a
+ * refused hold holds nothing" structural instead of four call sites remembering
+ * to pass a zero.
+ */
+const REFUSED_HOLD: ChannelBudgetHold = {
+  overBudget: true,
+  settle: async () => {},
+};
+
+function makeHold(channelId: string, yearMonth: string, reservedUsd: number): ChannelBudgetHold {
   let settled = false;
   return {
-    overBudget,
+    overBudget: false,
     async settle(costUsd: number, opts: { countRun?: boolean } = {}): Promise<void> {
       if (settled) {
         return;
@@ -453,8 +456,9 @@ function makeHold(
  * team/org cascading after), runs one generation against `userMessage`, and
  * returns the trimmed reply text plus the authoritative per-turn USD cost.
  *
- * Deliberately does NOT touch the channel budget: the caller holds before
- * calling this and settles after, so the hold spans exactly the model call.
+ * Deliberately does NOT touch the channel budget. {@link runHeldChannelTurn}
+ * wraps it with a hold that spans exactly the model call; this stays budget-free
+ * for the one caller that needs the pieces separately.
  */
 export async function runChannelAgentTurn(
   channel: {
@@ -498,6 +502,52 @@ export async function runChannelAgentTurn(
   const result = await runAgent(spec, userMessage, { spanName });
 
   return { costUsd: result.costUsd ?? 0, reply: (result.text ?? '').trim() };
+}
+
+/** A turn that ran, with the budget it is holding until the caller settles. */
+export interface HeldChannelTurn {
+  hold: ChannelBudgetHold;
+  reply: string;
+  costUsd: number;
+}
+
+/**
+ * {@link runChannelAgentTurn} with the channel's budget held across it.
+ *
+ * Returns `null` when the channel is at its cap — nothing was held and nothing
+ * spent, so the caller just takes its own "no reply" path.
+ *
+ * The release-on-throw lives here rather than at each call site. Four callers
+ * were writing the same reserve → bail → try/catch-release → settle dance around
+ * this one function, and a fifth that forgot the release would strand budget for
+ * the rest of the month with nothing to catch it. Settling stays with the caller:
+ * they disagree on whether the turn counts as a run.
+ */
+export async function runHeldChannelTurn(
+  channel: {
+    id: string;
+    agentKey: string;
+    teamId: string;
+    orgId: string;
+    personaPrompt?: string | null;
+    monthlyBudgetUsdCents: number | null;
+  },
+  userMessage: string,
+  spanName: string,
+  extras?: { tools?: AgentTools; promptNote?: string }
+): Promise<HeldChannelTurn | null> {
+  const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
+  if (hold.overBudget) {
+    return null;
+  }
+  try {
+    const turn = await runChannelAgentTurn(channel, userMessage, spanName, extras);
+    return { ...turn, hold };
+  } catch (err) {
+    // A turn that never produced a reply also never spent its hold.
+    await hold.settle(0, { countRun: false });
+    throw err;
+  }
 }
 
 /**
@@ -632,31 +682,30 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   const promptNote = input.followup
     ? `${baseToolNote}${FOLLOWUP_INTENT_PROMPT_NOTE}`
     : baseToolNote;
-  // Hold budget for this turn before spending it. A concurrent turn that would
-  // take the channel past its cap is refused here rather than after the fact.
-  const hold = await reserveChannelTurn(input.channelId, channel?.monthlyBudgetUsdCents ?? null);
-  if (hold.overBudget) {
+  // A concurrent turn that would take the channel past its cap is refused here
+  // rather than after the fact.
+  const turn = await runHeldChannelTurn(
+    {
+      agentKey,
+      id: input.channelId,
+      monthlyBudgetUsdCents: channel?.monthlyBudgetUsdCents ?? null,
+      orgId: input.orgId,
+      personaPrompt,
+      teamId: input.teamId,
+    },
+    userMessage,
+    'llm.channel_assistant',
+    {
+      promptNote,
+      tools: {
+        delegateTask: delegateTool,
+        generateWorkflow: generateWorkflowTool,
+        refineWorkflow: refineWorkflowTool,
+      } as AgentTools,
+    }
+  );
+  if (!turn) {
     return { reply: BUDGET_EXCEEDED_REPLY };
-  }
-  let turn: { reply: string; costUsd: number };
-  try {
-    turn = await runChannelAgentTurn(
-      { agentKey, id: input.channelId, orgId: input.orgId, personaPrompt, teamId: input.teamId },
-      userMessage,
-      'llm.channel_assistant',
-      {
-        promptNote,
-        tools: {
-          delegateTask: delegateTool,
-          generateWorkflow: generateWorkflowTool,
-          refineWorkflow: refineWorkflowTool,
-        } as AgentTools,
-      }
-    );
-  } catch (err) {
-    // A turn that never produced a reply also never spent its hold.
-    await hold.settle(0, { countRun: false });
-    throw err;
   }
   const { reply, costUsd } = turn;
 
@@ -666,7 +715,7 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   // Best-effort: a failure here must NOT break the reply — the workflow-level
   // ledger (recordLlmUsage inside runAgent) is the source of truth for billing;
   // this row only backs the per-channel cap.
-  await hold.settle(costUsd);
+  await turn.hold.settle(costUsd);
 
   // Gap H intent gate: a follow-up turn that decided the message wasn't for it
   // (and didn't fire a tool) is suppressed — the cost already happened (budget

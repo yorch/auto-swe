@@ -212,43 +212,43 @@ describe('reserveChannelTurn', () => {
       rows.set(month, next);
       return { costUsdAccrued: next };
     }) as never);
-    return Object.assign(() => rows.get('2026-06') ?? 0, { rows });
+    return { rows, total: () => rows.get('2026-06') ?? 0 };
   }
 
   it('takes no hold and never blocks when the channel has no cap', async () => {
-    const total = fakeLedger();
+    const ledger = fakeLedger();
     const hold = await reserveChannelTurn('chan-1', null);
     expect(hold.overBudget).toBe(false);
     expect(upsertUsage).not.toHaveBeenCalled();
 
     await hold.settle(0.02);
-    expect(total()).toBeCloseTo(0.02, 6);
+    expect(ledger.total()).toBeCloseTo(0.02, 6);
   });
 
   it('holds while the turn runs, then settles to exactly the real cost', async () => {
-    const total = fakeLedger(1);
+    const ledger = fakeLedger(1);
     const hold = await reserveChannelTurn('chan-1', 10000); // $100 cap
     expect(hold.overBudget).toBe(false);
-    expect(total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(1 + CHANNEL_TURN_RESERVATION_USD, 6);
 
     await hold.settle(0.02);
-    expect(total()).toBeCloseTo(1.02, 6);
+    expect(ledger.total()).toBeCloseTo(1.02, 6);
   });
 
   it('releases its hold when the channel is already at the cap', async () => {
-    const total = fakeLedger(5);
+    const ledger = fakeLedger(5);
     const hold = await reserveChannelTurn('chan-1', 500); // $5 cap, $5 spent
     expect(hold.overBudget).toBe(true);
     // Taken and given straight back — a refused turn must not leave the channel
     // looking more expensive than it was.
-    expect(total()).toBeCloseTo(5, 6);
+    expect(ledger.total()).toBeCloseTo(5, 6);
   });
 
   it('bounds concurrent turns, which a read-only gate does not', async () => {
     // $5 cap with $4.98 spent leaves room for one hold, not two. Turn workflow
     // ids are per-event, so both of these really can be in flight at once — the
     // whole point of holding rather than reading.
-    const total = fakeLedger(4.98);
+    const ledger = fakeLedger(4.98);
     const [first, second] = await Promise.all([
       reserveChannelTurn('chan-1', 500),
       reserveChannelTurn('chan-1', 500),
@@ -257,15 +257,15 @@ describe('reserveChannelTurn', () => {
     const refused = [first, second].filter((h) => h.overBudget);
     expect(refused).toHaveLength(1);
     // The refused turn gave its hold back; the admitted one still holds.
-    expect(total()).toBeCloseTo(4.98 + CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(4.98 + CHANNEL_TURN_RESERVATION_USD, 6);
   });
 
   it('settles once, so a caller can settle on success and release in a finally', async () => {
-    const total = fakeLedger(1);
+    const ledger = fakeLedger(1);
     const hold = await reserveChannelTurn('chan-1', 10000);
     await hold.settle(0.02);
     await hold.settle(0); // the `finally` release
-    expect(total()).toBeCloseTo(1.02, 6);
+    expect(ledger.total()).toBeCloseTo(1.02, 6);
   });
 
   it('settles onto the month it held against, across a rollover', async () => {
@@ -284,21 +284,21 @@ describe('reserveChannelTurn', () => {
   it('scales the hold to the number of model calls it covers', async () => {
     // A background pass that fans out over a batch must not be admitted on the
     // headroom of a single turn.
-    const total = fakeLedger(1);
+    const ledger = fakeLedger(1);
     const hold = await reserveChannelTurn('chan-1', 100_000, 4);
     expect(hold.overBudget).toBe(false);
-    expect(total()).toBeCloseTo(1 + 4 * CHANNEL_TURN_RESERVATION_USD, 6);
+    expect(ledger.total()).toBeCloseTo(1 + 4 * CHANNEL_TURN_RESERVATION_USD, 6);
 
     await hold.settle(0.3);
-    expect(total()).toBeCloseTo(1.3, 6);
+    expect(ledger.total()).toBeCloseTo(1.3, 6);
   });
 
   it('writes nothing when there is no hold and no cost', async () => {
-    const uncapped = fakeLedger();
+    const ledger = fakeLedger();
     const hold = await reserveChannelTurn('chan-1', null);
     await hold.settle(0, { countRun: false });
     expect(upsertUsage).not.toHaveBeenCalled();
-    expect(uncapped()).toBe(0);
+    expect(ledger.total()).toBe(0);
   });
 
   it('lets the turn proceed when the ledger write fails', async () => {

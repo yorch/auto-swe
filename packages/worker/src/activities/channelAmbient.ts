@@ -5,8 +5,7 @@ import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   DEFAULT_CHANNEL_AGENT_KEY,
   isChannelOverBudgetNow,
-  reserveChannelTurn,
-  runChannelAgentTurn,
+  runHeldChannelTurn,
 } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 
@@ -118,28 +117,28 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
-    // Hold budget before spending it, so concurrent digests and turns can't all
-    // pass the read above and blow past the cap together.
-    const hold = await reserveChannelTurn(channel.id, channel.monthlyBudgetUsdCents);
-    if (hold.overBudget) {
+    // Holds budget across the model call, so concurrent digests and turns can't
+    // all pass the read above and blow past the cap together.
+    const turn = await runHeldChannelTurn(
+      {
+        agentKey,
+        id: channel.id,
+        monthlyBudgetUsdCents: channel.monthlyBudgetUsdCents,
+        orgId: channel.orgId,
+        personaPrompt,
+        teamId: channel.teamId,
+      },
+      buildAmbientPrompt(memory),
+      'llm.channel_ambient'
+    );
+    if (!turn) {
       return;
-    }
-    let turn: { reply: string; costUsd: number };
-    try {
-      turn = await runChannelAgentTurn(
-        { agentKey, id: channel.id, orgId: channel.orgId, personaPrompt, teamId: channel.teamId },
-        buildAmbientPrompt(memory),
-        'llm.channel_ambient'
-      );
-    } catch (err) {
-      await hold.settle(0, { countRun: false });
-      throw err;
     }
     const { reply, costUsd } = turn;
 
     // Settle the turn's cost regardless of whether we post (the LLM call happened).
     // Best-effort — the ledger write swallows its own failures.
-    await hold.settle(costUsd);
+    await turn.hold.settle(costUsd);
 
     if (!shouldPostDigest(reply)) {
       return;

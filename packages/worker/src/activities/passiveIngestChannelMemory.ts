@@ -105,6 +105,24 @@ export async function passiveIngestChannelMemory(
     // Only process human top-level messages with non-empty text.
     const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
 
+    /** Move past everything just read, so the next fire doesn't re-read it. */
+    const advanceCursor = async () => {
+      const newestTs = messages.at(-1)?.ts;
+      if (newestTs) {
+        await prisma.slackChannel.update({
+          data: { passiveIngestCursor: newestTs },
+          where: { id: channelId },
+        });
+      }
+    };
+
+    // Nothing to ingest — advance past the bot-only traffic and stop before
+    // holding budget for a pass that will never call a model.
+    if (humanMessages.length === 0) {
+      await advanceCursor();
+      return EMPTY;
+    }
+
     // Hold budget before the cursor moves. A refused ingest must leave the
     // cursor where it was: advancing first and then bailing would skip this
     // window of messages permanently, and a hold is refused more readily than
@@ -113,23 +131,7 @@ export async function passiveIngestChannelMemory(
     if (hold.overBudget) {
       return EMPTY;
     }
-
-    // Advance cursor to newest ts seen (even if there are no human messages, we
-    // still move past bot-only traffic so we don't re-read it next time).
-    if (messages.length > 0) {
-      const newestTs = messages[messages.length - 1]?.ts ?? null;
-      if (newestTs) {
-        await prisma.slackChannel.update({
-          data: { passiveIngestCursor: newestTs },
-          where: { id: channelId },
-        });
-      }
-    }
-
-    if (humanMessages.length === 0) {
-      await hold.settle(0, { countRun: false });
-      return EMPTY;
-    }
+    await advanceCursor();
 
     const tracer = new AgentTracer();
     let totalCostUsd = 0;
