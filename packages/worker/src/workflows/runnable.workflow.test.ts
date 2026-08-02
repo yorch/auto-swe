@@ -29,8 +29,11 @@ const calls: {
   domainStates: string[];
   cancelledHumanSteps: string[];
   contextOverflows: { path: string; bytes: number }[];
+  /** How many batch activity calls the run made — one per run, not one per value. */
+  contextOverflowBatches: number;
 } = {
   cancelledHumanSteps: [],
+  contextOverflowBatches: 0,
   contextOverflows: [],
   createWorkflowRun: [],
   domainStates: [],
@@ -70,9 +73,14 @@ const fakeActivities = {
   },
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
-  storeContextOverflow: async (input: { path: string; content: string }) => {
-    calls.contextOverflows.push({ bytes: input.content.length, path: input.path });
-    return { artifactId: `art-${calls.contextOverflows.length}`, sizeBytes: input.content.length };
+  storeContextOverflowBatch: async (input: {
+    values: Array<{ path: string; content: string }>;
+  }) => {
+    calls.contextOverflowBatches += 1;
+    return input.values.map((v) => {
+      calls.contextOverflows.push({ bytes: v.content.length, path: v.path });
+      return { artifactId: `art-${calls.contextOverflows.length}`, sizeBytes: v.content.length };
+    });
   },
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
@@ -273,6 +281,36 @@ describe('RunnableWorkflow — oversized context values', () => {
     const spill = calls.contextOverflows.find((o) => o.path.includes('bigDiff'));
     expect(spill).toBeDefined();
     expect(spill?.bytes).toBe(9000);
+  }, 120_000);
+
+  it('spills every oversized value, past what the old 20-spill cap allowed', async () => {
+    calls.contextOverflows.length = 0;
+    calls.contextOverflowBatches = 0;
+    const COUNT = 25;
+    const big = 'y'.repeat(5000);
+    const values: Record<string, unknown> = {};
+    for (let i = 0; i < COUNT; i++) {
+      values[`context.big${i}`] = { literal: `${big}${i}` };
+    }
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        seed: { next: 'done', type: 'set', values },
+      },
+      'seed'
+    );
+
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-overflow-many')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+
+    // The cap used to truncate everything past the 20th value.
+    expect(calls.contextOverflows).toHaveLength(COUNT);
+    // ...and it existed because each spill was its own activity call. One call
+    // for the whole set is what makes removing the cap affordable.
+    expect(calls.contextOverflowBatches).toBe(1);
   }, 120_000);
 
   it('leaves small values inline', async () => {

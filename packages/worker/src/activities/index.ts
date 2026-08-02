@@ -70,7 +70,11 @@ export { consolidateLessons } from './consolidateLessons.js';
 export type { ContainerStepInput, ContainerStepResult } from './containerStep.js';
 export { runContainerStep } from './containerStep.js';
 export type { ContextOverflowRef, StoreContextOverflowInput } from './contextOverflow.js';
-export { CONTEXT_OVERFLOW_KIND, storeContextOverflow } from './contextOverflow.js';
+export {
+  CONTEXT_OVERFLOW_KIND,
+  storeContextOverflow,
+  storeContextOverflowBatch,
+} from './contextOverflow.js';
 export { createOrUpdatePullRequest } from './createOrUpdatePullRequest.js';
 export type {
   MergeBranchesInput,

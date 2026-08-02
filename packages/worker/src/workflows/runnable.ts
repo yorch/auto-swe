@@ -60,7 +60,7 @@ const stateActivities = proxyActivities<
     | 'createHumanStep'
     | 'resolveHumanStep'
     | 'cancelPendingHumanSteps'
-    | 'storeContextOverflow'
+    | 'storeContextOverflowBatch'
   >
 >({
   retry: RETRY_STATE,
@@ -811,13 +811,6 @@ async function runWithCancellation<T>(
 /** Strings longer than this are spilled to a `WorkflowArtifact`. */
 const CONTEXT_INLINE_LIMIT = 4000;
 
-/**
- * Cap on spills per run. A pathological context (hundreds of large values)
- * would otherwise turn finalization into hundreds of activity calls; past the
- * cap we fall back to truncating, and say so in the placeholder.
- */
-const MAX_CONTEXT_SPILLS = 20;
-
 function truncatedPlaceholder(value: string, note: string): string {
   return `${value.slice(0, CONTEXT_INLINE_LIMIT)}… [truncated ${value.length} bytes — ${note}]`;
 }
@@ -860,15 +853,24 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
   };
   walk(ctx, '');
 
+  // One activity call for the whole set. Spilling per value used to cost one
+  // round trip each, which is why this was capped at 20 and truncated the rest;
+  // batching removes that reason, so every oversized value now survives.
   const spilled = new Map<string, string>();
-  for (const { path, value } of oversized.slice(0, MAX_CONTEXT_SPILLS)) {
-    const ref = await stateActivities.storeContextOverflow({ content: value, path, runId });
-    spilled.set(
-      path,
-      ref
-        ? `[stored as artifact ${ref.artifactId} — ${ref.sizeBytes} bytes]`
-        : truncatedPlaceholder(value, 'artifact write failed')
-    );
+  if (oversized.length > 0) {
+    const refs = await stateActivities.storeContextOverflowBatch({
+      runId,
+      values: oversized.map(({ path, value }) => ({ content: value, path })),
+    });
+    oversized.forEach(({ path, value }, i) => {
+      const ref = refs[i];
+      spilled.set(
+        path,
+        ref
+          ? `[stored as artifact ${ref.artifactId} — ${ref.sizeBytes} bytes]`
+          : truncatedPlaceholder(value, 'artifact write failed')
+      );
+    });
   }
 
   // Second pass: substitute by path, so two identical strings at different
@@ -878,9 +880,11 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
       if (value.length <= CONTEXT_INLINE_LIMIT) {
         return value;
       }
-      return (
-        spilled.get(path) ?? truncatedPlaceholder(value, `over ${MAX_CONTEXT_SPILLS} spill cap`)
-      );
+      // Every oversized value gets a `spilled` entry (an artifact reference, or
+      // a truncation placeholder when that one write failed), so the fallback
+      // here is unreachable in practice — kept so a future walk/rebuild
+      // divergence degrades instead of emitting the raw multi-megabyte string.
+      return spilled.get(path) ?? truncatedPlaceholder(value, 'not spilled');
     }
     if (Array.isArray(value)) {
       return value.map((v, i) => rebuild(v, `${path}[${i}]`));
