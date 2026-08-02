@@ -4,10 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { slackChannelRoutes } from './slackChannels.js';
 
 function newMockPrisma() {
-  return {
+  const prisma = {
+    // Interactive transactions run against the same mock, as elsewhere in the
+    // suite; a throw inside the callback propagates, which is what the
+    // budget-reset route treats as "a worker claimed this hold first".
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    channelBudgetHold: {
+      delete: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     channelMonthlyUsage: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({}),
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     memoryItem: {
@@ -28,6 +37,7 @@ function newMockPrisma() {
     teamMembership: { findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
+  return prisma;
 }
 
 function newMockTemporal() {
@@ -908,5 +918,116 @@ describe('slackChannelRoutes', () => {
     });
     expect(res.statusCode).toBe(403);
     await app.close();
+  });
+});
+
+describe('POST /:id/budget/reset', () => {
+  const HOLD_A = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  const HOLD_B = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+
+  /** Two $0.0775 holds outstanding on top of $5.00 of real spend. */
+  function twoHolds(mockPrisma: ReturnType<typeof newMockPrisma>) {
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, name: 'general' });
+    mockPrisma.channelBudgetHold.findMany.mockResolvedValue([
+      { amountUsd: '0.0775', id: HOLD_A },
+      { amountUsd: '0.0775', id: HOLD_B },
+    ]);
+    mockPrisma.channelMonthlyUsage.findUnique.mockResolvedValue({
+      costUsdAccrued: '5.155',
+      runsCompleted: 4,
+      yearMonth: '2026-06',
+    });
+  }
+
+  const reset = (app: Awaited<ReturnType<typeof buildApp>>['app']) =>
+    app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/admin/slack-channels/${CHANNEL}/budget/reset`,
+    });
+
+  it('refunds only the holds it actually claimed', async () => {
+    // The bug this guards: a worker settling between the read and the delete
+    // has already netted its own reservation out. Refunding the whole sum on a
+    // partial delete subtracts it twice, erasing real spend and loosening the
+    // cap — the one thing this endpoint must never do.
+    const { app, mockPrisma } = await buildApp();
+    twoHolds(mockPrisma);
+    mockPrisma.channelBudgetHold.delete.mockImplementation(
+      async ({ where }: { where: { id: string } }) => {
+        if (where.id === HOLD_A) {
+          throw Object.assign(new Error('Record to delete does not exist'), { code: 'P2025' });
+        }
+        return { id: where.id };
+      }
+    );
+
+    const res = await reset(app);
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.holdsReleased).toBe(1);
+    expect(body.reclaimedUsd).toBeCloseTo(0.0775, 6);
+    // Exactly one decrement, for exactly the hold that was claimed.
+    expect(mockPrisma.channelMonthlyUsage.update).toHaveBeenCalledTimes(1);
+    const decrement = (
+      mockPrisma.channelMonthlyUsage.update.mock.calls[0]?.[0] as {
+        data: { costUsdAccrued: { decrement: number } };
+      }
+    ).data.costUsdAccrued.decrement;
+    expect(decrement).toBeCloseTo(0.0775, 6);
+  });
+
+  it('releases every hold when nothing races it', async () => {
+    const { app, mockPrisma } = await buildApp();
+    twoHolds(mockPrisma);
+
+    const body = JSON.parse((await reset(app)).payload);
+    expect(body.holdsReleased).toBe(2);
+    expect(body.reclaimedUsd).toBeCloseTo(0.155, 6);
+    expect(mockPrisma.channelMonthlyUsage.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('touches the ledger not at all when no holds are outstanding', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({ id: CHANNEL, name: 'general' });
+    mockPrisma.channelMonthlyUsage.findUnique.mockResolvedValue({
+      costUsdAccrued: '5',
+      runsCompleted: 4,
+      yearMonth: '2026-06',
+    });
+
+    const body = JSON.parse((await reset(app)).payload);
+    expect(body.holdsReleased).toBe(0);
+    expect(body.reclaimedUsd).toBe(0);
+    // Real spend is never what this endpoint touches.
+    expect(mockPrisma.channelMonthlyUsage.update).not.toHaveBeenCalled();
+    expect(mockPrisma.channelBudgetHold.delete).not.toHaveBeenCalled();
+  });
+
+  it('404s on an unknown channel', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue(null);
+    expect((await reset(app)).statusCode).toBe(404);
+  });
+
+  it('is admin-only', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    twoHolds(mockPrisma);
+    expect((await reset(app)).statusCode).toBe(403);
+    expect(mockPrisma.channelBudgetHold.delete).not.toHaveBeenCalled();
+  });
+
+  it('records what it released in the audit log', async () => {
+    const { app, mockPrisma } = await buildApp();
+    twoHolds(mockPrisma);
+
+    await reset(app);
+
+    const audit = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] as {
+      data: { afterJson: { holdsReleased: number }; beforeJson: { holdsOutstanding: number } };
+    };
+    expect(audit.data.beforeJson.holdsOutstanding).toBe(2);
+    expect(audit.data.afterJson.holdsReleased).toBe(2);
   });
 });
