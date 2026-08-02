@@ -29,7 +29,7 @@ library at `/admin/agents/library`.
 | `implementer` | `executeImplementation` | `anthropic/claude-opus-4-8` |
 | `reviewer` | `runReviewNetwork` (all three sub-agents) | `anthropic/claude-opus-4-8` |
 | `planner` | `planDecomposition`, epic planning | `anthropic/claude-sonnet-4-6` |
-| `securityReview` | _(legacy — see note)_ | `anthropic/claude-sonnet-4-6` |
+| `securityReview` | `scanDiffForSecurityIssues` — the post-diff gate on `executeImplementation` + the three fix paths | `anthropic/claude-sonnet-4-6` |
 | `validateContext` | `validateContext` | `anthropic/claude-sonnet-4-6` |
 | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-4-8` |
 | `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-4-8` |
@@ -48,9 +48,13 @@ agent fails that node at run time. Agents reached only through a template's `age
 checked non-fatally at template save and resolved per node at run time. `evalJudge` deliberately
 runs on a cheaper, different model from the agents it scores, to avoid self-preference bias.
 
-> **`securityReview` is legacy.** It was the original single-agent security path. The canonical path
-> is the three-agent review network, which binds the `reviewer` model for all three sub-agents. The
-> row is kept for forward compatibility — **do not route new code through it.**
+> **`securityReview` is live, not legacy.** It used to be documented as a compatibility shim, which
+> was wrong and unsafe advice — deleting the row breaks every implementation run. It backs
+> `scanDiffForSecurityIssues`, which `executeImplementation` and all three fix paths call on the
+> committed diff, and which throws a non-retryable `SECURITY_GATE_FAILURE` when any finding is
+> CRITICAL (the processor forces `passed: false` in that case regardless of what the model returned).
+> It complements the review network rather than being replaced by it: the network gives three
+> personas an opinion and routes on their verdicts, this one fails the activity outright.
 
 ### Sub-role personas (11)
 
@@ -513,8 +517,6 @@ Writes cut a new immutable `version`.
   reads the installed templates once, at startup. Activating a template afterwards — or adding a
   Slack channel — does not re-run the check, so a newly reachable agent with no credential fails at
   its node rather than at boot. Restarting the worker restores the fail-fast guarantee.
-- **`securityReview` is a legacy key.** Kept for forward compatibility; the canonical security path
-  is the review network. Do not route new code through it.
 - **Skill scoping is enforced on reads, not by the database.** `Skill` now carries
   `scope`/`teamId`/`orgId` with a CHECK constraint, and the team-scoped list filters to GLOBAL plus
   the caller's own tenant. There is no row-level security, so a query that forgets the filter still

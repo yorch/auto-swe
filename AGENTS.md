@@ -286,9 +286,13 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `ciFixer` / `reviewFixer` / `gateFixer` / `mergeConflictResolver` (← `implementer`);
   `lessonConsolidator` (← `commitToMemory`).
 
-`securityReview` is a legacy key kept for forward compatibility — **do not route new code through
-it.** The canonical security path is the three-agent review network (`runReviewNetwork`), which
-binds the `reviewer` model for all three sub-agents.
+`securityReview` is **not** legacy, despite what it used to say here. It backs
+`scanDiffForSecurityIssues`, the post-diff gate that runs on `executeImplementation` and on all
+three fix paths and throws a non-retryable `SECURITY_GATE_FAILURE` on any CRITICAL finding. It is a
+different mechanism from `runReviewNetwork`: the review network gives three personas an opinion on
+the whole change and routes on their verdicts; this scans the diff alone and fails the activity
+outright. Removing the Agent row breaks every implementation run — `assertConfigReady` requires it
+wherever those steps are installed.
 
 `MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for
 cost pricing and the model-config UI labels — it is **not** the agent universe.

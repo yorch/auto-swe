@@ -320,7 +320,7 @@ const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     systemPrompt: PLANNER_AGENT_PROMPT,
   },
   {
-    description: 'Legacy security-review role (review network is canonical).',
+    description: 'Post-diff security gate — CRITICAL findings fail the activity.',
     key: 'securityReview',
     modelSpec: 'anthropic/claude-sonnet-4-6',
     name: 'Security Review',
