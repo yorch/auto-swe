@@ -5,7 +5,7 @@ import { type Span, trace } from '@opentelemetry/api';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { currentActivityType, currentWorkflowId } from './activityContext.js';
 import { configCacheTtlMs, withCache } from './config/cache.js';
-import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
+import { DYNAMIC_AGENT_STEPS, STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -286,6 +286,9 @@ function flagUnregisteredAgentUsage(role: string, span: Span): void {
     activity = currentActivityType();
   } catch {
     return; // Outside an activity (tests, direct calls) — nothing to check.
+  }
+  if (DYNAMIC_AGENT_STEPS.has(activity)) {
+    return; // Its agent comes from the spec — no static entry can exist.
   }
   const declared = STEP_REQUIRED_AGENTS[activity];
   // No entry at all means the step resolves no model *as far as the map knows*;

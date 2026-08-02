@@ -14,10 +14,14 @@ vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'Prisma.DbN
  * Stubbed so these tests never reach the network; `null` is the "Slack could not
  * answer" case, which falls back to the caller's heuristic.
  */
-const fetchSlackChannelIsPrivateMock = vi.fn<() => Promise<boolean | null>>(async () => null);
+const fetchSlackChannelIsPrivateMock = vi.fn<(...a: unknown[]) => Promise<boolean | null>>(
+  async () => null
+);
 vi.mock('../lib/slack.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/slack.js')>()),
-  fetchSlackChannelIsPrivate: () => fetchSlackChannelIsPrivateMock(),
+  // Forward the arguments: asserting only the branch taken would let a change
+  // that asks Slack about the wrong channel — or drops the token — pass.
+  fetchSlackChannelIsPrivate: (...a: unknown[]) => fetchSlackChannelIsPrivateMock(...a),
 }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -810,6 +814,8 @@ describe('POST /api/v1/auth/slack/events — channel assistant teammate', () => 
     // channel's memory readable by every other channel in the org.
     fetchSlackChannelIsPrivateMock.mockResolvedValue(true);
     expect(await provisionViaMention('channel')).toMatchObject({ isPrivate: true });
+    // Asked about the right channel, with a token.
+    expect(fetchSlackChannelIsPrivateMock).toHaveBeenCalledWith('C9', 'xoxb-test');
   });
 
   it('falls back to the channel_type guess when Slack cannot answer', async () => {

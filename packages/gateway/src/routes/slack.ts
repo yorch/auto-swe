@@ -1126,19 +1126,30 @@ async function provisionChannel(
   // another, so it is worth a round-trip once, and re-checking on every mention
   // would put a Slack API call on the hot path of every turn. `isPrivate` is
   // still set on CREATE only, so neither source can undo a later admin override.
-  let isPrivate = opts.isPrivate ?? false;
+  // Selecting the fields this function returns means the common path — a channel
+  // that already exists — answers from this read and skips the no-op upsert
+  // below, so consulting Slack costs a round-trip only on first sight.
   const existing = await fastify.prisma.slackChannel.findUnique({
-    select: { id: true },
+    select: { followupSessionEnabled: true, id: true, orgId: true, teamId: true },
     where: channelWhere,
   });
-  if (!existing) {
-    const authoritative = await fetchSlackChannelIsPrivate(
-      slackChannelId,
-      (await resolveSlackBotTokenForWorkspace(slackTeamId)) ?? undefined
+  if (existing) {
+    return existing;
+  }
+
+  let isPrivate = opts.isPrivate ?? false;
+  const token = (await resolveSlackBotTokenForWorkspace(slackTeamId)) ?? undefined;
+  const authoritative = await fetchSlackChannelIsPrivate(slackChannelId, token);
+  if (authoritative !== null) {
+    isPrivate = authoritative;
+  } else if (token) {
+    // Falling back to the payload heuristic is the old behaviour, but silently:
+    // a missing `groups:read` scope or a flaky call would mark a private channel
+    // public *permanently*, since the flag is written on create only.
+    fastify.log.warn(
+      { isPrivate, slackChannelId },
+      'could not read is_private from Slack — provisioning the channel from the payload heuristic'
     );
-    if (authoritative !== null) {
-      isPrivate = authoritative;
-    }
   }
 
   const channel = await fastify.prisma.slackChannel

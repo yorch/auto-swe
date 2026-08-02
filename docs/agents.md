@@ -521,7 +521,9 @@ Writes cut a new immutable `version`.
   place that knows both the executing activity and the agent key just spent on — and logs a warning
   plus an `llm.step_agent_unregistered` span attribute. That fires the first time the step runs, not
   at merge, so a new model-resolving step should be added to the map deliberately rather than
-  discovered.
+  discovered. Steps whose agent comes from the spec rather than the map — `runAgentNode`, which
+  binds whatever `agentRef` a template node names — are listed in `DYNAMIC_AGENT_STEPS` and skip the
+  check, because no static entry could ever exist for them and the warning would be constant.
 - **The boot gate reflects install state at boot, not forever.** `requiredAgentKeysForDeployment()`
   reads the installed templates once, at startup. Activating a template afterwards — or adding a
   Slack channel — does not re-run the check, so a newly reachable agent with no credential fails at

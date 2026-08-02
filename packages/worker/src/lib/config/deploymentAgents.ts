@@ -2,7 +2,6 @@ import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
-import type { ModelBackedAgentKey } from './types.js';
 
 /**
  * The agent keys *this deployment* actually needs at boot.
@@ -73,9 +72,9 @@ export async function installedStepNames(): Promise<Set<string>> {
 }
 
 /** Empty when nothing runnable is installed — boot then has no agent gate. */
-export async function requiredAgentKeysForDeployment(): Promise<ModelBackedAgentKey[]> {
+export async function requiredAgentKeysForDeployment(): Promise<string[]> {
   const steps = await installedStepNames();
-  const keys = new Set<ModelBackedAgentKey>();
+  const keys = new Set<string>();
   for (const step of steps) {
     for (const key of STEP_REQUIRED_AGENTS[step] ?? []) {
       keys.add(key);
