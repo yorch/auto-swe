@@ -41,7 +41,7 @@ export const TENANT_SCOPED_MODELS = new Set([
 ]);
 
 /** Operations that can touch many tenants' rows in one call. */
-const GUARDED_OPERATIONS = new Set([
+export const GUARDED_OPERATIONS = new Set([
   'aggregate',
   'count',
   'deleteMany',

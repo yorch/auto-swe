@@ -24,6 +24,11 @@ export function delegateName(model: string): string {
   return model[0].toLowerCase() + model.slice(1);
 }
 
+/** The inverse of {@link delegateName}: `providerCredential` → `ProviderCredential`. */
+export function modelName(delegate: string): string {
+  return delegate[0].toUpperCase() + delegate.slice(1);
+}
+
 export function parseSchemaModels(schemaPath = SCHEMA_PATH): Record<string, string[]> {
   const schema = readFileSync(schemaPath, 'utf8');
   const models: Record<string, string[]> = {};
