@@ -269,11 +269,14 @@ describe('systemConfigService', () => {
 
     it('falls back to the env var when no DB row exists, and DB takes precedence when both are present', async () => {
       vi.stubEnv('GITHUB_TOKEN', 'env-token-value');
+      // GitHub Actions sets GITHUB_API_URL in every job, so it is NOT unset on
+      // a CI runner even though it is on most dev machines. Force it empty to
+      // keep the "no source at all" assertion below hermetic.
+      vi.stubEnv('GITHUB_API_URL', '');
 
       mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(null);
       const envOnly = await getGitHubConfig(prisma);
       expect(envOnly.sources.token).toBe('env');
-      // GITHUB_API_URL was never stubbed, so that field has no source at all.
       expect(envOnly.sources.apiUrl).toBeNull();
 
       mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(sealedColumns('token', 'db-token'));
@@ -282,9 +285,11 @@ describe('systemConfigService', () => {
     });
 
     it('a field with no DB row and no env var reports a null source', async () => {
-      // The sandbox's ambient GITHUB_TOKEN (proxy-injected) would otherwise
-      // leak into this "unset" assertion — force it empty for this test only.
+      // Ambient env would otherwise leak into these "unset" assertions: the
+      // sandbox injects GITHUB_TOKEN, and GitHub Actions sets GITHUB_API_URL in
+      // every job. Force both empty for this test only.
       vi.stubEnv('GITHUB_TOKEN', '');
+      vi.stubEnv('GITHUB_API_URL', '');
       mockPrisma.gitHubConfig.findUnique.mockResolvedValueOnce(null);
       const result = await getGitHubConfig(prisma);
       expect(result.sources.apiUrl).toBeNull();
