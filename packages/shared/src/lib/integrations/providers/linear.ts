@@ -75,8 +75,8 @@ const LINEAR_ISSUE_UPDATE_STATE_MUTATION = `mutation IssueUpdateState($id: Strin
 const STATUS_NAME_TO_STATE_TYPE: Record<string, string> = {
   backlog: 'backlog',
   blocked: 'unstarted',
-  cancelled: 'canceled',
   canceled: 'canceled',
+  cancelled: 'canceled',
   closed: 'completed',
   done: 'completed',
   'in progress': 'started',
@@ -196,11 +196,9 @@ export class LinearProvider implements IssueTrackerProvider {
           };
         };
       };
-      const result = await linearGraphql<StatesResponse>(
-        this.apiToken,
-        LINEAR_ISSUE_STATES_QUERY,
-        { id: issueId }
-      );
+      const result = await linearGraphql<StatesResponse>(this.apiToken, LINEAR_ISSUE_STATES_QUERY, {
+        id: issueId,
+      });
       const states = result.data?.issue?.team?.states?.nodes ?? [];
       if (states.length === 0) {
         return;

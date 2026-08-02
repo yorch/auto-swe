@@ -847,7 +847,9 @@ async function snapshotContext(ctx: Context, runId: string): Promise<unknown> {
       return;
     }
     if (Array.isArray(value)) {
-      value.forEach((v, i) => walk(v, `${path}[${i}]`));
+      value.forEach((v, i) => {
+        walk(v, `${path}[${i}]`);
+      });
       return;
     }
     if (value && typeof value === 'object') {
