@@ -44,10 +44,18 @@ RUN yarn workspaces focus @auto-swe/worker --production \
  && mkdir -p packages/shared/node_modules packages/worker/node_modules
 
 # ── Stage 3: Runtime ──
-FROM node:24-alpine
+# glibc base, NOT alpine. @temporalio/core-bridge ships only `-gnu` prebuilds
+# (x86_64/aarch64-unknown-linux-gnu) — there is no musl build — so on alpine the
+# worker died at startup with:
+#   Error loading shared library ld-linux-x86-64.so.2 ... core-bridge/.../index.node
+# `gcompat` is not enough: the shim loads but then fails symbol relocation.
+FROM node:24-slim
+
 # Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
-# the host Docker socket group at runtime with DOCKER_GID.
-RUN apk add --no-cache docker-cli
+# the host Docker socket group at runtime with DOCKER_GID. Taken from the
+# official CLI image rather than apt, which keeps it pinned and avoids pulling
+# the whole docker.io package (daemon included) into the runtime.
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 
 ARG APP_VERSION=unknown
