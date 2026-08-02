@@ -182,7 +182,7 @@ The shipped schema lives in `packages/shared/src/prisma/migrations/` — exactly
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 51 tables, enums, FKs, Prisma-expressible indexes) |
+| `00000000000000_init` | The full schema, generated from `schema.prisma` via `prisma migrate diff` (all 52 tables, enums, FKs, Prisma-expressible indexes) |
 | `00000000000001_custom_constraints_and_indexes` | Everything Prisma's DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade and HITL idempotency, singleton/scope CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
 
 New schema changes append normal Prisma migrations after these; `prisma migrate deploy` applies whatever is pending.

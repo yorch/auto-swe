@@ -428,7 +428,7 @@ erDiagram
 | Agent config | `Agent`, `AgentSkillRef`, `Skill` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `StorageConfig`, `WorkflowDefaults`, `GoogleOAuthConfig`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback |
-| Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)` |
+| Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage`, `ChannelBudgetHold` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)`; a hold row is one turn's outstanding claim on a channel's remaining budget |
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
 | Distribution | `InstalledBundle` | Installed bundles as a managed base layer |

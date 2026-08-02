@@ -168,8 +168,10 @@ before it runs and settles that hold for the true cost afterwards (`reserveChann
 `ChannelBudgetHold.settle`). The hold is an atomic increment on the ledger row, and each turn decides
 on the total *before* its own increment — so remaining headroom is a resource turns consume rather
 than a number they all read, which matters because turn workflow ids are per-event and a busy channel
-runs many at once. It is pinned to the month it was taken in, and scaled by the batch size for passes
-that fan out over a batch.
+runs many at once. It is pinned to the month it was taken in, and scaled by the number of model calls
+the held work will make — an assistant turn holds for two (the reply and the memory summarizer that
+follows it, which settle against the same hold), and the passes that fan out over a batch hold for
+the batch size.
 
 **The hold is priced, not guessed at.** `estimateHoldUsd` resolves the agent the channel is bound to
 and prices a nominal turn envelope (8K in / 1.5K out) against `MODEL_PRICES` — so an Opus channel
@@ -184,24 +186,34 @@ not unbounded by it as a plain read gate was.
 **A hold is a row, not just an increment.** The increment is what bounds concurrency; the
 `ChannelBudgetHold` row beside it — written in the same transaction — is what makes the claim
 reversible. A worker that dies mid-turn never settles, and without the row its estimate would sit on
-the ledger for the rest of the calendar month. Instead the next `reserveChannelTurn` on that channel
-sweeps any row past `expiresAt` (`CHANNEL_HOLD_TTL_MS`, 30 minutes), subtracting exactly what it
-added. Deleting the row *is* the claim, so a sweeper and a settling turn racing the same hold cannot
-both refund it — and a turn whose hold was swept settles its full cost rather than netting against a
-reservation that is already gone.
+the ledger for the rest of the calendar month. Instead a sweep reclaims any row past `expiresAt`
+(`CHANNEL_HOLD_TTL_MS`, 30 minutes), subtracting exactly what it added. Deleting the row *is* the
+claim, so a sweeper and a settling turn racing the same hold cannot both refund it — and a turn whose
+hold was swept settles its full cost rather than netting against a reservation that is already gone.
 
-`POST /api/v1/admin/slack-channels/:id/budget/reset` is the impatient version of that sweep for an
-operator who does not want to wait out the TTL. It drops the outstanding holds and subtracts exactly
-what they added; it is deliberately not a "zero the month" button, so recovering from a crash never
-doubles as disabling the cap.
+**The sweep runs from the refusal, not the happy path.** The accrued total a gate reads *includes*
+outstanding holds, so the state the sweep exists to repair — a channel pushed over its cap by holds
+nobody is spending against — is exactly the state that refuses every subsequent turn. Both
+`isChannelOverBudgetNow` and `reserveChannelTurn` therefore sweep from inside their refusal branch
+and re-decide on the reclaimed total; a channel under its cap never pays the extra round-trips, and
+never needs to.
+
+The corollary is that a channel comfortably under its cap never sweeps at all, so its abandoned holds
+sit until something pushes it to the cap.
+`POST /api/v1/admin/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
+control in the admin UI. It drops the outstanding holds one transaction at a time (the same
+delete-is-the-claim shape the worker's sweep uses, so a hold a worker is concurrently settling is
+never double-refunded) and reports how many it actually released. It is deliberately not a "zero the
+month" button: it subtracts exactly what the holds added and leaves real spend alone, so recovering
+from a crash never doubles as disabling the cap.
 
 One path still spends on the channel ledger **without** a hold: `finalizeChannelTaskRun`. A delegated
 task run spends across a whole workflow, not inside one activity, so there is nothing in-process to
 hold. `isChannelOverBudgetForTask` gates its *launch* with a plain read, and its summed cost lands on
 the channel ledger when the run finalizes.
 
-`isChannelOverBudgetNow` is that plain read. It also runs as a cheap bail before a held path does
-any prompt-building work — it decides nothing on its own there; the hold is what enforces the cap.
+`isChannelOverBudgetNow` is that read. It also runs as a cheap bail before a held path does any
+prompt-building work — it decides nothing on its own there; the hold is what enforces the cap.
 
 ---
 
@@ -227,7 +239,8 @@ Channels are configured at `/admin/slack-channels` over
 `/api/v1/admin/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
 memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
-and a channel picker.
+and a channel picker. `/:id/budget/reset` has no UI control — it is called directly, by an admin who
+knows a worker crashed mid-turn.
 
 **Schedule lifecycle.** `provisionChannel` registers a channel on first contact, defaulting
 `isPrivate` from Slack's `channel_type`. Toggling ambient or reactive mode calls
@@ -266,7 +279,8 @@ unproven on real traffic, and turn them on one channel at a time.
   against the bound model, so a turn with an unusually long prompt or reply overshoots by the
   difference, and the aggregate overshoot still scales with how many calls the remaining headroom
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
-  crash over-counts the channel until it expires (30 minutes) or an admin releases it.
+  crash over-counts the channel until the sweep reclaims it — which only happens once the channel
+  reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.
