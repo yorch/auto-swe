@@ -388,22 +388,36 @@ for (const file of targets) {
 //
 // Known gaps live next to the feature they belong to, not in a central list that
 // drifts. That only works if every capability doc actually has one — so require it.
-// Runbooks are procedures, not capability descriptions, and are exempt.
+//
+// This is an EXEMPT list, not an allowlist, and that is the point: an allowlist
+// exempts a new doc by omission, which is how `model-configuration.md` went
+// uncovered. Every doc under `docs/` is checked unless it is named here, so
+// adding a doc opts it in and skipping one is a deliberate, reviewable edit.
+//
+// Only pure procedure belongs here. A runbook tells you which buttons to press;
+// it makes no claim about what the system can do, so it has no gaps to state.
 // ---------------------------------------------------------------------------
 
-const CAPABILITY_DOCS = [
-  'docs/architecture.md',
-  'docs/agents.md',
-  'docs/evals.md',
-  'docs/channel-assistant.md',
-  'docs/hitl-workflows.md',
-  'docs/nl-workflow-authoring.md',
-  'docs/figma-integration.md',
-  'docs/product-overview.md',
-];
+const GAP_EXEMPT_DOCS = new Set([
+  'docs/README.md', // index
+  'docs/deployment.md', // runbook
+  'docs/github-app-setup.md', // runbook
+  'docs/oauth-setup.md', // runbook
+  'docs/slack-app-setup.md', // runbook
+]);
 const GAP_HEADING = /^#{2,3} .*(limitation|not built|non-goal|out of scope|maturity)/im;
 
-const missingGaps = CAPABILITY_DOCS.filter((d) => !GAP_HEADING.test(read(d)));
+const gapCheckedDocs = readdirSync(join(ROOT, 'docs'))
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => `docs/${f}`)
+  .filter((d) => !GAP_EXEMPT_DOCS.has(d))
+  .sort();
+
+const missingGaps = gapCheckedDocs.filter((d) => !GAP_HEADING.test(read(d)));
+
+// A doc listed as exempt but since deleted is a stale exemption — it would
+// silently keep a future doc of the same name uncovered.
+const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT, d)));
 
 // ---------------------------------------------------------------------------
 // Broken relative links
@@ -481,6 +495,7 @@ const clean =
   failures.length === 0 &&
   brokenLinks.length === 0 &&
   missingGaps.length === 0 &&
+  staleExemptions.length === 0 &&
   versionFailures.length === 0 &&
   proseFailures.length === 0;
 
@@ -489,7 +504,10 @@ if (clean) {
     `Doc drift check passed — ${targets.length} living docs, ${CHECKS.length} facts, ` +
       `${VERSIONED_DEPS.length} dependency versions, no broken links.`
   );
-  console.log(`  ${CAPABILITY_DOCS.length} capability docs state their limitations.`);
+  console.log(
+    `  ${gapCheckedDocs.length} docs state their limitations ` +
+      `(${GAP_EXEMPT_DOCS.size} runbooks exempt).`
+  );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   for (const [label, value] of facts) {
     console.log(`  ${String(value).padStart(3)}  ${label}`);
@@ -508,8 +526,19 @@ if (failures.length > 0) {
   console.error('Frozen docs under docs/history/ are exempt from claim checks.\n');
 }
 
+if (staleExemptions.length > 0) {
+  console.error(`Stale gap exemptions — ${staleExemptions.length} named doc(s) do not exist.\n`);
+  for (const d of staleExemptions) {
+    console.error(`  ${d}`);
+  }
+  console.error(
+    '\nRemove it from GAP_EXEMPT_DOCS. Left behind, it silently exempts a future' +
+      ' doc that reuses the name.\n'
+  );
+}
+
 if (missingGaps.length > 0) {
-  console.error(`Missing gap sections — ${missingGaps.length} capability doc(s).\n`);
+  console.error(`Missing gap sections — ${missingGaps.length} doc(s).\n`);
   for (const d of missingGaps) {
     console.error(`  ${d}`);
   }

@@ -209,3 +209,24 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 **Test button returns `"apiBase rejected: host '…' is on a private network"`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts. Use a publicly routable URL or set up a tunnel.
 
 **Model changes don't seem to apply mid-run**: confirm the activity is past the `await getModel(...)` call before you edited. Already-bound `LanguageModel` instances aren't swapped mid-`generate()`; the next call after the cache TTL (default 30s) picks up the new value.
+
+---
+
+## Limitations
+
+- **The config cache means edits are eventually consistent.** Model config is cached in-process with
+  a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
+  briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
+- **Pricing is keyed on the resolved `provider/model` spec.** A model with no `MODEL_PRICES` entry
+  and no `MODEL_PRICE_*` override records usage at **zero cost** rather than failing — the span
+  carries `llm.cost_pricing_known=false`. Budget caps are enforced on tokens, so an unpriced model
+  is still capped, but its USD figures read as $0.
+- **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
+  ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
+- **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a
+  model returning any other shape throws. Changing dimension is a migration plus a re-embed of every
+  `MemoryItem`, and there is no tooling for it.
+- **The boot check reflects install state at boot.** `assertConfigReady` gates on the agents the
+  installed templates can reach. Activating a template afterwards is not re-checked, so a newly
+  reachable agent with no credential fails at its node instead of at startup. Restart the worker to
+  restore fail-fast.
