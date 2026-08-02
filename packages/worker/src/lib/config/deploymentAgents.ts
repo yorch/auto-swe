@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
 import type { ModelBackedAgentKey } from './types.js';
@@ -27,10 +28,15 @@ import type { ModelBackedAgentKey } from './types.js';
 
 /** Step names reachable from the installed, runnable template versions. */
 export async function installedStepNames(): Promise<Set<string>> {
-  const templates = await prisma.workflowTemplate.findMany({
-    select: { activeVersion: true, experimentVersion: true, id: true },
-    where: { status: 'ACTIVE' },
-  });
+  const templates = await runUnscoped(
+    'the boot gate covers the whole deployment: any tenant installed template can run on this worker',
+    ['WorkflowTemplate'],
+    () =>
+      prisma.workflowTemplate.findMany({
+        select: { activeVersion: true, experimentVersion: true, id: true },
+        where: { status: 'ACTIVE' },
+      })
+  );
 
   // Both arms of an A/B split can run, so both count as installed.
   const wanted = templates.flatMap((t) =>
@@ -80,7 +86,12 @@ export async function requiredAgentKeysForDeployment(): Promise<ModelBackedAgent
   // calls `runAgent` directly, and the seeded channel template is a one-node
   // trace container. So walking specs cannot see this requirement; the presence
   // of a channel is what implies it.
-  if ((await prisma.slackChannel.count()) > 0) {
+  const channelCount = await runUnscoped(
+    'a channel in any tenant means this worker can serve channel turns',
+    ['SlackChannel'],
+    () => prisma.slackChannel.count()
+  );
+  if (channelCount > 0) {
     keys.add('channelAssistant');
   }
 

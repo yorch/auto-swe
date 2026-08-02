@@ -1,4 +1,5 @@
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -47,11 +48,13 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
   app.get('/mcp-connections', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.connection.findMany({
-      include: { team: { select: { id: true, name: true, slug: true } } },
-      orderBy: { name: 'asc' },
-      where: { isActive: true, type: 'mcp' },
-    });
+    const rows = await runUnscoped("admin lists every team's mcp connections", ['Connection'], () =>
+      fastify.prisma.connection.findMany({
+        include: { team: { select: { id: true, name: true, slug: true } } },
+        orderBy: { name: 'asc' },
+        where: { isActive: true, type: 'mcp' },
+      })
+    );
     return { data: rows };
   });
 

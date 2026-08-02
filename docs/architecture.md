@@ -571,11 +571,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
 
 - **Tenant isolation is application-layer only.** Org and team membership are checked on the routes;
   there are no database row-level policies. A missing check is a data-exposure bug, not something
-  the database will catch. The gateway's Prisma client carries a `tenantGuard` extension that
-  fails a multi-row query (`findMany` / `count` / `aggregate` / `groupBy` / `updateMany` /
-  `deleteMany`) on a model with a `teamId`/`orgId` when the query has no tenant predicate. Every
+  the database will catch. The shared Prisma singleton carries a `tenantGuard` extension — applied
+  in `db.ts`, so gateway and worker both get it — that fails a multi-row query (`findMany` /
+  `count` / `aggregate` / `groupBy` / `updateMany` / `deleteMany`) on a model with a
+  `teamId`/`orgId` when the query has no tenant predicate. Every
   call site is accounted for: a deliberate cross-tenant read declares itself with
-  `runUnscoped(reason, fn)`, and the common `admin ? {} : filter` shape uses `asPlatformAdmin`,
+  `runUnscoped(reason, models, fn)`, and the common `admin ? {} : filter` shape uses
+  `asPlatformAdmin`,
   which keeps the guard live for everyone except the role meant to see everything. It throws
   outside production and warns inside it, so a false positive pages someone rather than taking the
   API down; `TENANT_GUARD_STRICT=1` makes production throw too. Single-row lookups are deliberately
@@ -587,13 +589,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   already-named model does not. That is the residual hole, and it is deliberate: several call sites
   legitimately wrap a `Promise.all` of two or three queries on the same model, so a
   one-query-per-region rule would not fit them.
-- **The tenant guard covers the gateway only.** It is applied where `fastify.prisma` is built, so
-  the worker — and the handful of gateway modules that import the `@auto-swe/shared/db` singleton
-  directly — run unguarded. That split is an artifact of where `$extends` is called, not a judgement
-  about which paths are tenant-sensitive; the worker is the half that puts `MemoryItem` rows into an
-  agent prompt. Moving it into `db.ts` would cover both, and requires triaging the worker's own
-  cross-tenant reads first (`getReposForConsolidation`, `planEpic`, `channelMemory`, the config
-  resolvers, and `keyRotation`, which sweeps two tenant-scoped tables by design).
+- **The guard is enforced at run time but audited statically.** Route tests decorate a mocked
+  Prisma, so the extension never runs on them, and production defaults to `warn` — which means a
+  forgotten filter can reach a log line nobody reads. `tenantGuard.coverage.test.ts` closes that by
+  reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
+  `where`, or sit inside `runUnscoped`/`asPlatformAdmin`. It is a text heuristic, so a `where` hoisted
+  behind a variable or helper call is undecidable; those few sites are listed by name in the test
+  and verified by hand.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

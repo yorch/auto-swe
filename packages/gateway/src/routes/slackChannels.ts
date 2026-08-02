@@ -292,20 +292,25 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   // its masked last-four + install metadata. Static path, declared before `/:id`
   // so Fastify routes it as a literal (not a channel id).
   app.get('/workspaces', { onRequest: adminOnly }, async () => {
-    const rows = await fastify.prisma.slackWorkspace.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: {
-        _count: { select: { channels: true } },
-        botTokenLastFour: true,
-        createdAt: true,
-        id: true,
-        installedAt: true,
-        isActive: true,
-        name: true,
-        orgId: true,
-        slackTeamId: true,
-      },
-    });
+    const rows = await runUnscoped(
+      'admin lists every installed Slack workspace',
+      ['SlackWorkspace'],
+      () =>
+        fastify.prisma.slackWorkspace.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            _count: { select: { channels: true } },
+            botTokenLastFour: true,
+            createdAt: true,
+            id: true,
+            installedAt: true,
+            isActive: true,
+            name: true,
+            orgId: true,
+            slackTeamId: true,
+          },
+        })
+    );
     const data = rows.map((r) => ({
       channelCount: r._count.channels,
       createdAt: r.createdAt,

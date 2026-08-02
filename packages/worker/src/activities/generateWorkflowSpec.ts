@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type AuthoringCatalog,
   BUILTIN_SHELL_IMAGES,
@@ -82,18 +83,25 @@ function formatErrors(err: unknown): string[] {
  * the shared catalog renderer), so they are not queried here.
  */
 async function buildCatalog(teamId: string | null, allowShell: boolean): Promise<AuthoringCatalog> {
-  const agentRows = await prisma.agent.findMany({
-    // scope DESC so a TEAM row sorts before the GLOBAL one ('TEAM' > 'GLOBAL'),
-    // letting the dedupe below keep the team override's name/description.
-    orderBy: [{ key: 'asc' }, { scope: 'desc' }],
-    select: { description: true, key: true, name: true },
-    where: {
-      isActive: true,
-      // Only GLOBAL + the requester's TEAM-scoped agents — not ORGANIZATION /
-      // CHANNEL / WORKFLOW_TEMPLATE rows that merely carry the same teamId.
-      OR: [{ scope: 'GLOBAL' as const }, ...(teamId ? [{ scope: 'TEAM' as const, teamId }] : [])],
-    },
-  });
+  const listAgents = () =>
+    prisma.agent.findMany({
+      // scope DESC so a TEAM row sorts before the GLOBAL one ('TEAM' > 'GLOBAL'),
+      // letting the dedupe below keep the team override's name/description.
+      orderBy: [{ key: 'asc' }, { scope: 'desc' }],
+      select: { description: true, key: true, name: true },
+      where: {
+        isActive: true,
+        // Only GLOBAL + the requester's TEAM-scoped agents — not ORGANIZATION /
+        // CHANNEL / WORKFLOW_TEMPLATE rows that merely carry the same teamId.
+        OR: [{ scope: 'GLOBAL' as const }, ...(teamId ? [{ scope: 'TEAM' as const, teamId }] : [])],
+      },
+    });
+  // With a team the OR carries `teamId` and the guard checks it as usual. With
+  // no team the query is GLOBAL-only, which has no tenant to filter by — say so
+  // rather than exempting the scoped path too.
+  const agentRows = teamId
+    ? await listAgents()
+    : await runUnscoped('no team scope: the catalog is the GLOBAL library', ['Agent'], listAgents);
   // Dedupe by key (a team override + the GLOBAL row share a key) — keep the first
   // seen, which is the TEAM row when present (scope DESC), so the catalog shows
   // the most-specific label. Only the key matters for an `agentRef` either way.

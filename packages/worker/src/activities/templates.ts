@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
@@ -53,10 +54,15 @@ export async function createWorkflowRun(
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
   // today (version 1); kept as a { key: version } map for forward pins.
-  const agents = await prisma.agent.findMany({
-    select: { key: true, version: true },
-    where: { isActive: true, scope: 'GLOBAL' },
-  });
+  const agents = await runUnscoped(
+    'GLOBAL-scope rows are the deployment-wide defaults; they have no tenant by definition',
+    ['Agent'],
+    () =>
+      prisma.agent.findMany({
+        select: { key: true, version: true },
+        where: { isActive: true, scope: 'GLOBAL' },
+      })
+  );
   const agentVersions: Record<string, number> = {};
   for (const a of agents) {
     agentVersions[a.key] = Math.max(agentVersions[a.key] ?? 0, a.version);

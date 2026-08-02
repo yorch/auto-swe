@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { currentKeyVersion, decryptSecret, encryptSecret } from './crypto.js';
+import { runUnscoped } from './tenantGuard.js';
 
 /**
  * Re-encrypts every secret under the current `CONFIG_ENCRYPTION_KEY`.
@@ -118,7 +119,16 @@ export async function rotateEncryptionKey(opts?: { dryRun?: boolean }): Promise<
       throw new Error(`ENCRYPTED_FIELDS names model '${model}', which is not on the Prisma client`);
     }
 
-    const rows = await delegate.findMany({});
+    // Rotation is a deployment-wide operation on the ciphertext column itself —
+    // it re-encrypts every row regardless of owner, and skipping a tenant's rows
+    // would leave them unreadable once the old key is dropped. `ENCRYPTED_FIELDS`
+    // is keyed by delegate name; the guard keys off the model name.
+    const modelName = model[0].toUpperCase() + model.slice(1);
+    const rows = await runUnscoped(
+      'key rotation must re-encrypt every row; a skipped tenant loses its secrets',
+      [modelName],
+      () => delegate.findMany({})
+    );
     for (const row of rows) {
       const data: Record<string, unknown> = {};
 

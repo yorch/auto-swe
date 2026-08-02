@@ -3,6 +3,7 @@ import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
@@ -100,13 +101,17 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
 
-      const teams = await fastify.prisma.team.findMany({
-        include: {
-          _count: { select: { memberships: true, repositories: true } },
-        },
-        orderBy: { name: 'asc' },
-        where,
-      });
+      // The spread above is `{}` for a platform admin, which is the deliberate
+      // cross-tenant branch.
+      const teams = await asPlatformAdmin(user, 'admin lists every team', ['Team'], () =>
+        fastify.prisma.team.findMany({
+          include: {
+            _count: { select: { memberships: true, repositories: true } },
+          },
+          orderBy: { name: 'asc' },
+          where,
+        })
+      );
 
       return { data: teams };
     }

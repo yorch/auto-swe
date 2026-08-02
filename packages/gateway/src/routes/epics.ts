@@ -73,28 +73,36 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // Validate all repos exist and are active. Include the requesting user's
       // team membership per repo so the access check below doesn't need a
       // second round-trip (mirrors the single-repo work-request route).
-      const repos = await fastify.prisma.connection.findMany({
-        select: {
-          id: true,
-          organizationName: true,
-          repoName: true,
-          team: {
+      // Unscoped by design: the caller supplies the ids and the membership rows
+      // selected here are what the access check below decides on. Filtering by
+      // team up front would turn "you cannot see this repo" into "no such repo".
+      const repos = await runUnscoped(
+        'access is decided from the memberships selected here, not by the where clause',
+        ['Connection'],
+        () =>
+          fastify.prisma.connection.findMany({
             select: {
-              memberships: {
-                select: { userId: true },
-                where: { userId: user.sub },
+              id: true,
+              organizationName: true,
+              repoName: true,
+              team: {
+                select: {
+                  memberships: {
+                    select: { userId: true },
+                    where: { userId: user.sub },
+                  },
+                  organization: {
+                    select: { id: true, monthlyBudgetUsdCents: true },
+                  },
+                  orgId: true,
+                },
               },
-              organization: {
-                select: { id: true, monthlyBudgetUsdCents: true },
-              },
-              orgId: true,
             },
-          },
-        },
-        // Only git_repo connections are valid epic targets; a non-git id (e.g.
-        // mcp) simply isn't found and surfaces as REPOS_NOT_FOUND below.
-        where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
-      });
+            // Only git_repo connections are valid epic targets; a non-git id (e.g.
+            // mcp) simply isn't found and surfaces as REPOS_NOT_FOUND below.
+            where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
+          })
+      );
 
       const foundIds = new Set(repos.map((r) => r.id));
       const missingIds = repoIds.filter((id) => !foundIds.has(id));

@@ -50,8 +50,16 @@ const GUARDED_OPERATIONS = new Set([
   'updateMany',
 ]);
 
-/** Keys that scope a query to a tenant, directly or through a relation. */
+/**
+ * Keys that scope a query to a tenant, directly or through a relation.
+ *
+ * `channelId` counts because a `SlackChannel` belongs to exactly one team, so
+ * filtering on it is strictly narrower than filtering on `teamId` — the two
+ * tenant-scoped models that carry the column (`MemoryItem`, `Agent`) both
+ * inherit their tenant from the channel.
+ */
 const TENANT_KEYS = new Set([
+  'channelId',
   'orgId',
   'organization',
   'organizationId',
