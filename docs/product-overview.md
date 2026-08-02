@@ -86,7 +86,7 @@ flowchart TB
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
-| **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 59 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
+| **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 58 built-in admin-extensible regex patterns; locked-down ephemeral shell containers |
 | **HITL** | 4 node types (approval / decision / input / review); inbox UI + Slack buttons; atomic resolution, timeout routing, cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
 | **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; OAuth (GitHub/Google), magic-link, account linking, new-user approval |
 | **Integrations** | GitHub (PAT *or* GitHub App), Slack (slash command + interactive), issue trackers (Jira / Linear / GitHub Issues), S3/MinIO storage, email (SMTP/Resend) — all DB-configured, encrypted, with connection tests + audit log |

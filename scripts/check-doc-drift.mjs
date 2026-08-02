@@ -72,9 +72,16 @@ const builtinSkills = (() => {
   return count(body[1], /^\s*[A-Z0-9_]+_SKILL,$/gm);
 })();
 
-/** Built-in scanner patterns, total and per `ScannerPatternType`. */
+/**
+ * Built-in scanner patterns, total and per `ScannerPatternType`.
+ *
+ * The trailing comma is load-bearing: `BuiltinScannerPatternDef` declares
+ * `type: 'INJECTION' | 'EXFILTRATION' | …;`, and matching without it counted
+ * that union as a 14th INJECTION pattern — inflating every total by one.
+ * Verified against a seeded database: 58 rows, 13 INJECTION.
+ */
 const patternsByType = {};
-for (const m of patternsSrc.matchAll(/type: '([A-Z_]+)'/g)) {
+for (const m of patternsSrc.matchAll(/type: '([A-Z_]+)',/g)) {
   patternsByType[m[1]] = (patternsByType[m[1]] ?? 0) + 1;
 }
 const scannerPatterns = Object.values(patternsByType).reduce((a, b) => a + b, 0);

@@ -331,7 +331,7 @@ Six scanners run during agent execution, each independently advisory or blocking
 | **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 
-**Built-in patterns:** 59 patterns in `packages/shared/src/scannerPatterns/index.ts` — 14 INJECTION,
+**Built-in patterns:** 58 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 6 SENSITIVE_FILE. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 
