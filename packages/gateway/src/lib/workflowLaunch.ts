@@ -39,16 +39,43 @@ import { isUniqueConstraintError } from './prismaErrors.js';
  * recoverable failure mode rather than the invisible one.
  */
 
-/** Rows to write before the workflow starts. `runInput` is omitted on re-runs. */
-export interface WorkflowLedgerRows {
+/**
+ * Rows to write before the workflow starts. `runInput` is omitted on re-runs;
+ * `activeWorkflow` is omitted by launches that do not keep a spend ledger.
+ *
+ * **Omitting `activeWorkflow` gives up atomic dedup**, because the unique index
+ * on `ActiveWorkflow.temporalWorkflowId` is what decides the winner of two
+ * concurrent submissions. Such a launch still gets ledger-before-start ordering
+ * and compensation; its only duplicate protection is Temporal's own
+ * `WorkflowExecutionAlreadyStartedError`, which is a TOCTOU-prone gate and does
+ * nothing at all when the workflow ID is random. Prefer passing the row.
+ */
+export type WorkflowLedgerRows = {
   /** `RunInput` row, when this launch creates one (skipped when re-running). */
   runInput?: Record<string, unknown>;
-  /** `ActiveWorkflow` row. Must carry `temporalWorkflowId`. */
-  activeWorkflow: Record<string, unknown> & { temporalWorkflowId: string };
-}
+} & (
+  | {
+      /** `ActiveWorkflow` row. Must carry `temporalWorkflowId`. */
+      activeWorkflow: Record<string, unknown> & { temporalWorkflowId: string };
+      temporalWorkflowId?: never;
+    }
+  | {
+      /**
+       * No `ActiveWorkflow` row — PRD runs track their spend through
+       * `AgentTrace` instead (`finalizeWorkflowRun` sums the traces when the
+       * ledger join is empty). The ID is still needed for compensation logging.
+       */
+      activeWorkflow?: undefined;
+      temporalWorkflowId: string;
+    }
+);
 
 export type LaunchWorkflowResult =
-  | { ok: true; activeWorkflowId: string }
+  | {
+      ok: true;
+      /** `null` when the launch wrote no `ActiveWorkflow` row. */
+      activeWorkflowId: string | null;
+    }
   /**
    * Another run already owns this workflow ID — either the ledger insert lost
    * the unique-index race or Temporal reported the execution already started.
@@ -62,20 +89,27 @@ export async function launchTrackedWorkflow(
   start: () => Promise<unknown>,
   opts?: { log?: { error: (obj: unknown, msg?: string) => void } }
 ): Promise<LaunchWorkflowResult> {
-  const { runInput, activeWorkflow } = rows;
-  const temporalWorkflowId = activeWorkflow.temporalWorkflowId;
+  const { runInput } = rows;
+  // Read `rows.activeWorkflow` rather than a destructured local: destructuring
+  // discards the union narrowing that proves one of the two carries the ID.
+  const activeWorkflow = rows.activeWorkflow;
+  const temporalWorkflowId: string = rows.activeWorkflow
+    ? rows.activeWorkflow.temporalWorkflowId
+    : rows.temporalWorkflowId;
 
   // 1. Ledger first, atomically. A P2002 here is the dedup gate firing.
-  let activeWorkflowId: string;
+  let activeWorkflowId: string | null;
   try {
     const writes = [
       ...(runInput
         ? [prisma.runInput.create({ data: runInput as never })]
         : ([] as ReturnType<typeof prisma.runInput.create>[])),
-      prisma.activeWorkflow.create({ data: activeWorkflow as never }),
+      ...(activeWorkflow
+        ? [prisma.activeWorkflow.create({ data: activeWorkflow as never })]
+        : ([] as ReturnType<typeof prisma.activeWorkflow.create>[])),
     ];
     const results = (await prisma.$transaction(writes)) as Array<{ id: string }>;
-    activeWorkflowId = results[results.length - 1].id;
+    activeWorkflowId = activeWorkflow ? results[results.length - 1].id : null;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return { ok: false, reason: 'DUPLICATE' };
@@ -111,18 +145,35 @@ export async function launchTrackedWorkflow(
  */
 async function compensate(
   prisma: FastifyInstance['prisma'],
-  ids: { activeWorkflowId: string; runInputId?: string },
+  ids: { activeWorkflowId: string | null; runInputId?: string },
   ctx: { temporalWorkflowId: string; log?: { error: (obj: unknown, msg?: string) => void } }
 ): Promise<void> {
-  try {
-    await prisma.activeWorkflow.delete({ where: { id: ids.activeWorkflowId } });
-    if (ids.runInputId) {
-      await prisma.runInput.delete({ where: { id: ids.runInputId } });
+  // Each delete is independent: a failure cleaning up one row must not strand
+  // the other. (Deleting the ActiveWorkflow first also keeps the FK happy.)
+  const deletes: Array<[string, () => Promise<unknown>]> = [
+    ...(ids.activeWorkflowId
+      ? ([
+          [
+            'activeWorkflow',
+            () => prisma.activeWorkflow.delete({ where: { id: ids.activeWorkflowId as string } }),
+          ],
+        ] as Array<[string, () => Promise<unknown>]>)
+      : []),
+    ...(ids.runInputId
+      ? ([
+          ['runInput', () => prisma.runInput.delete({ where: { id: ids.runInputId as string } })],
+        ] as Array<[string, () => Promise<unknown>]>)
+      : []),
+  ];
+
+  for (const [row, run] of deletes) {
+    try {
+      await run();
+    } catch (cleanupErr) {
+      ctx.log?.error(
+        { err: cleanupErr, row, temporalWorkflowId: ctx.temporalWorkflowId },
+        'workflow start failed and ledger cleanup also failed — row left for manual recovery'
+      );
     }
-  } catch (cleanupErr) {
-    ctx.log?.error(
-      { err: cleanupErr, temporalWorkflowId: ctx.temporalWorkflowId },
-      'workflow start failed and ledger cleanup also failed — rows left for manual recovery'
-    );
   }
 }

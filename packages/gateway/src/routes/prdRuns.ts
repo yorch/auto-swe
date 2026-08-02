@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const CreatePrdRunSchema = z.object({
   /** Full content of the PRD document (copied from Confluence / Google Docs). */
@@ -133,34 +134,38 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         templateVersion: template.activeVersion,
       };
 
-      // Start Temporal workflow first (idempotency gate).
-      try {
-        await fastify.temporal.startRunnableWorkflow(prdWorkflowId, workflowInput);
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'PRD_RUN_ALREADY_EXISTS',
-              message: `A PRD run workflow is already running for this ID: ${prdWorkflowId}`,
-            },
-          });
-        }
-        throw err;
-      }
-
-      // Persist the RunInput row.
-      await fastify.prisma.runInput.create({
-        data: {
-          description: prdTitle,
-          externalTicketId: workflowInput.request.externalTicketId,
-          id: workRequestId,
-          isCrossRepo: true,
-          requestedById: user.sub,
-          requestPayload,
-          templateId: template.id,
-          templateVersion: template.activeVersion,
+      // Ledger row first, workflow second, rolled back if the start fails — see
+      // `launchTrackedWorkflow`. A PRD run keeps no `ActiveWorkflow` ledger (its
+      // spend is summed from `AgentTrace` at finalize, and the per-repo children
+      // it submits carry their own rows), so there is no unique index to dedup
+      // on; `prdWorkflowId` carries a random suffix anyway, so the DUPLICATE
+      // branch below only ever fires on Temporal's own already-started error.
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          runInput: {
+            description: prdTitle,
+            externalTicketId: workflowInput.request.externalTicketId,
+            id: workRequestId,
+            isCrossRepo: true,
+            requestedById: user.sub,
+            requestPayload,
+            templateId: template.id,
+            templateVersion: template.activeVersion,
+          },
+          temporalWorkflowId: prdWorkflowId,
         },
-      });
+        () => fastify.temporal.startRunnableWorkflow(prdWorkflowId, workflowInput),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: {
+            code: 'PRD_RUN_ALREADY_EXISTS',
+            message: `A PRD run workflow is already running for this ID: ${prdWorkflowId}`,
+          },
+        });
+      }
 
       return reply.status(201).send({
         data: {

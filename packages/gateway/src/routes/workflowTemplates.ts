@@ -19,7 +19,9 @@ import {
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { validateSpecRefs } from '../lib/specRefValidation.js';
+import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { getErrorName, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
@@ -1341,7 +1343,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/runs',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { body: RunTemplateBody, params: TemplateIdParam },
+      schema: {
+        body: RunTemplateBody,
+        headers: IdempotencyHeaderSchema,
+        params: TemplateIdParam,
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -1397,7 +1403,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       const workRequestId = crypto.randomUUID();
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
-      const temporalWorkflowId = `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      // With an Idempotency-Key the ID is a pure function of the key, so the
+      // unique index on ActiveWorkflow.temporalWorkflowId becomes a real dedup
+      // gate. Without one, every request is a distinct run (previous behaviour).
+      const idempotencyKey = request.headers['idempotency-key'];
+      const temporalWorkflowId = idempotencyKey
+        ? workflowIdFromIdempotencyKey('wf', shortTplId, idempotencyKey)
+        : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
@@ -1408,47 +1420,46 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         workRequestId,
       };
 
-      try {
-        await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-          request: repoWorkRequest,
-          templateId: tpl.id,
-          templateVersion: tpl.activeVersion,
+      // Ledger rows first, workflow second, rolled back if the start fails —
+      // see `launchTrackedWorkflow`.
+      const launch = await launchTrackedWorkflow(
+        fastify.prisma,
+        {
+          activeWorkflow: {
+            budgetTier,
+            currentStatus: 'IMPLEMENTING',
+            repoId: connectionId ?? null,
+            temporalWorkflowId,
+            workRequestId,
+          },
+          runInput: {
+            connectionId,
+            description,
+            externalTicketId,
+            id: workRequestId,
+            payload: payload as object,
+            requestedById: user.sub,
+            requestPayload: JSON.stringify(request.body),
+            templateId: tpl.id,
+            templateVersion: tpl.activeVersion,
+          },
+        },
+        () =>
+          fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+            request: repoWorkRequest,
+            templateId: tpl.id,
+            templateVersion: tpl.activeVersion as number,
+          }),
+        { log: fastify.log }
+      );
+      if (!launch.ok) {
+        return reply.status(409).send({
+          error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' },
         });
-      } catch (err: unknown) {
-        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' },
-          });
-        }
-        throw err;
       }
 
-      await fastify.prisma.runInput.create({
-        data: {
-          connectionId,
-          description,
-          externalTicketId,
-          id: workRequestId,
-          payload: payload as object,
-          requestedById: user.sub,
-          requestPayload: JSON.stringify(request.body),
-          templateId: tpl.id,
-          templateVersion: tpl.activeVersion,
-        },
-      });
-
-      const activeWorkflow = await fastify.prisma.activeWorkflow.create({
-        data: {
-          budgetTier,
-          currentStatus: 'IMPLEMENTING',
-          repoId: connectionId ?? null,
-          temporalWorkflowId,
-          workRequestId,
-        },
-      });
-
       return reply.status(201).send({
-        data: { temporalWorkflowId, workflowId: activeWorkflow.id, workRequestId },
+        data: { temporalWorkflowId, workflowId: launch.activeWorkflowId, workRequestId },
       });
     }
   );

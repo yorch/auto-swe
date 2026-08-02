@@ -226,19 +226,17 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 | `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
 | `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
 
+Both accept an optional **`Idempotency-Key`** header. With one, the run's workflow ID is a
+deterministic function of the key, so a retried request or a redelivered webhook collapses onto the
+original run (`409`) instead of starting a second one. Without one, each request is a fresh run —
+idempotency is opt-in, because a schedule or a manual retry often *wants* to run the same payload
+again.
+
 **What is still SWE-shaped is the plumbing behind them, not the door.** Both marshal the payload into
 a `RepoWorkRequest` — the ticket→PR struct — passing `repoId: ''` when there is no connection, and
 `RunInput.externalTicketId` remains non-nullable in the schema (auto-filled rather than demanded of
 the caller). Event→input mappings for external triggers are configuration rather than a persisted
 `Trigger` table.
-
-**The generic entry points do not get the ledger guarantee.** `POST /workflow-templates/:id/runs`
-starts the Temporal workflow before writing its `RunInput` and `ActiveWorkflow` rows, outside a
-transaction and without compensation, rather than going through `launchTrackedWorkflow` — so a DB
-failure after a successful start leaves a run executing with nothing to attribute its spend or PRs
-to. Its workflow ID is random, so it has no dedup either. The Slack run modal and `POST /prd-runs`
-have the same ordering (both at least derive a deterministic ID). See
-[architecture.md §10](./architecture.md#10-limitations).
 
 Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
 so IP-direct connections are unfiltered and wildcard entries are informational only. Both would
