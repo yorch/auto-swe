@@ -27,10 +27,15 @@ export const TOOLTIP_CURSOR_FILL = '#171c26'; // ink-700
 
 export const CHART_HEIGHT = 280;
 
-/** Formats a `YYYY-MM-DD` date label as e.g. "3 Jun" for axis ticks/tooltips. */
+/**
+ * Formats a `YYYY-MM-DD` date label as e.g. "3 Jun" for axis ticks/tooltips.
+ * The locale is left to the browser so ticks match the dates rendered
+ * elsewhere in the app rather than pinning every reader to US ordering.
+ */
+const tickDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
+
 export function formatDateLabel(label: unknown) {
-  const d = new Date(`${String(label)}T00:00:00`);
-  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+  return tickDate.format(new Date(`${String(label)}T00:00:00`));
 }
 
 export const TOOLTIP_STYLE: React.CSSProperties = {

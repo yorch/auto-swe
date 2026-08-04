@@ -5,71 +5,130 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatDate(date: string | Date, options?: { showSeconds?: boolean }): string {
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: 'short',
-    ...(options?.showSeconds ? { second: '2-digit', year: 'numeric' } : {}),
-  }).format(new Date(date));
+// ── Locale-sensitive display helpers ────────────────────────────────────────
+//
+// Every formatter below passes `undefined` as the locale so the reader's own
+// browser preference decides date order, decimal separators, and unit names.
+// Pinning a locale here is what made a non-US reader see US-ordered dates from
+// `formatDate` next to browser-ordered ones from the bare `toLocaleString()`
+// calls elsewhere in the app.
+//
+// These are safe to resolve at render time: every caller is a client component
+// whose data arrives from TanStack Query after mount, and the app does no SSR
+// prefetch, so none of this runs on the server where the locale would differ.
+//
+// `Intl` objects are expensive to construct and these run once per row in long
+// tables, so each is built lazily and reused.
+function lazy<T>(make: () => T): () => T {
+  let value: T | undefined;
+  return () => {
+    value ??= make();
+    return value;
+  };
 }
+
+const DATE_PARTS: Intl.DateTimeFormatOptions = {
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  month: 'short',
+};
+const shortDate = lazy(() => new Intl.DateTimeFormat(undefined, DATE_PARTS));
+const preciseDate = lazy(
+  () => new Intl.DateTimeFormat(undefined, { ...DATE_PARTS, second: '2-digit', year: 'numeric' })
+);
+
+export function formatDate(date: string | Date, options?: { showSeconds?: boolean }): string {
+  const formatter = options?.showSeconds ? preciseDate() : shortDate();
+  return formatter.format(new Date(date));
+}
+
+// `numeric: 'auto'` yields "now" for the sub-minute case (and "yesterday" for a
+// single day) instead of a bare "0s ago"; `narrow` keeps the en output at the
+// same width as the hand-rolled "5m ago" it replaces.
+const relativeTime = lazy(
+  () => new Intl.RelativeTimeFormat(undefined, { numeric: 'auto', style: 'narrow' })
+);
 
 export function formatRelativeTime(date: string | Date): string {
-  const now = Date.now();
-  const then = new Date(date).getTime();
-  const diff = now - then;
+  const diff = Date.now() - new Date(date).getTime();
 
   if (diff < 60_000) {
-    return 'just now';
+    return relativeTime().format(0, 'second');
   }
   if (diff < 3600_000) {
-    return `${Math.floor(diff / 60_000)}m ago`;
+    return relativeTime().format(-Math.floor(diff / 60_000), 'minute');
   }
   if (diff < 86400_000) {
-    return `${Math.floor(diff / 3600_000)}h ago`;
+    return relativeTime().format(-Math.floor(diff / 3600_000), 'hour');
   }
-  return `${Math.floor(diff / 86400_000)}d ago`;
+  return relativeTime().format(-Math.floor(diff / 86400_000), 'day');
 }
 
-export function formatCost(usd: number): string {
-  if (usd === 0) {
+// Costs are denominated in USD (MODEL_PRICES is USD per MTok), so the currency
+// is fixed and only its presentation follows the locale.
+const usd = lazy(() => new Intl.NumberFormat(undefined, { currency: 'USD', style: 'currency' }));
+
+export function formatCost(usdAmount: number): string {
+  if (usdAmount === 0) {
     return '—';
   }
-  if (usd < 0.01) {
-    return '<$0.01';
+  if (usdAmount < 0.01) {
+    return `<${usd().format(0.01)}`;
   }
-  return `$${usd.toFixed(2)}`;
+  return usd().format(usdAmount);
 }
 
+const compact = lazy(
+  () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: 'compact' })
+);
+
 export function formatTokens(n: number): string {
-  if (n >= 1_000_000) {
-    return `${(n / 1_000_000).toFixed(1)}M`;
-  }
-  if (n >= 1_000) {
-    return `${(n / 1_000).toFixed(0)}K`;
-  }
-  return `${n}`;
+  return compact().format(n);
 }
+
+const durationUnit = (unit: 'second' | 'minute' | 'hour', maximumFractionDigits: number) =>
+  lazy(
+    () =>
+      new Intl.NumberFormat(undefined, {
+        maximumFractionDigits,
+        style: 'unit',
+        unit,
+        unitDisplay: 'narrow',
+      })
+  );
+const seconds = durationUnit('second', 0);
+const minutes = durationUnit('minute', 1);
+const hours = durationUnit('hour', 2);
 
 export function formatDuration(ms: number | null): string {
   if (ms === null) {
     return '—';
   }
   if (ms < 60_000) {
-    return `${Math.round(ms / 1000)}s`;
+    return seconds().format(ms / 1000);
   }
   if (ms < 3_600_000) {
-    return `${(ms / 60_000).toFixed(1)}m`;
+    return minutes().format(ms / 60_000);
   }
-  return `${(ms / 3_600_000).toFixed(2)}h`;
+  return hours().format(ms / 3_600_000);
 }
+
+// `style: 'percent'` scales by 100 itself, so the ratio is passed through as-is.
+const percent = lazy(
+  () =>
+    new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: 1,
+      style: 'percent',
+    })
+);
 
 export function formatPercent(p: number | null): string {
   if (p === null) {
     return '—';
   }
-  return `${(p * 100).toFixed(1)}%`;
+  return percent().format(p);
 }
 
 // ── Status palette aligned with the Workshop Telemetry design system ────────

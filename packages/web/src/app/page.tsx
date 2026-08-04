@@ -111,7 +111,7 @@ export default function DashboardPage() {
   }
 
   const now = new Date();
-  const today = new Intl.DateTimeFormat('en-US', {
+  const today = new Intl.DateTimeFormat(undefined, {
     day: 'numeric',
     month: 'long',
     weekday: 'long',
