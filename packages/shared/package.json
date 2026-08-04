@@ -85,7 +85,8 @@
     "@types/bcrypt": "6.0.0",
     "prisma": "7.9.1",
     "tsx": "4.23.4",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "typescript-compiler-api": "npm:typescript@6.0.2"
   },
   "prisma": {
     "schema": "src/prisma/schema.prisma",
