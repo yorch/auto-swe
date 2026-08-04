@@ -598,9 +598,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
   `where`, or sit inside a `runUnscoped`/`asPlatformAdmin` that names *that* model. It also fails if
   any file outside a named allowlist constructs its own `PrismaClient`, since a second client is an
-  unguarded one. It is a text heuristic, so a `where` hoisted behind a variable, a helper call, or a
-  conditional spread is undecidable; those few sites are listed by name in the test and verified by
-  hand.
+  unguarded one. It parses rather than pattern-matches, and hands each reconstructed `where` to the
+  guard's own `hasTenantPredicate`, so the audit and the runtime rule cannot disagree about what
+  counts as scoped. What it cannot see is anything needing types or a call graph: a `where` hoisted
+  behind a variable, a helper call, or a conditional spread is undecidable to it. Those few sites
+  are listed by name in the test, verified by hand, and each entry declares how many call sites it
+  covers, so the allowlist cannot widen without someone editing it.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub

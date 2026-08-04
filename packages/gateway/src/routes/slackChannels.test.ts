@@ -978,10 +978,10 @@ describe('POST /:id/budget/reset', () => {
     // Exactly one decrement, for exactly the hold that was claimed.
     expect(mockPrisma.channelMonthlyUsage.update).toHaveBeenCalledTimes(1);
     const decrement = (
-      mockPrisma.channelMonthlyUsage.update.mock.calls[0]?.[0] as {
-        data: { costUsdAccrued: { decrement: number } };
-      }
-    ).data.costUsdAccrued.decrement;
+      mockPrisma.channelMonthlyUsage.update.mock.calls[0]?.[0] as
+        | { data: { costUsdAccrued: { decrement: number } } }
+        | undefined
+    )?.data.costUsdAccrued.decrement;
     expect(decrement).toBeCloseTo(0.0775, 6);
   });
 

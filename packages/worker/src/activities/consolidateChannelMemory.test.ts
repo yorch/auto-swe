@@ -164,10 +164,10 @@ describe('consolidateChannelMemory', () => {
     await consolidateChannelMemory({ channelId: CHANNEL_ID });
 
     const held = (
-      upsertUsage.mock.calls[0]?.[0] as {
-        update: { costUsdAccrued: { increment: number } };
-      }
-    ).update.costUsdAccrued.increment;
+      upsertUsage.mock.calls[0]?.[0] as
+        | { update: { costUsdAccrued: { increment: number } } }
+        | undefined
+    )?.update.costUsdAccrued.increment;
     // Two clusters, priced off the bound model: 2 × (8K × $5 + 1.5K × $25) / 1M.
     expect(held).toBeCloseTo(2 * ((8_000 * 5 + 1_500 * 25) / 1_000_000), 6);
     // And the hold really was taken, rather than silently degrading to the
