@@ -203,6 +203,7 @@ content instead, it says so.
 - **No IP-level egress filtering for shell steps.** DNS-based filtering only; IP-direct connections are out of scope (would require host iptables).
 - **No multi-arm A/B.** Exactly two arms per template (active vs experiment).
 - **No cross-process scanner-cache invalidation.** Gateway and worker are separate processes; pattern edits propagate via 60 s TTL.
+- **No localization.** Interface copy is English only, across the dashboard, the CLI, and Slack and email notifications: there is no message catalog, no locale routing or negotiation, and the web root layout fixes `lang="en"`. Formatting is the exception — dates, durations, token counts, costs, and percentages go through `Intl` with no locale pinned, so they follow the reader's browser even though the surrounding words do not. Three further surfaces would each need their own mechanism rather than a message catalog: names and descriptions seeded into the database by `syncBuiltins()` and rendered as data, gateway error text that the dashboard displays verbatim (the `{ code, message }` envelope makes the code the translatable unit, but Zod refinements carry prose and no code), and status pills, which derive their label by reformatting the raw enum instead of looking one up.
 
 ---
 
