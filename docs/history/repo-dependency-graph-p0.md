@@ -72,11 +72,10 @@ trust) touch it.
   or left unset — decide against the array-NOT-NULL house pattern; `packageNames` is genuinely
   optional so a plain nullable array is right).
 - **Prisma migration** (`yarn db:migrate`) generates the table, FKs, and the plain indexes.
-- **Custom migration** — extend `migrations/.../custom_constraints_and_indexes/migration.sql` with the
-  two partial unique indexes, the two CHECKs, and the status/source CHECK enums. Read the
-  [`prisma-pgvector-hnsw`](../../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill first — the same
-  gotcha applies (a `prisma migrate` diff will try to drop DDL it can't see; the custom file is
-  hand-owned).
+- **Custom migration** — a **new** migration folder (`00000000000002_repo_dependencies`), appended
+  after the existing two, carrying the two partial unique indexes, the two CHECKs, and the
+  status/source CHECK enums. Per the [`prisma-pgvector-hnsw`](../../.claude/skills/prisma-pgvector-hnsw/SKILL.md)
+  skill, non-expressible DDL is **never** added by editing the already-applied `00000000000001`.
 - **Doc-count sync:** the new model bumps the Prisma-model count — update `docs/architecture.md`'s
   count in this PR so `yarn docs:check` stays green.
 

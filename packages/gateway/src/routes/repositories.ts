@@ -52,7 +52,7 @@ const UpdateRepoSchema = z.object({
  * repos into team B — and the isActive check keeps it consistent with the
  * create path (a LEAD of a deactivated team can't keep editing its repos).
  */
-async function canManageTeamRepos(
+export async function canManageTeamRepos(
   prisma: FastifyInstance['prisma'],
   user: { sub: string; role: string },
   teamId: string

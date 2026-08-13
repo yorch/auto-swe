@@ -34,6 +34,7 @@ import { modelConfigRoutes } from './routes/modelConfig.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
 import { orgMembersRoutes } from './routes/orgMembers.js';
 import { prdRunRoutes } from './routes/prdRuns.js';
+import { repoDependencyRoutes } from './routes/repoDependencies.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
@@ -271,6 +272,7 @@ async function start() {
   await app.register(userRoutes, { prefix: '/api/v1/users' });
   await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
+  await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
   await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });

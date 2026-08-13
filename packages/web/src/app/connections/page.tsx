@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
+import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -17,6 +18,7 @@ import { useAuthStore } from '@/stores/authStore';
 type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
+  | { kind: 'dependencies'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -109,15 +111,26 @@ export default function ConnectionsPage() {
               >
                 {r.isActive ? 'Active' : 'Inactive'}
               </span>
-              {canManage && (
-                <Button
-                  onClick={() => setMode({ kind: 'edit', repo: r })}
-                  size="sm"
-                  variant="ghost"
-                >
-                  Edit
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                {(!r.type || r.type === 'git_repo') && (
+                  <Button
+                    onClick={() => setMode({ kind: 'dependencies', repo: r })}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Dependencies
+                  </Button>
+                )}
+                {canManage && (
+                  <Button
+                    onClick={() => setMode({ kind: 'edit', repo: r })}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Edit
+                  </Button>
+                )}
+              </div>
             </div>
           </Card>
         ))}
@@ -142,6 +155,16 @@ export default function ConnectionsPage() {
       />
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
+
+      {mode?.kind === 'dependencies' && (
+        <RepoDependenciesModal
+          canManage={canManage}
+          onClose={() => setMode(null)}
+          open
+          repo={mode.repo}
+          repos={repos ?? []}
+        />
+      )}
     </div>
   );
 }
