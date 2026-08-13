@@ -17,7 +17,9 @@ resolver; SWE is the first consumer (the review network, the implementer, the ep
 > **Decisions already locked** (see §8): extend `Connection` (no new base table); inject into the
 > **review network + implementer + planner/decomposer**; detect from **all four sources** (manifest,
 > manual, git/CI signal, LLM inference) with a **tiered trust model**; walk the graph **both
-> directions, 1 hop**.
+> directions, 1 hop**; **manual edges need a LEAD on both teams**, while **detector edges land as
+> evidence with a depended-upon-team dismiss veto**; **unresolved dependencies surface as
+> repo-onboarding suggestions**.
 
 ---
 
@@ -48,6 +50,19 @@ Two concrete symptoms:
 
 **The honest summary:** repos are first-class as *nodes* but there are no *edges*. This RFC adds the
 edges, the detectors that populate them, and the resolver that turns them into agent context.
+
+**Who creates the nodes today (and why it shapes the graph).** A git-repo `Connection` is created
+in exactly two places: the `POST /api/v1/repositories` gateway route (`routes/repositories.ts`) —
+driven by the web `/connections` page (`ConnectionFormModal` / "Import from GitHub") — and the seed
+script's one sample repo. Creation requires a platform `LEAD`/`ADMIN` **and** LEAD-or-higher on the
+target team (`canManageTeamRepos`); an `ENGINEER` cannot. **Nothing auto-registers a repo** — GitHub
+webhooks only *read* existing repos to route a ticket; there is no CLI command. So every node is
+manually onboarded, one team per repo. Two consequences the graph must design around: (1) a detector
+can only resolve an edge to an **already-onboarded** repo, so coverage tracks onboarding completeness
+— this motivates the onboarding-suggestion loop (§4.4); and (2) the same LEAD/ADMIN users who onboard
+repos are the ones who manage edges, but edges routinely **cross teams** (a platform SDK consumed by
+many product repos), which the single-team repo-creation model never had to answer — see the authz
+model in §4.5.
 
 ---
 
@@ -91,10 +106,17 @@ model RepoDependency {
   id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// The dependent repo (e.g. payments-api). "from depends on to."
   fromRepoId String @map("from_repo_id") @db.Uuid
-  /// The dependency repo (e.g. payments-sdk).
-  toRepoId   String @map("to_repo_id") @db.Uuid
-  fromRepo   Connection @relation("RepoDependencyFrom", fields: [fromRepoId], references: [id], onDelete: Cascade)
-  toRepo     Connection @relation("RepoDependencyTo", fields: [toRepoId], references: [id], onDelete: Cascade)
+  /// The dependency repo (e.g. payments-sdk). NULLABLE: a row with a null
+  /// toRepoId + a non-null toRef is an *unresolved suggestion* — a detected
+  /// dependency on a package whose repo is not onboarded yet (§4.4). When that
+  /// repo is later onboarded the row is resolved in place (fill toRepoId, clear
+  /// toRef, promote status), so a suggestion becomes a real edge without churn.
+  toRepoId   String? @map("to_repo_id") @db.Uuid
+  /// The raw, unresolved dependency string for a suggestion (e.g. "@acme/foo").
+  /// Null once toRepoId is set.
+  toRef      String? @map("to_ref")
+  fromRepo   Connection  @relation("RepoDependencyFrom", fields: [fromRepoId], references: [id], onDelete: Cascade)
+  toRepo     Connection? @relation("RepoDependencyTo", fields: [toRepoId], references: [id], onDelete: Cascade)
 
   /// Edge semantics: "code" | "runtime" | "build" | "api" | "data" | ...
   kind       String  @default("code")
@@ -102,21 +124,25 @@ model RepoDependency {
   source     String
   /// 1.0 for deterministic sources; <1 for LLM inference.
   confidence Float   @default(1)
-  /// "active" (in-graph) | "proposed" (awaiting confirm) | "dismissed" (human-rejected).
+  /// "active" (in-graph) | "proposed" (awaiting confirm) |
+  /// "dismissed" (human-rejected, sticky) | "unresolved" (suggestion, no repo yet).
   status     String  @default("active")
   /// Provenance detail — matched package name, manifest path, importing file,
   /// submodule path, model + reasoning for inferred edges, etc.
   detail     Json?
 
   detectedAt    DateTime  @default(now()) @map("detected_at") @db.Timestamptz
+  /// Who confirmed (promoted proposed→active) — audit for the dual-team gate.
   confirmedById String?   @map("confirmed_by_id") @db.Uuid
   confirmedAt   DateTime? @map("confirmed_at") @db.Timestamptz
+  /// Who dismissed (the depended-upon team's veto, §4.5) — sticky against re-detection.
+  dismissedById String?   @map("dismissed_by_id") @db.Uuid
+  dismissedAt   DateTime? @map("dismissed_at") @db.Timestamptz
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   /// One edge per (pair, kind, source) so detectors coexist without clobbering
   /// each other — a manifest edge and an inferred edge for the same pair are
   /// distinct rows, reconciled at read time by max-confidence.
-  @@unique([fromRepoId, toRepoId, kind, source])
   @@index([fromRepoId])
   @@index([toRepoId])
   @@map("repo_dependencies")
@@ -132,11 +158,19 @@ On `Connection`, two back-relations:
 
 Constraints that the Prisma DSL can't express go in the custom-constraints migration
 (`migrations/00000000000001_custom_constraints_and_indexes`), matching how the partial unique index
-on `Connection` is done today:
+on `Connection` is done today. The uniqueness is split because a row is either a resolved edge or an
+unresolved suggestion:
 
-- **No self-edges:** `CHECK (from_repo_id <> to_repo_id)`.
-- **Status/source enums as CHECK constraints** (kept as strings, per the P0 enum→string pivot house
-  style — no Prisma enum).
+- **Resolved edges:** partial unique index on `(from_repo_id, to_repo_id, kind, source)` `WHERE
+  to_repo_id IS NOT NULL` — Postgres treats NULLs as distinct, so a plain `@@unique` would let
+  duplicate suggestions through; the partial index scopes uniqueness to real edges.
+- **Unresolved suggestions:** partial unique index on `(from_repo_id, to_ref, kind, source)` `WHERE
+  to_repo_id IS NULL`.
+- **No self-edges:** `CHECK (from_repo_id <> to_repo_id)` (holds trivially when `to_repo_id` is null).
+- **Shape guard:** `CHECK ((to_repo_id IS NOT NULL) OR (to_ref IS NOT NULL))` — a row points at a repo
+  or names an unresolved ref, never neither.
+- **Status/source enums as CHECK constraints** (kept as strings, per the enum→string house style — no
+  Prisma enum).
 
 **Reconciliation model.** Multiple detectors can assert the same pair. The read-side resolver
 collapses rows for a pair to the **max-confidence `active`** edge (plus surfaces the individual source
@@ -147,8 +181,9 @@ re-assert (the detector re-writes its own `source` row, but the resolver honors 
 **Visibility / tenancy.** Repos belong to teams, teams to orgs (P5). An edge may legitimately cross
 teams *within an org* (a platform SDK consumed by many product repos). The resolver filters neighbor
 repos to those the run's team/org can see (reusing the existing team/org access helpers) so injection
-never leaks a repo across an org boundary. Cross-org edges are rejected at write time. (Open item
-§7.)
+never leaks a repo across an org boundary. Cross-org edges are rejected at write time. Who may
+*create* a cross-team edge, and how the depended-upon team retains control, is the authz model in
+§4.5.
 
 ---
 
@@ -188,7 +223,11 @@ deps that don't resolve to a registered repo are simply dropped (they're not rep
 | `git_signal` | `active` | 1.0 |
 | `inferred` | `proposed` | model-reported, `<1.0` |
 
-- Deterministic edges enter the graph immediately.
+- **Deterministic edges enter the graph immediately as evidence.** A manifest/git edge records an
+  observed fact ("this `package.json` literally imports `@acme/payments-sdk`"). Gating a true,
+  evidence-backed fact behind human consent would be wrong — it would leave a demonstrably-real
+  cross-team dependency unrecorded until a meeting happens. So detector edges land `active` and the
+  depended-upon team's **dismiss veto** (§4.5) is the control, not a precondition. (Decision §8.6.)
 - **Inferred edges land `proposed`** — they need a human confirm/dismiss, *or* auto-promote to
   `active` above a configurable confidence threshold (a `WorkflowDefaults`-style config, default
   conservative). This keeps a hallucinated import from silently poisoning review context (RFC risk
@@ -205,6 +244,36 @@ deps that don't resolve to a registered repo are simply dropped (they're not rep
   schedules) catches manifest drift and newly-registered repos that become resolution targets for
   existing repos' deps.
 - **Manual re-scan** button in the admin UI.
+
+### 4.4 Unresolved dependencies → onboarding suggestions
+
+Because every node is manually onboarded (§1), a detector routinely finds an internal dependency
+string whose repo is not registered yet. Rather than drop it, we **record it as a suggestion**: a
+`RepoDependency` row with `toRepoId = null`, `toRef = "@acme/foo"`, `status = "unresolved"`. The admin
+UI surfaces these as "*`payments-api` references `@acme/foo` — onboard it?*" with a one-click prefill
+of the onboarding form. When that repo is later onboarded, the detector's next pass (or an inline
+resolve step) **fills `toRepoId`, clears `toRef`, and promotes `status`** — the suggestion becomes a
+real edge in place, no duplicate row.
+
+This turns the graph into a **driver** of repo onboarding, not just a consumer of it, and directly
+closes the coverage gap that manual-only onboarding creates. The row shape ships in P0 (schema) so we
+migrate once; the detector that populates it and the suggestions surface land in P1.
+
+### 4.5 Authorization — who manages an edge
+
+Repo *creation* is single-team (a LEAD/ADMIN on the repo's team). Edges **cross teams**, so they need
+their own rule, split by how the edge was asserted:
+
+| Edge origin | To create/confirm | To remove from the graph |
+| --- | --- | --- |
+| **Manual** (a human asserting a relationship) | LEAD/ADMIN on **both** the `from` and `to` repos' teams — the depended-upon team must consent to becoming a context source | Either team's LEAD |
+| **Detector** (manifest/git/inferred — machine-observed) | No human gate; lands `active` (or `proposed` for inferred) as evidence | The **depended-upon (`to`) team's LEAD** holds a **dismiss veto** — sticky against re-detection |
+
+The asymmetry is deliberate (§4.2): a *human claim* of a dependency needs both sides' buy-in, but a
+*machine-observed fact* is recorded as evidence and the depended-upon team controls it by dismissing —
+opting their repo out of being a context source — rather than by pre-approving every true import.
+ADMIN (platform) and, within an org, an org-admin can manage any edge. Cross-org edges are rejected at
+write time regardless. (Decisions §8.6–§8.7.)
 
 ---
 
@@ -274,21 +343,26 @@ Phased so each lands independently. Front-loads the durable, trustworthy pieces;
 expensive ones.
 
 ### P0 — Graph foundation *(greenlit; no LLM cost, no behavior change)*
-- `RepoDependency` model + CHECK constraints + migration; `Connection` back-relations + optional
-  `packageNames` field.
+- `RepoDependency` model (incl. nullable `toRepoId` + `toRef` for the P1 suggestion shape) + CHECK /
+  partial-unique constraints + migration; `Connection` back-relations + optional `packageNames` field.
 - **Manual/declared edges:** admin API (`/api/v1/admin/repos/:id/dependencies` CRUD) + a repo
-  management UI to view/add/confirm/dismiss edges.
+  management UI to view/add/confirm/dismiss edges. **Both-teams authz** on manual create/confirm
+  (§4.5); the **dismiss veto** is real in P0 (sticky `dismissed` status honored by the resolver).
 - **Read-side resolver** `resolveRepoDependencyContext` (graph walk + reconciliation + visibility
-  filter) — returns structured neighbors, no injection yet.
-- Tests: migration applies; edge CRUD; resolver walks both directions, honors dismiss, filters
-  visibility.
+  filter; no-ops when the run has no connection, §5.4) — returns structured neighbors, no injection
+  yet.
+- Tests: migration applies; edge CRUD; both-teams gate (LEAD-on-one rejected); resolver walks both
+  directions, honors dismiss, filters visibility; self-edge / cross-org rejected.
 
-### P1 — Deterministic detectors
+### P1 — Deterministic detectors + onboarding suggestions
 - **Manifest parser** (`source='manifest'`) — package.json/go.mod/requirements/pom/Cargo/csproj →
-  internal-package resolution → `active` edges.
+  internal-package resolution → `active` edges (evidence, §4.2).
 - **Git-signal detector** (`source='git_signal'`) — submodules / monorepo paths / CODEOWNERS.
+- **Unresolved → suggestions** (§4.4): unresolved refs recorded as `unresolved` rows + an admin
+  "suggested repos to onboard" surface with onboard-form prefill; resolve-in-place on onboarding.
 - Trigger on connection create/update + a Temporal Schedule re-scan + manual re-scan button.
-- Tests: fixture manifests → expected edges; resolution hits/misses; idempotent re-runs.
+- Tests: fixture manifests → expected edges; resolution hits/misses; unresolved→suggestion→resolve
+  lifecycle; idempotent re-runs.
 
 ### P2 — Context injection
 - Wire `resolveRepoDependencyContext` into the **review network** (primary), the **implementer**, and
@@ -315,8 +389,11 @@ expensive ones.
   scheduled scan. The scheduled re-scan + a `detectedAt`/`updatedAt` freshness signal address this;
   consider expiring manifest edges not re-observed in N scans.
 - **Internal-package resolution ambiguity.** Same package name across orgs, forks, renamed repos. v1
-  scopes resolution to registered repos + declared `packageNames`; misses drop silently (safe — no
-  false injection). Surfacing "unresolved dependency strings" in the UI is a nice-to-have.
+  scopes resolution to registered repos + declared `packageNames`; an unresolved miss is not dropped
+  but recorded as an onboarding suggestion (§4.4), so a coverage gap is visible rather than silent.
+- **Onboarding drives coverage.** Because nothing auto-registers repos (§1), a fresh deployment's
+  graph starts sparse and fills only as teams onboard repos. The suggestion loop mitigates this but
+  does not eliminate it — a dependency on a repo nobody ever onboards stays a suggestion.
 - **Inferred-edge trust.** Covered by the tiered model, but the auto-promote threshold needs tuning
   against real data — start conservative (confirm-only), raise once we see precision.
 - **Cross-org / cross-team edges.** v1: allow within an org, reject across orgs, resolver filters by
@@ -340,3 +417,11 @@ Locked in the alignment discussion that produced this RFC:
 4. **Graph scope — both directions, 1 hop.** Upstream contracts + downstream blast-radius, direct
    neighbors only for v1; transitive deferred. (§2.)
 5. **Detection sources — all four.** Manual, manifest, git/CI signal, LLM inference. (§4.1.)
+6. **Detector edges are evidence, not proposals.** Manifest/git edges land `active` immediately; the
+   depended-upon team's LEAD holds a sticky **dismiss veto** rather than a pre-approval gate. (Manual
+   edges still land as human claims; inferred still land `proposed`.) (§4.2, §4.5.)
+7. **Manual edge authz — LEAD on both teams.** A human-asserted cross-team edge needs consent from
+   both the dependent and the depended-upon team; either team can later remove it. (§4.5.)
+8. **Unresolved deps become onboarding suggestions.** An internal dependency on an un-onboarded repo
+   is recorded (`toRepoId=null`, `toRef`, `unresolved`) and surfaced as an onboard-this-repo
+   suggestion, resolved in place when the repo is added. The row shape ships in P0. (§4.4.)
