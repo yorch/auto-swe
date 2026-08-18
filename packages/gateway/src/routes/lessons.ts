@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ConsolidateBody = z.object({
@@ -14,11 +15,11 @@ const ConsolidateBody = z.object({
 });
 
 const LessonListQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 }).extend({
-  includeConsolidated: z.coerce.boolean().default(false),
+  includeConsolidated: booleanQueryParam(false),
 });
 
 const LessonSearchQuery = z.object({
-  includeConsolidated: z.coerce.boolean().default(false),
+  includeConsolidated: booleanQueryParam(false),
   limit: z.coerce.number().int().min(1).max(100).default(10),
   q: z.string().min(1),
   repoId: z.string().uuid(),

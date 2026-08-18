@@ -15,13 +15,14 @@ import {
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE'] as const;
 
 const ListQuery = z.object({
-  all: z.coerce.boolean().optional(),
+  all: booleanQueryParam(false),
   channelId: z.string().uuid().optional(),
   orgId: z.string().uuid().optional(),
   scope: z.enum(AGENT_SCOPES).optional(),
