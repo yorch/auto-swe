@@ -6,11 +6,13 @@ import {
   type BundleEntities,
   type BundleManifest,
   type BundleScannerPattern,
+  BundleSchemaVersionError,
   type BundleSkill,
   type BundleTemplate,
   computeContentHash,
   parseBundle,
   type TrustedKey,
+  validateBundleScannerPatterns,
   verifyBundleSignature,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -196,16 +198,26 @@ export async function exportBundle(
 
   const entities: BundleEntities = { agents, scannerPatterns, skills, templates };
   const dependencies = deriveDependencies(entities);
+  // Identity is part of the hashed payload, so metadata is assembled first and
+  // the hash computed over it (see `computeContentHash`).
+  const metadata = {
+    createdAt: new Date().toISOString(),
+    name: opts.name,
+    ...(opts.origin !== undefined ? { source: opts.origin } : {}),
+    version: opts.version,
+  };
   return {
     bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
     dependencies,
     entities,
     metadata: {
-      contentHash: computeContentHash({ dependencies, entities }),
-      createdAt: new Date().toISOString(),
-      name: opts.name,
-      source: opts.origin,
-      version: opts.version,
+      ...metadata,
+      contentHash: computeContentHash({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        dependencies,
+        entities,
+        metadata,
+      }),
     },
   };
 }
@@ -226,12 +238,36 @@ export async function installBundle(
   raw: unknown,
   opts: InstallOptions = {}
 ): Promise<InstallResult> {
-  const manifest = parseBundle(raw); // throws ZodError on malformed input
+  let manifest: BundleManifest;
+  try {
+    manifest = parseBundle(raw); // throws ZodError on malformed input
+  } catch (err) {
+    // A bundle built under an older trust format (v1 signed only entities +
+    // dependencies, leaving name/version unsigned) is rejected outright rather
+    // than reinterpreted — surfaced as a 400 with the re-sign instructions.
+    if (err instanceof BundleSchemaVersionError) {
+      throw new BundleIntegrityError(err.message);
+    }
+    throw err;
+  }
 
+  // Covers the manifest's identity (name/version) as well as its content, so a
+  // relabelled copy of a signed bundle fails here before trust is evaluated.
   const hash = verifyContentHash(manifest);
   if (!hash.ok) {
     throw new BundleIntegrityError(
       `bundle content hash mismatch (declared ${manifest.metadata.contentHash}, computed ${hash.expected})`
+    );
+  }
+
+  // Scanner patterns are executable content: apply the same ReDoS/compile gate
+  // the admin API applies, BEFORE any write and regardless of trust state — an
+  // UNVERIFIED bundle is installable, so this is the only thing standing between
+  // a bundle-supplied `(a+)+$` and the worker's scan loop.
+  const patternErrors = validateBundleScannerPatterns(manifest);
+  if (patternErrors.length > 0) {
+    throw new BundleIntegrityError(
+      `bundle contains unsafe scanner pattern(s):\n  - ${patternErrors.join('\n  - ')}`
     );
   }
 

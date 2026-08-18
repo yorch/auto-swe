@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { checkRegexRuntimeSafety } from '@auto-swe/shared/lib/regexSafety';
 import { SCANNER_PATTERN_CACHE_TTL_MS as CACHE_TTL_MS } from '@auto-swe/shared/lib/scannerCache';
 
 interface CachedEntry {
@@ -35,6 +36,17 @@ export function makePatternLoader(type: PatternType, logPrefix: string) {
     });
     const entries: CachedEntry[] = [];
     for (const r of rows) {
+      // Rows written before the write-time ReDoS gate (or by a direct DB edit)
+      // are skipped here rather than compiled into a cached RegExp.
+      const issue = checkRegexRuntimeSafety(r.pattern, r.flags);
+      if (issue) {
+        console.error(
+          issue.code === 'INVALID_REGEX'
+            ? `[${logPrefix}] skipping invalid pattern '${r.label}': invalid regex`
+            : `[${logPrefix}] skipping unsafe pattern '${r.label}': ${issue.code} — ${issue.message}`
+        );
+        continue;
+      }
       try {
         entries.push({ label: r.label, re: new RegExp(r.pattern, r.flags) });
       } catch {

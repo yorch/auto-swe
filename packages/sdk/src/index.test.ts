@@ -1,13 +1,31 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { verifyBundleSignature } from '@auto-swe/shared/bundle';
+import {
+  BUNDLE_SCHEMA_VERSION,
+  computeContentHash,
+  verifyBundleSignature,
+} from '@auto-swe/shared/bundle';
 import { describe, expect, it } from 'vitest';
 import {
   defineBundle,
   defineContainerStep,
+  defineScannerPattern,
   defineSkill,
   signBundle,
   validateBundle,
 } from './index.js';
+
+const keyPair = () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  return {
+    privateKeyPem: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+    trusted: [
+      {
+        id: 'first-party',
+        publicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+      },
+    ],
+  };
+};
 
 describe('defineBundle', () => {
   it('assembles a schema-valid manifest with a matching content hash', () => {
@@ -44,6 +62,68 @@ describe('signBundle', () => {
   });
 });
 
+describe('signBundle — the signature covers bundle identity', () => {
+  it('verifies an honestly signed bundle', () => {
+    const { privateKeyPem, trusted } = keyPair();
+    const signed = signBundle(
+      defineBundle({ name: 'vendor-pack', source: 'vendor', version: '1.0.0' }),
+      privateKeyPem,
+      'first-party'
+    );
+    expect(verifyBundleSignature(signed, trusted).verified).toBe(true);
+  });
+
+  it('does NOT verify once the bundle is relabelled to another name', () => {
+    const { privateKeyPem, trusted } = keyPair();
+    const signed = signBundle(
+      defineBundle({ name: 'vendor-pack', version: '1.0.0' }),
+      privateKeyPem,
+      'first-party'
+    );
+    const relabelled = {
+      ...signed,
+      metadata: { ...signed.metadata, name: 'victim-pack' },
+    };
+    expect(validateBundle(relabelled).ok).toBe(false);
+    expect(verifyBundleSignature(relabelled, trusted).verified).toBe(false);
+
+    // …and re-hashing after the edit only invalidates the signature.
+    const rehashed = {
+      ...relabelled,
+      metadata: {
+        ...relabelled.metadata,
+        contentHash: computeContentHash({
+          ...relabelled,
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        }),
+      },
+    };
+    expect(validateBundle(rehashed).ok).toBe(true);
+    expect(verifyBundleSignature(rehashed, trusted).verified).toBe(false);
+  });
+
+  it('does NOT verify when an old release is replayed under a bumped version', () => {
+    const { privateKeyPem, trusted } = keyPair();
+    const signed = signBundle(
+      defineBundle({ name: 'vendor-pack', version: '1.0.0' }),
+      privateKeyPem,
+      'first-party'
+    );
+    const bumped = {
+      ...signed,
+      metadata: { ...signed.metadata, version: '2.0.0' },
+    };
+    expect(verifyBundleSignature(bumped, trusted).verified).toBe(false);
+  });
+
+  it('refuses to sign a manifest whose declared hash does not match', () => {
+    const { privateKeyPem } = keyPair();
+    const bundle = defineBundle({ name: 'b', version: '1' });
+    bundle.metadata.name = 'relabelled-before-signing';
+    expect(() => signBundle(bundle, privateKeyPem)).toThrow(/refusing to sign/);
+  });
+});
+
 describe('validateBundle', () => {
   it('rejects a tampered content hash', () => {
     const bundle = defineBundle({ name: 'b', version: '1' });
@@ -57,6 +137,44 @@ describe('validateBundle', () => {
 
   it('rejects a malformed manifest', () => {
     expect(validateBundle({ not: 'a bundle' }).ok).toBe(false);
+  });
+
+  it('rejects a catastrophic scanner pattern (same gate the server applies)', () => {
+    const res = validateBundle(
+      defineBundle({
+        name: 'b',
+        scannerPatterns: [
+          defineScannerPattern({ flags: 'i', label: 'evil', pattern: '(a+)+$', type: 'INJECTION' }),
+        ],
+        version: '1',
+      })
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors[0]).toMatch(/REDOS_RISK/);
+    }
+  });
+
+  it('accepts an ordinary scanner pattern', () => {
+    const res = validateBundle(
+      defineBundle({
+        name: 'b',
+        scannerPatterns: [
+          defineScannerPattern({ label: 'ok', pattern: 'ignore\\s+previous', type: 'INJECTION' }),
+        ],
+        version: '1',
+      })
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it('rejects a bundle emitted under the old (v1) trust format', () => {
+    const legacy = { ...defineBundle({ name: 'b', version: '1' }), bundleSchemaVersion: 1 };
+    const res = validateBundle(legacy);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors[0]).toMatch(/unsupported bundleSchemaVersion 1/);
+    }
   });
 });
 

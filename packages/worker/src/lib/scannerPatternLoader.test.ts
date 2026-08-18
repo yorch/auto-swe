@@ -34,6 +34,21 @@ describe('makePatternLoader — loading and compilation', () => {
     expect(entries[1].re.test('FOO')).toBe(true);
   });
 
+  it('skips a catastrophic-backtracking row and keeps the rest', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      findMany.mockResolvedValue([row('redos', '(a+)+$'), row('ok', 'bar')] as never);
+      const { load } = makePatternLoader('SHELL_COMMAND', 'myScanner');
+      const entries = await load();
+      expect(entries.map((e) => e.label)).toEqual(['ok']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[myScanner] skipping unsafe pattern 'redos': REDOS_RISK")
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('queries only active patterns of the requested type, ordered by label', async () => {
     findMany.mockResolvedValue([] as never);
     const { load } = makePatternLoader('CODE_SECURITY', 'test');

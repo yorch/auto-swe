@@ -1,3 +1,4 @@
+import { capScanText } from '@auto-swe/shared/lib/regexSafety';
 import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
@@ -54,9 +55,11 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
   const findings: CodeSecurityFinding[] = [];
 
   for (const { content, file, line } of addedLines) {
+    // A single added line can be a minified bundle; bound per-line scan work.
+    const scanned = capScanText(content);
     for (const { label, re } of patterns) {
       re.lastIndex = 0;
-      const m = re.exec(content);
+      const m = re.exec(scanned);
       if (m) {
         findings.push({ file, label, line, match: m[0].slice(0, 120) });
       }

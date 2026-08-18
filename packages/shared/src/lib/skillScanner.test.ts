@@ -10,6 +10,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
+import { MAX_SCAN_TEXT_LENGTH } from './regexSafety.js';
 import { invalidateScannerPatternCache, scanSkillContent } from './skillScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
@@ -200,6 +201,65 @@ describe('scanSkillContent — pattern loading behavior', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('skips a catastrophic-backtracking row but keeps applying the safe ones', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      findMany.mockReset();
+      findMany.mockResolvedValue([
+        {
+          flags: '',
+          id: 'evil',
+          isActive: true,
+          label: 'redos',
+          pattern: '(a+)+$',
+          type: 'INJECTION',
+        },
+        {
+          flags: 'i',
+          id: 'ok',
+          isActive: true,
+          label: 'jailbreak',
+          pattern: 'jailbreak',
+          type: 'INJECTION',
+        },
+      ] as never);
+      const result = await scanSkillContent(`A jailbreak attempt. ${'a'.repeat(40)}!`);
+      expect(result.warnings).toEqual(['injection:jailbreak']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("skipping unsafe pattern 'redos': REDOS_RISK")
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('keeps applying a stored g-flag row (stateful flags are a write-time policy only)', async () => {
+    findMany.mockReset();
+    findMany.mockResolvedValue([
+      {
+        flags: 'g',
+        id: 'g',
+        isActive: true,
+        label: 'g-rule',
+        pattern: 'jailbreak',
+        type: 'INJECTION',
+      },
+    ] as never);
+    await expect(scanSkillContent('a jailbreak')).resolves.toMatchObject({
+      warnings: ['injection:g-rule'],
+    });
+  });
+
+  it('bounds the scanned text at the per-pattern cap', async () => {
+    findMany.mockReset();
+    findMany.mockResolvedValue([
+      { flags: '', id: 'x', isActive: true, label: 'needle', pattern: 'NEEDLE', type: 'INJECTION' },
+    ] as never);
+    const beyondCap = `${'.'.repeat(MAX_SCAN_TEXT_LENGTH)}NEEDLE`;
+    await expect(scanSkillContent(beyondCap)).resolves.toEqual({ safe: true, warnings: [] });
+    await expect(scanSkillContent(`NEEDLE${beyondCap}`)).resolves.toMatchObject({ safe: false });
   });
 
   it('caches patterns across calls within the TTL', async () => {

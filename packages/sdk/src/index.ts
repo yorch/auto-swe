@@ -18,6 +18,7 @@ import {
   computeContentHash,
   parseBundle,
   signContentHash,
+  validateBundleScannerPatterns,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
 import type { ContainerStepNode } from '@auto-swe/shared/workflow';
@@ -58,17 +59,29 @@ export function defineBundle(input: DefineBundleInput): BundleManifest {
     templates: input.templates ?? [],
   };
   const dependencies = input.dependencies ?? [];
+  // Metadata is assembled first because the content hash covers it: since bundle
+  // schema v2 the hash (and therefore the signature over it) binds the bundle's
+  // identity — `name`/`version` — to its content, so a signed bundle cannot be
+  // relabelled or version-bumped and still verify.
+  const metadata = {
+    createdAt: new Date().toISOString(),
+    ...(input.description ? { description: input.description } : {}),
+    name: input.name,
+    ...(input.source ? { source: input.source } : {}),
+    version: input.version,
+  };
   return {
     bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
     dependencies,
     entities,
     metadata: {
-      contentHash: computeContentHash({ dependencies, entities }),
-      createdAt: new Date().toISOString(),
-      ...(input.description ? { description: input.description } : {}),
-      name: input.name,
-      ...(input.source ? { source: input.source } : {}),
-      version: input.version,
+      ...metadata,
+      contentHash: computeContentHash({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        dependencies,
+        entities,
+        metadata,
+      }),
     },
   };
 }
@@ -76,12 +89,24 @@ export function defineBundle(input: DefineBundleInput): BundleManifest {
 /**
  * Attach a detached ed25519 signature over the bundle's content hash, so an
  * installing deployment that trusts the matching public key marks it VERIFIED.
+ *
+ * The declared hash is re-derived first: signing a manifest whose `contentHash`
+ * does not match its own content and identity would produce a signature that can
+ * never verify, and — worse — would be the exact shape of a relabelling attempt.
+ * Better to fail loudly at authoring time.
  */
 export function signBundle(
   manifest: BundleManifest,
   privateKeyPem: string,
   signedBy?: string
 ): BundleManifest {
+  const { ok, expected } = verifyContentHash(manifest);
+  if (!ok) {
+    throw new Error(
+      `refusing to sign: content hash mismatch (declared ${manifest.metadata.contentHash}, computed ${expected}). ` +
+        'Re-assemble the manifest with defineBundle() after any edit to its entities or metadata.'
+    );
+  }
   return {
     ...manifest,
     metadata: {
@@ -116,6 +141,12 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
       ],
       ok: false,
     };
+  }
+  // Same scanner-pattern gate the server applies at install (shared code, so an
+  // author never ships a bundle that install would reject).
+  const patternErrors = validateBundleScannerPatterns(bundle);
+  if (patternErrors.length > 0) {
+    return { errors: patternErrors, ok: false };
   }
   return { bundle, ok: true };
 }

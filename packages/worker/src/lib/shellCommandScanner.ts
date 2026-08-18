@@ -1,3 +1,4 @@
+import { capScanText } from '@auto-swe/shared/lib/regexSafety';
 import {
   checkContentSecurity,
   SECURITY_CHECK_FAILED_PREFIX,
@@ -147,10 +148,12 @@ export function extractShellWrites(command: string): ShellWrite[] {
 export async function scanShellCommand(command: string): Promise<string | null> {
   const patterns = await loadShellPatterns();
   const truncate = () => (command.length > 200 ? `${command.slice(0, 200)}…` : command);
+  // Bound per-pattern scan work on an agent-supplied command of any length.
+  const scanned = capScanText(command);
 
   for (const { label, re } of patterns) {
     re.lastIndex = 0;
-    if (re.test(command)) {
+    if (re.test(scanned)) {
       return (
         `Command blocked by security policy [${label}]:\n  ${truncate()}\n` +
         'Modify the command to avoid the restricted pattern and retry.'
