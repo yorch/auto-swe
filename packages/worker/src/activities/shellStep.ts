@@ -106,12 +106,20 @@ async function runDocker(args: string[], tokenForRedact?: string | null): Promis
     if (err instanceof Error) {
       err.message = redactToken(err.message, tokenForRedact);
     }
-    const e = err as { stdout?: unknown; stderr?: unknown };
+    const e = err as { stdout?: unknown; stderr?: unknown; cmd?: unknown };
     if (typeof e.stdout === 'string') {
       e.stdout = redactToken(e.stdout, tokenForRedact);
     }
     if (typeof e.stderr === 'string') {
       e.stderr = redactToken(e.stderr, tokenForRedact);
+    }
+    // `promisify(exec)`'s rejection also carries the raw command string on
+    // `.cmd` (own enumerable property, alongside code/killed/signal). It
+    // never reaches Temporal history (the failure converter only takes
+    // message/stack/type), but a `log.error({ err })` call would serialize
+    // it verbatim — redact it too.
+    if (typeof e.cmd === 'string') {
+      e.cmd = redactToken(e.cmd, tokenForRedact);
     }
     throw err;
   }
@@ -322,7 +330,16 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       workspaceMount: volumeName,
     });
 
-    const fullLog = `$ ${input.command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
+    // Redact immediately: `cloneIntoVolume` leaves the credential-embedded
+    // remote in `/workspace/repo/.git/config`, and the command runs with that
+    // repo as cwd, so `result.stdout`/`stderr` can carry the raw token (e.g.
+    // `git remote -v`, a failing `git fetch/push`, `cat .git/config`). Every
+    // downstream use (artifact body, truncated summary tail) reads from these
+    // redacted copies, never from `result.stdout`/`result.stderr` directly.
+    const redactedStdout = redactToken(result.stdout, meta.token);
+    const redactedStderr = redactToken(result.stderr, meta.token);
+
+    const fullLog = `$ ${input.command}\n--- stdout ---\n${redactedStdout}\n--- stderr ---\n${redactedStderr}`;
     const runId = await currentWorkflowRunId();
     const artifact = await putArtifact({
       body: fullLog,
@@ -358,7 +375,11 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       }
     }
 
-    const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
+    // Redact before truncating, not after: a token straddling the truncation
+    // cut would otherwise leave an unredacted fragment in the summary (and in
+    // Temporal history) because the split-token halves no longer match the
+    // full token string.
+    const tail = truncate(`${redactedStderr || redactedStdout}`.trim(), 4000);
     const passSummary = pushError
       ? `shell step ran (exit 0) but git push failed — changes NOT persisted: ${pushError}`
       : `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`;
@@ -394,9 +415,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       passed,
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
-      // Defense in depth: every summary this activity returns is redacted
-      // here, not just the pushError branch above — so a future code path
-      // that forgets to thread the token through still can't leak it.
+      // Defense in depth: every summary built from `tail`/`passSummary` below
+      // this point is redacted again here, not just the pushError branch
+      // above — so a future code path that forgets to thread the token
+      // through still can't leak it. (The `ShellImageNotAllowedError` early
+      // return above this point is a separate return statement and skips
+      // this redaction entirely — safe today because that path never touches
+      // repo/git output, only `assertShellImageAllowed`'s own message.)
       summary: redactToken(summary, meta.token),
     };
   } finally {

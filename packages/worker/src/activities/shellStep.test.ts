@@ -47,6 +47,7 @@ vi.mock('./commitToMemory.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { getScmProvider } from '../lib/scm/index.js';
@@ -56,6 +57,7 @@ const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
 const mockedExec = vi.mocked(execShellAsync);
 const mockedRunEphemeral = vi.mocked(runEphemeralContainer);
 const mockedGetScmProvider = vi.mocked(getScmProvider);
+const mockedPutArtifact = vi.mocked(putArtifact);
 
 const REQUEST = {
   externalTicketId: 'JIRA-1',
@@ -149,6 +151,89 @@ describe('runShellStep — token redaction', () => {
       const e = err as { message?: string; stderr?: string };
       const combined = `${e.message ?? ''}${e.stderr ?? ''}`;
       return !combined.includes(TOKEN);
+    });
+  });
+
+  it('does not put the raw token into the persisted artifact body', async () => {
+    // The credential-embedded remote lives in /workspace/repo/.git/config
+    // after `cloneIntoVolume`, so a command like `git remote -v` echoes it
+    // straight into stdout/stderr — this must never reach the stored
+    // artifact, even though the command itself succeeds.
+    mockedRunEphemeral.mockResolvedValue({
+      exitCode: 0,
+      signal: undefined,
+      stderr: '',
+      stdout: `origin\t${CLONE_URL} (fetch)\norigin\t${CLONE_URL} (push)`,
+    } as never);
+
+    const result = await runShellStep({
+      command: 'git remote -v',
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+
+    expect(result.passed).toBe(true);
+    expect(mockedPutArtifact).toHaveBeenCalledTimes(1);
+    const call = mockedPutArtifact.mock.calls[0]?.[0] as { body: string };
+    expect(call.body).not.toContain(TOKEN);
+    expect(call.body).not.toContain(CLONE_URL);
+  });
+
+  it('fully redacts a token that straddles the 4000-byte truncation boundary', async () => {
+    // truncate() keeps the first `half` (2000) bytes and the last `half`
+    // bytes, dropping the middle. Place the token so it starts 10 bytes
+    // before that cut — if redaction ran on the already-truncated string
+    // (the pre-fix order), only the first 10 chars of the token would
+    // survive into `head`, unredacted, because the full 30-char pattern no
+    // longer appears intact anywhere in the truncated text.
+    const half = 2000;
+    const prefix = 'A'.repeat(half - 10);
+    const suffix = 'B'.repeat(4000); // pushes total well past 4000 so truncation fires
+    const straddlingStderr = `${prefix}${TOKEN}${suffix}`;
+
+    mockedRunEphemeral.mockResolvedValue({
+      exitCode: 1,
+      signal: undefined,
+      stderr: straddlingStderr,
+      stdout: '',
+    } as never);
+
+    const result = await runShellStep({
+      command: 'some-failing-command',
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.summary).not.toContain(TOKEN);
+    // The specific leaked fragment the pre-fix ordering would have left
+    // behind: the first 10 characters of the token, unredacted.
+    expect(result.summary).not.toContain(TOKEN.slice(0, 10));
+  });
+
+  it('redacts the raw command string on err.cmd from a failed docker exec', async () => {
+    mockedExec.mockImplementation(async (command: string) => {
+      if (command.includes('git clone')) {
+        const err = new Error('fatal: authentication failed') as Error & {
+          cmd?: string;
+          stdout?: string;
+          stderr?: string;
+        };
+        // Node's promisify(exec) rejection carries the full command,
+        // credential URL included, on `.cmd`.
+        err.cmd = `docker run --rm -v vol:/workspace:rw --entrypoint sh alpine/git:latest -c "git clone ${CLONE_URL} /workspace/repo"`;
+        err.stdout = '';
+        err.stderr = 'fatal: authentication failed';
+        throw err;
+      }
+      return '';
+    });
+
+    await expect(
+      runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST })
+    ).rejects.toSatisfy((err: unknown) => {
+      const e = err as { cmd?: unknown };
+      return typeof e.cmd === 'string' && !e.cmd.includes(TOKEN);
     });
   });
 });
