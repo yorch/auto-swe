@@ -59,8 +59,14 @@ async function doCreateOrUpdatePullRequest(
       );
     }
 
+    // Re-arm the CI wait along with the head. This node always runs before the
+    // workflow (re-)enters its CI wait, so `ciStatus = PENDING` means exactly
+    // "no verdict has been delivered for the current head yet" — the freshness
+    // token the `/webhooks/ci` handler guards its transition and its signal on.
+    // Leaving a stale PASSED/FAILED here would let a verdict for the previous
+    // head suppress the verdict for this one.
     await prisma.pullRequest.update({
-      data: { headSha: codeResult.headSha },
+      data: { ciStatus: 'PENDING', headSha: codeResult.headSha },
       where: { id: existingPR.id },
     });
 
