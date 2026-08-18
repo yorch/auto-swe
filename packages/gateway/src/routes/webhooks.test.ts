@@ -122,7 +122,15 @@ describe('webhook routes', () => {
   // path for the duplicate-delivery idempotency test. `null` means every call
   // transitions (count: 1), matching a first-time delivery.
   let updateManyResultCounts: number[] | null = null;
+  /**
+   * Stands in for `pull_requests.status` on the single row the /git tests use.
+   * The handler's OPEN→MERGED `updateMany` is a *guarded* write, so the mock
+   * has to model the guard for the duplicate/rollback tests to mean anything.
+   */
+  let prRowStatus = 'OPEN';
   const signalCalls: SignalCall[] = [];
+  /** Workflow IDs whose signal should reject, simulating a Temporal outage. */
+  const signalFailWorkflowIds = new Set<string>();
   const evalCreateCalls: Array<Record<string, unknown>> = [];
   let workflowRunRow: { id: string } | null = null;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -154,6 +162,17 @@ describe('webhook routes', () => {
         updateMany: async (args: UpdateCall) => {
           const idx = updateManyCalls.length;
           updateManyCalls.push(args);
+          // /git writes `status`; model the OPEN→MERGED guard for real so the
+          // duplicate and rollback paths are genuinely exercised.
+          if (typeof args.data.status === 'string') {
+            const guard = args.where.status as string | undefined;
+            if (guard !== undefined && guard !== prRowStatus) {
+              return { count: 0 };
+            }
+            prRowStatus = args.data.status;
+            return { count: 1 };
+          }
+          // /ci writes `ciStatus`; counts stay driven by updateManyResultCounts.
           const count = updateManyResultCounts ? (updateManyResultCounts[idx] ?? 1) : 1;
           return { count };
         },
@@ -165,7 +184,11 @@ describe('webhook routes', () => {
 
     app.decorate('temporal', {
       signalWorkflow: async (workflowId: string, signalName: string, args: unknown[]) => {
+        // Record the attempt either way — the failure tests assert on retries.
         signalCalls.push({ args, signalName, workflowId });
+        if (signalFailWorkflowIds.has(workflowId)) {
+          throw new Error(`temporal unreachable for ${workflowId}`);
+        }
       },
       startRunnableWorkflow: async (id: string, args: unknown) => {
         if (jiraStartFailure) {
@@ -192,7 +215,9 @@ describe('webhook routes', () => {
     updateCalls.length = 0;
     updateManyCalls.length = 0;
     updateManyResultCounts = null;
+    prRowStatus = 'OPEN';
     signalCalls.length = 0;
+    signalFailWorkflowIds.clear();
     evalCreateCalls.length = 0;
     workflowRunRow = null;
     state.github = {
@@ -288,7 +313,10 @@ describe('webhook routes', () => {
         signalSent: true,
         workflowId: 'eng-acme-payments-api-JIRA-1',
       });
-      expect(updateCalls).toEqual([{ data: { status: 'MERGED' }, where: { id: 'pr-row-1' } }]);
+      expect(updateManyCalls).toEqual([
+        { data: { status: 'MERGED' }, where: { id: 'pr-row-1', status: 'OPEN' } },
+      ]);
+      expect(prRowStatus).toBe('MERGED');
       expect(signalCalls).toEqual([
         {
           args: [true],
@@ -330,6 +358,7 @@ describe('webhook routes', () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
       expect(updateCalls).toHaveLength(0);
+      expect(updateManyCalls).toHaveLength(0);
       expect(signalCalls).toHaveLength(0);
     });
 
@@ -342,6 +371,71 @@ describe('webhook routes', () => {
         reason: 'No tracked workflow for this PR',
       });
       expect(signalCalls).toHaveLength(0);
+    });
+
+    it('no-ops without re-signaling when the row is already MERGED (duplicate delivery)', async () => {
+      // The lookup raced another delivery and handed back a stale OPEN row;
+      // the guarded update is what actually decides, and it updates 0 rows.
+      trackedPr = trackedRow();
+      prRowStatus = 'MERGED';
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual({
+        ignored: true,
+        reason: 'PR already merged (duplicate delivery)',
+      });
+      expect(signalCalls).toHaveLength(0);
+      expect(evalCreateCalls).toHaveLength(0);
+    });
+
+    it('rolls the PR back to OPEN and answers 503 when the merge signal fails', async () => {
+      // The bug this guards: committing status=MERGED before the durable
+      // signal made GitHub's redelivery find no OPEN PR, so the merge signal
+      // was lost forever and the workflow hung until timeout.
+      trackedPr = trackedRow();
+      workflowRunRow = { id: 'run-1' };
+      signalFailWorkflowIds.add('eng-acme-payments-api-JIRA-1');
+
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.payload).error.code).toBe('SIGNAL_FAILED');
+      // Marked MERGED, then reverted — the row is recoverable.
+      expect(updateManyCalls).toEqual([
+        { data: { status: 'MERGED' }, where: { id: 'pr-row-1', status: 'OPEN' } },
+        { data: { status: 'OPEN' }, where: { id: 'pr-row-1', status: 'MERGED' } },
+      ]);
+      expect(prRowStatus).toBe('OPEN');
+      // Downstream side effects must not run on the failed path.
+      expect(evalCreateCalls).toHaveLength(0);
+    });
+
+    it("re-signals on GitHub's redelivery after a failed merge signal", async () => {
+      trackedPr = trackedRow();
+      signalFailWorkflowIds.add('eng-acme-payments-api-JIRA-1');
+      const failed = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(failed.statusCode).toBe(503);
+      expect(prRowStatus).toBe('OPEN');
+
+      // Temporal recovers; GitHub redelivers the same event.
+      signalFailWorkflowIds.clear();
+      signalCalls.length = 0;
+      updateManyCalls.length = 0;
+      const retried = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+
+      expect(retried.statusCode).toBe(200);
+      expect(JSON.parse(retried.payload).data).toEqual({
+        signalSent: true,
+        workflowId: 'eng-acme-payments-api-JIRA-1',
+      });
+      expect(signalCalls).toEqual([
+        {
+          args: [true],
+          signalName: 'humanMergeSignal',
+          workflowId: 'eng-acme-payments-api-JIRA-1',
+        },
+      ]);
+      expect(prRowStatus).toBe('MERGED');
     });
   });
 
@@ -373,7 +467,9 @@ describe('webhook routes', () => {
     }
 
     beforeEach(() => {
-      openPrs = [{ id: 'pr-row-1', workflow: { temporalWorkflowId: 'wf-ci-1' } }];
+      openPrs = [
+        { ciStatus: 'PENDING', id: 'pr-row-1', workflow: { temporalWorkflowId: 'wf-ci-1' } },
+      ];
     });
 
     it('signals ciPipelineSignal immediately on a failing conclusion (no aggregation fetch)', async () => {
@@ -642,6 +738,88 @@ describe('webhook routes', () => {
           workflowId: 'wf-ci-1',
         },
       ]);
+    });
+
+    it('rolls ciStatus back and answers 503 when the CI signal fails', async () => {
+      // The bug this guards: a rejected signal was only logged and the handler
+      // still returned 200, so GitHub never redelivered — and because ciStatus
+      // had already flipped, the idempotency guard made any later delivery a
+      // no-op. The CI-fix loop then never fired.
+      signalFailWorkflowIds.add('wf-ci-1');
+      const body = ciPayload('failure');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.payload).error.code).toBe('SIGNAL_FAILED');
+      expect(updateManyCalls).toEqual([
+        { data: { ciStatus: 'FAILED' }, where: { ciStatus: { not: 'FAILED' }, id: 'pr-row-1' } },
+        // Reverted to the value the row held before this delivery, guarded on
+        // the status this delivery wrote.
+        { data: { ciStatus: 'PENDING' }, where: { ciStatus: 'FAILED', id: 'pr-row-1' } },
+      ]);
+    });
+
+    it('re-signals on redelivery after a failed CI signal', async () => {
+      signalFailWorkflowIds.add('wf-ci-1');
+      const body = ciPayload('failure');
+      const failed = await inject('/api/v1/webhooks/ci', body, sign(body));
+      expect(failed.statusCode).toBe(503);
+
+      // Rolled back to PENDING, so the redelivery's `ciStatus: { not: FAILED }`
+      // guard transitions the row again and the signal is retried.
+      signalFailWorkflowIds.clear();
+      signalCalls.length = 0;
+      updateManyCalls.length = 0;
+      const retried = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(retried.statusCode).toBe(200);
+      expect(JSON.parse(retried.payload).data).toEqual({
+        conclusion: 'failure',
+        signaled: ['wf-ci-1'],
+      });
+      expect(signalCalls).toEqual([
+        {
+          args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: false }],
+          signalName: 'ciPipelineSignal',
+          workflowId: 'wf-ci-1',
+        },
+      ]);
+    });
+
+    it('on a partial multi-workflow failure, rolls back only the failed PR', async () => {
+      // Per-PR recovery: the PR that was signaled keeps its new ciStatus, so a
+      // redelivery cannot double-fire its workflow; only the failed PR is
+      // reverted and re-signaled.
+      openPrs = [
+        { ciStatus: 'PENDING', id: 'pr-row-1', workflow: { temporalWorkflowId: 'wf-ci-1' } },
+        { ciStatus: 'PENDING', id: 'pr-row-2', workflow: { temporalWorkflowId: 'wf-ci-2' } },
+      ];
+      signalFailWorkflowIds.add('wf-ci-2');
+      const body = ciPayload('failure');
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.payload).error.message).toContain('1 of 2');
+      expect(signalCalls.map((c) => c.workflowId)).toEqual(['wf-ci-1', 'wf-ci-2']);
+      // Only pr-row-2 is reverted; pr-row-1 keeps FAILED.
+      expect(updateManyCalls.slice(2)).toEqual([
+        { data: { ciStatus: 'PENDING' }, where: { ciStatus: 'FAILED', id: 'pr-row-2' } },
+      ]);
+
+      // Redelivery: pr-row-1 is already FAILED (count 0 → not transitioned),
+      // pr-row-2 is back at PENDING and transitions again.
+      signalFailWorkflowIds.clear();
+      signalCalls.length = 0;
+      updateManyCalls.length = 0;
+      updateManyResultCounts = [0, 1];
+      const retried = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(retried.statusCode).toBe(200);
+      expect(JSON.parse(retried.payload).data).toEqual({
+        conclusion: 'failure',
+        signaled: ['wf-ci-2'],
+      });
+      expect(signalCalls.map((c) => c.workflowId)).toEqual(['wf-ci-2']);
     });
 
     it('ignores check_run events when no tracked PR matches the commit', async () => {

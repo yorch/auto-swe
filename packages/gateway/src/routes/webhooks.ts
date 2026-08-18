@@ -276,18 +276,55 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
       }
 
-      // Update PR status
-      await fastify.prisma.pullRequest.update({
+      // Atomic OPEN→MERGED guard, then signal, rolling back on failure — the
+      // same shape as `resolveHitlStep` in `lib/hitlResolve.ts`, for the same
+      // reason. The `status: 'OPEN'` predicate is the real concurrency guard
+      // (the lookup above is an optimistic fast-path): two concurrent
+      // deliveries of the same merge race here and only one updates a row.
+      const merged = await fastify.prisma.pullRequest.updateMany({
         data: { status: 'MERGED' },
-        where: { id: pullRequest.id },
+        where: { id: pullRequest.id, status: 'OPEN' },
       });
+      if (merged.count === 0) {
+        // Someone else won the race and is delivering the signal; a genuine
+        // duplicate delivery no-ops here instead of signaling twice.
+        return { data: { ignored: true, reason: 'PR already merged (duplicate delivery)' } };
+      }
 
-      // Signal the Temporal workflow
-      await fastify.temporal.signalWorkflow(
-        pullRequest.workflow.temporalWorkflowId,
-        'humanMergeSignal',
-        [true]
-      );
+      // Signal the Temporal workflow. The workflow's merge wait only unblocks
+      // via this signal, so a failure after the row moved to MERGED would
+      // strand it: the redelivery GitHub sends would no longer match the
+      // `status: 'OPEN'` lookup and would be ignored. Roll the row back to
+      // OPEN and answer non-2xx so the redelivery can re-signal.
+      try {
+        await fastify.temporal.signalWorkflow(
+          pullRequest.workflow.temporalWorkflowId,
+          'humanMergeSignal',
+          [true]
+        );
+      } catch (err: unknown) {
+        request.log.error(
+          { err, prNumber, prRowId: pullRequest.id },
+          'Merge Temporal signal failed; rolling PR back to OPEN'
+        );
+        await fastify.prisma.pullRequest
+          .updateMany({
+            data: { status: 'OPEN' },
+            where: { id: pullRequest.id, status: 'MERGED' },
+          })
+          .catch((rollbackErr: unknown) => {
+            request.log.error(
+              { err: rollbackErr, prRowId: pullRequest.id },
+              'Merge rollback failed — PR stuck MERGED without a delivered signal'
+            );
+          });
+        return reply.status(503).send({
+          error: {
+            code: 'SIGNAL_FAILED',
+            message: 'Could not deliver the merge signal to the workflow — retry the delivery',
+          },
+        });
+      }
 
       // P0 evals: capture the human merge label as a normalized signal,
       // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).
@@ -444,28 +481,72 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         };
       }
 
-      // Signal all affected Temporal workflows in parallel
-      const signaled: string[] = [];
-      const signalPromises: Promise<unknown>[] = [];
+      // Signal all affected Temporal workflows in parallel.
+      //
+      // Partial-failure semantics (one check_run event can fan out to several
+      // workflows): recovery is decided PER PR, not per delivery. A PR whose
+      // signal failed has its `ciStatus` rolled back to the value it had
+      // before this delivery, so the redelivery's `ciStatus: { not: … }` guard
+      // transitions it again and re-signals. A PR whose signal succeeded keeps
+      // the new status, so the same redelivery finds count 0 for it and does
+      // NOT signal it a second time — the CI-wait step is not idempotent on
+      // the workflow side, and a duplicate `ciPipelineSignal` could resume a
+      // run that has already moved on. The handler then answers non-2xx so
+      // GitHub actually redelivers; retrying inline would block the webhook.
+      type TrackedPr = (typeof transitioned)[number];
+      const toSignal: Array<{ pr: TrackedPr; workflowId: string }> = [];
       for (const pr of transitioned) {
         if (pr.workflow) {
-          const wfId = pr.workflow.temporalWorkflowId;
-          signaled.push(wfId);
-          signalPromises.push(
-            fastify.temporal.signalWorkflow(wfId, 'ciPipelineSignal', [{ logsUrl, passed }])
-          );
+          toSignal.push({ pr, workflowId: pr.workflow.temporalWorkflowId });
         }
       }
-      const results = await Promise.allSettled(signalPromises);
-      for (const r of results) {
+      const results = await Promise.allSettled(
+        toSignal.map((t) =>
+          fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [{ logsUrl, passed }])
+        )
+      );
+
+      const signaled: string[] = [];
+      const succeeded: TrackedPr[] = [];
+      const failed: TrackedPr[] = [];
+      results.forEach((r, i) => {
+        const { pr, workflowId } = toSignal[i];
         if (r.status === 'rejected') {
-          request.log.error({ err: r.reason }, 'Failed to signal workflow');
+          request.log.error(
+            { err: r.reason, prRowId: pr.id, workflowId },
+            'Failed to signal workflow; rolling ciStatus back for redelivery'
+          );
+          failed.push(pr);
+        } else {
+          succeeded.push(pr);
+          signaled.push(workflowId);
         }
+      });
+
+      if (failed.length > 0) {
+        // Revert only the rows whose signal failed, guarded on the status this
+        // delivery wrote so a concurrent CI event is never clobbered.
+        await Promise.all(
+          failed.map((pr) =>
+            fastify.prisma.pullRequest
+              .updateMany({
+                data: { ciStatus: pr.ciStatus },
+                where: { ciStatus: newStatus, id: pr.id },
+              })
+              .catch((rollbackErr: unknown) => {
+                request.log.error(
+                  { err: rollbackErr, prRowId: pr.id },
+                  'CI status rollback failed — PR stuck without a delivered signal'
+                );
+              })
+          )
+        );
       }
 
-      // Best-effort tracker sync on CI result.
+      // Best-effort tracker sync on CI result — only for PRs whose signal
+      // landed; a rolled-back PR syncs on its redelivery instead.
       const trackerConfig = await resolveIssueTrackerConfig();
-      for (const pr of transitioned) {
+      for (const pr of succeeded) {
         const ticketId = pr.workflow?.workRequest?.externalTicketId;
         if (ticketId) {
           await syncTrackerOnEvent(
@@ -475,6 +556,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             trackerConfig
           ).catch(() => null);
         }
+      }
+
+      if (failed.length > 0) {
+        return reply.status(503).send({
+          error: {
+            code: 'SIGNAL_FAILED',
+            message: `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`,
+          },
+        });
       }
 
       return { data: { conclusion, signaled } };
