@@ -23,6 +23,7 @@
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
+    "./lib/repoDependency": "./dist/lib/repoDependency.js",
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",

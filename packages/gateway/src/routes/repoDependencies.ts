@@ -1,3 +1,5 @@
+import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
+import { NEIGHBOR_SELECT } from '@auto-swe/shared/lib/repoDependencyResolver';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -7,8 +9,9 @@ import { canManageTeamRepos } from './repositories.js';
 
 /**
  * Repo dependency graph edges (see docs/history/repo-dependency-graph-rfc.md).
- * Mounted under /api/v1/repositories, so the `:id` path param is always the
- * dependent (`from`) repo.
+ * Mounted under /api/v1/repositories. `:id` is a repo the edge touches — the
+ * `from` (dependent) repo for the "Depends on" view, or the `to` (depended-upon)
+ * repo when its team manages an incoming edge from its own "Depended on by" view.
  *
  * Authorization is asymmetric by intent (RFC §4.5): creating/confirming a
  * manual edge needs a LEAD on BOTH the dependent and the depended-upon team —
@@ -16,11 +19,9 @@ import { canManageTeamRepos } from './repositories.js';
  * dismissing (the veto) needs the depended-upon team, and removing needs either.
  */
 
-const EdgeKind = z.enum(['code', 'runtime', 'build', 'api', 'data']);
-
 const CreateEdgeSchema = z.object({
   detail: z.record(z.string(), z.unknown()).optional(),
-  kind: EdgeKind.default('code'),
+  kind: z.enum(EDGE_KINDS).default('code'),
   toRepoId: z.string().uuid(),
 });
 
@@ -31,42 +32,66 @@ const PatchEdgeSchema = z.object({
 const RepoParams = z.object({ id: z.string().uuid() });
 const EdgeParams = z.object({ edgeId: z.string().uuid(), id: z.string().uuid() });
 
-type PrismaClient = FastifyInstance['prisma'];
+type RoutePrisma = FastifyInstance['prisma'];
 
 interface RepoNode {
   id: string;
   teamId: string;
   type: string;
   orgId: string;
-  teamActive: boolean;
 }
 
 /** Load a connection with the tenancy fields the authz + visibility checks need. */
-async function loadRepo(prisma: PrismaClient, id: string): Promise<RepoNode | null> {
+async function loadRepo(prisma: RoutePrisma, id: string): Promise<RepoNode | null> {
   const repo = await prisma.connection.findUnique({
-    select: {
-      id: true,
-      team: { select: { isActive: true, orgId: true } },
-      teamId: true,
-      type: true,
-    },
+    select: { id: true, team: { select: { orgId: true } }, teamId: true, type: true },
     where: { id },
   });
   if (!repo?.team) {
     return null;
   }
-  return {
-    id: repo.id,
-    orgId: repo.team.orgId,
-    teamActive: repo.team.isActive,
-    teamId: repo.teamId,
-    type: repo.type,
-  };
+  return { id: repo.id, orgId: repo.team.orgId, teamId: repo.teamId, type: repo.type };
+}
+
+/** Whether the edge touches repo `id` as either endpoint. */
+function edgeInvolves(edge: { fromRepoId: string; toRepoId: string | null }, id: string): boolean {
+  return edge.fromRepoId === id || edge.toRepoId === id;
+}
+
+/**
+ * Load an edge and both its endpoint repos, scoped so `:id` must be one of them.
+ * Returns null when the edge is missing or does not involve `:id` (→ 404). The
+ * two repo loads run in parallel; `to` is null for an unresolved suggestion.
+ */
+async function loadEdgeWithRepos(prisma: RoutePrisma, edgeId: string, id: string) {
+  const edge = await prisma.repoDependency.findUnique({ where: { id: edgeId } });
+  if (!edge || !edgeInvolves(edge, id)) {
+    return null;
+  }
+  const [from, to] = await Promise.all([
+    loadRepo(prisma, edge.fromRepoId),
+    edge.toRepoId ? loadRepo(prisma, edge.toRepoId) : Promise.resolve(null),
+  ]);
+  return { edge, from, to };
+}
+
+/** Whether the user is a LEAD (or ADMIN) on both teams — the manual-edge gate. */
+async function bothTeamsLead(
+  prisma: RoutePrisma,
+  user: { sub: string; role: string },
+  teamA: string,
+  teamB: string
+): Promise<boolean> {
+  const [a, b] = await Promise.all([
+    canManageTeamRepos(prisma, user, teamA),
+    canManageTeamRepos(prisma, user, teamB),
+  ]);
+  return a && b;
 }
 
 /** Whether the user can see repo `:id` at all — ADMIN, or a member of its team. */
 async function canViewRepo(
-  prisma: PrismaClient,
+  prisma: RoutePrisma,
   user: { sub: string; role: string },
   repo: RepoNode
 ): Promise<boolean> {
@@ -120,10 +145,18 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
           ...incoming.map((e) => e.fromRepoId),
         ]),
       ];
+      // Reuse the resolver's neighbour select; the visibility predicate is kept
+      // literal (mirrors resolveRepoDependencyContext) so tenantGuard's static
+      // scanner can see the team.orgId filter.
       const neighbors = neighborIds.length
         ? await fastify.prisma.connection.findMany({
-            select: { id: true, name: true, organizationName: true, repoName: true, teamId: true },
-            where: { id: { in: neighborIds }, team: { orgId: repo.orgId } },
+            select: NEIGHBOR_SELECT,
+            where: {
+              id: { in: neighborIds },
+              isActive: true,
+              team: { orgId: repo.orgId },
+              type: 'git_repo',
+            },
           })
         : [];
       const byId = new Map(neighbors.map((n) => [n.id, n]));
@@ -185,11 +218,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const [canFrom, canTo] = await Promise.all([
-        canManageTeamRepos(fastify.prisma, user, from.teamId),
-        canManageTeamRepos(fastify.prisma, user, to.teamId),
-      ]);
-      if (!canFrom || !canTo) {
+      if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
         return reply.status(403).send({
           error: {
             code: 'FORBIDDEN',
@@ -233,17 +262,19 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const edge = await fastify.prisma.repoDependency.findUnique({
-        where: { id: request.params.edgeId },
-      });
-      if (!edge || edge.fromRepoId !== request.params.id) {
+      // `:id` may be the `from` or the `to` repo — the depended-upon team
+      // dismisses incoming edges from its own repo's modal (RFC §4.5).
+      const loaded = await loadEdgeWithRepos(
+        fastify.prisma,
+        request.params.edgeId,
+        request.params.id
+      );
+      if (!loaded) {
         return reply.status(404).send({
           error: { code: 'EDGE_NOT_FOUND', message: 'Dependency edge not found' },
         });
       }
-
-      const from = await loadRepo(fastify.prisma, edge.fromRepoId);
-      const to = edge.toRepoId ? await loadRepo(fastify.prisma, edge.toRepoId) : null;
+      const { edge, from, to } = loaded;
       if (!from) {
         return reply.status(404).send({
           error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
@@ -261,11 +292,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
-        const [canFrom, canTo] = await Promise.all([
-          canManageTeamRepos(fastify.prisma, user, from.teamId),
-          canManageTeamRepos(fastify.prisma, user, to.teamId),
-        ]);
-        if (!canFrom || !canTo) {
+        if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
           return reply.status(403).send({
             error: {
               code: 'FORBIDDEN',
@@ -313,21 +340,27 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       const edge = await fastify.prisma.repoDependency.findUnique({
         where: { id: request.params.edgeId },
       });
-      if (!edge || edge.fromRepoId !== request.params.id) {
+      if (!edge || !edgeInvolves(edge, request.params.id)) {
         return reply.status(404).send({
           error: { code: 'EDGE_NOT_FOUND', message: 'Dependency edge not found' },
         });
       }
-      const from = await loadRepo(fastify.prisma, edge.fromRepoId);
-      const to = edge.toRepoId ? await loadRepo(fastify.prisma, edge.toRepoId) : null;
-      const teamIds = [from?.teamId, to?.teamId].filter((v): v is string => !!v);
-      const allowed = (
-        await Promise.all(teamIds.map((t) => canManageTeamRepos(fastify.prisma, user, t)))
-      ).some(Boolean);
-      if (user.role !== 'ADMIN' && !allowed) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'Requires LEAD on either repository’s team' },
-        });
+      // ADMIN removes any edge; others need LEAD on either endpoint's team — so
+      // only load the endpoint repos when we actually have to check membership.
+      if (user.role !== 'ADMIN') {
+        const [from, to] = await Promise.all([
+          loadRepo(fastify.prisma, edge.fromRepoId),
+          edge.toRepoId ? loadRepo(fastify.prisma, edge.toRepoId) : Promise.resolve(null),
+        ]);
+        const teamIds = [from?.teamId, to?.teamId].filter((v): v is string => !!v);
+        const allowed = (
+          await Promise.all(teamIds.map((t) => canManageTeamRepos(fastify.prisma, user, t)))
+        ).some(Boolean);
+        if (!allowed) {
+          return reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'Requires LEAD on either repository’s team' },
+          });
+        }
       }
       await fastify.prisma.repoDependency.delete({ where: { id: edge.id } });
       return reply.status(204).send();

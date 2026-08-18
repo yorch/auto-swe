@@ -232,6 +232,68 @@ describe('repoDependencyRoutes', () => {
       });
       expect(res.statusCode).toBe(403);
     });
+
+    it('lets the depended-upon team dismiss from its OWN repo modal (:id === toRepoId)', async () => {
+      // The edge is fromRepoId=FROM, toRepoId=TO. The depended-upon team opens
+      // TO's Dependencies modal, so the request targets :id = TO. This is the
+      // veto flow, and it must not 404 on the fromRepoId !== :id mismatch.
+      ctx.mockPrisma.repoDependency.findUnique.mockResolvedValueOnce({
+        fromRepoId: FROM,
+        id: EDGE,
+        toRepoId: TO,
+      });
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      ctx.mockPrisma.repoDependency.update.mockResolvedValueOnce({ id: EDGE, status: 'dismissed' });
+
+      const res = await ctx.app.inject({
+        body: { status: 'dismissed' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/repositories/${TO}/dependencies/${EDGE}`,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('DELETE /:id/dependencies/:edgeId', () => {
+    it('lets the depended-upon team remove an incoming edge from its own modal (:id === toRepoId)', async () => {
+      ctx.mockPrisma.repoDependency.findUnique.mockResolvedValueOnce({
+        fromRepoId: FROM,
+        id: EDGE,
+        toRepoId: TO,
+      });
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      ctx.mockPrisma.repoDependency.delete.mockResolvedValueOnce({ id: EDGE });
+
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `/api/v1/repositories/${TO}/dependencies/${EDGE}`,
+      });
+      expect(res.statusCode).toBe(204);
+      expect(ctx.mockPrisma.repoDependency.delete).toHaveBeenCalledWith({ where: { id: EDGE } });
+    });
+
+    it('404s when the edge involves neither the path repo as from nor to', async () => {
+      ctx.mockPrisma.repoDependency.findUnique.mockResolvedValueOnce({
+        fromRepoId: FROM,
+        id: EDGE,
+        toRepoId: TO,
+      });
+      const other = '99999999-9999-4999-8999-999999999999';
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `/api/v1/repositories/${other}/dependencies/${EDGE}`,
+      });
+      expect(res.statusCode).toBe(404);
+    });
   });
 
   describe('GET /:id/dependencies', () => {

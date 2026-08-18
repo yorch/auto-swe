@@ -1,7 +1,8 @@
 'use client';
 
+import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
@@ -12,8 +13,7 @@ import {
   useRepoDependencies,
   useSetRepoDependencyStatus,
 } from '@/hooks/useRepoDependencies';
-
-const KINDS = ['code', 'runtime', 'build', 'api', 'data'];
+import { connectionLabel } from '@/lib/connectionDisplay';
 
 function neighborLabel(edge: DepEdgeView): string {
   if (edge.repo) {
@@ -41,12 +41,20 @@ function StatusBadge({ status }: { status: string }) {
 function EdgeRow({
   edge,
   canManage,
+  canVeto,
   onDismiss,
   onReactivate,
   onRemove,
 }: {
   edge: DepEdgeView;
   canManage: boolean;
+  /**
+   * Whether the dismiss/reactivate veto applies here. The veto belongs to the
+   * depended-upon team, so it is offered only in the "Depended on by" section
+   * (where the subject repo is the one being depended on). In "Depends on" the
+   * subject is the dependent, whose managers can only Remove.
+   */
+  canVeto: boolean;
   onDismiss: () => void;
   onReactivate: () => void;
   onRemove: () => void;
@@ -61,12 +69,12 @@ function EdgeRow({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <StatusBadge status={edge.status} />
-        {canManage && edge.status === 'active' && (
+        {canManage && canVeto && edge.status === 'active' && (
           <Button onClick={onDismiss} size="sm" variant="ghost">
             Dismiss
           </Button>
         )}
-        {canManage && edge.status === 'dismissed' && edge.repo && (
+        {canManage && canVeto && edge.status === 'dismissed' && (
           <Button onClick={onReactivate} size="sm" variant="ghost">
             Reactivate
           </Button>
@@ -78,6 +86,52 @@ function EdgeRow({
         )}
       </div>
     </li>
+  );
+}
+
+function DepSection({
+  title,
+  subtitle,
+  edges,
+  emptyText,
+  canManage,
+  canVeto,
+  onDismiss,
+  onReactivate,
+  onRemove,
+}: {
+  title: string;
+  subtitle?: string;
+  edges: DepEdgeView[] | undefined;
+  emptyText: string;
+  canManage: boolean;
+  canVeto: boolean;
+  onDismiss: (id: string) => void;
+  onReactivate: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <section>
+      <h4 className="mb-1 font-semibold text-sm">{title}</h4>
+      {subtitle && <p className="mb-1 text-paper-500 text-xs">{subtitle}</p>}
+      {edges && edges.length > 0 ? (
+        <ul>
+          {edges.map((e) => (
+            <EdgeRow
+              canManage={canManage}
+              canVeto={canVeto}
+              edge={e}
+              key={e.id}
+              onDismiss={() => onDismiss(e.id)}
+              onReactivate={() => onReactivate(e.id)}
+              onRemove={() => onRemove(e.id)}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="text-paper-400 text-sm">{emptyText}</p>
+      )}
+    </section>
   );
 }
 
@@ -94,7 +148,7 @@ export function RepoDependenciesModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const { data, isLoading } = useRepoDependencies(repo.id, open);
+  const { data, isLoading, isError } = useRepoDependencies(repo.id, open);
   const create = useCreateRepoDependency(repo.id);
   const setStatus = useSetRepoDependencyStatus(repo.id);
   const remove = useDeleteRepoDependency(repo.id);
@@ -102,60 +156,54 @@ export function RepoDependenciesModal({
   const [toRepoId, setToRepoId] = useState('');
   const [kind, setKind] = useState('code');
 
-  const candidates = repos.filter((r) => (r.type ?? 'git_repo') === 'git_repo' && r.id !== repo.id);
+  const candidates = useMemo(
+    () => repos.filter((r) => (r.type ?? 'git_repo') === 'git_repo' && r.id !== repo.id),
+    [repos, repo.id]
+  );
 
-  const label = repo.organizationName
-    ? `${repo.organizationName}/${repo.repoName}`
-    : (repo.name ?? repo.id);
+  const dismiss = (id: string) => setStatus.mutate({ edgeId: id, status: 'dismissed' });
+  const reactivate = (id: string) => setStatus.mutate({ edgeId: id, status: 'active' });
+  const removeEdge = (id: string) => remove.mutate(id);
+  const mutationFailed = setStatus.isError || remove.isError;
 
   return (
-    <Modal onClose={onClose} open={open} subtitle={label} title="Dependencies">
+    <Modal onClose={onClose} open={open} subtitle={connectionLabel(repo)} title="Dependencies">
       {isLoading ? (
         <p className="py-6 text-center text-paper-400 text-sm">Loading…</p>
+      ) : isError ? (
+        <p className="py-6 text-center text-brick-400 text-sm">
+          Could not load dependencies. You may not have access to this repository, or the request
+          failed — try again.
+        </p>
       ) : (
         <div className="space-y-6">
-          <section>
-            <h4 className="mb-1 font-semibold text-sm">Depends on</h4>
-            {data && data.dependsOn.length > 0 ? (
-              <ul>
-                {data.dependsOn.map((e) => (
-                  <EdgeRow
-                    canManage={canManage}
-                    edge={e}
-                    key={e.id}
-                    onDismiss={() => setStatus.mutate({ edgeId: e.id, status: 'dismissed' })}
-                    onReactivate={() => setStatus.mutate({ edgeId: e.id, status: 'active' })}
-                    onRemove={() => remove.mutate(e.id)}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className="text-paper-400 text-sm">No upstream dependencies.</p>
-            )}
-          </section>
-
-          <section>
-            <h4 className="mb-1 font-semibold text-sm">Depended on by</h4>
-            <p className="mb-1 text-paper-500 text-xs">
-              Repos that depend on this one. Dismiss here to opt this repo out as a context source.
+          {mutationFailed && (
+            <p className="rounded border border-brick-400/30 bg-brick-400/10 px-3 py-2 text-brick-400 text-xs">
+              That action didn’t go through — you may lack LEAD on the required team, or the edge
+              changed. Reopen and try again.
             </p>
-            {data && data.dependedOnBy.length > 0 ? (
-              <ul>
-                {data.dependedOnBy.map((e) => (
-                  <EdgeRow
-                    canManage={canManage}
-                    edge={e}
-                    key={e.id}
-                    onDismiss={() => setStatus.mutate({ edgeId: e.id, status: 'dismissed' })}
-                    onReactivate={() => setStatus.mutate({ edgeId: e.id, status: 'active' })}
-                    onRemove={() => remove.mutate(e.id)}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className="text-paper-400 text-sm">No downstream dependents.</p>
-            )}
-          </section>
+          )}
+          <DepSection
+            canManage={canManage}
+            canVeto={false}
+            edges={data?.dependsOn}
+            emptyText="No upstream dependencies."
+            onDismiss={dismiss}
+            onReactivate={reactivate}
+            onRemove={removeEdge}
+            title="Depends on"
+          />
+          <DepSection
+            canManage={canManage}
+            canVeto={true}
+            edges={data?.dependedOnBy}
+            emptyText="No downstream dependents."
+            onDismiss={dismiss}
+            onReactivate={reactivate}
+            onRemove={removeEdge}
+            subtitle="Repos that depend on this one. Dismiss here to opt this repo out as a context source."
+            title="Depended on by"
+          />
 
           {canManage && candidates.length > 0 && (
             <section className="border-paper-800 border-t pt-4">
@@ -170,14 +218,12 @@ export function RepoDependenciesModal({
                   <option value="">Select a repository…</option>
                   {candidates.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.organizationName
-                        ? `${r.organizationName}/${r.repoName}`
-                        : (r.name ?? r.id)}
+                      {connectionLabel(r)}
                     </option>
                   ))}
                 </Select>
                 <Select label="Kind" onChange={(e) => setKind(e.target.value)} value={kind}>
-                  {KINDS.map((k) => (
+                  {EDGE_KINDS.map((k) => (
                     <option key={k} value={k}>
                       {k}
                     </option>

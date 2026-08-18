@@ -41,15 +41,17 @@ export interface ResolveRepoDependencyCtx {
   orgId: string;
 }
 
-interface EdgeRow {
-  id: string;
-  neighborId: string | null;
-  kind: string;
-  source: string;
-  confidence: number;
-}
-
-const NEIGHBOR_SELECT = {
+/**
+ * The neighbour repo columns both the resolver and the management API surface.
+ * Shared so the two views agree on the shape.
+ *
+ * The visibility *predicate* (`isActive` + `team.orgId` + git_repo) is
+ * deliberately NOT extracted into a shared helper: `tenantGuard.coverage.test.ts`
+ * statically requires a literal `team.orgId` at every `connection.findMany` site,
+ * and a spread helper hides it from that guard. So each call site inlines the
+ * same where clause — kept honest by the tenant-guard test, not by DRY.
+ */
+export const NEIGHBOR_SELECT = {
   id: true,
   name: true,
   organizationName: true,
@@ -88,27 +90,11 @@ export async function resolveRepoDependencyContext(
     }),
   ]);
 
-  const upstreamRows: EdgeRow[] = upstreamEdges.map((e) => ({
-    confidence: e.confidence,
-    id: e.id,
-    kind: e.kind,
-    neighborId: e.toRepoId,
-    source: e.source,
-  }));
-  const downstreamRows: EdgeRow[] = downstreamEdges.map((e) => ({
-    confidence: e.confidence,
-    id: e.id,
-    kind: e.kind,
-    neighborId: e.fromRepoId,
-    source: e.source,
-  }));
-
   const neighborIds = [
-    ...new Set(
-      [...upstreamRows, ...downstreamRows]
-        .map((r) => r.neighborId)
-        .filter((v): v is string => v !== null)
-    ),
+    ...new Set([
+      ...upstreamEdges.map((e) => e.toRepoId).filter((v): v is string => v !== null),
+      ...downstreamEdges.map((e) => e.fromRepoId),
+    ]),
   ];
   if (neighborIds.length === 0) {
     return { downstream: [], upstream: [] };
@@ -117,7 +103,8 @@ export async function resolveRepoDependencyContext(
   // Hydrate neighbours filtered to the caller's org — the `team.orgId` predicate
   // is both the tenant-guard filter and the visibility boundary, so injection
   // never crosses an org even if a stray cross-org edge slipped past the write
-  // path. Deactivated / non-git connections are dropped defensively.
+  // path. Deactivated / non-git connections are dropped defensively. (Mirrored in
+  // the GET management route; kept literal per tenantGuard.coverage.test.ts.)
   const neighbors = await prisma.connection.findMany({
     select: NEIGHBOR_SELECT,
     where: {
@@ -129,38 +116,43 @@ export async function resolveRepoDependencyContext(
   });
   const byId = new Map(neighbors.map((n) => [n.id, n]));
 
-  const collapse = (rows: EdgeRow[]): RepoDependencyNeighbor[] => {
+  type RawEdge = { id: string; kind: string; source: string; confidence: number };
+  const collapse = <E extends RawEdge>(
+    edges: E[],
+    neighborIdOf: (e: E) => string | null
+  ): RepoDependencyNeighbor[] => {
     const groups = new Map<string, RepoDependencyNeighbor>();
-    for (const row of rows) {
-      if (!row.neighborId) {
-        continue;
-      }
-      const repo = byId.get(row.neighborId);
-      if (!repo) {
+    for (const e of edges) {
+      const nid = neighborIdOf(e);
+      const repo = nid ? byId.get(nid) : undefined;
+      if (!nid || !repo) {
         continue; // outside the caller's org, inactive, or non-git — not visible
       }
-      const existing = groups.get(row.neighborId);
+      const existing = groups.get(nid);
       if (existing) {
-        if (!existing.kinds.includes(row.kind)) {
-          existing.kinds.push(row.kind);
+        if (!existing.kinds.includes(e.kind)) {
+          existing.kinds.push(e.kind);
         }
-        if (!existing.sources.includes(row.source)) {
-          existing.sources.push(row.source);
+        if (!existing.sources.includes(e.source)) {
+          existing.sources.push(e.source);
         }
-        existing.confidence = Math.max(existing.confidence, row.confidence);
-        existing.edgeIds.push(row.id);
+        existing.confidence = Math.max(existing.confidence, e.confidence);
+        existing.edgeIds.push(e.id);
       } else {
-        groups.set(row.neighborId, {
-          confidence: row.confidence,
-          edgeIds: [row.id],
-          kinds: [row.kind],
+        groups.set(nid, {
+          confidence: e.confidence,
+          edgeIds: [e.id],
+          kinds: [e.kind],
           repo,
-          sources: [row.source],
+          sources: [e.source],
         });
       }
     }
     return [...groups.values()];
   };
 
-  return { downstream: collapse(downstreamRows), upstream: collapse(upstreamRows) };
+  return {
+    downstream: collapse(downstreamEdges, (e) => e.fromRepoId),
+    upstream: collapse(upstreamEdges, (e) => e.toRepoId),
+  };
 }
