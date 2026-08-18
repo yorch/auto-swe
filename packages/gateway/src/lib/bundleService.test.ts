@@ -240,6 +240,11 @@ describe('installBundle', () => {
 
   it('rejects a bundle built under the old (v1) trust format', async () => {
     const legacy = { ...manifestFor({ ...EMPTY }), bundleSchemaVersion: 1 };
+    // Must come back wrapped as BundleIntegrityError specifically (not just any
+    // rejection with a matching message) — the route only maps
+    // BundleIntegrityError/BundleDependencyError/ZodError to a 400; an unwrapped
+    // BundleSchemaVersionError would fall through to a generic 500.
+    await expect(installBundle(asArg(), legacy)).rejects.toBeInstanceOf(BundleIntegrityError);
     await expect(installBundle(asArg(), legacy)).rejects.toThrow(/unsupported bundleSchemaVersion/);
     expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
   });

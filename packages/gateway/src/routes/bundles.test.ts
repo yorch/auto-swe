@@ -160,6 +160,31 @@ describe('bundleRoutes', () => {
     await app.close();
   });
 
+  it('400s on a bundle built under the old (v1) trust format', async () => {
+    // Regression test: installBundle's parseBundle throws BundleSchemaVersionError
+    // for this shape, which bundleService must catch and rewrap as
+    // BundleIntegrityError. The route only maps BundleIntegrityError /
+    // BundleDependencyError / ZodError to 400 — an unwrapped
+    // BundleSchemaVersionError falls through to a generic 500.
+    const app = await buildApp();
+    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const bundle = {
+      bundleSchemaVersion: 1,
+      dependencies: [],
+      entities,
+      metadata: { contentHash: 'irrelevant', createdAt: 'now', name: 'n', version: '1' },
+    };
+    const res = await app.inject({
+      body: { bundle },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/admin/bundles/install',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_BUNDLE');
+    await app.close();
+  });
+
   it('installs a valid empty bundle', async () => {
     const app = await buildApp();
     const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };

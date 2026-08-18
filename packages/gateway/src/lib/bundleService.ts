@@ -297,7 +297,16 @@ export async function installBundle(
         const existing = await tx.skill.findFirst({ where: { name: s.name } });
         if (existing) {
           await tx.skill.update({
-            data: { description: s.description ?? null, origin, promptText: s.promptText },
+            data: {
+              description: s.description ?? null,
+              // Never trust the bundle's verification flag — installing new content
+              // over an existing skill must reset isVerified, matching the create
+              // branch below; otherwise an UNVERIFIED bundle can silently overwrite a
+              // human-verified skill's prompt while it keeps its verified badge.
+              isVerified: false,
+              origin,
+              promptText: s.promptText,
+            },
             where: { id: existing.id },
           });
         } else {
