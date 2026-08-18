@@ -228,10 +228,18 @@ describe('validateBundleScannerPatterns', () => {
       },
     });
 
-  it('rejects a catastrophic-backtracking pattern', () => {
-    const errors = validateBundleScannerPatterns(withPattern('(a+)+$'));
+  it('rejects a pattern that does not compile', () => {
+    const errors = validateBundleScannerPatterns(withPattern('(unclosed'));
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/scanner pattern 'evil' \[REDOS_RISK\]/);
+    expect(errors[0]).toMatch(/scanner pattern 'evil' \[INVALID_REGEX\]/);
+  });
+
+  it('makes no cost claim — a bundle CAN carry a catastrophic pattern', () => {
+    // Deliberate and documented: bundle validation is pure and synchronous (the
+    // SDK depends on that), and the empirical probe needs a worker thread. What
+    // stops a bundle-supplied `(a+)+$` from wedging the worker is the wall-clock
+    // execution budget every scanner runs patterns under, not this function.
+    expect(validateBundleScannerPatterns(withPattern('(a+)+$'))).toEqual([]);
   });
 
   it('accepts an ordinary pattern', () => {

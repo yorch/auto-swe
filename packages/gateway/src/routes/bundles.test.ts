@@ -124,11 +124,14 @@ describe('bundleRoutes', () => {
     await app.close();
   });
 
-  it('400s on a bundle carrying a catastrophic scanner pattern', async () => {
+  it('400s on a bundle carrying an uncompilable scanner pattern', async () => {
+    // Compile / flags / length only. Bundle validation makes no execution-cost
+    // claim — a catastrophic pattern installs and is bounded (and quarantined)
+    // at run time by the scanners' wall-clock budget instead.
     const app = await buildApp();
     const entities = {
       agents: [],
-      scannerPatterns: [{ flags: 'i', label: 'evil', pattern: '(a+)+$', type: 'INJECTION' }],
+      scannerPatterns: [{ flags: 'i', label: 'evil', pattern: '(unclosed', type: 'INJECTION' }],
       skills: [],
       templates: [],
     } as unknown as BundleEntities;
@@ -156,7 +159,7 @@ describe('bundleRoutes', () => {
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.payload);
     expect(body.error.code).toBe('INVALID_BUNDLE');
-    expect(body.error.message).toMatch(/REDOS_RISK/);
+    expect(body.error.message).toMatch(/INVALID_REGEX/);
     await app.close();
   });
 

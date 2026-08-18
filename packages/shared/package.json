@@ -23,6 +23,7 @@
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
+    "./lib/regexExec": "./dist/lib/regexExec.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",

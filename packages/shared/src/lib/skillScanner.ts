@@ -1,11 +1,22 @@
 import { prisma } from '@auto-swe/shared/db';
-import { capScanText, checkRegexRuntimeSafety } from './regexSafety.js';
+import { runRegexBatch } from './regexExec.js';
+import { capScanText } from './regexSafety.js';
 import { SCANNER_PATTERN_CACHE_TTL_MS as CACHE_TTL_MS } from './scannerCache.js';
 
+/**
+ * A stored pattern kept as source + flags. Execution happens inside the bounded
+ * executor thread, which compiles its own copy.
+ */
+interface PatternEntry {
+  label: string;
+  source: string;
+  flags: string;
+}
+
 interface CachedPatterns {
-  exfiltration: Array<{ label: string; re: RegExp }>;
+  exfiltration: PatternEntry[];
   fetchedAt: number;
-  injection: Array<{ label: string; re: RegExp }>;
+  injection: PatternEntry[];
 }
 
 let cache: CachedPatterns | null = null;
@@ -20,29 +31,22 @@ async function loadPatterns(): Promise<CachedPatterns> {
     where: { isActive: true, type: { in: ['INJECTION', 'EXFILTRATION'] } },
   });
   const { exfiltration, injection } = rows.reduce<{
-    exfiltration: Array<{ label: string; re: RegExp }>;
-    injection: Array<{ label: string; re: RegExp }>;
+    exfiltration: PatternEntry[];
+    injection: PatternEntry[];
   }>(
     (acc, r) => {
-      // Both write paths (admin API, bundle install) reject unsafe patterns, but
-      // rows predating that check can still be in the table — skip them here
-      // rather than compiling a catastrophic pattern into a cached RegExp.
-      const issue = checkRegexRuntimeSafety(r.pattern, r.flags);
-      if (issue) {
-        console.error(
-          issue.code === 'INVALID_REGEX'
-            ? `[skillScanner] skipping invalid pattern '${r.label}': invalid regex`
-            : `[skillScanner] skipping unsafe pattern '${r.label}': ${issue.code} — ${issue.message}`
-        );
-        return acc;
-      }
+      // The only load-time filter is "does it compile". How costly a row is to
+      // run is bounded at execution time by the executor's wall-clock budget,
+      // not guessed at here.
       try {
-        const entry = { label: r.label, re: new RegExp(r.pattern, r.flags) };
-        const bucket = r.type === 'INJECTION' ? acc.injection : acc.exfiltration;
-        bucket.push(entry);
+        new RegExp(r.pattern, r.flags);
       } catch {
         console.error(`[skillScanner] skipping invalid pattern '${r.label}': invalid regex`);
+        return acc;
       }
+      const entry: PatternEntry = { flags: r.flags, label: r.label, source: r.pattern };
+      const bucket = r.type === 'INJECTION' ? acc.injection : acc.exfiltration;
+      bucket.push(entry);
       return acc;
     },
     { exfiltration: [], injection: [] }
@@ -58,24 +62,35 @@ export function invalidateScannerPatternCache(): void {
 export interface SkillScanResult {
   safe: boolean;
   warnings: string[];
+  /**
+   * True when a pattern exceeded its execution budget and the scan is therefore
+   * partial. Advisory at every call site, so this is reported rather than
+   * thrown — but a caller that wants to be conservative can read it.
+   */
+  incomplete: boolean;
 }
 
+/**
+ * Scans skill text / LLM output for injection and exfiltration patterns.
+ *
+ * ADVISORY at every call site, which is what makes both bounds here acceptable:
+ * the text is truncated at {@link capScanText}'s cap, and a pattern that burns
+ * the executor's budget degrades the scan instead of blocking anything.
+ */
 export async function scanSkillContent(promptText: string): Promise<SkillScanResult> {
   const { exfiltration, injection } = await loadPatterns();
-  const warnings: string[] = [];
-  // Bound the work any one pattern can do. Scanning is advisory at every call
-  // site, so a truncated scan is strictly preferable to an unbounded backtrack
-  // over an arbitrarily long LLM response.
   const text = capScanText(promptText);
-  const check = (patterns: Array<{ label: string; re: RegExp }>, prefix: string) => {
-    for (const { label, re } of patterns) {
-      re.lastIndex = 0;
-      if (re.test(text)) {
-        warnings.push(`${prefix}:${label}`);
-      }
-    }
-  };
-  check(injection, 'injection');
-  check(exfiltration, 'exfiltration');
-  return { safe: warnings.length === 0, warnings };
+  const specs = [
+    ...injection.map((p) => ({ flags: p.flags, key: `injection:${p.label}`, source: p.source })),
+    ...exfiltration.map((p) => ({
+      flags: p.flags,
+      key: `exfiltration:${p.label}`,
+      source: p.source,
+    })),
+  ];
+  const { hits, incomplete } = await runRegexBatch(specs, [{ key: 'text', text }], {
+    label: 'skillScanner',
+  });
+  const warnings = hits.map((h) => h.patternKey);
+  return { incomplete, safe: warnings.length === 0, warnings };
 }

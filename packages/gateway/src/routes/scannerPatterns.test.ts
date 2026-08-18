@@ -66,25 +66,34 @@ const create = async (body: Record<string, unknown>) => {
 beforeEach(() => vi.clearAllMocks());
 
 describe('POST /admin/scanner-patterns — ReDoS gate', () => {
-  it.each(['(a+)+$', '([a-z]+)*!', '(a|ab)+'])(
+  // The gate is empirical: the candidate is executed under the scanners' own
+  // wall-clock budget against repetition-heavy input built from its alphabet.
+  it.each(['(a+)+$', '([a-z]+)*!', '(a+){1,50}$', '(w+)+$'])(
     'rejects the catastrophic pattern %j without writing it',
     async (pattern) => {
       const res = await create({ flags: 'i', label: 'evil', pattern, type: 'INJECTION' });
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.payload);
       expect(body.error.code).toBe('REDOS_RISK');
-      expect(body.error.message).toMatch(/catastrophic backtracking/);
+      expect(body.error.message).toMatch(/execution budget/);
       expect(prisma.scannerPattern.create).not.toHaveBeenCalled();
     }
   );
 
-  it('still accepts an ordinary pattern', async () => {
-    const res = await create({
-      flags: 'i',
-      label: 'ok',
-      pattern: 'ignore\\s+(all\\s+)?previous\\s+instructions',
-      type: 'INJECTION',
-    });
+  // Each of these was rejected by the deleted structural analyser; two of them
+  // are regexes this repo itself hardcodes in `shellCommandScanner.ts`, so an
+  // admin could not add a rule the codebase already ships.
+  it.each([
+    'ignore\\s+(all\\s+)?previous\\s+instructions',
+    '(?:\\w+\\.)+\\w+',
+    '(?:\\d+\\.)+\\d+',
+    '(?:[^,]+,)+[^,]+',
+    '(foo|bar|baz)+',
+    '(a|ab)+',
+    '\\btee\\b(?:\\s+(?:-a|--append|-i|--ignore-interrupts))*\\s+(?:\'([^\']+)\'|"([^"]+)"|([^\\s;&|)<>\'"-][^\\s;&|)<>\'"]*))',
+    '\\b(?:cp|mv|install)\\b((?:\\s+(?:-[^\\s;&|]+|\'[^\']+\'|"[^"]+"|[^\\s;&|)<>\'"]+))+)',
+  ])('still accepts the ordinary pattern %j', async (pattern) => {
+    const res = await create({ flags: 'i', label: 'ok', pattern, type: 'INJECTION' });
     expect(res.statusCode).toBe(201);
     expect(prisma.scannerPattern.create).toHaveBeenCalledTimes(1);
   });

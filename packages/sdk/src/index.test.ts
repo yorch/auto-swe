@@ -139,7 +139,32 @@ describe('validateBundle', () => {
     expect(validateBundle({ not: 'a bundle' }).ok).toBe(false);
   });
 
-  it('rejects a catastrophic scanner pattern (same gate the server applies)', () => {
+  it('rejects an uncompilable scanner pattern (same gate the server applies)', () => {
+    const res = validateBundle(
+      defineBundle({
+        name: 'b',
+        scannerPatterns: [
+          defineScannerPattern({
+            flags: 'i',
+            label: 'evil',
+            pattern: '(unclosed',
+            type: 'INJECTION',
+          }),
+        ],
+        version: '1',
+      })
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors[0]).toMatch(/INVALID_REGEX/);
+    }
+  });
+
+  it('makes no execution-cost claim — a catastrophic pattern validates', () => {
+    // Deliberate: the SDK is pure and I/O-free, and the only sound check for
+    // catastrophic backtracking is to execute the pattern under a bound. That
+    // happens in the worker thread every scanner runs patterns in, and (as an
+    // early error) in the admin API's probe — not here.
     const res = validateBundle(
       defineBundle({
         name: 'b',
@@ -149,10 +174,7 @@ describe('validateBundle', () => {
         version: '1',
       })
     );
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.errors[0]).toMatch(/REDOS_RISK/);
-    }
+    expect(res.ok).toBe(true);
   });
 
   it('accepts an ordinary scanner pattern', () => {

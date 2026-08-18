@@ -249,15 +249,28 @@ describe('installBundle', () => {
     expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
   });
 
-  it('rejects a catastrophic scanner pattern before any write, even unsigned', async () => {
+  it('rejects an uncompilable scanner pattern before any write, even unsigned', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      scannerPatterns: [{ flags: 'i', label: 'broken', pattern: '(unclosed', type: 'INJECTION' }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m)).rejects.toBeInstanceOf(BundleIntegrityError);
+    await expect(installBundle(asArg(), m)).rejects.toThrow(/INVALID_REGEX/);
+    expect(prisma.scannerPattern.upsert).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('installs a catastrophic scanner pattern — bounding it is a run-time job', async () => {
+    // Bundle validation is pure and synchronous by contract, so it makes no
+    // execution-cost claim. A pattern like this installs, and every scanner then
+    // runs it under a wall-clock budget that terminates and quarantines it. The
+    // honest posture is documented in AGENTS.md §6.
     const m = manifestFor({
       ...EMPTY,
       scannerPatterns: [{ flags: 'i', label: 'redos', pattern: '(a+)+$', type: 'INJECTION' }],
     } as unknown as BundleEntities);
-    await expect(installBundle(asArg(), m)).rejects.toBeInstanceOf(BundleIntegrityError);
-    await expect(installBundle(asArg(), m)).rejects.toThrow(/REDOS_RISK/);
-    expect(prisma.scannerPattern.upsert).not.toHaveBeenCalled();
-    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+    await expect(installBundle(asArg(), m)).resolves.toBeDefined();
+    expect(prisma.scannerPattern.upsert).toHaveBeenCalled();
   });
 
   it('still installs an ordinary scanner pattern', async () => {

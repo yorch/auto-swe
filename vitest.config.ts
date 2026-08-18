@@ -68,6 +68,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexSafety.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/regexExec',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexExec.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/connectionGuards',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/connectionGuards.ts'),
       },

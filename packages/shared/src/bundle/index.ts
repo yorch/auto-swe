@@ -6,7 +6,11 @@ import {
   verify as cryptoVerify,
 } from 'node:crypto';
 import { z } from 'zod';
-import { checkRegexSafety } from '../lib/regexSafety.js';
+import {
+  checkRegexSafety,
+  MAX_PATTERN_SOURCE_LENGTH,
+  MAX_SKILL_PROMPT_TEXT_LENGTH,
+} from '../lib/regexSafety.js';
 
 /**
  * Bundle format (P4/WS1) — a versioned, self-describing export of a *tagged set*
@@ -52,7 +56,9 @@ export const BundleSkillSchema = z.object({
   isVerified: z.boolean().optional(),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),
-  promptText: z.string(),
+  // Same length cap as the admin API (`POST /admin/skills`): a bundle must not
+  // be a way to smuggle in a promptText the API would refuse.
+  promptText: z.string().max(MAX_SKILL_PROMPT_TEXT_LENGTH),
 });
 
 /** A skill attachment on an exported Agent, referenced by skill name. */
@@ -85,7 +91,7 @@ export const BundleScannerPatternSchema = z.object({
   origin: z.string().nullable().optional(),
   // Same length cap as the admin API (`POST /admin/scanner-patterns`): a bundle
   // must not be a way to smuggle in a pattern the API would refuse.
-  pattern: z.string().min(1).max(2000),
+  pattern: z.string().min(1).max(MAX_PATTERN_SOURCE_LENGTH),
   type: z.enum(SCANNER_PATTERN_TYPES),
 });
 
@@ -271,10 +277,17 @@ export function verifyContentHash(manifest: BundleManifest): {
 
 /**
  * Check every scanner pattern the bundle carries for compile errors, unsafe
- * flags, and catastrophic-backtracking structure — the SAME gate the admin API
+ * flags, and over-long bodies — the same syntax-and-size gate the admin API
  * applies at `POST /admin/scanner-patterns`, shared here so install cannot be a
  * back door around it. Bundle install is reachable with an UNVERIFIED bundle, so
  * this must run regardless of trust state.
+ *
+ * It makes NO claim about execution cost. A bundle can carry a pattern that
+ * backtracks catastrophically; what stops that from wedging a process is the
+ * wall-clock budget every scanner runs patterns under (`lib/regexExec.ts`), not
+ * this function. Bundle validation is pure and synchronous by contract (the SDK
+ * depends on it), and the empirical probe the admin API layers on top needs a
+ * worker thread, so it does not run here.
  *
  * Returns one message per offending pattern; empty means all are acceptable.
  */

@@ -1,4 +1,5 @@
-import { capScanText } from '@auto-swe/shared/lib/regexSafety';
+import { runRegexBatch } from '@auto-swe/shared/lib/regexExec';
+import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
 import {
   checkContentSecurity,
   SECURITY_CHECK_FAILED_PREFIX,
@@ -144,21 +145,38 @@ export function extractShellWrites(command: string): ShellWrite[] {
  *
  * Returns a human-readable block message (for the agent to self-correct) if the
  * command matches, or null if it is clean.
+ *
+ * This is a BLOCKING scanner, which drives two choices:
+ *
+ * - The whole command is scanned, in overlapping windows. Truncating it would
+ *   be a bypass: 20k of leading `#` comment would push a forbidden command past
+ *   a plain cap and out of the rule's sight.
+ * - A scan that cannot complete blocks. If a pattern burns its execution budget
+ *   the scanner cannot say the command is clean, so it does not.
  */
 export async function scanShellCommand(command: string): Promise<string | null> {
   const patterns = await loadShellPatterns();
   const truncate = () => (command.length > 200 ? `${command.slice(0, 200)}…` : command);
-  // Bound per-pattern scan work on an agent-supplied command of any length.
-  const scanned = capScanText(command);
 
-  for (const { label, re } of patterns) {
-    re.lastIndex = 0;
-    if (re.test(scanned)) {
-      return (
-        `Command blocked by security policy [${label}]:\n  ${truncate()}\n` +
-        'Modify the command to avoid the restricted pattern and retry.'
-      );
-    }
+  const { hits, incomplete } = await runRegexBatch(
+    patterns.map((p) => ({ flags: p.flags, key: p.label, source: p.source })),
+    chunkScanText(command).map((text, i) => ({ key: String(i), text })),
+    { label: 'shellCommandScanner' }
+  );
+  const hit = hits[0];
+  if (hit) {
+    return (
+      `Command blocked by security policy [${hit.patternKey}]:\n  ${truncate()}\n` +
+      'Modify the command to avoid the restricted pattern and retry.'
+    );
+  }
+  if (incomplete) {
+    return (
+      `Command blocked: the shell security scan could not complete.\n  ${truncate()}\n` +
+      'A scanner pattern exceeded its execution budget, so the command could not be ' +
+      'cleared. Retry; if this persists, an administrator must fix the offending ' +
+      'pattern at /admin/scanner.'
+    );
   }
 
   for (const target of extractShellWriteTargets(command)) {

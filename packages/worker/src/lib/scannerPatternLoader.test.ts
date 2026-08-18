@@ -22,31 +22,36 @@ beforeEach(() => {
 });
 
 describe('makePatternLoader — loading and compilation', () => {
-  it('compiles DB rows into labelled RegExp entries', async () => {
+  it('loads DB rows as labelled pattern sources', async () => {
     findMany.mockResolvedValue([row('rule-a', '\\bmkfs\\b'), row('rule-b', 'foo', 'i')] as never);
     const { load } = makePatternLoader('SHELL_COMMAND', 'test');
     const entries = await load();
-    expect(entries).toHaveLength(2);
-    expect(entries[0].label).toBe('rule-a');
-    expect(entries[0].re).toBeInstanceOf(RegExp);
-    expect(entries[0].re.source).toBe('\\bmkfs\\b');
-    expect(entries[1].re.flags).toBe('i');
-    expect(entries[1].re.test('FOO')).toBe(true);
+    expect(entries).toEqual([
+      { flags: '', label: 'rule-a', source: '\\bmkfs\\b' },
+      { flags: 'i', label: 'rule-b', source: 'foo' },
+    ]);
   });
 
-  it('skips a catastrophic-backtracking row and keeps the rest', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      findMany.mockResolvedValue([row('redos', '(a+)+$'), row('ok', 'bar')] as never);
-      const { load } = makePatternLoader('SHELL_COMMAND', 'myScanner');
-      const entries = await load();
-      expect(entries.map((e) => e.label)).toEqual(['ok']);
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("[myScanner] skipping unsafe pattern 'redos': REDOS_RISK")
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
+  it('keeps an expensive-looking row rather than guessing it is unsafe', async () => {
+    // The loader deliberately makes NO cost judgement: a pattern that shape
+    // analysis would have called catastrophic still loads, and its execution
+    // cost is bounded at run time by the executor's wall-clock budget. The
+    // reverse — dropping it here — silently stops an admin's block rule.
+    findMany.mockResolvedValue([row('redos', '(a+)+$'), row('ok', 'bar')] as never);
+    const { load } = makePatternLoader('SHELL_COMMAND', 'myScanner');
+    const entries = await load();
+    expect(entries.map((e) => e.label)).toEqual(['redos', 'ok']);
+  });
+
+  it('keeps an over-long row (the length cap is a write-time policy only)', async () => {
+    // The old runtime check reported PATTERN_TOO_LONG *before* compiling, and the
+    // runtime wrapper then discarded that code — so an over-long catastrophic row
+    // written straight into the DB was compiled and run unchecked. There is no
+    // longer a length-based runtime path to fail open.
+    findMany.mockResolvedValue([row('long', `(a+)+${'b'.repeat(2100)}$`)] as never);
+    const { load } = makePatternLoader('SHELL_COMMAND', 'myScanner');
+    const entries = await load();
+    expect(entries.map((e) => e.label)).toEqual(['long']);
   });
 
   it('queries only active patterns of the requested type, ordered by label', async () => {

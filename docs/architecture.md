@@ -626,6 +626,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
+- **Scanner regex execution is bounded, not proven safe.** Patterns run in a pooled worker thread
+  killed at a 250 ms budget, so a catastrophic one cannot wedge the process — but it is then
+  quarantined per process and no longer enforced, and the scan it overran costs one spurious block
+  on a blocking scanner. See [agents.md §11](./agents.md#11-limitations).
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a
