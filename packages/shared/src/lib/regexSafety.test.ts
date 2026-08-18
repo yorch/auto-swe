@@ -4,7 +4,6 @@ import {
   capScanText,
   checkRegexSafety,
   chunkScanText,
-  isRegexSafe,
   MAX_PATTERN_SOURCE_LENGTH,
   MAX_SCAN_TEXT_LENGTH,
   SAFE_FLAGS_RE,
@@ -54,13 +53,13 @@ describe('checkRegexSafety', () => {
     // stops `(a+)+$` from wedging a process is the wall-clock execution budget
     // in regexExec.ts, exercised in regexExec.test.ts, plus the empirical probe
     // the admin API layers on top.
-    expect(isRegexSafe('(a+)+$', '')).toBe(true);
+    expect(checkRegexSafety('(a+)+$', '')).toBeNull();
   });
 
   it('accepts every shipped built-in pattern', () => {
-    const rejected = BUILTIN_SCANNER_PATTERNS.filter((p) => !isRegexSafe(p.pattern, p.flags)).map(
-      (p) => `${p.label}: ${checkRegexSafety(p.pattern, p.flags)?.message}`
-    );
+    const rejected = BUILTIN_SCANNER_PATTERNS.filter(
+      (p) => checkRegexSafety(p.pattern, p.flags) !== null
+    ).map((p) => `${p.label}: ${checkRegexSafety(p.pattern, p.flags)?.message}`);
     expect(rejected).toEqual([]);
   });
 });

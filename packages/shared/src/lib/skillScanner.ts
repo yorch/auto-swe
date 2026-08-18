@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { runRegexBatch } from './regexExec.js';
+import { runRegexBatch, toRegexSpecs } from './regexExec.js';
 import { capScanText } from './regexSafety.js';
 import { SCANNER_PATTERN_CACHE_TTL_MS as CACHE_TTL_MS } from './scannerCache.js';
 
@@ -81,12 +81,8 @@ export async function scanSkillContent(promptText: string): Promise<SkillScanRes
   const { exfiltration, injection } = await loadPatterns();
   const text = capScanText(promptText);
   const specs = [
-    ...injection.map((p) => ({ flags: p.flags, key: `injection:${p.label}`, source: p.source })),
-    ...exfiltration.map((p) => ({
-      flags: p.flags,
-      key: `exfiltration:${p.label}`,
-      source: p.source,
-    })),
+    ...toRegexSpecs(injection, 'injection:'),
+    ...toRegexSpecs(exfiltration, 'exfiltration:'),
   ];
   const { hits, incomplete } = await runRegexBatch(specs, [{ key: 'text', text }], {
     label: 'skillScanner',

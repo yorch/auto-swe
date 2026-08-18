@@ -7,7 +7,6 @@
  * over `@auto-swe/shared/bundle`; no I/O, so they run anywhere (CI, scripts).
  */
 import {
-  BUNDLE_SCHEMA_VERSION,
   type BundleAgent,
   type BundleDependency,
   type BundleEntities,
@@ -15,7 +14,7 @@ import {
   type BundleScannerPattern,
   type BundleSkill,
   type BundleTemplate,
-  computeContentHash,
+  buildBundleManifest,
   parseBundle,
   signContentHash,
   validateBundleScannerPatterns,
@@ -58,32 +57,16 @@ export function defineBundle(input: DefineBundleInput): BundleManifest {
     skills: input.skills ?? [],
     templates: input.templates ?? [],
   };
-  const dependencies = input.dependencies ?? [];
-  // Metadata is assembled first because the content hash covers it: since bundle
-  // schema v2 the hash (and therefore the signature over it) binds the bundle's
-  // identity — `name`/`version` — to its content, so a signed bundle cannot be
-  // relabelled or version-bumped and still verify.
-  const metadata = {
-    createdAt: new Date().toISOString(),
-    ...(input.description ? { description: input.description } : {}),
-    name: input.name,
-    ...(input.source ? { source: input.source } : {}),
-    version: input.version,
-  };
-  return {
-    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
-    dependencies,
+  // Assembly + hashing live in `@auto-swe/shared/bundle` so the SDK and the
+  // gateway's `exportBundle` cannot drift over what the v2 hash covers.
+  return buildBundleManifest({
+    dependencies: input.dependencies,
     entities,
-    metadata: {
-      ...metadata,
-      contentHash: computeContentHash({
-        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
-        dependencies,
-        entities,
-        metadata,
-      }),
-    },
-  };
+    name: input.name,
+    version: input.version,
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+  });
 }
 
 /**

@@ -202,7 +202,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: result.code, message: result.message } });
       }
 
-      return { data: { id: result.stepId, status: 'RESOLVED' } };
+      // `signalSent: false` means the decision was recorded but the workflow it
+      // was meant for no longer exists — a 200 with a caveat, not a failure the
+      // caller can retry into success (see lib/hitlResolve.ts).
+      return { data: { id: result.stepId, signalSent: result.signalSent, status: 'RESOLVED' } };
     }
   );
 };

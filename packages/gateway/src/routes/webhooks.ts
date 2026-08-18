@@ -13,25 +13,12 @@ import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { postSlackMessage } from '../lib/slack.js';
+// The webhook handlers below undo their DB write and answer non-2xx when a
+// signal fails, so the delivery can be sent again — only ever useful for a
+// TRANSIENT failure. See `lib/temporalErrors.ts` for why a terminal one keeps
+// the write and answers 2xx instead.
+import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import { getErrorName } from '../plugins/auth.js';
-
-/**
- * True when a Temporal signal rejection can never succeed on a later attempt:
- * the target execution does not exist, because it never started or has already
- * completed / been terminated. Same discriminator as `trySteerThreadTask` in
- * `routes/slack.ts`.
- *
- * The distinction matters because the webhook handlers below undo their DB
- * write and answer non-2xx when a signal fails, so the delivery can be sent
- * again. That is only ever useful for a TRANSIENT failure. On a terminal one
- * there is no workflow left to strand, no later attempt can land the signal,
- * and undoing the write would leave the DB describing the repository
- * incorrectly — so the write stands and the handler answers 2xx.
- */
-function isTerminalSignalError(err: unknown): boolean {
-  return getErrorName(err) === 'WorkflowNotFoundError';
-}
 
 // GitHub payloads are HMAC-verified before we get here, but a shape change or a
 // non-PR/non-check event can still arrive. Validate the fields we touch so a

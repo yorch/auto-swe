@@ -5,6 +5,7 @@ import {
   type BundleEntities,
   type BundleManifest,
   BundleSchemaVersionError,
+  buildBundleManifest,
   computeContentHash,
   parseBundle,
   signContentHash,
@@ -131,6 +132,101 @@ describe('computeContentHash', () => {
 
   it('survives a JSON round-trip of the manifest', () => {
     const m = manifest({ metadata: { description: 'd', source: 'vendor' } });
+    expect(verifyContentHash(JSON.parse(JSON.stringify(m))).ok).toBe(true);
+  });
+});
+
+describe('buildBundleManifest', () => {
+  /**
+   * A manifest exactly as a previously-shipped bundle carries it, with the
+   * content hash a pre-`buildBundleManifest` toolchain wrote into it. This is a
+   * GOLDEN value: every already-signed bundle in the wild was signed over a hash
+   * derived this way, so if a change to the assembly or canonicalization moves
+   * this string, every such bundle stops verifying and installs UNVERIFIED.
+   * Do not re-record it to make a failing test pass.
+   */
+  const GOLDEN_CONTENT_HASH = '6651660198a43ca78fdfa0400c6adfb2876676db95fb9d7300f75bf23a5ab34c';
+
+  const goldenInput = {
+    createdAt: '2026-01-01T00:00:00.000Z',
+    dependencies: [{ connectionType: 'mcp' }],
+    description: 'Starter content for autonomous SWE',
+    entities: {
+      agents: [
+        {
+          key: 'implementer',
+          modelSpec: 'anthropic/claude-opus-4-8',
+          name: 'Implementer',
+          skills: [{ skill: 'careful-review', sortOrder: 0 }],
+          toolKeys: ['bash', 'mcp'],
+        },
+      ],
+      scannerPatterns: [
+        { flags: 'i', label: 'ignore-previous', pattern: 'ignore\\s+previous', type: 'INJECTION' },
+      ],
+      skills: [{ name: 'careful-review', promptText: 'review carefully' }],
+      templates: [{ name: 'default-engineering', spec: { nodes: { a: { type: 'agent' } } } }],
+    } as unknown as BundleEntities,
+    name: 'swe-starter',
+    source: 'swe-starter',
+    version: '1.0.0',
+  };
+
+  it('reproduces the content hash existing signed bundles were signed over', () => {
+    expect(buildBundleManifest(goldenInput).metadata.contentHash).toBe(GOLDEN_CONTENT_HASH);
+  });
+
+  it('an existing manifest carrying that hash still verifies', () => {
+    const onDisk = {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      dependencies: goldenInput.dependencies,
+      entities: goldenInput.entities,
+      metadata: {
+        contentHash: GOLDEN_CONTENT_HASH,
+        createdAt: goldenInput.createdAt,
+        description: goldenInput.description,
+        name: goldenInput.name,
+        signature: 'AAAA',
+        signedBy: 'vendor',
+        source: goldenInput.source,
+        version: goldenInput.version,
+      },
+    } as BundleManifest;
+    expect(verifyContentHash(onDisk).ok).toBe(true);
+  });
+
+  it('matches the inline v2 assembly it replaced, field for field', () => {
+    const { entities, dependencies } = goldenInput;
+    const metadata = {
+      createdAt: goldenInput.createdAt,
+      description: goldenInput.description,
+      name: goldenInput.name,
+      source: goldenInput.source,
+      version: goldenInput.version,
+    };
+    expect(buildBundleManifest(goldenInput)).toEqual({
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      dependencies,
+      entities,
+      metadata: {
+        ...metadata,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+          dependencies,
+          entities,
+          metadata,
+        }),
+      },
+    });
+  });
+
+  it('omits absent optional metadata rather than emitting undefined keys', () => {
+    const m = buildBundleManifest({ entities: emptyEntities, name: 'b', version: '1' });
+    expect(Object.hasOwn(m.metadata, 'description')).toBe(false);
+    expect(Object.hasOwn(m.metadata, 'source')).toBe(false);
+    expect(m.dependencies).toEqual([]);
+    // Self-consistent and JSON-round-trip stable (the property `undefined` keys
+    // would break if they leaked into the object).
     expect(verifyContentHash(JSON.parse(JSON.stringify(m))).ok).toBe(true);
   });
 });

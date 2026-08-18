@@ -58,6 +58,57 @@ describe('runRegexBatch — ordinary matching', () => {
   });
 });
 
+describe('runRegexBatch — the worker caches compiled patterns by source+flags identity', () => {
+  it('returns identical results across repeated batches of the same pattern (the cache does not change matches)', async () => {
+    const patterns = [
+      { flags: 'i', key: 'p1', source: '\\bfoo\\b' },
+      { flags: '', key: 'p2', source: 'bar' },
+    ];
+    const targets = [{ key: 't', text: 'FOO and bar' }];
+
+    const first = await runRegexBatch(patterns, targets);
+    const second = await runRegexBatch(patterns, targets);
+    const third = await runRegexBatch(patterns, targets);
+
+    const expected = {
+      hits: [
+        { match: 'FOO', patternKey: 'p1', targetKey: 't' },
+        { match: 'bar', patternKey: 'p2', targetKey: 't' },
+      ],
+      incomplete: false,
+      quarantinedPatternKeys: [],
+      timedOutPatternKeys: [],
+    };
+    expect(first).toEqual(expected);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it('attributes hits to the right key when two distinct patterns share one source+flags identity (one compiled RegExp, two callers)', async () => {
+    // Mirrors what toRegexSpecs' keyPrefix produces: the same admin pattern
+    // reused under two different category keys.
+    const result = await runRegexBatch(
+      [
+        { flags: '', key: 'injection:jailbreak', source: 'jailbreak' },
+        { flags: '', key: 'exfiltration:jailbreak', source: 'jailbreak' },
+      ],
+      [{ key: 't', text: 'a jailbreak attempt' }]
+    );
+    expect(result.hits.map((h) => h.patternKey).sort()).toEqual([
+      'exfiltration:jailbreak',
+      'injection:jailbreak',
+    ]);
+  });
+
+  it('keeps matching correctly on a g-flag pattern across repeated batches (lastIndex reset survives caching)', async () => {
+    const pattern = { flags: 'g', key: 'g-rule', source: 'foo' };
+    const first = await runRegexBatch([pattern], [{ key: 't', text: 'foo' }]);
+    const second = await runRegexBatch([pattern], [{ key: 't', text: 'foo' }]);
+    expect(first.hits).toHaveLength(1);
+    expect(second.hits).toHaveLength(1);
+  });
+});
+
 describe('runRegexBatch — the execution budget is the actual containment', () => {
   it('terminates a catastrophic pattern instead of wedging the process', async () => {
     const started = Date.now();

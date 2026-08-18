@@ -556,6 +556,21 @@ bypasses it, as security-critical.
 > The metadata blackhole needs a real-Docker smoke test — it is exercised by unit tests against
 > argument construction, not against a live daemon.
 
+**Shell and container steps get the same credential treatment.** `runShellStep`
+(`activities/shellStep.ts`) clones the branch into a Docker volume that is then bind-mounted into
+the container running the author-supplied command, so a token left in `.git/config` would be
+readable by that command — and, on a `network: 'egress'` step, exfiltratable. `origin` is therefore
+reset to the credential-free URL in the same script as the clone, and the post-command commit/push
+(a separate container, after the command has exited) authenticates per-call through
+`http.extraheader`. Both paths share `splitCloneCredential()` / `gitWithAuthHeader()` with
+`createWorkspace`. Output redaction of the token remains on every sink as defense in depth, but it
+is not the containment: it matches the exact substring, so any transform (`base64`, `rev`, `tr`)
+would defeat it.
+
+> **Consequence for authors:** a shell-step command cannot run its own authenticated `git fetch`,
+> `pull`, or `push` against a private repo — it holds no credential. Leave changes in the working
+> tree instead; the step commits and pushes them to the run's branch after the command exits.
+
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
 [AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the

@@ -1,4 +1,4 @@
-import { runRegexBatch } from '@auto-swe/shared/lib/regexExec';
+import { runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
 import { capScanText } from '@auto-swe/shared/lib/regexSafety';
 import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
 import { makePatternLoader } from './scannerPatternLoader.js';
@@ -63,7 +63,7 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
   }
 
   const { hits, incomplete } = await runRegexBatch(
-    patterns.map((p) => ({ flags: p.flags, key: p.label, source: p.source })),
+    toRegexSpecs(patterns),
     addedLines.map((l, i) => ({ key: String(i), text: capScanText(l.content) })),
     { label: 'codeSecurityScanner' }
   );

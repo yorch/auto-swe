@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
+import { isTerminalSignalError } from './temporalErrors.js';
 
 /**
  * Shared HITL resolve core, used by:
@@ -25,7 +26,7 @@ export interface HitlResolveDeps {
   temporal: {
     signalWorkflow(workflowId: string, signalName: string, args?: unknown[]): Promise<void>;
   };
-  log: { error(obj: unknown, msg?: string): void };
+  log: { error(obj: unknown, msg?: string): void; warn(obj: unknown, msg?: string): void };
 }
 
 export type HitlResolveErrorCode =
@@ -37,7 +38,20 @@ export type HitlResolveErrorCode =
   | 'SIGNAL_FAILED';
 
 export type HitlResolveResult =
-  | { ok: true; stepId: string; kind: string; title: string }
+  | {
+      ok: true;
+      stepId: string;
+      kind: string;
+      title: string;
+      /**
+       * False when the step was resolved but the target workflow no longer
+       * exists, so the signal could not be — and never will be — delivered.
+       * The resolution stands (see {@link resolveHitlStep}); callers surface it
+       * as success-with-caveat. Same field and same meaning as the merge
+       * webhook's `signalSent`.
+       */
+      signalSent: boolean;
+    }
   | { ok: false; code: HitlResolveErrorCode; message: string };
 
 /**
@@ -74,8 +88,9 @@ export function runVisibilityFilter(user: HitlActor): Prisma.WorkflowHumanStepWh
  *   2. Optimistic PENDING + run-RUNNING checks
  *   3. Action validation against HITL_VALID_ACTIONS for the step kind
  *   4. Atomic PENDING→RESOLVED updateMany (the real concurrency guard)
- *   5. Temporal signal; on failure roll the row back to PENDING so the user
- *      can retry instead of stranding the run
+ *   5. Temporal signal; on a TRANSIENT failure roll the row back to PENDING so
+ *      the user can retry instead of stranding the run. On a TERMINAL one the
+ *      resolution stands — see the signal block for why.
  */
 export async function resolveHitlStep(
   deps: HitlResolveDeps,
@@ -136,37 +151,52 @@ export async function resolveHitlStep(
     return { code: 'ALREADY_RESOLVED', message: 'This step has already been resolved', ok: false };
   }
 
-  // Deliver the Temporal signal. The workflow only unblocks via this
-  // signal — if it fails after the row was marked RESOLVED, the step
-  // would vanish from the inbox while the workflow stays stuck until its
-  // timeout. Roll the row back to PENDING on failure so the user can
-  // retry instead of stranding the run.
+  // Deliver the Temporal signal. The workflow only unblocks via this signal, so
+  // a TRANSIENT failure after the row was marked RESOLVED would strand it: the
+  // step would vanish from the inbox while the workflow stays stuck until its
+  // timeout. Roll the row back to PENDING so the human can retry.
+  //
+  // A TERMINAL failure is the opposite case: the execution is gone (never
+  // started, already completed, or terminated), so no retry can ever land the
+  // signal and there is no run left to strand. Rolling back would return the
+  // step to the inbox permanently unclearable — every retry re-fails the same
+  // way — and would discard a decision the human legitimately made. Keep the
+  // resolution and report success with `signalSent: false`, matching what the
+  // merge webhook does with a terminal signal failure.
+  let signalSent = true;
   try {
     await temporal.signalWorkflow(step.run.workflowId, step.signalName, [signalPayload]);
   } catch (err: unknown) {
-    log.error({ err, stepId: step.id }, 'HITL Temporal signal failed; rolling back');
-    await prisma.workflowHumanStep
-      .updateMany({
-        data: {
-          payload: Prisma.DbNull,
-          resolvedAt: null,
-          resolvedBy: null,
-          status: 'PENDING',
-        },
-        where: { id: step.id, resolvedBy: user.sub, status: 'RESOLVED' },
-      })
-      .catch((rollbackErr: unknown) => {
-        log.error(
-          { err: rollbackErr, stepId: step.id },
-          'HITL rollback failed — step stuck RESOLVED without a delivered signal'
-        );
-      });
-    return {
-      code: 'SIGNAL_FAILED',
-      message: 'Could not deliver the response to the workflow — please retry',
-      ok: false,
-    };
+    if (!isTerminalSignalError(err)) {
+      log.error({ err, stepId: step.id }, 'HITL Temporal signal failed; rolling back');
+      await prisma.workflowHumanStep
+        .updateMany({
+          data: {
+            payload: Prisma.DbNull,
+            resolvedAt: null,
+            resolvedBy: null,
+            status: 'PENDING',
+          },
+          where: { id: step.id, resolvedBy: user.sub, status: 'RESOLVED' },
+        })
+        .catch((rollbackErr: unknown) => {
+          log.error(
+            { err: rollbackErr, stepId: step.id },
+            'HITL rollback failed — step stuck RESOLVED without a delivered signal'
+          );
+        });
+      return {
+        code: 'SIGNAL_FAILED',
+        message: 'Could not deliver the response to the workflow — please retry',
+        ok: false,
+      };
+    }
+    signalSent = false;
+    log.warn(
+      { err, stepId: step.id },
+      'HITL signal target workflow no longer exists; keeping the step RESOLVED'
+    );
   }
 
-  return { kind: step.kind, ok: true, stepId: step.id, title: step.title };
+  return { kind: step.kind, ok: true, signalSent, stepId: step.id, title: step.title };
 }

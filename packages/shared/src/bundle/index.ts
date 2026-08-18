@@ -10,6 +10,8 @@ import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
   MAX_SKILL_PROMPT_TEXT_LENGTH,
+  SAFE_FLAGS_MESSAGE,
+  SAFE_FLAGS_RE,
 } from '../lib/regexSafety.js';
 
 /**
@@ -82,11 +84,10 @@ export const BundleAgentSchema = z.object({
 
 export const BundleScannerPatternSchema = z.object({
   // Safe flag subset only (i,m,s,u,v) — `g`/`y` are rejected to prevent the
-  // stateful-lastIndex bug in cached RegExps, mirroring the scanner-pattern API.
-  flags: z
-    .string()
-    .regex(/^[imsuv]*$/, 'flags may only contain i, m, s, u, v')
-    .optional(),
+  // stateful-lastIndex bug in cached RegExps. Policy lives in `regexSafety` and
+  // is imported, not restated: this schema, the scanner-pattern API schema, and
+  // `checkRegexSafety` must never be able to disagree about which flags are legal.
+  flags: z.string().regex(SAFE_FLAGS_RE, SAFE_FLAGS_MESSAGE).optional(),
   label: z.string().min(1).max(200),
   origin: z.string().nullable().optional(),
   // Same length cap as the admin API (`POST /admin/scanner-patterns`): a bundle
@@ -243,6 +244,57 @@ export function computeContentHash(input: ContentHashInput): string {
       })
     )
     .digest('hex');
+}
+
+/** Everything a caller supplies to assemble a manifest; the rest is derived. */
+export interface BuildBundleManifestInput {
+  entities: BundleEntities;
+  dependencies?: BundleDependency[];
+  name: string;
+  version: string;
+  /** Defaults to now. Inside the hash, so a re-export is a distinct artifact. */
+  createdAt?: string;
+  description?: string;
+  source?: string;
+}
+
+/**
+ * Assemble a hash-consistent {@link BundleManifest}. The ONE place the v2
+ * ordering is expressed — metadata is built first, hashed, and only then does
+ * `contentHash` join it — shared by every producer (the SDK's `defineBundle`,
+ * the gateway's `exportBundle`) so no producer can drift into hashing a
+ * different payload than the others and emit a bundle that installs UNVERIFIED.
+ *
+ * Since v2 the hash covers metadata, so the bundle's identity (`name`,
+ * `version`) is bound to its content and a signature over the hash binds both.
+ * Optional metadata fields are omitted entirely when not supplied rather than
+ * emitted as `undefined`, so an in-memory manifest hashes identically to its
+ * JSON round-trip (`stableStringify` drops undefined keys for the same reason).
+ */
+export function buildBundleManifest(input: BuildBundleManifestInput): BundleManifest {
+  const { entities } = input;
+  const dependencies = input.dependencies ?? [];
+  const metadata = {
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    name: input.name,
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    version: input.version,
+  };
+  return {
+    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+    dependencies,
+    entities,
+    metadata: {
+      ...metadata,
+      contentHash: computeContentHash({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        dependencies,
+        entities,
+        metadata,
+      }),
+    },
+  };
 }
 
 /**

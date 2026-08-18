@@ -52,6 +52,7 @@ import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { runShellStep } from './shellStep.js';
+import { shellQuote } from './workspace.js';
 
 const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
 const mockedExec = vi.mocked(execShellAsync);
@@ -78,9 +79,11 @@ beforeEach(() => {
   // `docker ...` command string. Route by content: clone/volume calls succeed;
   // the finalize (commit + push) script fails, mimicking a real `git push`
   // rejection whose stderr/message embed the credential URL — exactly what
-  // git prints on a push failure.
+  // git prints on a push failure. Match on `push origin` rather than
+  // `git push origin`: the push is issued as
+  // `git -c http.extraheader=… push origin …`.
   mockedExec.mockImplementation(async (command: string) => {
-    if (command.includes('git push origin')) {
+    if (command.includes('push origin')) {
       const err = new Error(
         `Command failed: docker run ... sh -c 'git push origin HEAD:auto/JIRA-1'\n` +
           `fatal: unable to access '${CLONE_URL}/': The requested URL returned error: 403`
@@ -155,10 +158,10 @@ describe('runShellStep — token redaction', () => {
   });
 
   it('does not put the raw token into the persisted artifact body', async () => {
-    // The credential-embedded remote lives in /workspace/repo/.git/config
-    // after `cloneIntoVolume`, so a command like `git remote -v` echoes it
-    // straight into stdout/stderr — this must never reach the stored
-    // artifact, even though the command itself succeeds.
+    // `cloneIntoVolume` scrubs the credential out of `origin`, so a real
+    // `git remote -v` no longer prints it. This asserts the defense-in-depth
+    // layer: if a token reaches stdout by any route, it must never reach the
+    // stored artifact, even though the command itself succeeds.
     mockedRunEphemeral.mockResolvedValue({
       exitCode: 0,
       signal: undefined,
@@ -235,5 +238,139 @@ describe('runShellStep — token redaction', () => {
       const e = err as { cmd?: unknown };
       return typeof e.cmd === 'string' && !e.cmd.includes(TOKEN);
     });
+  });
+});
+
+/**
+ * The redaction suite above is defense in depth; these tests cover the actual
+ * containment. The workspace volume is bind-mounted into the container that
+ * runs the AUTHOR-SUPPLIED command with `/workspace/repo` as cwd, so a token
+ * left in `.git/config` is live data inside the sandbox — and sink redaction
+ * (exact-substring) is defeated by `base64`/`rev`/`tr`. The credential must
+ * therefore never be persisted in the volume at all.
+ */
+describe('runShellStep — clone credential is never persisted in the workspace volume', () => {
+  const CLEAN_CLONE_URL = 'https://github.com/acme/widgets.git';
+  const AUTH_HEADER = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`;
+
+  beforeEach(() => {
+    // All docker invocations succeed here — these tests assert on the
+    // *generated command sequence*, not on error handling.
+    mockedExec.mockImplementation(async () => '');
+  });
+
+  const dockerCommands = (): string[] => mockedExec.mock.calls.map((c) => String(c[0]));
+
+  const requireCommand = (label: string, match: (c: string) => boolean): string => {
+    const found = dockerCommands().find(match);
+    if (!found) {
+      throw new Error(`no docker command matched ${label}; got:\n${dockerCommands().join('\n')}`);
+    }
+    return found;
+  };
+
+  /**
+   * `runDocker` shell-quotes every docker argument, so the `sh -c` script
+   * reaches `execShellAsync` with each inner `'` escaped as `'\''`. Escaping
+   * is per-character and context-free, so a fragment escaped on its own is a
+   * substring of the escaped whole — which lets these assertions be written
+   * against the script as authored while still proving both quoting levels
+   * survived intact.
+   */
+  const escaped = (fragment: string): string => shellQuote(fragment).slice(1, -1);
+
+  it('resets origin to the credential-free URL in the same script as the clone', async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
+    // The scrub must be chained onto the clone itself, so there is no window
+    // in which the volume holds a credential-bearing origin — and the URL it
+    // installs must be shell-quoted like every other interpolated value.
+    expect(clone).toContain(escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`));
+    expect(clone.indexOf('git remote set-url origin')).toBeGreaterThan(clone.indexOf('git clone'));
+  });
+
+  it('leaves the token in the clone argument only, never in what origin keeps', async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
+    const scrubAt = clone.indexOf('git remote set-url origin');
+    expect(scrubAt).toBeGreaterThan(-1);
+    // Everything the clone leaves behind on disk — i.e. the origin URL it is
+    // reset to — must be credential-free.
+    expect(clone.slice(scrubAt)).not.toContain(TOKEN);
+    // And the token must reach exactly one docker invocation: the clone that
+    // genuinely needs it. Nothing else may carry it in the clear.
+    expect(dockerCommands().filter((c) => c.includes(TOKEN))).toHaveLength(1);
+  });
+
+  it('scrubs origin on the default-branch fallback clone too', async () => {
+    mockedExec.mockImplementation(async (command: string) => {
+      if (command.includes(escaped(`-b ${shellQuote('auto/JIRA-1')}`))) {
+        const err = new Error('fatal') as Error & { stderr?: string };
+        err.stderr = 'Remote branch auto/JIRA-1 not found in upstream origin';
+        throw err;
+      }
+      return '';
+    });
+
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const fallbackClone = requireCommand(
+      'default-branch clone',
+      (c) => c.includes('git clone') && c.includes(escaped(`-b ${shellQuote('main')}`))
+    );
+    expect(fallbackClone).toContain(
+      escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`)
+    );
+  });
+
+  it('authenticates the finalize push via http.extraheader rather than the origin URL', async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
+    expect(finalize).toContain(
+      escaped(`git -c http.extraheader=${shellQuote(AUTH_HEADER)} push origin HEAD:`)
+    );
+    // The header carries the credential base64-encoded, so the raw token must
+    // not appear — and the push must not fall back to a bare `git push` that
+    // would rely on a credential-bearing remote.
+    expect(finalize).not.toContain(TOKEN);
+    expect(finalize).not.toContain('\ngit push origin');
+  });
+
+  it('shell-quotes the branch inside the header-authenticated push', async () => {
+    const branch = "weird'; touch /pwned; #";
+    await runShellStep({
+      branch,
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+
+    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
+    expect(finalize).toContain(
+      escaped(
+        `git -c http.extraheader=${shellQuote(AUTH_HEADER)} push origin HEAD:${shellQuote(branch)}`
+      )
+    );
+  });
+
+  it('falls back to a plain push when the provider hands back an unauthenticated URL', async () => {
+    mockedGetScmProvider.mockReturnValue({
+      cloneCredentials: vi
+        .fn()
+        .mockResolvedValue({ authedCloneUrl: CLEAN_CLONE_URL, token: TOKEN }),
+    } as never);
+
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    // The scrub is unconditional — it just installs the same URL back.
+    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
+    expect(clone).toContain(escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`));
+    // …and with nothing to inject, the push stays a plain `git push`.
+    const finalize = requireCommand('finalize push', (c) => c.includes('push origin'));
+    expect(finalize).toContain('\ngit push origin HEAD:');
+    expect(finalize).not.toContain('http.extraheader');
   });
 });

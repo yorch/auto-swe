@@ -1,6 +1,5 @@
 import { Prisma, type PrismaClient } from '@auto-swe/shared';
 import {
-  BUNDLE_SCHEMA_VERSION,
   type BundleAgent,
   type BundleDependency,
   type BundleEntities,
@@ -9,7 +8,7 @@ import {
   BundleSchemaVersionError,
   type BundleSkill,
   type BundleTemplate,
-  computeContentHash,
+  buildBundleManifest,
   parseBundle,
   type TrustedKey,
   validateBundleScannerPatterns,
@@ -197,29 +196,16 @@ export async function exportBundle(
   }
 
   const entities: BundleEntities = { agents, scannerPatterns, skills, templates };
-  const dependencies = deriveDependencies(entities);
-  // Identity is part of the hashed payload, so metadata is assembled first and
-  // the hash computed over it (see `computeContentHash`).
-  const metadata = {
-    createdAt: new Date().toISOString(),
-    name: opts.name,
-    ...(opts.origin !== undefined ? { source: opts.origin } : {}),
-    version: opts.version,
-  };
-  return {
-    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
-    dependencies,
+  // Assembly + hashing live in `@auto-swe/shared/bundle` (`buildBundleManifest`)
+  // so this and the SDK's `defineBundle` cannot drift over what the v2 hash
+  // covers — identity included.
+  return buildBundleManifest({
+    dependencies: deriveDependencies(entities),
     entities,
-    metadata: {
-      ...metadata,
-      contentHash: computeContentHash({
-        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
-        dependencies,
-        entities,
-        metadata,
-      }),
-    },
-  };
+    name: opts.name,
+    version: opts.version,
+    ...(opts.origin !== undefined ? { source: opts.origin } : {}),
+  });
 }
 
 /**

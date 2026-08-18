@@ -98,11 +98,6 @@ export function checkRegexSafety(pattern: string, flags = ''): RegexSafetyIssue 
   return null;
 }
 
-/** Convenience predicate for write-time checks. */
-export function isRegexSafe(pattern: string, flags = ''): boolean {
-  return checkRegexSafety(pattern, flags) === null;
-}
-
 /**
  * Truncate text to the advisory scan cap (see {@link MAX_SCAN_TEXT_LENGTH}).
  *

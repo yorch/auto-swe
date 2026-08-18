@@ -1,11 +1,11 @@
-import { runRegexBatch } from '@auto-swe/shared/lib/regexExec';
+import { runRegexBatch, toRegexSpecs } from '@auto-swe/shared/lib/regexExec';
 import { chunkScanText } from '@auto-swe/shared/lib/regexSafety';
 import {
   checkContentSecurity,
   SECURITY_CHECK_FAILED_PREFIX,
 } from '../agents/preWriteSecurityCheck.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
-import { checkSensitiveFilePath } from './sensitiveFileScanner.js';
+import { checkSensitiveFilePaths } from './sensitiveFileScanner.js';
 
 const { load: loadShellPatterns, invalidate } = makePatternLoader(
   'SHELL_COMMAND',
@@ -159,7 +159,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
   const truncate = () => (command.length > 200 ? `${command.slice(0, 200)}…` : command);
 
   const { hits, incomplete } = await runRegexBatch(
-    patterns.map((p) => ({ flags: p.flags, key: p.label, source: p.source })),
+    toRegexSpecs(patterns),
     chunkScanText(command).map((text, i) => ({ key: String(i), text })),
     { label: 'shellCommandScanner' }
   );
@@ -179,11 +179,15 @@ export async function scanShellCommand(command: string): Promise<string | null> 
     );
   }
 
-  for (const target of extractShellWriteTargets(command)) {
-    const blocked = await checkSensitiveFilePath(target);
-    if (blocked) {
+  const writeTargets = extractShellWriteTargets(command);
+  if (writeTargets.length > 0) {
+    // One combined round trip for every write target this command has, rather
+    // than one `checkSensitiveFilePath` call — and one serialized trip through
+    // the regex executor — per target.
+    const blockedTarget = await checkSensitiveFilePaths(writeTargets);
+    if (blockedTarget) {
       return (
-        `Command blocked: it writes to '${target}', which matches the sensitive-file policy.\n` +
+        `Command blocked: it writes to '${blockedTarget}', which matches the sensitive-file policy.\n` +
         `  ${truncate()}\n` +
         'Store secrets in environment variables or a secrets manager, not in source files.'
       );

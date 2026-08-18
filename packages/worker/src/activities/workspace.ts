@@ -30,6 +30,63 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+export interface SplitCloneCredential {
+  /**
+   * The clone URL with any embedded credential removed. Safe to persist as the
+   * `origin` remote inside a container an agent (or an author-supplied shell
+   * command) can read.
+   */
+  cleanUrl: string;
+  /**
+   * `AUTHORIZATION: basic <base64>` header value for `git -c http.extraheader`,
+   * or `undefined` when the source URL carried no credential.
+   */
+  gitAuthHeader?: string;
+}
+
+/**
+ * Split a credential-embedded clone URL (`https://x-access-token:<tok>@host/…`)
+ * into a scrubbed URL plus a per-call `http.extraheader` value.
+ *
+ * This is the single source of truth for "never persist the token in
+ * `.git/config`": `createWorkspace` (agent workspaces) and `runShellStep`
+ * (ephemeral shell-step volumes) both clone into a filesystem that untrusted
+ * code later reads, so both set `origin` to `cleanUrl` right after clone and
+ * inject `gitAuthHeader` only on the network calls that need it.
+ *
+ * Backward compatible: a plain (unauthenticated) or non-URL string falls
+ * through unchanged with no auth header.
+ */
+export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredential {
+  try {
+    const u = new URL(authedRepoUrl);
+    if (u.password) {
+      const token = decodeURIComponent(u.password);
+      const gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+      u.username = '';
+      u.password = '';
+      return { cleanUrl: u.toString(), gitAuthHeader };
+    }
+  } catch {
+    /* non-URL — leave as-is, no auth header */
+  }
+  return { cleanUrl: authedRepoUrl };
+}
+
+/**
+ * Build a `git` invocation with the clone credential injected for this call
+ * only via `-c http.extraheader`, so it is never written to disk. With no
+ * header (unauthenticated remote) this is just a plain `git <subcommand>`.
+ *
+ * The header is `shellQuote`d here — callers embed the result in a shell
+ * script, so this stays the escaping boundary for the credential value.
+ */
+export function gitWithAuthHeader(subcommand: string, gitAuthHeader?: string): string {
+  return gitAuthHeader
+    ? `git -c http.extraheader=${shellQuote(gitAuthHeader)} ${subcommand}`
+    : `git ${subcommand}`;
+}
+
 // Resource caps applied to every workspace container (bound worst-case
 // memory/CPU usage from a runaway agent-driven build/test process, and cap
 // process count to blunt fork-bomb-style failures) and the default base image
@@ -150,22 +207,8 @@ export async function createWorkspace(
   // can be injected per-call via `git -c http.extraheader` instead of being
   // persisted in the cloned repo's `.git/config` as the `origin` remote URL —
   // see the `git remote set-url` scrub below and `gitAuthed` on the returned
-  // Workspace. Backward compatible: a plain (unauthenticated) URL just falls
-  // through with no auth header.
-  let cleanUrl = authedRepoUrl;
-  let gitAuthHeader: string | undefined;
-  try {
-    const u = new URL(authedRepoUrl);
-    if (u.password) {
-      const token = decodeURIComponent(u.password);
-      gitAuthHeader = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
-      u.username = '';
-      u.password = '';
-      cleanUrl = u.toString();
-    }
-  } catch {
-    /* non-URL — leave as-is, no auth header */
-  }
+  // Workspace.
+  const { cleanUrl, gitAuthHeader } = splitCloneCredential(authedRepoUrl);
 
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
@@ -290,10 +333,7 @@ export async function createWorkspace(
   // `-c http.extraheader` for this call only — never written to disk. When
   // the source URL carried no credential (`gitAuthHeader` unset), this is
   // just a plain `git <subcmd>` against the scrubbed `origin` remote.
-  const gitAuthedArgs = (subcmd: string) =>
-    gitAuthHeader
-      ? `git -c http.extraheader=${shellQuote(gitAuthHeader)} ${subcmd}`
-      : `git ${subcmd}`;
+  const gitAuthedArgs = (subcmd: string) => gitWithAuthHeader(subcmd, gitAuthHeader);
 
   return {
     containerId: containerName,

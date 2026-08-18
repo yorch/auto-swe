@@ -8,8 +8,16 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+// Spy on the real `runRegexBatch` (not a stub) so behavior is unchanged for
+// every other test in this file, while FIX-1 tests below can assert on how
+// many round trips a scan actually issues.
+vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/regexExec')>();
+  return { ...actual, runRegexBatch: vi.fn(actual.runRegexBatch) };
+});
+
 import { prisma } from '@auto-swe/shared/db';
-import { resetRegexExecutor } from '@auto-swe/shared/lib/regexExec';
+import { resetRegexExecutor, runRegexBatch } from '@auto-swe/shared/lib/regexExec';
 import { MAX_SCAN_TEXT_LENGTH } from '@auto-swe/shared/lib/regexSafety';
 import { invalidateSensitiveFilePatternCache } from './sensitiveFileScanner.js';
 import {
@@ -20,6 +28,7 @@ import {
 } from './shellCommandScanner.js';
 
 const findMany = vi.mocked(prisma.scannerPattern.findMany);
+const runRegexBatchSpy = vi.mocked(runRegexBatch);
 
 // Verbatim copy of the built-in SHELL_COMMAND patterns from
 // packages/shared/src/scannerPatterns/index.ts (BUILTIN_SCANNER_PATTERNS is not
@@ -177,6 +186,7 @@ beforeEach(() => {
   invalidateSensitiveFilePatternCache();
   findMany.mockReset();
   mockPatternRows(BUILTIN_SHELL_PATTERNS);
+  runRegexBatchSpy.mockClear();
 });
 
 describe('scanShellCommand — commands that must be blocked', () => {
@@ -396,6 +406,54 @@ describe('extractShellWriteTargets', () => {
       expect(extractShellWriteTargets(command)).toEqual([]);
     }
   );
+});
+
+describe('scanShellCommand — sensitive-file checks for a multi-target command are ONE batch (FIX 1)', () => {
+  // Regression: before FIX 1, scanShellCommand looped
+  // `for (const target of extractShellWriteTargets(command)) { await
+  // checkSensitiveFilePath(target) }`, so a command with N write targets paid N
+  // serialized round trips through the regex executor. It must now pay exactly
+  // one, no matter how many targets the command has.
+  const multiTargetCommand =
+    'cp a.pem /workspace/out/a.pem && cp b.key /workspace/out/b.key && echo hi > /workspace/out/c.txt';
+
+  it('extracts several distinct write targets from the command', () => {
+    const targets = extractShellWriteTargets(multiTargetCommand);
+    expect(targets).toEqual(
+      expect.arrayContaining([
+        '/workspace/out/a.pem',
+        '/workspace/out/b.key',
+        '/workspace/out/c.txt',
+      ])
+    );
+    expect(targets).toHaveLength(3);
+  });
+
+  it('issues exactly one shell-pattern batch and one combined sensitive-file batch, never one per target', async () => {
+    await scanShellCommand(multiTargetCommand);
+    // 1 call to scan the command text against SHELL_COMMAND patterns, 1 call to
+    // scan ALL write targets against SENSITIVE_FILE patterns together — not the
+    // 1 + N a per-target loop would issue for N = 3 write targets.
+    expect(runRegexBatchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('the target count does not change the number of batches', async () => {
+    const singleTargetCommand = 'echo hi > /workspace/out/c.txt';
+    await scanShellCommand(singleTargetCommand);
+    const callsForOneTarget = runRegexBatchSpy.mock.calls.length;
+
+    runRegexBatchSpy.mockClear();
+    await scanShellCommand(multiTargetCommand);
+    const callsForThreeTargets = runRegexBatchSpy.mock.calls.length;
+
+    expect(callsForOneTarget).toBe(callsForThreeTargets);
+  });
+
+  it('still reports the earliest blocked target, matching pre-fix ordering', async () => {
+    const result = await scanShellCommand(multiTargetCommand);
+    expect(result).toContain("writes to '/workspace/out/a.pem'");
+    expect(result).toContain('sensitive-file policy');
+  });
 });
 
 describe('scanShellCommand — sensitive-file policy applies to bash', () => {
