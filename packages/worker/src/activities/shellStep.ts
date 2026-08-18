@@ -224,7 +224,8 @@ async function finalizeWorkspaceVolume(
   volumeName: string,
   branch: string,
   commandSummary: string,
-  image: string
+  image: string,
+  token: string
 ): Promise<FinalizeResult> {
   const script = [
     'set -e',
@@ -239,17 +240,23 @@ async function finalizeWorkspaceVolume(
     'git rev-parse HEAD',
     'git diff --name-only HEAD~1 HEAD',
   ].join('\n');
-  const out = await runDocker([
-    'run',
-    '--rm',
-    '-v',
-    `${volumeName}:/workspace:rw`,
-    '--entrypoint',
-    'sh',
-    image,
-    '-c',
-    script,
-  ]);
+  // `git push` failures print the credential-embedded remote URL (the clone
+  // origin set by `cloneIntoVolume`) to stderr — pass the token through so
+  // `runDocker`'s catch redacts it before it ever reaches the caller.
+  const out = await runDocker(
+    [
+      'run',
+      '--rm',
+      '-v',
+      `${volumeName}:/workspace:rw`,
+      '--entrypoint',
+      'sh',
+      image,
+      '-c',
+      script,
+    ],
+    token
+  );
   if (out.includes('NO_CHANGES')) {
     return { filesChanged: [] };
   }
@@ -335,7 +342,8 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           volumeName,
           branch,
           input.command.slice(0, 80),
-          helperImage
+          helperImage,
+          meta.token
         );
       } catch (err) {
         // A push failure shouldn't mask a successful command run, but the
@@ -346,7 +354,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           (typeof e.stderr === 'string' && e.stderr) ||
           (typeof e.message === 'string' && e.message) ||
           String(err);
-        pushError = redactToken(raw).slice(0, 500);
+        pushError = redactToken(raw, meta.token).slice(0, 500);
       }
     }
 
@@ -375,6 +383,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       });
     }
 
+    const summary = passed
+      ? passSummary
+      : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`;
+
     return {
       artifactId: artifact?.id,
       exitCode: result.exitCode,
@@ -382,9 +394,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       passed,
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
-      summary: passed
-        ? passSummary
-        : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
+      // Defense in depth: every summary this activity returns is redacted
+      // here, not just the pushError branch above — so a future code path
+      // that forgets to thread the token through still can't leak it.
+      summary: redactToken(summary, meta.token),
     };
   } finally {
     await safeRunDocker(['volume', 'rm', '-f', volumeName]);
