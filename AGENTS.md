@@ -101,6 +101,9 @@ Top-level files that matter:
 - Use `import type` for type-only imports — **critical** for Temporal workflow files (V8 isolate)
 - Fastify plugin pattern (`fastify-plugin`) for all gateway extensions
 - Zod schemas for request validation via `fastify-type-provider-zod`
+- Boolean query params go through `booleanQueryParam()` (`gateway/src/lib/queryParams.ts`), never
+  `z.coerce.boolean()` — coercion is `Boolean(input)`, so the string `false` arrives as `true` and
+  the parameter silently means its opposite
 - Prisma for all DB access — raw SQL (`$queryRawUnsafe`) only for pgvector operations (embeddings)
 - Prefer explicit error handling over silent failures
 - **Biome** is the single source of truth for lint + format — config at root `biome.json` (single quotes, lineWidth 100, indent 2, organizeImports on). Run `yarn lint:fix` before committing.

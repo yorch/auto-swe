@@ -231,6 +231,16 @@ sequenceDiagram
     Worker->>DB: finalizeWorkflowRun (cost, tokens, org billing)
 ```
 
+**CI verdicts are matched to a commit, not just to a PR.** The `/webhooks/ci` handler only signals a
+run when the tracked pull request is awaiting a verdict *at the head the event describes*
+(`ciStatus = PENDING` at that `headSha`). That pairing is what stops a redelivered verdict for an
+older commit from resuming a run that has already moved on. `createOrUpdatePullRequest` arms it by
+resetting `ciStatus` whenever it moves the head, so a template that waits on `ciPipelineSignal`
+**must reach that wait through a `createOrUpdatePullRequest` step**. Every built-in template does.
+A hand-authored template that pushes by some other route and then waits on `ciPipelineSignal` gets
+its first verdict and silently ignores every later one, failing at the wait's own timeout rather
+than at the point of the mistake.
+
 **Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead: the planner
 agent decomposes the brief into per-repo subtasks, a dependency graph is built, child
 `RunnableWorkflow`s fan out in dependency order, and the parent reports
