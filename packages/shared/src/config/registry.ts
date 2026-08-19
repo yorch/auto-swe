@@ -1,0 +1,277 @@
+import { z } from 'zod';
+import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
+import type { SettingDefinition } from './types.js';
+
+/**
+ * The setting registry — one declaration per configurable knob.
+ *
+ * Every entry replaces a constant that used to be compiled into the worker, so
+ * `defaultValue` is always the value that constant held. An unconfigured
+ * deployment therefore behaves exactly as it did before the knob existed, and
+ * an operator can change it from the dashboard instead of shipping a release.
+ *
+ * Adding a knob: add a definition here. Storage, validation, the API contract,
+ * the admin form and the permission check all derive from it — there is no
+ * migration, no Zod body schema, no form field to write.
+ */
+
+/// Identity helper: preserves the value type `T` through the definition so
+/// `resolveSetting('channel.historyMessageLimit')` returns `number`, not
+/// `unknown`, without every call site restating the type.
+function defineSetting<T>(def: SettingDefinition<T>): SettingDefinition<T> {
+  return def;
+}
+
+const positiveInt = z.number().int().positive();
+const ratio = z.number().min(0).max(1);
+
+function parseIntEnv(raw: string): number | undefined {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export const SETTING_DEFINITIONS = {
+  // ── Channel assistant ──────────────────────────────────────────────────────
+  // The assistant's proactivity and context budgets. Every one of these was a
+  // module-scope constant in `worker/src/activities/channel*.ts`, which made
+  // "the bot is too chatty in this channel" a code change. They cascade to
+  // CHANNEL so one noisy channel can be tuned without touching the others.
+  //
+  // Where SlackChannel already has a nullable column for the same knob, that
+  // column still wins — these supply the default it falls back to, so a
+  // per-channel override set in the Slack admin page keeps its meaning.
+  'channel.historyMessageLimit': defineSetting({
+    defaultValue: 30,
+    description:
+      'How many recent channel messages the assistant reads for context on a reactive pass. Higher gives better answers on long threads and costs more input tokens per turn.',
+    group: 'channel',
+    key: 'channel.historyMessageLimit',
+    label: 'History window',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(200),
+    unit: 'messages',
+  }),
+  'channel.memoryContextItems': defineSetting({
+    defaultValue: 5,
+    description:
+      'How many semantic-memory items are pulled into an assistant turn. Raising it grounds replies in more past context at the cost of prompt size.',
+    group: 'channel',
+    key: 'channel.memoryContextItems',
+    label: 'Memory items per turn',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(50),
+    unit: 'items',
+  }),
+  'channel.memoryDedupThreshold': defineSetting({
+    defaultValue: 0.85,
+    description:
+      'Cosine similarity above which a new memory is treated as a duplicate of an existing one and dropped. Lower it to store fewer near-identical memories.',
+    group: 'channel',
+    key: 'channel.memoryDedupThreshold',
+    label: 'Memory dedup threshold',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: ratio,
+    unit: '0–1',
+  }),
+  'channel.passiveIngestLimit': defineSetting({
+    defaultValue: 50,
+    description:
+      'Maximum messages examined per passive-ingest sweep of a channel. Caps the cost of catching up after a quiet period.',
+    group: 'channel',
+    key: 'channel.passiveIngestLimit',
+    label: 'Passive ingest batch',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(500),
+    unit: 'messages',
+  }),
+  'channel.reactiveCooldownMinutes': defineSetting({
+    defaultValue: 10,
+    description:
+      'Minimum gap between unprompted interjections in one channel. The per-channel override on the Slack channel page wins over this when set.',
+    group: 'channel',
+    key: 'channel.reactiveCooldownMinutes',
+    label: 'Interjection cooldown',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10_080),
+    unit: 'minutes',
+  }),
+  'channel.reactiveLookbackMinutes': defineSetting({
+    defaultValue: 30,
+    description:
+      'How far back a reactive pass scans for conversation it has not evaluated yet. The per-channel override wins over this when set.',
+    group: 'channel',
+    key: 'channel.reactiveLookbackMinutes',
+    label: 'Interjection lookback',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10_080),
+    unit: 'minutes',
+  }),
+  'channel.threadContextMessages': defineSetting({
+    defaultValue: 15,
+    description:
+      'How many messages of an existing thread the assistant reads before replying in it.',
+    group: 'channel',
+    key: 'channel.threadContextMessages',
+    label: 'Thread context window',
+    overridableAt: ['CHANNEL', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(100),
+    unit: 'messages',
+  }),
+
+  // ── Semantic memory ────────────────────────────────────────────────────────
+  'memory.orgSimilarityThreshold': defineSetting({
+    defaultValue: 0.7,
+    description:
+      'Cosine similarity a memory from another channel must clear before it is surfaced as an organisation-wide signal. Raise it to flag less, lower it to flag more.',
+    group: 'memory',
+    key: 'memory.orgSimilarityThreshold',
+    label: 'Org signal threshold',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: ratio,
+    unit: '0–1',
+  }),
+
+  // ── Workflow interpreter ───────────────────────────────────────────────────
+  // These bound how a single run may expand. They are run-pinned: the
+  // interpreter runs inside the Temporal V8 isolate and cannot read the
+  // database, and a run that started under one transition ceiling must finish
+  // under the same one or its replay history stops matching its code.
+  'workflow.fanoutConcurrency': defineSetting({
+    defaultValue: 4,
+    description:
+      'Default number of fan-out branches executed in parallel when a node does not set its own concurrency. Raise it to finish wide fan-outs sooner, at the cost of more simultaneous workspaces.',
+    group: 'workflow',
+    key: 'workflow.fanoutConcurrency',
+    label: 'Fan-out concurrency',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: positiveInt.max(64),
+    unit: 'branches',
+  }),
+  'workflow.maxTransitions': defineSetting({
+    defaultValue: 500,
+    description:
+      'Hard ceiling on node transitions in one run — the backstop against a spec that loops forever. A run that hits it fails rather than burning budget indefinitely.',
+    group: 'workflow',
+    key: 'workflow.maxTransitions',
+    label: 'Max transitions per run',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: positiveInt.max(100_000),
+    unit: 'transitions',
+  }),
+
+  // ── Agent workspace ────────────────────────────────────────────────────────
+  'workspace.blockMetadata': defineSetting({
+    defaultValue: true,
+    description:
+      'Blackhole the cloud metadata IPs (AWS/GCP/Azure IMDS, ECS task metadata) inside every agent workspace. Leave this on unless it misbehaves on your Docker runtime — turning it off exposes instance credentials to agent-run code.',
+    envVar: 'WORKSPACE_BLOCK_METADATA',
+    group: 'workspace',
+    key: 'workspace.blockMetadata',
+    label: 'Block cloud metadata endpoints',
+    // A security control, so it is deliberately platform-wide and ADMIN-only:
+    // no team should be able to switch off metadata blocking for its own runs.
+    overridableAt: [],
+    parseEnv: (raw) => raw !== 'false',
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workspace.gitHelperImage': defineSetting({
+    defaultValue: 'alpine/git:latest',
+    description:
+      'Image used for the short-lived container that performs git operations for a shell step. Pin a digest here to stop tracking the upstream tag.',
+    group: 'workspace',
+    key: 'workspace.gitHelperImage',
+    label: 'Git helper image',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
+  }),
+  'workspace.maxConcurrentActivities': defineSetting({
+    defaultValue: 10,
+    description:
+      'Cap on Temporal activity tasks one worker runs at once. Most activities hold a Docker workspace, so raise it only if the Docker host can serve more in parallel. Takes effect when the worker restarts.',
+    envVar: 'WORKER_MAX_CONCURRENT_ACTIVITIES',
+    group: 'workspace',
+    key: 'workspace.maxConcurrentActivities',
+    label: 'Worker activity concurrency',
+    overridableAt: [],
+    parseEnv: parseIntEnv,
+    requiredRole: 'ADMIN',
+    restartRequired: true,
+    runPinned: false,
+    schema: positiveInt.max(1000),
+    unit: 'activities',
+  }),
+  'workspace.metadataBlockImage': defineSetting({
+    defaultValue: 'alpine:3.20',
+    description:
+      'Image used for the privileged sidecar that installs the metadata blackhole routes. It needs `ip` from busybox and nothing else.',
+    group: 'workspace',
+    key: 'workspace.metadataBlockImage',
+    label: 'Metadata blocker image',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
+  }),
+} as const satisfies Record<string, SettingDefinition<unknown>>;
+
+/// Every registry key. Used to type `resolveSetting` and to validate an
+/// incoming key at the API boundary.
+export type SettingKey = keyof typeof SETTING_DEFINITIONS;
+
+/// The value type a given key resolves to.
+export type SettingValue<K extends SettingKey> =
+  (typeof SETTING_DEFINITIONS)[K] extends SettingDefinition<infer T> ? T : never;
+
+export const SETTING_KEYS = Object.keys(SETTING_DEFINITIONS) as SettingKey[];
+
+export function isSettingKey(key: string): key is SettingKey {
+  return Object.hasOwn(SETTING_DEFINITIONS, key);
+}
+
+export function getSettingDefinition<K extends SettingKey>(
+  key: K
+): (typeof SETTING_DEFINITIONS)[K] {
+  return SETTING_DEFINITIONS[key];
+}
+
+/// The keys snapshotted onto a run at start. Everything else re-resolves live.
+export const RUN_PINNED_SETTING_KEYS = SETTING_KEYS.filter(
+  (key) => SETTING_DEFINITIONS[key].runPinned
+);
