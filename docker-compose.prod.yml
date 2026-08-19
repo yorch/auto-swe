@@ -3,11 +3,12 @@
 #
 # SECURITY (SEC-4): this overlay refuses to start on the dev-default
 # credentials baked into docker-compose.infra.yml. POSTGRES_PASSWORD,
-# MINIO_ROOT_USER, and MINIO_ROOT_PASSWORD are mandatory here (`:?`); the same
-# variables feed the postgres/temporal/minio services in the infra file, so
-# setting them in `.env` secures the whole stack. Set DATABASE_URL_OVERRIDE to
-# use an external Postgres instead (POSTGRES_PASSWORD is then not required by
-# the gateway/worker, but still set it if the bundled postgres service runs).
+# ARTIFACT_S3_ACCESS_KEY, and ARTIFACT_S3_SECRET_KEY are mandatory here (`:?`); the
+# same variables feed the postgres/garage services in the infra file, so setting
+# them in `.env` secures the whole stack. Set DATABASE_URL_OVERRIDE to use an
+# external Postgres instead (POSTGRES_PASSWORD is then not required by the
+# gateway/worker, but still set it if the bundled postgres service runs), and
+# see `.env.example` for swapping the object store to a hosted S3 provider.
 services:
   gateway:
     image: ${APP_IMAGE_GATEWAY:-ghcr.io/yorch/auto-swe/gateway:main}
@@ -38,13 +39,22 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
-      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://minio:9000}
+      # Defaults to the bundled Garage service. To use hosted S3 instead
+      # (AWS/R2/B2/…), set these three plus the credentials below in `.env` and
+      # clear COMPOSE_PROFILES so the bundled store is not started — no compose
+      # file needs editing. ARTIFACT_S3_FORCE_PATH_STYLE must stay true for
+      # Garage and MinIO-likes; AWS S3 and R2 want it false.
+      ARTIFACT_S3_ENDPOINT: ${ARTIFACT_S3_ENDPOINT:-http://garage:3900}
       ARTIFACT_S3_FORCE_PATH_STYLE: ${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
-      # No minioadmin fallback in production — these also configure the MinIO
-      # server itself in docker-compose.infra.yml, so requiring them here
-      # guarantees the object store never runs on default credentials.
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production — do not use the minioadmin default}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production — do not use the minioadmin default}
+      ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-us-east-1}
+      # No dev fallback in production. When the bundled store is in use these
+      # same values provision its access key (see docker-compose.infra.yml), so
+      # requiring them here guarantees it never runs on the dev placeholder.
+      # When a hosted provider is in use they are that provider's credentials.
+      # Named ARTIFACT_S3_* on the outside so an ambient AWS_ACCESS_KEY_ID in the
+      # deploying shell cannot silently take precedence over `.env`.
+      AWS_ACCESS_KEY_ID: ${ARTIFACT_S3_ACCESS_KEY:?ARTIFACT_S3_ACCESS_KEY is required in production — do not use the local dev default}
+      AWS_SECRET_ACCESS_KEY: ${ARTIFACT_S3_SECRET_KEY:?ARTIFACT_S3_SECRET_KEY is required in production — do not use the local dev default}
     group_add:
       - "${DOCKER_GID:-999}"
     volumes:
@@ -54,8 +64,12 @@ services:
         condition: service_healthy
       temporal:
         condition: service_healthy
-      minio:
+      # `required: false` so a deployment pointing ARTIFACT_S3_ENDPOINT at a
+      # hosted provider can leave the `objectstore` profile off; the worker then
+      # starts without it instead of failing on a missing dependency.
+      garage:
         condition: service_healthy
+        required: false
 
   web:
     image: ${APP_IMAGE_WEB:-ghcr.io/yorch/auto-swe/web:main}

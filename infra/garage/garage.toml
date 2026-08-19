@@ -1,0 +1,37 @@
+# Garage configuration for the bundled single-node object store.
+#
+# Mounted read-only into the `garage` service in docker-compose.infra.yml. The
+# server is started with `--single-node --default-bucket`, which provisions the
+# cluster layout, the S3 access key, and the artifact bucket on first boot from
+# GARAGE_DEFAULT_ACCESS_KEY / GARAGE_DEFAULT_SECRET_KEY / GARAGE_DEFAULT_BUCKET.
+# Re-running against existing data is a no-op, so there is no bucket-create
+# sidecar to keep in step with it.
+#
+# `rpc_secret` is deliberately absent: it is a secret, this file is committed,
+# and Garage reads GARAGE_RPC_SECRET from the environment instead. Garage also
+# refuses to start on a world-readable secrets file, which an in-repo config
+# would be.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+
+# sqlite rather than the default lmdb: lmdb sizes a large sparse memory map that
+# some bind-mounted filesystems (and Docker Desktop's virtiofs) handle poorly.
+# At this workload — artifact blobs written once and read back — the metadata
+# engine is not the bottleneck.
+db_engine = "sqlite"
+
+# One node, one copy. Durability here comes from backing up ./data/garage, the
+# same as it does for ./data/postgres.
+replication_factor = 1
+
+# Bound to 0.0.0.0 rather than [::] — the IPv6 wildcard fails outright on hosts
+# with IPv6 disabled, which includes many CI runners and minimal containers.
+rpc_bind_addr = "0.0.0.0:3901"
+
+[s3_api]
+# Only path-style addressing is used (the worker sets forcePathStyle), but
+# root_domain has to be set for Garage to parse vhost-style requests at all.
+s3_region     = "us-east-1"
+api_bind_addr = "0.0.0.0:3900"
+root_domain   = ".s3.garage.localhost"
