@@ -27,6 +27,7 @@ function pageTitle(pathname: string): string {
     ['/admin/model-config', 'Model Config'],
     ['/admin/integrations', 'Integrations'],
     ['/admin/scanner', 'Scanner'],
+    ['/admin/settings', 'Settings'],
     ['/admin/workflow', 'Workflow Defaults'],
     ['/admin/schedules', 'Schedules'],
     ['/admin/sessions', 'Sessions'],
