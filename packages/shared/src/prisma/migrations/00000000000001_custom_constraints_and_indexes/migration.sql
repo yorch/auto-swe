@@ -154,6 +154,84 @@ ALTER TABLE "knowledge_base_config"
 ALTER TABLE "figma_config"
     ADD CONSTRAINT "figma_config_singleton" CHECK ("id" = 'default');
 
+-- ── Config registry: scope discriminator + per-scope uniqueness ──────────────
+-- Same shape as `agents` above: exactly the id column for the row's own scope
+-- may be set, so a TEAM override can never also carry an org id.
+ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_scope_keys_check" CHECK (
+    ("scope" = 'GLOBAL'            AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
+ OR ("scope" = 'ORGANIZATION'      AND "org_id" IS NOT NULL AND "team_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
+ OR ("scope" = 'TEAM'              AND "team_id" IS NOT NULL AND "org_id" IS NULL AND "channel_id" IS NULL AND "workflow_template_id" IS NULL)
+ OR ("scope" = 'CHANNEL'           AND "channel_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "workflow_template_id" IS NULL)
+ OR ("scope" = 'WORKFLOW_TEMPLATE' AND "workflow_template_id" IS NOT NULL AND "team_id" IS NULL AND "org_id" IS NULL AND "channel_id" IS NULL)
+);
+
+-- One override per key per scope instance. Partial per scope because Prisma
+-- cannot express `WHERE scope = …` in a unique index — the same reason writes
+-- use findFirst-then-create instead of upsert.
+CREATE UNIQUE INDEX "config_settings_global_uidx"
+    ON "config_settings" ("key")
+    WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX "config_settings_org_uidx"
+    ON "config_settings" ("key", "org_id")
+    WHERE "scope" = 'ORGANIZATION';
+
+CREATE UNIQUE INDEX "config_settings_team_uidx"
+    ON "config_settings" ("key", "team_id")
+    WHERE "scope" = 'TEAM';
+
+CREATE UNIQUE INDEX "config_settings_channel_uidx"
+    ON "config_settings" ("key", "channel_id")
+    WHERE "scope" = 'CHANNEL';
+
+CREATE UNIQUE INDEX "config_settings_template_uidx"
+    ON "config_settings" ("key", "workflow_template_id")
+    WHERE "scope" = 'WORKFLOW_TEMPLATE';
+
+-- ── Config permissions: one grantee, tenant-level scopes only ────────────────
+-- A grant names exactly one grantee: a specific user, or every holder of a role.
+ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_grantee_check" CHECK (
+    ("user_id" IS NOT NULL AND "role" IS NULL)
+ OR ("user_id" IS NULL AND "role" IS NOT NULL)
+);
+
+-- Grants are only meaningful down to a tenant boundary: a CHANNEL- or
+-- TEMPLATE-scoped grant would be narrower than the thing an operator actually
+-- administers, so authority is expressed at GLOBAL, ORGANIZATION, or TEAM and
+-- covers everything beneath it. `ConfigScope` also permits CHANNEL and
+-- WORKFLOW_TEMPLATE, so a row carrying either fails every branch and is
+-- rejected.
+ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_scope_keys_check" CHECK (
+    ("scope" = 'GLOBAL'       AND "team_id" IS NULL AND "org_id" IS NULL)
+ OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
+ OR ("scope" = 'TEAM'         AND "team_id" IS NOT NULL AND "org_id" IS NULL)
+);
+
+-- One grant per (pattern, grantee, scope instance) so re-granting is idempotent.
+CREATE UNIQUE INDEX "config_permissions_user_global_uidx"
+    ON "config_permissions" ("key_pattern", "user_id")
+    WHERE "scope" = 'GLOBAL' AND "user_id" IS NOT NULL;
+
+CREATE UNIQUE INDEX "config_permissions_role_global_uidx"
+    ON "config_permissions" ("key_pattern", "role")
+    WHERE "scope" = 'GLOBAL' AND "role" IS NOT NULL;
+
+CREATE UNIQUE INDEX "config_permissions_user_org_uidx"
+    ON "config_permissions" ("key_pattern", "user_id", "org_id")
+    WHERE "scope" = 'ORGANIZATION' AND "user_id" IS NOT NULL;
+
+CREATE UNIQUE INDEX "config_permissions_role_org_uidx"
+    ON "config_permissions" ("key_pattern", "role", "org_id")
+    WHERE "scope" = 'ORGANIZATION' AND "role" IS NOT NULL;
+
+CREATE UNIQUE INDEX "config_permissions_user_team_uidx"
+    ON "config_permissions" ("key_pattern", "user_id", "team_id")
+    WHERE "scope" = 'TEAM' AND "user_id" IS NOT NULL;
+
+CREATE UNIQUE INDEX "config_permissions_role_team_uidx"
+    ON "config_permissions" ("key_pattern", "role", "team_id")
+    WHERE "scope" = 'TEAM' AND "role" IS NOT NULL;
+
 -- ── NOT NULL on array columns ────────────────────────────────────────────────
 -- Prisma 7's generator emits `String[]` columns as nullable at the DB level
 -- even though the client treats them as always-non-null — reinstate the

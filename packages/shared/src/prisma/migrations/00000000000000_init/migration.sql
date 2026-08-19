@@ -469,6 +469,7 @@ CREATE TABLE "workflow_runs" (
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
+    "pinned_settings" JSONB,
     "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "baseline_sha" TEXT,
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
@@ -907,6 +908,39 @@ CREATE TABLE "figma_config" (
 );
 
 -- CreateTable
+CREATE TABLE "config_settings" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "key" TEXT NOT NULL,
+    "scope" "ConfigScope" NOT NULL,
+    "team_id" UUID,
+    "org_id" UUID,
+    "channel_id" UUID,
+    "workflow_template_id" UUID,
+    "value" JSONB NOT NULL,
+    "updated_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "config_settings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "config_permissions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "key_pattern" TEXT NOT NULL,
+    "user_id" UUID,
+    "role" "Role",
+    "scope" "ConfigScope" NOT NULL,
+    "team_id" UUID,
+    "org_id" UUID,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "config_permissions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "config_audit_log" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "entity_type" TEXT NOT NULL,
@@ -1268,6 +1302,45 @@ CREATE INDEX "provider_credentials_team_id_idx" ON "provider_credentials"("team_
 CREATE INDEX "provider_credentials_org_id_idx" ON "provider_credentials"("org_id");
 
 -- CreateIndex
+CREATE INDEX "config_settings_key_idx" ON "config_settings"("key");
+
+-- CreateIndex
+CREATE INDEX "config_settings_scope_team_id_idx" ON "config_settings"("scope", "team_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_scope_org_id_idx" ON "config_settings"("scope", "org_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_scope_channel_id_idx" ON "config_settings"("scope", "channel_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_scope_workflow_template_id_idx" ON "config_settings"("scope", "workflow_template_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_team_id_idx" ON "config_settings"("team_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_org_id_idx" ON "config_settings"("org_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_channel_id_idx" ON "config_settings"("channel_id");
+
+-- CreateIndex
+CREATE INDEX "config_settings_workflow_template_id_idx" ON "config_settings"("workflow_template_id");
+
+-- CreateIndex
+CREATE INDEX "config_permissions_user_id_idx" ON "config_permissions"("user_id");
+
+-- CreateIndex
+CREATE INDEX "config_permissions_role_idx" ON "config_permissions"("role");
+
+-- CreateIndex
+CREATE INDEX "config_permissions_team_id_idx" ON "config_permissions"("team_id");
+
+-- CreateIndex
+CREATE INDEX "config_permissions_org_id_idx" ON "config_permissions"("org_id");
+
+-- CreateIndex
 CREATE INDEX "config_audit_log_entity_type_entity_id_idx" ON "config_audit_log"("entity_type", "entity_id");
 
 -- CreateIndex
@@ -1479,6 +1552,27 @@ ALTER TABLE "provider_credentials" ADD CONSTRAINT "provider_credentials_org_id_f
 
 -- AddForeignKey
 ALTER TABLE "embedding_configs" ADD CONSTRAINT "embedding_configs_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "provider_credentials"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "slack_channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_settings" ADD CONSTRAINT "config_settings_workflow_template_id_fkey" FOREIGN KEY ("workflow_template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "config_permissions" ADD CONSTRAINT "config_permissions_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "skills" ADD CONSTRAINT "skills_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;

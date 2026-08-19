@@ -37,9 +37,18 @@ latency climbs.
 2. **Read every generated migration before committing it.** If it contains a `DROP INDEX`,
    `DROP CONSTRAINT`, or `ALTER … DROP NOT NULL` you did not intend, delete those statements. The
    generator does not know the DDL it is dropping was deliberate.
-3. **New non-expressible DDL goes in its own hand-written migration**, appended after the existing
-   two — never by editing `00000000000001`, which is already applied everywhere.
-4. **Embeddings are fixed at 1536 dimensions.** `packages/worker/src/lib/embeddings.ts` throws if a
+3. **Non-expressible DDL belongs in `00000000000001`, not in the baseline.** The split is by *kind*
+   of DDL, not by when it was written. While the schema is undeployed, add to that file and
+   regenerate the baseline (`prisma migrate diff --from-empty --to-schema src/prisma/schema.prisma
+   --script`) rather than appending a third migration — two migrations, one generated and one
+   hand-written, is the shape to keep. **Once the schema is deployed anywhere this inverts:**
+   `00000000000001` is then applied in the wild and must not be edited, so new DDL of either kind
+   appends as its own migration.
+4. **After regenerating the baseline, prove the result is unchanged.** Apply the old chain and the
+   new one to two fresh databases and compare `information_schema.columns`, `pg_constraint` and
+   `pg_indexes` — a raw `pg_dump` diff also reports physical column ordering, which is not a schema
+   difference and will bury a real one.
+5. **Embeddings are fixed at 1536 dimensions.** `packages/worker/src/lib/embeddings.ts` throws if a
    model returns a different shape; changing the dimension means a new migration plus a re-embed of
    every existing row.
 
