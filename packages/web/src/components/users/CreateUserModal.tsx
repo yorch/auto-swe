@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { type CreatedUser, useCreateUser } from '@/hooks/useWorkflows';
+import { type CreatedUser, useCreateUser } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';

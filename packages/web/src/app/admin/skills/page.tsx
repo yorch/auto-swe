@@ -1,6 +1,5 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -11,89 +10,18 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { api } from '@/lib/api';
+import {
+  type Skill,
+  useCreateSkill,
+  useDeleteSkill,
+  useSkillEffectiveness,
+  useSkills,
+  useUpdateSkill,
+} from '@/hooks/useSkills';
 import { errMsg } from '@/lib/errors';
-
-interface Skill {
-  id: string;
-  name: string;
-  description: string | null;
-  promptText: string;
-  origin: string | null;
-  isBuiltIn: boolean;
-  isVerified: boolean;
-  isActive: boolean;
-  usedByCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function useSkills() {
-  return useQuery({
-    queryFn: () => api.get<{ data: Skill[] }>('/api/v1/admin/skills').then((r) => r.data),
-    queryKey: ['skills', 'all'],
-  });
-}
-
-interface SkillEffectiveness {
-  windowDays: number;
-  totalRuns: number;
-  baselineSuccessRate: number | null;
-  caveat: string;
-  perSkill: Array<{
-    name: string;
-    runs: number;
-    successRate: number | null;
-    avgCostUsd: number | null;
-  }>;
-}
-
-function useSkillEffectiveness() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: SkillEffectiveness }>('/api/v1/admin/skills/effectiveness')
-        .then((r) => r.data),
-    queryKey: ['skills', 'effectiveness'],
-  });
-}
 
 function pct(v: number | null): string {
   return v == null ? '—' : `${(v * 100).toFixed(0)}%`;
-}
-
-function useCreateSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { name: string; description?: string; promptText: string }) =>
-      api.post<{ data: Skill }>('/api/v1/admin/skills', body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
-}
-
-function useUpdateSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...body
-    }: {
-      id: string;
-      name?: string;
-      description?: string;
-      promptText?: string;
-      isActive?: boolean;
-    }) => api.put<{ data: Skill }>(`/api/v1/admin/skills/${id}`, body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
-}
-
-function useDeleteSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/skills/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
-  });
 }
 
 function OriginBadge({ origin }: { origin: string | null }) {

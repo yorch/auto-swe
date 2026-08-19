@@ -5,7 +5,7 @@ import { HumanStepCard } from '@/components/inbox/HumanStepCard';
 import { Button } from '@/components/ui/Button';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { TabBar } from '@/components/ui/TabBar';
-import { type InboxFilter, useInbox } from '@/hooks/useWorkflows';
+import { type InboxFilter, useInbox } from '@/hooks/useInbox';
 
 const TABS: { id: InboxFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },

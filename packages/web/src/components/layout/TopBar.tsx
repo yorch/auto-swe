@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
-import { useInbox, useTeams } from '@/hooks/useWorkflows';
+import { useInbox } from '@/hooks/useInbox';
+import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 

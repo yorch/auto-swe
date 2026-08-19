@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { useCreateTeam, useUpdateTeam } from '@/hooks/useWorkflows';
+import { useCreateTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 
 type Mode =

@@ -24,7 +24,7 @@ import {
   useUpdateWorkflowTemplate,
   useWorkflowGenerationJob,
   useWorkflowTemplates,
-} from '@/hooks/useWorkflows';
+} from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';

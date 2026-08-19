@@ -5,7 +5,8 @@ import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useAddTeamMember, useEligibleUsers } from '@/hooks/useWorkflows';
+import { useAddTeamMember } from '@/hooks/useTeams';
+import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';

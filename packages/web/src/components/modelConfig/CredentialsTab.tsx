@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type ProviderCredentialRow,
   useAdminCreateCredential,
@@ -30,6 +32,7 @@ export function CredentialsTab() {
   const { data: credentials, isLoading } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<ProviderCredentialRow | null>(null);
   const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
   // Per-row pending flag — `useMutation` returns a single `isPending` shared
   // across all rows, so we track our own per-id state.
@@ -124,20 +127,7 @@ export function CredentialsTab() {
                 >
                   Edit
                 </Button>
-                <Button
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `Delete ${c.provider} credential? Roles pinning it will fall back to the cascade.`
-                      )
-                    ) {
-                      return;
-                    }
-                    del.mutate(c.id);
-                  }}
-                  size="sm"
-                  variant="danger"
-                >
+                <Button onClick={() => setDeleting(c)} size="sm" variant="danger">
                   Delete
                 </Button>
               </td>
@@ -163,6 +153,20 @@ export function CredentialsTab() {
           }}
         />
       )}
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Delete ${deleting?.provider} credential? Roles pinning it will fall back to the cascade.`}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          if (deleting) {
+            del.mutate(deleting.id);
+          }
+        }}
+        open={deleting !== null}
+        title="Delete provider credential"
+      />
     </Card>
   );
 }
@@ -190,33 +194,29 @@ function CredentialModal({
   const [teamId, setTeamId] = useState(existing?.teamId ?? '');
   const [apiBase, setApiBase] = useState(existing?.apiBase ?? '');
   const [apiKey, setApiKey] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const { error, submit } = useIntegrationConfigForm();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    try {
+    void submit(() => {
       if (existing) {
         // Update: only apiBase + apiKey are editable. When the user clears
         // apiBase, send `null` explicitly so the gateway nulls the column —
         // omitting the key entirely would leave the stale URL in place.
         const apiBaseChanged = apiBase !== (existing.apiBase ?? '');
-        await onSave({
+        return onSave({
           ...(apiBaseChanged && { apiBase: apiBase || null }),
           ...(apiKey && { apiKey }),
         });
-      } else {
-        await onSave({
-          apiKey,
-          provider,
-          scope,
-          ...(scope === 'TEAM' && { teamId }),
-          ...(apiBase && { apiBase }),
-        });
       }
-    } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
-    }
+      return onSave({
+        apiKey,
+        provider,
+        scope,
+        ...(scope === 'TEAM' && { teamId }),
+        ...(apiBase && { apiBase }),
+      });
+    });
   };
 
   return (

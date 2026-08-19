@@ -19,12 +19,8 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import {
-  useCancelWorkflowRun,
-  useInbox,
-  useRetryWorkRequest,
-  useWorkflowRun,
-} from '@/hooks/useWorkflows';
+import { useInbox } from '@/hooks/useInbox';
+import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';

@@ -6,7 +6,7 @@ import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { useTeams } from '@/hooks/useWorkflows';
+import { useTeams } from '@/hooks/useTeams';
 import { useAuthStore } from '@/stores/authStore';
 
 export default function TeamsPage() {

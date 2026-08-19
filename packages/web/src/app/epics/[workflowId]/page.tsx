@@ -5,7 +5,7 @@ import { use, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useEpic } from '@/hooks/useWorkflows';
+import { useEpic } from '@/hooks/useEpics';
 import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 

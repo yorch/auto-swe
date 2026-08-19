@@ -15,7 +15,8 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useInbox } from '@/hooks/useInbox';
-import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useWorkflows } from '@/hooks/useRuns';
 import {
   groupWorkflowsByDate,
   groupWorkflowsByRepo,

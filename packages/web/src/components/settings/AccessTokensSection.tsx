@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import {
@@ -10,7 +11,7 @@ import {
   useCreatePat,
   usePersonalAccessTokens,
   useRevokePat,
-} from '@/hooks/useWorkflows';
+} from '@/hooks/usePats';
 import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -25,6 +26,7 @@ export function AccessTokensSection() {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<PatCreated | null>(null);
   const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState<{ id: string; name: string } | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -55,13 +57,6 @@ export function AccessTokensSection() {
     } catch {
       // clipboard unavailable — user can select manually
     }
-  }
-
-  function handleRevoke(id: string, label: string) {
-    if (!window.confirm(`Revoke "${label}"? Anything using this token will stop working.`)) {
-      return;
-    }
-    revoke.mutate(id);
   }
 
   return (
@@ -110,7 +105,11 @@ export function AccessTokensSection() {
                     </div>
                   </div>
                   {!revoked && (
-                    <Button onClick={() => handleRevoke(t.id, t.name)} size="sm" variant="danger">
+                    <Button
+                      onClick={() => setRevoking({ id: t.id, name: t.name })}
+                      size="sm"
+                      variant="danger"
+                    >
                       Revoke
                     </Button>
                   )}
@@ -184,6 +183,20 @@ export function AccessTokensSection() {
           </div>
         )}
       </Modal>
+
+      <ConfirmModal
+        confirmLabel="Revoke"
+        dangerous
+        message={`Revoke "${revoking?.name}"? Anything using this token will stop working.`}
+        onClose={() => setRevoking(null)}
+        onConfirm={() => {
+          if (revoking) {
+            revoke.mutate(revoking.id);
+          }
+        }}
+        open={revoking !== null}
+        title="Revoke personal access token"
+      />
     </>
   );
 }

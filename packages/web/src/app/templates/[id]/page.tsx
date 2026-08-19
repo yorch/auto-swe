@@ -38,7 +38,7 @@ import {
   useWorkflowTemplate,
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
-} from '@/hooks/useWorkflows';
+} from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';

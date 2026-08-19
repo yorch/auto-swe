@@ -9,7 +9,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { TabBar } from '@/components/ui/TabBar';
-import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useWorkflows';
+import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useTemplates';
 import { cn, formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 interface PageProps {

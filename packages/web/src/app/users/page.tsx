@@ -9,7 +9,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Th } from '@/components/ui/Th';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
-import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useWorkflows';
+import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 

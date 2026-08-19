@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useRepositories, useWorkflows } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useWorkflows } from '@/hooks/useRuns';
 import { formatCost, formatRelativeTime } from '@/lib/utils';
 
 export default function WorkflowsPage() {

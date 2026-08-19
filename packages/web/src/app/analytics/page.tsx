@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
-import { useGlobalAnalytics } from '@/hooks/useWorkflows';
+import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { formatPercent } from '@/lib/utils';
 
 const WINDOWS = [

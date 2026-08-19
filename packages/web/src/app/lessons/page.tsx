@@ -7,7 +7,8 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
-import { useLessonSearch, useLessons, useRepositories } from '@/hooks/useWorkflows';
+import { useLessonSearch, useLessons } from '@/hooks/useLessons';
+import { useRepositories } from '@/hooks/useRepositories';
 import { groupLessonsByDate, groupLessonsByType } from '@/lib/chartUtils';
 import { formatDate } from '@/lib/utils';
 

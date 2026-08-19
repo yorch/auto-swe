@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useInbox } from '@/hooks/useWorkflows';
+import { useInbox } from '@/hooks/useInbox';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 

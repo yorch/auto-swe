@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { SparkleIcon } from '@/components/ui/icons';
 import { Modal } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Textarea';
-import { useRefineWorkflowTemplate } from '@/hooks/useWorkflows';
+import { useRefineWorkflowTemplate } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 
 type ChatMessage = {

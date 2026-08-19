@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { useCreateWorkRequest, useRepositories } from '@/hooks/useWorkflows';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useCreateWorkRequest } from '@/hooks/useRuns';
 import { errMsg } from '@/lib/errors';
 
 type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';

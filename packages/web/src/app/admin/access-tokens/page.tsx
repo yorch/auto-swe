@@ -7,7 +7,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Th } from '@/components/ui/Th';
-import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useWorkflows';
+import { useAdminPruneShellAudit, useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
 import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
 

@@ -5,8 +5,7 @@ import { use } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useRunsForWorkRequest } from '@/hooks/useRuns';
-import { useWorkflow } from '@/hooks/useWorkflows';
+import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
 import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {

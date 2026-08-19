@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useWorkflows';
+import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 
 export function ShellAllowlistEditor({ teamId }: { teamId: string }) {

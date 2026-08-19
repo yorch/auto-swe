@@ -7,7 +7,8 @@ import { Card } from '@/components/ui/Card';
 import { Pagination } from '@/components/ui/Pagination';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useAllWorkflowRuns, useWorkflowTemplates } from '@/hooks/useWorkflows';
+import { useAllWorkflowRuns } from '@/hooks/useRuns';
+import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { formatRelativeTime } from '@/lib/utils';
 
 const PAGE_SIZE = 50;

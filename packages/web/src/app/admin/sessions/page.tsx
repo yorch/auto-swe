@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Th } from '@/components/ui/Th';
-import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useWorkflows';
+import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function AdminSessionsPage() {

@@ -14,8 +14,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
-import { useUpdateTeam } from '@/hooks/useTeams';
-import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useWorkflows';
+import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
 

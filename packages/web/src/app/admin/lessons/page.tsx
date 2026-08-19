@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
@@ -69,6 +70,7 @@ export default function AdminLessonsPage() {
   const deleteLesson = useDeleteLesson();
 
   const [triggeringAll, setTriggeringAll] = useState(false);
+  const [deleting, setDeleting] = useState<{ id: string; summary: string } | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
 
   const handleTriggerAll = async () => {
@@ -87,10 +89,6 @@ export default function AdminLessonsPage() {
   const handleTriggerRepo = async (repoId: string) => {
     await triggerRepoConsolidation(repoId);
     void refetchStats();
-  };
-
-  const handleDelete = async (id: string) => {
-    await deleteLesson.mutateAsync(id);
   };
 
   const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
@@ -232,7 +230,7 @@ export default function AdminLessonsPage() {
                 </div>
                 <button
                   className="shrink-0 font-mono text-[10px] text-paper-700 hover:text-brick-400"
-                  onClick={() => handleDelete(lesson.id)}
+                  onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
                   type="button"
                 >
                   delete
@@ -242,6 +240,20 @@ export default function AdminLessonsPage() {
           </div>
         )}
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Delete "${deleting?.summary}"? This cannot be undone.`}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          if (deleting) {
+            deleteLesson.mutate(deleting.id);
+          }
+        }}
+        open={deleting !== null}
+        title="Delete lesson"
+      />
     </div>
   );
 }
