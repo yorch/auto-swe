@@ -50,8 +50,6 @@ export interface LayoutResult {
 
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 88;
-export const RANK_X_SPACING = 240;
-export const NODE_Y_SPACING = 80;
 
 function collectEdges(node: Node, id: string): LayoutEdge[] {
   const edges: LayoutEdge[] = [];
@@ -172,72 +170,4 @@ export function layoutSpec(spec: WorkflowSpec): LayoutResult {
   };
 }
 
-export function nodeCategoryColor(node: Node): { fill: string; stroke: string; text: string } {
-  switch (node.type) {
-    case 'step':
-      return { fill: '#dbeafe', stroke: '#2563eb', text: '#1e3a8a' };
-    case 'agent':
-      // Indigo to distinguish the declarative agent node from generic steps.
-      return { fill: '#e0e7ff', stroke: '#4f46e5', text: '#312e81' };
-    case 'mcp':
-      // Cyan/teal for the external MCP tool-call node.
-      return { fill: '#cffafe', stroke: '#0e7490', text: '#164e63' };
-    case 'eval':
-      // Green for the eval/scoring node.
-      return { fill: '#dcfce7', stroke: '#15803d', text: '#14532d' };
-    case 'set':
-      return { fill: '#fef3c7', stroke: '#d97706', text: '#78350f' };
-    case 'cond':
-      return { fill: '#ede9fe', stroke: '#7c3aed', text: '#4c1d95' };
-    case 'signal':
-      return { fill: '#cffafe', stroke: '#0891b2', text: '#155e75' };
-    case 'fanOut':
-      return { fill: '#dcfce7', stroke: '#16a34a', text: '#14532d' };
-    case 'shell':
-    case 'containerStep':
-      // Distinct red-orange to signal the elevated-permissions step type at a glance.
-      return { fill: '#ffe4e6', stroke: '#e11d48', text: '#881337' };
-    case 'terminate':
-      return { fill: '#fee2e2', stroke: '#dc2626', text: '#7f1d1d' };
-    case 'humanApproval':
-    case 'humanDecision':
-    case 'humanInput':
-    case 'humanReview':
-      return { fill: '#fef9c3', stroke: '#ca8a04', text: '#713f12' };
-  }
-}
-
 export type DiffKind = 'added' | 'removed' | 'changed';
-
-export function diffStrokeColor(kind: DiffKind | undefined): string | null {
-  switch (kind) {
-    case 'added':
-      return '#16a34a';
-    case 'removed':
-      return '#dc2626';
-    case 'changed':
-      return '#d97706';
-    default:
-      return null;
-  }
-}
-
-export function statusFill(status: string | undefined): string | undefined {
-  if (!status) {
-    return undefined;
-  }
-  switch (status) {
-    case 'RUNNING':
-      return '#3b82f6';
-    case 'PASSED':
-      return '#16a34a';
-    case 'FAILED':
-      return '#dc2626';
-    case 'SKIPPED':
-      return '#9ca3af';
-    case 'PENDING':
-      return '#a78bfa';
-    default:
-      return undefined;
-  }
-}
