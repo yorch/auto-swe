@@ -2,6 +2,7 @@
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
 import { WorkflowsByRepoChart } from '@/components/charts/WorkflowsByRepoChart';
@@ -75,6 +76,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { data: workflows, isLoading } = useWorkflows();
   const { data: repos, isLoading: reposLoading } = useRepositories();
   const { data: inboxSteps } = useInbox();
@@ -119,11 +121,7 @@ export default function DashboardPage() {
         <PageHeader
           actions={
             <div className="flex items-center gap-2">
-              <Button
-                onClick={() => window.location.assign('/templates')}
-                size="sm"
-                variant="secondary"
-              >
+              <Button onClick={() => router.push('/templates')} size="sm" variant="secondary">
                 Browse workflows
               </Button>
               <Button

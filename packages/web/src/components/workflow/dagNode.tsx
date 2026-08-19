@@ -34,10 +34,10 @@ export interface DagNodeData {
 }
 
 const CATEGORY_RING: Record<SpecNode['type'], string> = {
-  agent: 'border-l-indigo-400',
+  agent: 'border-l-ember-300',
   cond: 'border-l-violet-400',
   containerStep: 'border-l-brick-400',
-  eval: 'border-l-moss-500',
+  eval: 'border-l-moss-400',
   fanOut: 'border-l-moss-400',
   humanApproval: 'border-l-amber-500',
   humanDecision: 'border-l-amber-500',

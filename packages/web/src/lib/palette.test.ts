@@ -70,7 +70,11 @@ describe('design tokens are the only colour scale in use', () => {
   it('no component uses a default Tailwind colour scale', () => {
     const root = path.resolve(__dirname, '..');
     const files = globSync('**/*.tsx', { cwd: root }).filter((rel) => !rel.endsWith('.test.tsx'));
-    const pattern = new RegExp(`(?:text|bg|border|from|to|via)-(?:${scales.join('|')})-\\d{2,3}`);
+    // Directional and side variants count: `border-l-indigo-400` slipped past
+    // an earlier version of this guard that only matched the bare prefix.
+    const pattern = new RegExp(
+      `(?:text|bg|border|from|to|via)(?:-[a-z])?-(?:${scales.join('|')})-\\d{2,3}`
+    );
 
     const offenders = files
       .map((rel) => ({

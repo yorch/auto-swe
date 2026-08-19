@@ -21,6 +21,16 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return { error, hasError: true };
   }
 
+  /**
+   * Without this, a crash is shown to the user and recorded nowhere — the one
+   * failure mode nobody finds out about. There is no client-side error sink in
+   * this app yet, so the console is the sink; `componentStack` is the part a
+   * stack trace alone does not give you, naming the component that threw.
+   */
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[ErrorBoundary] uncaught render error', error, info.componentStack);
+  }
+
   render() {
     if (this.state.hasError) {
       return (

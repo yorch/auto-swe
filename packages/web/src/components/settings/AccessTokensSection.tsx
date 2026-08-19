@@ -12,6 +12,7 @@ import {
   usePersonalAccessTokens,
   useRevokePat,
 } from '@/hooks/usePats';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -25,7 +26,7 @@ export function AccessTokensSection() {
   const [expiresInDays, setExpiresInDays] = useState<string>('90');
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<PatCreated | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useTransientFlag();
   const [revoking, setRevoking] = useState<{ id: string; name: string } | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
@@ -52,8 +53,7 @@ export function AccessTokensSection() {
     }
     try {
       await navigator.clipboard.writeText(revealed.token);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      markCopied();
     } catch {
       // clipboard unavailable — user can select manually
     }

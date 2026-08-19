@@ -14,10 +14,14 @@ const VARIANTS: Record<Variant, string> = {
     'border-ink-400 bg-ink-600 text-paper-300 hover:bg-ink-500 hover:text-paper-100 hover:border-ink-300',
 };
 
+// Sizes differ by height and horizontal padding only. Type size is the
+// component-wide 13.5px set inline below; the `text-xs`/`text-sm` classes
+// that used to be here never applied, because an inline style beats every
+// class, so all three rendered at 13.5px regardless.
 const SIZES: Record<Size, string> = {
-  lg: 'h-10 px-5 text-sm',
-  md: 'h-8 px-4 text-sm',
-  sm: 'h-7 px-3 text-xs',
+  lg: 'h-10 px-5',
+  md: 'h-8 px-4',
+  sm: 'h-7 px-3',
 };
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {

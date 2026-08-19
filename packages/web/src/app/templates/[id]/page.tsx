@@ -39,6 +39,7 @@ import {
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useTemplates';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 import { formatPercent, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -245,7 +246,7 @@ function ExperimentCard({
   const [expVer, setExpVer] = useState<number | null>(experimentVersion);
   const [split, setSplit] = useState<number>(experimentSplit ?? 10);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, markSaved] = useTransientFlag();
 
   const nonActive = versions.filter((v) => v.version !== activeVersion);
 
@@ -256,8 +257,7 @@ function ExperimentCard({
         experimentSplit: expVer ? split : null,
         experimentVersion: expVer,
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      markSaved();
     } catch (err) {
       setError(errMsg(err, 'save failed'));
     }

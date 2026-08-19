@@ -61,6 +61,10 @@ function subLabelFor(node: SpecNode): string | undefined {
       return `shell · ${node.image}`;
     case 'mcp':
       return `mcp · ${node.tool}`;
+    case 'agent':
+      return `agent · ${node.agentRef}`;
+    case 'eval':
+      return `eval · ${node.scorers.map((sc) => sc.kind).join(', ')}`;
     case 'containerStep':
       return `container · ${node.image}`;
     case 'humanApproval':
@@ -68,6 +72,15 @@ function subLabelFor(node: SpecNode): string | undefined {
     case 'humanInput':
     case 'humanReview':
       return node.title || undefined;
+    default: {
+      // Exhaustiveness sentinel. The return type is `string | undefined`, so a
+      // missing case is legal and silently drops the node's sublabel from the
+      // canvas — a node that renders with no identifying detail at all. Fail
+      // the build instead.
+      const unhandled: never = node;
+      void unhandled;
+      return undefined;
+    }
   }
 }
 

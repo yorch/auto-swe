@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
 
 interface CopyButtonProps {
   value: string;
@@ -8,12 +8,11 @@ interface CopyButtonProps {
 }
 
 export function CopyButton({ value, className }: CopyButtonProps) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useTransientFlag();
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    markCopied();
   };
 
   return (

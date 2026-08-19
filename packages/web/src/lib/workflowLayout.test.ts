@@ -3,6 +3,7 @@ import { makeSpec as spec } from '@auto-swe/shared/workflow/testHelpers';
 import { describe, expect, it } from 'vitest';
 import { handleKindsFor } from '@/components/workflow/dagNode';
 import { makeDefaultNodeFor } from '@/components/workflow/makeDefaultNode';
+import { PRIMITIVE_GROUPS } from '@/components/workflow/NodePalette';
 import { layoutSpec, NODE_WIDTH } from './workflowLayout.js';
 
 describe('layoutSpec', () => {
@@ -155,5 +156,14 @@ describe('layoutSpec', () => {
     // ranks — exact value depends on dagre's spacing, so assert lower bounds.
     expect(result.width).toBeGreaterThanOrEqual(NODE_WIDTH * 2);
     expect(result.height).toBeGreaterThan(0);
+  });
+});
+
+describe('node-type coverage', () => {
+  it('the palette offers every node type exactly once', () => {
+    const offered = PRIMITIVE_GROUPS.flatMap((g) => g.items.map((i) => i.type));
+
+    const declared = NodeSchema.options.map((o) => o.shape.type.value);
+    expect([...offered].sort()).toEqual([...declared].sort());
   });
 });

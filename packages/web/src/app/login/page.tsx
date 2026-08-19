@@ -307,10 +307,17 @@ function LoginPageInner() {
               autonomous workflows
             </div>
           </div>
+          {/* Driven by the provider probe, which doubles as the reachability
+              check — a status light that always reads "online" is worse than
+              no status light. */}
           <div className="flex items-center gap-2">
-            <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-moss-400" />
+            <span
+              className={`pulse-dot inline-block h-1.5 w-1.5 rounded-full ${
+                gatewayDown ? 'bg-brick-400' : 'bg-moss-400'
+              }`}
+            />
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              gateway online
+              {gatewayDown ? 'gateway offline' : 'gateway online'}
             </span>
           </div>
         </header>

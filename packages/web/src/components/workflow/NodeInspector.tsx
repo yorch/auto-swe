@@ -53,6 +53,32 @@ const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
   subgraph: 'Subgraph',
 };
 
+/**
+ * Which node types the sections above configure.
+ *
+ * The dispatch is a chain of `node.type === …` guards, so a new node type
+ * silently gets an inspector with no fields at all. Classifying every type
+ * here makes that a compile error, and the `false` entries render a pointer
+ * to JSON mode instead of blank space.
+ */
+const HAS_CONFIG_SECTION: Record<SpecNode['type'], boolean> = {
+  agent: true,
+  cond: true,
+  containerStep: true,
+  eval: false,
+  fanOut: true,
+  humanApproval: false,
+  humanDecision: false,
+  humanInput: false,
+  humanReview: false,
+  mcp: true,
+  set: true,
+  shell: true,
+  signal: true,
+  step: true,
+  terminate: true,
+};
+
 export function NodeInspector({
   nodeId,
   node,
@@ -172,6 +198,12 @@ export function NodeInspector({
             }
             values={node.values ?? {}}
           />
+        )}
+        {!HAS_CONFIG_SECTION[node.type] && (
+          <p className="mb-4 text-xs text-paper-500">
+            No inspector fields for a <span className="font-mono text-paper-300">{node.type}</span>{' '}
+            node yet — edit its configuration in JSON mode. Its outgoing edges are below.
+          </p>
         )}
 
         {/* Outgoing-edge connections — explicit dropdowns alongside the

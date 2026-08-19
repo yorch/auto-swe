@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useTeamShellAllowlist, useUpdateTeamShellAllowlist } from '@/hooks/useTeams';
+import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
 
 export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
@@ -11,12 +12,11 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
   const update = useUpdateTeamShellAllowlist(teamId);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, markSaved, resetSaved] = useTransientFlag();
   // True once the admin has typed. Without this, a background refetch that
   // returns genuinely different data (a second admin, a second tab) replaces
   // the textarea mid-edit. Mirrors EgressAllowlistEditor.
   const isDirtyRef = useRef(false);
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (data && !isDirtyRef.current) {
@@ -24,18 +24,9 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
     }
   }, [data]);
 
-  useEffect(
-    () => () => {
-      if (savedTimerRef.current !== null) {
-        clearTimeout(savedTimerRef.current);
-      }
-    },
-    []
-  );
-
   async function handleSave() {
     setError(null);
-    setSaved(false);
+    resetSaved();
     const list = text
       .split('\n')
       .map((s) => s.trim())
@@ -43,11 +34,7 @@ export function ShellAllowlistEditor({ teamId }: { teamId: string }) {
     try {
       await update.mutateAsync(list);
       isDirtyRef.current = false;
-      setSaved(true);
-      if (savedTimerRef.current !== null) {
-        clearTimeout(savedTimerRef.current);
-      }
-      savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
+      markSaved();
     } catch (err) {
       setError(errMsg(err, 'Failed to update allowlist'));
     }

@@ -9,7 +9,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HumanStepCard } from '@/components/inbox/HumanStepCard';
-import { LayoutToggle, type RunDetailLayout } from '@/components/LayoutToggle';
+import { LayoutToggle } from '@/components/LayoutToggle';
 import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
@@ -21,6 +21,7 @@ import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useInbox } from '@/hooks/useInbox';
 import { useCancelWorkflowRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { SplitRunPanel } from './SplitRunPanel';
 import { TracesTab } from './TracesTab';
@@ -848,7 +849,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const cancelRun = useCancelWorkflowRun(id);
   const retryRun = useRetryWorkRequest();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [layout, setLayout] = useState<RunDetailLayout>('A');
+  const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const { data: inboxSteps } = useInbox();
 
