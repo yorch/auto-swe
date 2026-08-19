@@ -20,6 +20,63 @@ export type ConfigSources<K extends string> = Partial<Record<K, ConfigSource>>;
 
 export type ConfigResponse<T> = { data: T; sources: ConfigSources<keyof T & string> };
 
+// ── Singleton-config resource factory ──
+
+/**
+ * Every admin config is a singleton behind the same endpoint shape:
+ * `GET /api/v1/admin/config/<slug>`, `PUT` to the same path, and — where the
+ * integration supports it — `POST …/test` or `POST …/trigger`. Deriving the
+ * path and the cache key from one slug is what keeps a resource from reading
+ * one cache entry and invalidating another.
+ *
+ * Two GET shapes exist and both are represented: the integration configs
+ * return `{ data, sources }` whole so each field can be badged db/env, while
+ * the schedule and tuning configs unwrap to `data` alone.
+ */
+const configPath = (slug: string) => `/api/v1/admin/config/${slug}`;
+
+/** `oauth/google` → `admin-config-oauth-google`; every other slug is flat. */
+const configKey = (slug: string) => [`admin-config-${slug.replaceAll('/', '-')}`];
+
+/** GET returning `{ data, sources }` verbatim. */
+function sourcedConfigQuery<TConfig>(slug: string) {
+  return () =>
+    useQuery({
+      queryFn: () => api.get<ConfigResponse<TConfig>>(configPath(slug)),
+      queryKey: configKey(slug),
+    });
+}
+
+/** GET unwrapped to `data`, for the configs that carry no source badges. */
+function unwrappedConfigQuery<TConfig>(slug: string) {
+  return () =>
+    useQuery({
+      queryFn: () => api.get<{ data: TConfig }>(configPath(slug)).then((r) => r.data),
+      queryKey: configKey(slug),
+    });
+}
+
+/** PUT that invalidates the matching query on success. */
+function configMutation<TConfig, TInput>(slug: string) {
+  return () => {
+    const qc = useQueryClient();
+    return useMutation({
+      mutationFn: (body: TInput) => api.put<{ data: TConfig }>(configPath(slug), body),
+      onSuccess: () => qc.invalidateQueries({ queryKey: configKey(slug) }),
+    });
+  };
+}
+
+/** POST `…/test`. The body is empty for connectors that need no probe input. */
+function postConfigTest(slug: string, body: Record<string, string> = {}) {
+  return api.post<{ ok: boolean; detail: string }>(`${configPath(slug)}/test`, body);
+}
+
+/** POST `…/trigger`, for the scheduled configs that can be run on demand. */
+function postConfigTrigger(slug: string) {
+  return api.post<{ data: { triggered: boolean } }>(`${configPath(slug)}/trigger`, {});
+}
+
 // ── GitHub config ──
 
 export interface GitHubConfig {
@@ -53,28 +110,11 @@ export interface GitHubConfigInput {
   authMode?: string | null;
 }
 
-export function useGitHubConfig() {
-  return useQuery({
-    queryFn: () => api.get<ConfigResponse<GitHubConfig>>('/api/v1/admin/config/github'),
-    queryKey: ['admin-config-github'],
-  });
-}
+export const useGitHubConfig = sourcedConfigQuery<GitHubConfig>('github');
 
-export function useUpdateGitHubConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: GitHubConfigInput) =>
-      api.put<{ data: GitHubConfig & { requiresRestart?: boolean } }>(
-        '/api/v1/admin/config/github',
-        body
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-github'] }),
-  });
-}
+export const useUpdateGitHubConfig = configMutation<GitHubConfig, GitHubConfigInput>('github');
 
-export function testGitHubConnection() {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/github/test', {});
-}
+export const testGitHubConnection = () => postConfigTest('github');
 
 // ── Slack config ──
 
@@ -93,28 +133,11 @@ export interface SlackConfigInput {
   signingSecret?: string;
 }
 
-export function useSlackConfig() {
-  return useQuery({
-    queryFn: () => api.get<ConfigResponse<SlackConfig>>('/api/v1/admin/config/slack'),
-    queryKey: ['admin-config-slack'],
-  });
-}
+export const useSlackConfig = sourcedConfigQuery<SlackConfig>('slack');
 
-export function useUpdateSlackConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: SlackConfigInput) =>
-      api.put<{ data: SlackConfig & { requiresRestart?: boolean } }>(
-        '/api/v1/admin/config/slack',
-        body
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-slack'] }),
-  });
-}
+export const useUpdateSlackConfig = configMutation<SlackConfig, SlackConfigInput>('slack');
 
-export function testSlackConnection() {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/slack/test', {});
-}
+export const testSlackConnection = () => postConfigTest('slack');
 
 // ── Storage config ──
 
@@ -142,25 +165,11 @@ export interface StorageConfigInput {
   awsSecretAccessKey?: string;
 }
 
-export function useStorageConfig() {
-  return useQuery({
-    queryFn: () => api.get<ConfigResponse<StorageConfig>>('/api/v1/admin/config/storage'),
-    queryKey: ['admin-config-storage'],
-  });
-}
+export const useStorageConfig = sourcedConfigQuery<StorageConfig>('storage');
 
-export function useUpdateStorageConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: StorageConfigInput) =>
-      api.put<{ data: StorageConfig }>('/api/v1/admin/config/storage', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-storage'] }),
-  });
-}
+export const useUpdateStorageConfig = configMutation<StorageConfig, StorageConfigInput>('storage');
 
-export function testStorageConnection() {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/storage/test', {});
-}
+export const testStorageConnection = () => postConfigTest('storage');
 
 // ── Workflow defaults ──
 
@@ -225,24 +234,13 @@ export interface WorkflowDefaultsInput {
   ciPollDeadlineSec?: number | null;
 }
 
-export function useWorkflowDefaultsConfig() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: WorkflowDefaultsConfig }>('/api/v1/admin/config/workflow-defaults')
-        .then((r) => r.data),
-    queryKey: ['admin-config-workflow-defaults'],
-  });
-}
+export const useWorkflowDefaultsConfig =
+  unwrappedConfigQuery<WorkflowDefaultsConfig>('workflow-defaults');
 
-export function useUpdateWorkflowDefaultsConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: WorkflowDefaultsInput) =>
-      api.put<{ data: WorkflowDefaultsConfig }>('/api/v1/admin/config/workflow-defaults', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-workflow-defaults'] }),
-  });
-}
+export const useUpdateWorkflowDefaultsConfig = configMutation<
+  WorkflowDefaultsConfig,
+  WorkflowDefaultsInput
+>('workflow-defaults');
 
 // ── Google OAuth config ──
 
@@ -257,24 +255,11 @@ export interface GoogleOAuthConfigInput {
   clientSecret?: string;
 }
 
-export function useGoogleOAuthConfig() {
-  return useQuery({
-    queryFn: () => api.get<ConfigResponse<GoogleOAuthConfig>>('/api/v1/admin/config/oauth/google'),
-    queryKey: ['admin-config-oauth-google'],
-  });
-}
+export const useGoogleOAuthConfig = sourcedConfigQuery<GoogleOAuthConfig>('oauth/google');
 
-export function useUpdateGoogleOAuthConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: GoogleOAuthConfigInput) =>
-      api.put<{ data: GoogleOAuthConfig & { requiresRestart?: boolean } }>(
-        '/api/v1/admin/config/oauth/google',
-        body
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-oauth-google'] }),
-  });
-}
+export const useUpdateGoogleOAuthConfig = configMutation<GoogleOAuthConfig, GoogleOAuthConfigInput>(
+  'oauth/google'
+);
 
 // ── Issue tracker config ──
 
@@ -310,28 +295,15 @@ export interface IssueTrackerConfigInput {
   allowPrivateNetwork?: boolean;
 }
 
-export function useIssueTrackerConfig() {
-  return useQuery({
-    queryFn: () =>
-      api.get<ConfigResponse<IssueTrackerConfig>>('/api/v1/admin/config/issue-tracker'),
-    queryKey: ['admin-config-issue-tracker'],
-  });
-}
+export const useIssueTrackerConfig = sourcedConfigQuery<IssueTrackerConfig>('issue-tracker');
 
-export function useUpdateIssueTrackerConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: IssueTrackerConfigInput) =>
-      api.put<{ data: IssueTrackerConfig }>('/api/v1/admin/config/issue-tracker', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-issue-tracker'] }),
-  });
-}
+export const useUpdateIssueTrackerConfig = configMutation<
+  IssueTrackerConfig,
+  IssueTrackerConfigInput
+>('issue-tracker');
 
-export function testIssueTrackerConnection(ticketId: string) {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/issue-tracker/test', {
-    ticketId,
-  });
-}
+export const testIssueTrackerConnection = (ticketId: string) =>
+  postConfigTest('issue-tracker', { ticketId });
 
 export function useDetectJiraFields() {
   return useMutation({
@@ -376,28 +348,15 @@ export interface KnowledgeBaseConfigInput {
   allowPrivateNetwork?: boolean;
 }
 
-export function useKnowledgeBaseConfig() {
-  return useQuery({
-    queryFn: () =>
-      api.get<ConfigResponse<KnowledgeBaseConfig>>('/api/v1/admin/config/knowledge-base'),
-    queryKey: ['admin-config-knowledge-base'],
-  });
-}
+export const useKnowledgeBaseConfig = sourcedConfigQuery<KnowledgeBaseConfig>('knowledge-base');
 
-export function useUpdateKnowledgeBaseConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: KnowledgeBaseConfigInput) =>
-      api.put<{ data: KnowledgeBaseConfig }>('/api/v1/admin/config/knowledge-base', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-knowledge-base'] }),
-  });
-}
+export const useUpdateKnowledgeBaseConfig = configMutation<
+  KnowledgeBaseConfig,
+  KnowledgeBaseConfigInput
+>('knowledge-base');
 
-export function testKnowledgeBaseConnection(query: string) {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/knowledge-base/test', {
-    query,
-  });
-}
+export const testKnowledgeBaseConnection = (query: string) =>
+  postConfigTest('knowledge-base', { query });
 
 // ── Figma (design source) config ──
 
@@ -413,25 +372,11 @@ export interface FigmaConfigInput {
   maxNodes?: number | null;
 }
 
-export function useFigmaConfig() {
-  return useQuery({
-    queryFn: () => api.get<ConfigResponse<FigmaConfig>>('/api/v1/admin/config/figma'),
-    queryKey: ['admin-config-figma'],
-  });
-}
+export const useFigmaConfig = sourcedConfigQuery<FigmaConfig>('figma');
 
-export function useUpdateFigmaConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: FigmaConfigInput) =>
-      api.put<{ data: FigmaConfig }>('/api/v1/admin/config/figma', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-figma'] }),
-  });
-}
+export const useUpdateFigmaConfig = configMutation<FigmaConfig, FigmaConfigInput>('figma');
 
-export function testFigmaConnection() {
-  return api.post<{ ok: boolean; detail: string }>('/api/v1/admin/config/figma/test', {});
-}
+export const testFigmaConnection = () => postConfigTest('figma');
 
 // ── Consolidation schedule config ──
 
@@ -456,31 +401,14 @@ export interface ConsolidationConfigInput {
   similarityThreshold?: number;
 }
 
-export function useConsolidationConfig() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: ConsolidationConfig }>('/api/v1/admin/config/consolidation')
-        .then((r) => r.data),
-    queryKey: ['admin-config-consolidation'],
-  });
-}
+export const useConsolidationConfig = unwrappedConfigQuery<ConsolidationConfig>('consolidation');
 
-export function useUpdateConsolidationConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ConsolidationConfigInput) =>
-      api.put<{ data: ConsolidationConfig }>('/api/v1/admin/config/consolidation', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-consolidation'] }),
-  });
-}
+export const useUpdateConsolidationConfig = configMutation<
+  ConsolidationConfig,
+  ConsolidationConfigInput
+>('consolidation');
 
-export function triggerConsolidationNow() {
-  return api.post<{ data: { triggered: boolean } }>(
-    '/api/v1/admin/config/consolidation/trigger',
-    {}
-  );
-}
+export const triggerConsolidationNow = () => postConfigTrigger('consolidation');
 
 // ── Re-validation schedule ──
 
@@ -504,31 +432,14 @@ export interface RevalidationConfigInput {
   datasetSlug?: string | null;
 }
 
-export function useRevalidationConfig() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: RevalidationConfig }>('/api/v1/admin/config/revalidation')
-        .then((r) => r.data),
-    queryKey: ['admin-config-revalidation'],
-  });
-}
+export const useRevalidationConfig = unwrappedConfigQuery<RevalidationConfig>('revalidation');
 
-export function useUpdateRevalidationConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: RevalidationConfigInput) =>
-      api.put<{ data: RevalidationConfig }>('/api/v1/admin/config/revalidation', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-revalidation'] }),
-  });
-}
+export const useUpdateRevalidationConfig = configMutation<
+  RevalidationConfig,
+  RevalidationConfigInput
+>('revalidation');
 
-export function triggerRevalidationNow() {
-  return api.post<{ data: { triggered: boolean } }>(
-    '/api/v1/admin/config/revalidation/trigger',
-    {}
-  );
-}
+export const triggerRevalidationNow = () => postConfigTrigger('revalidation');
 
 // ── Canary routing config ──
 
@@ -546,22 +457,9 @@ export interface CanaryConfigInput {
   percent?: number;
 }
 
-export function useCanaryConfig() {
-  return useQuery({
-    queryFn: () =>
-      api.get<{ data: CanaryConfig }>('/api/v1/admin/config/canary').then((r) => r.data),
-    queryKey: ['admin-config-canary'],
-  });
-}
+export const useCanaryConfig = unwrappedConfigQuery<CanaryConfig>('canary');
 
-export function useUpdateCanaryConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CanaryConfigInput) =>
-      api.put<{ data: CanaryConfig }>('/api/v1/admin/config/canary', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-config-canary'] }),
-  });
-}
+export const useUpdateCanaryConfig = configMutation<CanaryConfig, CanaryConfigInput>('canary');
 
 // ── Config audit log ──
 

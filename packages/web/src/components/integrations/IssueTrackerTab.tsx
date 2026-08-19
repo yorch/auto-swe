@@ -13,8 +13,8 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { errMsg } from '@/lib/errors';
+import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
-import { SourceBadge } from './SourceBadge';
 
 const PROVIDER_HINTS: Record<
   IssueTrackerProvider,
@@ -139,19 +139,12 @@ export function IssueTrackerTab() {
           block a submission.
         </p>
         <div className="space-y-4">
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="tracker-provider"
-            >
-              Provider
-              <SourceBadge source={sources.provider} />
-              {data?.provider && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.provider}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.provider || undefined}
+            id="tracker-provider"
+            label="Provider"
+            source={sources.provider}
+          >
             <select
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs focus:border-ember-400 focus:outline-none"
               id="tracker-provider"
@@ -169,20 +162,13 @@ export function IssueTrackerTab() {
             {hints && (
               <p className="mt-1 text-[11px] text-paper-600">Ticket ID format: {hints.ticket}</p>
             )}
-          </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="tracker-base-url"
-            >
-              Base URL
-              <SourceBadge source={sources.baseUrl} />
-              {data?.baseUrl && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.baseUrl}
-                </span>
-              )}
-            </label>
+          </ConfigField>
+          <ConfigField
+            current={data?.baseUrl || undefined}
+            id="tracker-base-url"
+            label="Base URL"
+            source={sources.baseUrl}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="tracker-base-url"
@@ -190,7 +176,7 @@ export function IssueTrackerTab() {
               placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
               value={baseUrl}
             />
-          </div>
+          </ConfigField>
           <div>
             <div className="flex items-center gap-3">
               <input
@@ -210,19 +196,12 @@ export function IssueTrackerTab() {
               reopens the server to requests against your internal network for this connector.
             </p>
           </div>
-          <div>
-            <label
-              className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-              htmlFor="tracker-email"
-            >
-              Email (Jira only)
-              <SourceBadge source={sources.email} />
-              {data?.email && (
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                  current: {data.email}
-                </span>
-              )}
-            </label>
+          <ConfigField
+            current={data?.email || undefined}
+            id="tracker-email"
+            label="Email (Jira only)"
+            source={sources.email}
+          >
             <input
               className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
               id="tracker-email"
@@ -230,7 +209,7 @@ export function IssueTrackerTab() {
               placeholder="you@example.com (Jira basic-auth user)"
               value={email}
             />
-          </div>
+          </ConfigField>
           <SecretInput
             current={data?.apiToken ?? null}
             id="tracker-api-token"
@@ -253,19 +232,12 @@ export function IssueTrackerTab() {
             instances.
           </p>
           <div className="space-y-4">
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="tracker-story-points"
-              >
-                Story Points Field ID
-                <SourceBadge source={sources.storyPointsFieldId} />
-                {data?.storyPointsFieldId && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.storyPointsFieldId}
-                  </span>
-                )}
-              </label>
+            <ConfigField
+              current={data?.storyPointsFieldId || undefined}
+              id="tracker-story-points"
+              label="Story Points Field ID"
+              source={sources.storyPointsFieldId}
+            >
               <div className="flex items-center gap-2">
                 <input
                   className="flex-1 rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
@@ -298,20 +270,13 @@ export function IssueTrackerTab() {
                 </Button>
               </div>
               {detectResult && <p className="mt-1 text-[11px] text-paper-400">{detectResult}</p>}
-            </div>
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="tracker-epic-issue-type"
-              >
-                Epic Issue Type
-                <SourceBadge source={sources.epicIssueType} />
-                {data?.epicIssueType && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.epicIssueType}
-                  </span>
-                )}
-              </label>
+            </ConfigField>
+            <ConfigField
+              current={data?.epicIssueType || undefined}
+              id="tracker-epic-issue-type"
+              label="Epic Issue Type"
+              source={sources.epicIssueType}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="tracker-epic-issue-type"
@@ -319,20 +284,13 @@ export function IssueTrackerTab() {
                 placeholder="Epic"
                 value={epicIssueType}
               />
-            </div>
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="tracker-story-issue-type"
-              >
-                Story Issue Type
-                <SourceBadge source={sources.storyIssueType} />
-                {data?.storyIssueType && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.storyIssueType}
-                  </span>
-                )}
-              </label>
+            </ConfigField>
+            <ConfigField
+              current={data?.storyIssueType || undefined}
+              id="tracker-story-issue-type"
+              label="Story Issue Type"
+              source={sources.storyIssueType}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="tracker-story-issue-type"
@@ -340,20 +298,13 @@ export function IssueTrackerTab() {
                 placeholder="Story"
                 value={storyIssueType}
               />
-            </div>
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="tracker-default-project-key"
-              >
-                Default Project Key
-                <SourceBadge source={sources.defaultProjectKey} />
-                {data?.defaultProjectKey && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.defaultProjectKey}
-                  </span>
-                )}
-              </label>
+            </ConfigField>
+            <ConfigField
+              current={data?.defaultProjectKey || undefined}
+              id="tracker-default-project-key"
+              label="Default Project Key"
+              source={sources.defaultProjectKey}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="tracker-default-project-key"
@@ -361,7 +312,7 @@ export function IssueTrackerTab() {
                 placeholder="PROJ"
                 value={defaultProjectKey}
               />
-            </div>
+            </ConfigField>
           </div>
         </Card>
       )}
@@ -386,19 +337,12 @@ export function IssueTrackerTab() {
               source={sources.webhookSecret}
               value={webhookSecret}
             />
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="tracker-webhook-trigger-status"
-              >
-                Trigger status
-                <SourceBadge source={sources.webhookTriggerStatus} />
-                {data?.webhookTriggerStatus && (
-                  <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                    current: {data.webhookTriggerStatus}
-                  </span>
-                )}
-              </label>
+            <ConfigField
+              current={data?.webhookTriggerStatus || undefined}
+              id="tracker-webhook-trigger-status"
+              label="Trigger status"
+              source={sources.webhookTriggerStatus}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="tracker-webhook-trigger-status"
@@ -406,7 +350,7 @@ export function IssueTrackerTab() {
                 placeholder="Ready for Dev"
                 value={webhookTriggerStatus}
               />
-            </div>
+            </ConfigField>
           </div>
         </Card>
       )}

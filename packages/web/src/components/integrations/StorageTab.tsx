@@ -11,6 +11,7 @@ import {
   useUpdateStorageConfig,
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
+import { ConfigField } from './ConfigField';
 import { SecretInput } from './SecretInput';
 import { SourceBadge } from './SourceBadge';
 
@@ -141,14 +142,7 @@ export function StorageTab() {
           </CardHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label
-                  className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                  htmlFor="s3-bucket"
-                >
-                  Bucket
-                  <SourceBadge source={sources.s3Bucket} />
-                </label>
+              <ConfigField id="s3-bucket" label="Bucket" source={sources.s3Bucket}>
                 <input
                   className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                   id="s3-bucket"
@@ -156,15 +150,8 @@ export function StorageTab() {
                   placeholder="my-auto-swe-bucket"
                   value={s3Bucket}
                 />
-              </div>
-              <div>
-                <label
-                  className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                  htmlFor="s3-region"
-                >
-                  Region
-                  <SourceBadge source={sources.s3Region} />
-                </label>
+              </ConfigField>
+              <ConfigField id="s3-region" label="Region" source={sources.s3Region}>
                 <input
                   className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                   id="s3-region"
@@ -172,19 +159,14 @@ export function StorageTab() {
                   placeholder="us-east-1"
                   value={s3Region}
                 />
-              </div>
+              </ConfigField>
             </div>
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="s3-endpoint"
-              >
-                Endpoint URL
-                <SourceBadge source={sources.s3Endpoint} />
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
-                  (optional — leave blank for AWS)
-                </span>
-              </label>
+            <ConfigField
+              id="s3-endpoint"
+              label="Endpoint URL"
+              note="(optional — leave blank for AWS)"
+              source={sources.s3Endpoint}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="s3-endpoint"
@@ -192,18 +174,13 @@ export function StorageTab() {
                 placeholder="https://s3.example.com"
                 value={s3Endpoint}
               />
-            </div>
-            <div>
-              <label
-                className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                htmlFor="s3-prefix"
-              >
-                Key prefix
-                <SourceBadge source={sources.s3Prefix} />
-                <span className="font-mono text-[10px] normal-case tracking-normal text-paper-600">
-                  (optional)
-                </span>
-              </label>
+            </ConfigField>
+            <ConfigField
+              id="s3-prefix"
+              label="Key prefix"
+              note="(optional)"
+              source={sources.s3Prefix}
+            >
               <input
                 className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                 id="s3-prefix"
@@ -211,7 +188,7 @@ export function StorageTab() {
                 placeholder="auto-swe/"
                 value={s3Prefix}
               />
-            </div>
+            </ConfigField>
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 checked={s3ForcePathStyle}
@@ -232,19 +209,12 @@ export function StorageTab() {
                 Credentials
               </div>
               <div className="space-y-4">
-                <div>
-                  <label
-                    className="mb-1 flex items-center gap-2 text-xs uppercase text-paper-500"
-                    htmlFor="aws-access-key-id"
-                  >
-                    Access key ID
-                    <SourceBadge source={sources.awsAccessKeyId} />
-                    {data?.awsAccessKeyId && (
-                      <span className="font-mono text-[10px] normal-case tracking-normal text-paper-400">
-                        current: {data.awsAccessKeyId}
-                      </span>
-                    )}
-                  </label>
+                <ConfigField
+                  current={data?.awsAccessKeyId || undefined}
+                  id="aws-access-key-id"
+                  label="Access key ID"
+                  source={sources.awsAccessKeyId}
+                >
                   <input
                     className="w-full rounded-sm border border-ink-600 bg-ink-900 px-3 py-2 font-mono text-xs placeholder:text-paper-600 focus:border-ember-400 focus:outline-none"
                     id="aws-access-key-id"
@@ -252,7 +222,7 @@ export function StorageTab() {
                     placeholder="AKIAIOSFODNN7EXAMPLE"
                     value={awsAccessKeyId}
                   />
-                </div>
+                </ConfigField>
                 <SecretInput
                   current={data?.awsSecretAccessKey ?? null}
                   id="aws-secret-access-key"
