@@ -40,7 +40,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       : null;
 
   const totalTraces = run.traces?.length ?? 0;
-  const cost = (run as unknown as Record<string, unknown>).cost as number | undefined;
+  const cost = run.costUsdAccrued;
 
   return (
     <aside
@@ -76,7 +76,7 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
               <MonoValue>{totalTraces}</MonoValue>
             </MetaRow>
           )}
-          {cost != null && cost > 0 && (
+          {cost > 0 && (
             <MetaRow label="Cost">
               <MonoValue>{formatCost(cost)}</MonoValue>
             </MetaRow>
