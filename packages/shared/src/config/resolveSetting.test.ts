@@ -1,0 +1,293 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const findMany = vi.fn(async (_args?: unknown) => [] as unknown[]);
+
+vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
+
+import { isUnscoped } from '../lib/tenantGuard.js';
+import { _resetConfigCacheForTests } from './cache.js';
+import {
+  invalidateSettingsCache,
+  resolveEffectiveSettings,
+  resolveSetting,
+  resolveSettings,
+  snapshotPinnedSettings,
+} from './resolveSetting.js';
+
+type Row = { key: string; scope: string; value: unknown };
+
+function rows(...list: Row[]) {
+  findMany.mockResolvedValue(list);
+}
+
+const TEAM_CTX = { orgId: 'org-1', teamId: 'team-1' };
+
+beforeEach(() => {
+  _resetConfigCacheForTests();
+  findMany.mockReset();
+  findMany.mockResolvedValue([]);
+  delete process.env.WORKER_MAX_CONCURRENT_ACTIVITIES;
+});
+
+describe('resolveSetting', () => {
+  it('falls back to the definition default when nothing overrides it', async () => {
+    await expect(resolveSetting('channel.historyMessageLimit')).resolves.toBe(30);
+  });
+
+  it('uses a GLOBAL override', async () => {
+    rows({ key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 12 });
+    await expect(resolveSetting('channel.historyMessageLimit')).resolves.toBe(12);
+  });
+
+  it('prefers the most specific scope', async () => {
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 10 },
+      { key: 'channel.historyMessageLimit', scope: 'ORGANIZATION', value: 20 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: 30 },
+      { key: 'channel.historyMessageLimit', scope: 'CHANNEL', value: 40 }
+    );
+    await expect(
+      resolveSetting('channel.historyMessageLimit', { ...TEAM_CTX, channelId: 'c-1' })
+    ).resolves.toBe(40);
+  });
+
+  it('falls through to the next scope down when the narrower one has no row', async () => {
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 10 },
+      { key: 'channel.historyMessageLimit', scope: 'ORGANIZATION', value: 20 }
+    );
+    await expect(resolveSetting('channel.historyMessageLimit', TEAM_CTX)).resolves.toBe(20);
+  });
+
+  it('ignores a stored value the schema rejects rather than failing the read', async () => {
+    // A row written before a schema tightened, or hand-edited. Degrading one
+    // key to its default beats throwing on every activity that reads config.
+    rows({ key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 'not a number' });
+    await expect(resolveSetting('channel.historyMessageLimit')).resolves.toBe(30);
+  });
+
+  it('skips an invalid narrow override and uses the valid broader one', async () => {
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 7 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: -5 }
+    );
+    await expect(resolveSetting('channel.historyMessageLimit', TEAM_CTX)).resolves.toBe(7);
+  });
+
+  it('reads an env var when no override exists, and lets a DB row beat it', async () => {
+    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = '25';
+    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(25);
+
+    _resetConfigCacheForTests();
+    rows({ key: 'workspace.maxConcurrentActivities', scope: 'GLOBAL', value: 40 });
+    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(40);
+  });
+
+  it('ignores an unparseable env var', async () => {
+    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = 'lots';
+    await expect(resolveSetting('workspace.maxConcurrentActivities')).resolves.toBe(10);
+  });
+
+  it('honours WORKSPACE_BLOCK_METADATA only-false semantics', async () => {
+    process.env.WORKSPACE_BLOCK_METADATA = 'false';
+    await expect(resolveSetting('workspace.blockMetadata')).resolves.toBe(false);
+    _resetConfigCacheForTests();
+    process.env.WORKSPACE_BLOCK_METADATA = 'anything-else';
+    await expect(resolveSetting('workspace.blockMetadata')).resolves.toBe(true);
+    delete process.env.WORKSPACE_BLOCK_METADATA;
+  });
+});
+
+describe('overridableAt is enforced on read, not only on write', () => {
+  it('ignores a scoped row for a setting the definition says is platform-wide', async () => {
+    // workspace.blockMetadata declares `overridableAt: []` because no team
+    // should be able to switch off metadata blocking for its own runs. The
+    // write path refuses such a row, but a row can exist without passing
+    // through it — direct SQL, or a definition narrowed after the fact. A
+    // security control a stray row can disable is not a control.
+    rows({ key: 'workspace.blockMetadata', scope: 'TEAM', value: false });
+    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(true);
+  });
+
+  it('still honours the GLOBAL row for a platform-wide setting', async () => {
+    rows({ key: 'workspace.blockMetadata', scope: 'GLOBAL', value: false });
+    await expect(resolveSetting('workspace.blockMetadata', TEAM_CTX)).resolves.toBe(false);
+  });
+
+  it('skips a disallowed scope and falls through to an allowed broader one', async () => {
+    // channel.historyMessageLimit permits CHANNEL/TEAM/ORGANIZATION but not
+    // WORKFLOW_TEMPLATE.
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'WORKFLOW_TEMPLATE', value: 99 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 }
+    );
+    await expect(
+      resolveSetting('channel.historyMessageLimit', { ...TEAM_CTX, workflowTemplateId: 'wt-1' })
+    ).resolves.toBe(21);
+  });
+});
+
+describe('run pinning', () => {
+  it('reads a pinned value instead of the live cascade', async () => {
+    rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
+    await expect(
+      resolveSetting('workflow.maxTransitions', {
+        pinnedSettings: { 'workflow.maxTransitions': 250 },
+      })
+    ).resolves.toBe(250);
+  });
+
+  it('does not pin a setting that is not marked runPinned', async () => {
+    rows({ key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 11 });
+    await expect(
+      resolveSetting('channel.historyMessageLimit', {
+        pinnedSettings: { 'channel.historyMessageLimit': 99 },
+      })
+    ).resolves.toBe(11);
+  });
+
+  it('falls back to the live cascade when a pinned value is invalid', async () => {
+    rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
+    await expect(
+      resolveSetting('workflow.maxTransitions', {
+        pinnedSettings: { 'workflow.maxTransitions': 0 },
+      })
+    ).resolves.toBe(900);
+  });
+
+  it('degrades to the live cascade when the snapshot is not an object at all', async () => {
+    // WorkflowRun.pinnedSettings is an untyped Json column; a hand-edited row
+    // can hold a string. Throwing here would break every activity in the run.
+    rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
+    await expect(
+      resolveSetting('workflow.maxTransitions', {
+        pinnedSettings: 'oops' as unknown as Record<string, unknown>,
+      })
+    ).resolves.toBe(900);
+  });
+
+  it('snapshots exactly the run-pinned keys, resolved through the cascade', async () => {
+    rows({ key: 'workflow.fanoutConcurrency', scope: 'TEAM', value: 8 });
+    const snapshot = await snapshotPinnedSettings(TEAM_CTX);
+    expect(snapshot).toEqual({
+      'workflow.fanoutConcurrency': 8,
+      'workflow.maxTransitions': 500,
+    });
+  });
+});
+
+describe('batching and caching', () => {
+  it('resolves many keys in one query', async () => {
+    rows({ key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 15 });
+    const values = await resolveSettings(
+      ['channel.historyMessageLimit', 'channel.memoryContextItems'],
+      TEAM_CTX
+    );
+    expect(values).toEqual({
+      'channel.historyMessageLimit': 15,
+      'channel.memoryContextItems': 5,
+    });
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves a repeat read for the same context from cache', async () => {
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+    await resolveSetting('channel.memoryContextItems', TEAM_CTX);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps separate contexts apart', async () => {
+    await resolveSetting('channel.historyMessageLimit', { teamId: 'team-1' });
+    await resolveSetting('channel.historyMessageLimit', { teamId: 'team-2' });
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let two contexts collide when an id contains the key separator', async () => {
+    // Ids are UUIDs today and the API validates them as such, so this is not
+    // reachable now — but a raw Slack channel id or a template slug arriving
+    // through another caller would make one tenant's cache entry serve another.
+    rows({ key: 'channel.historyMessageLimit', scope: 'TEAM', value: 42 });
+    await resolveSetting('channel.historyMessageLimit', { channelId: 'b:', teamId: 'c' });
+    await resolveSetting('channel.historyMessageLimit', { channelId: 'b', orgId: 'c:' });
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-queries after an invalidation so a save is visible immediately', async () => {
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+    invalidateSettingsCache();
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('only queries the scopes the context can actually select', async () => {
+    await resolveSetting('channel.historyMessageLimit');
+    const args = findMany.mock.calls[0]?.[0] as { where: { OR: unknown[] } } | undefined;
+    expect(args?.where.OR).toEqual([{ scope: 'GLOBAL' }]);
+  });
+});
+
+describe('resolveEffectiveSettings', () => {
+  it('reports the scope each value came from', async () => {
+    process.env.WORKER_MAX_CONCURRENT_ACTIVITIES = '25';
+    rows({ key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 });
+    const { settings } = await resolveEffectiveSettings(TEAM_CTX);
+    const byKey = new Map(settings.map((entry) => [entry.key, entry]));
+
+    expect(byKey.get('channel.historyMessageLimit')).toMatchObject({ source: 'TEAM', value: 21 });
+    expect(byKey.get('channel.memoryContextItems')).toMatchObject({ source: 'DEFAULT', value: 5 });
+    expect(byKey.get('workspace.maxConcurrentActivities')).toMatchObject({
+      source: 'ENV',
+      value: 25,
+    });
+  });
+
+  it('exposes the row stored at one exact scope from the same batch', async () => {
+    // The admin view needs both the resolved value and "what is set *here*".
+    // Reading the second from the batch is what lets it cost one query rather
+    // than two — and keeps it from needing its own tenant-guard exemption.
+    rows(
+      { key: 'channel.historyMessageLimit', scope: 'GLOBAL', value: 10 },
+      { key: 'channel.historyMessageLimit', scope: 'TEAM', value: 21 }
+    );
+    const { overrideAt, settings } = await resolveEffectiveSettings(TEAM_CTX);
+
+    expect(settings.find((s) => s.key === 'channel.historyMessageLimit')?.value).toBe(21);
+    expect(overrideAt('channel.historyMessageLimit', 'TEAM')).toBe(21);
+    expect(overrideAt('channel.historyMessageLimit', 'GLOBAL')).toBe(10);
+    expect(overrideAt('channel.historyMessageLimit', 'CHANNEL')).toBeUndefined();
+    expect(overrideAt('channel.memoryContextItems', 'TEAM')).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a pinned value as PINNED so a stalled live edit is explainable', async () => {
+    const { settings } = await resolveEffectiveSettings({
+      pinnedSettings: { 'workflow.maxTransitions': 250 },
+    });
+    const pinned = settings.find((entry) => entry.key === 'workflow.maxTransitions');
+    expect(pinned).toMatchObject({ source: 'PINNED', value: 250 });
+  });
+});
+
+describe('tenant guard', () => {
+  it('marks the override query as intentionally cross-tenant while it runs', async () => {
+    // The query's GLOBAL branch has no tenant predicate by design, so the guard
+    // would reject it as an unscoped findMany. The exemption has to still be in
+    // scope at the moment Prisma is called — an AsyncLocalStorage region that
+    // ended one await too early would let the guard fire in production under
+    // TENANT_GUARD_STRICT while every mocked test kept passing.
+    let exemptAtQueryTime: boolean | undefined;
+    findMany.mockImplementation(async () => {
+      exemptAtQueryTime = isUnscoped('ConfigSetting');
+      return [];
+    });
+
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+
+    expect(exemptAtQueryTime).toBe(true);
+  });
+
+  it('does not leave the exemption in place after resolution', async () => {
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+    expect(isUnscoped('ConfigSetting')).toBe(false);
+  });
+});

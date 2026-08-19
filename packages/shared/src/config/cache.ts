@@ -112,6 +112,19 @@ export function configCacheTtlMs(): number {
   return DEFAULT_TTL_MS;
 }
 
+/// Drops every entry whose key starts with `prefix`. The settings resolver
+/// caches one entry per resolution context, so a write at any scope can
+/// invalidate many of them — a GLOBAL edit changes what every team resolves.
+/// Walking the store is cheap next to leaving an admin's save invisible for a
+/// full TTL.
+export function invalidatePrefix(prefix: string): void {
+  for (const key of store.keys()) {
+    if (key.startsWith(prefix)) {
+      store.delete(key);
+    }
+  }
+}
+
 /// Test-only escape hatch. Drops every entry so the next call goes back to the DB.
 export function _resetConfigCacheForTests(): void {
   store.clear();

@@ -852,9 +852,27 @@ describe('systemConfigService', () => {
           action: 'UPDATE',
           actorId: 'user-42',
           afterJson: { baseUrl: 'https://x', changedFields: ['baseUrl'] },
+          // Explicit null rather than absent: an omitted before-state is a
+          // CREATE, and the column should say so rather than being undefined.
+          beforeJson: null,
           entityId: '00000000-0000-0000-0001-000000000001',
           entityType: 'GitHubConfig',
         },
+      });
+    });
+
+    it('persists the before-state so an entry shows what a value changed from', async () => {
+      const log = fakeLogger();
+      await writeSystemConfigAudit(prisma, log, {
+        action: 'UPDATE',
+        actorId: 'user-42',
+        afterJson: { baseUrl: 'https://new' },
+        beforeJson: { baseUrl: 'https://old' },
+        entityId: '00000000-0000-0000-0001-000000000001',
+        entityType: 'GitHubConfig',
+      });
+      expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ beforeJson: { baseUrl: 'https://old' } }),
       });
     });
 

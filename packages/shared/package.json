@@ -53,7 +53,13 @@
     "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
-    "./lib/keyRotation": "./dist/lib/keyRotation.js"
+    "./lib/keyRotation": "./dist/lib/keyRotation.js",
+    "./config": "./dist/config/index.js",
+    "./config/cache": "./dist/config/cache.js",
+    "./config/registry": "./dist/config/registry.js",
+    "./config/permissions": "./dist/config/permissions.js",
+    "./config/resolveSetting": "./dist/config/resolveSetting.js",
+    "./config/types": "./dist/config/types.js"
   },
   "scripts": {
     "db:generate": "DATABASE_URL=dummy prisma generate",

@@ -21,6 +21,7 @@
  */
 
 import crypto from 'node:crypto';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -28,6 +29,7 @@ import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/sh
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -62,8 +64,17 @@ export interface ShellStepResult {
   filesChanged: string[];
 }
 
-// Tiny (~5MB) helper image with git built-in, used by the prep + finalize phases.
-const GIT_HELPER_IMAGE = 'alpine/git:latest';
+// Tiny (~5MB) helper image with git built-in, used by the prep + finalize
+// phases. A registry setting rather than a constant so a deployment can pin a
+// digest instead of tracking the upstream `latest` tag.
+//
+// Resolved ONCE at the top of the step and threaded down, deliberately: the
+// finalize path's errors are swallowed and reported as "command passed but the
+// push failed", so a config-resolution failure in there would surface as a
+// successful step whose changes were silently never committed.
+async function gitHelperImage(): Promise<string> {
+  return resolveSetting('workspace.gitHelperImage', await currentRequestContext());
+}
 
 /**
  * Redact the GitHub token from any string. `runDocker` invokes `git clone`
@@ -150,7 +161,12 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  * failures are surfaced unchanged so they're not masked by a confusing
  * default-branch retry. Caller owns volume lifecycle.
  */
-async function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): Promise<void> {
+async function cloneIntoVolume(
+  volumeName: string,
+  meta: RepoMeta,
+  branch: string,
+  image: string
+): Promise<void> {
   const tryClone = (refspec: string): Promise<string> =>
     runDocker(
       [
@@ -160,7 +176,7 @@ async function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: strin
         `${volumeName}:/workspace:rw`,
         '--entrypoint',
         'sh',
-        GIT_HELPER_IMAGE,
+        image,
         '-c',
         `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
       ],
@@ -207,7 +223,8 @@ interface FinalizeResult {
 async function finalizeWorkspaceVolume(
   volumeName: string,
   branch: string,
-  commandSummary: string
+  commandSummary: string,
+  image: string
 ): Promise<FinalizeResult> {
   const script = [
     'set -e',
@@ -229,7 +246,7 @@ async function finalizeWorkspaceVolume(
     `${volumeName}:/workspace:rw`,
     '--entrypoint',
     'sh',
-    GIT_HELPER_IMAGE,
+    image,
     '-c',
     script,
   ]);
@@ -276,12 +293,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
 
   const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
+  const helperImage = await gitHelperImage();
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
   await runDocker(['volume', 'create', volumeName]);
   try {
     heartbeat('shell-step: cloning branch into workspace volume');
-    await cloneIntoVolume(volumeName, meta, branch);
+    await cloneIntoVolume(volumeName, meta, branch, helperImage);
 
     heartbeat('shell-step: running command');
     const effectiveEgressAllowlist = meta.teamEgressAllowlist;
@@ -313,7 +331,12 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     if (passed) {
       heartbeat('shell-step: finalizing workspace');
       try {
-        finalize = await finalizeWorkspaceVolume(volumeName, branch, input.command.slice(0, 80));
+        finalize = await finalizeWorkspaceVolume(
+          volumeName,
+          branch,
+          input.command.slice(0, 80),
+          helperImage
+        );
       } catch (err) {
         // A push failure shouldn't mask a successful command run, but the
         // caller needs to know changes weren't persisted. Surface the

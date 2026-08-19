@@ -1,6 +1,6 @@
+import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
-import { configCacheTtlMs, withCache } from './cache.js';
 import type { ResolveCtx } from './types.js';
 
 /// Look up `{ teamId, workflowTemplateId }` for the currently-executing
@@ -45,7 +45,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
           where: { temporalWorkflowId: wid },
         }),
         prisma.workflowRun.findUnique({
-          select: { agentVersions: true, templateId: true },
+          select: { agentVersions: true, pinnedSettings: true, templateId: true },
           where: { workflowId: wid },
         }),
       ]);
@@ -53,11 +53,19 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         run?.agentVersions && typeof run.agentVersions === 'object'
           ? (run.agentVersions as Record<string, number>)
           : undefined;
+      // Run-start snapshot of the registry settings marked `runPinned`. Carried
+      // on the ctx so any activity that resolves a setting gets the run's frozen
+      // value without knowing that pinning exists.
+      const pinnedSettings =
+        run?.pinnedSettings && typeof run.pinnedSettings === 'object'
+          ? (run.pinnedSettings as Record<string, unknown>)
+          : undefined;
       return {
         agentVersions,
         // Org is derived transitively (team → org); the ORGANIZATION cascade
         // tier sits between TEAM and GLOBAL.
         orgId: active?.repository?.team?.orgId,
+        pinnedSettings,
         teamId: active?.repository?.teamId,
         workflowTemplateId: run?.templateId,
       };
@@ -66,6 +74,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
       ctx.teamId !== undefined ||
       ctx.orgId !== undefined ||
       ctx.workflowTemplateId !== undefined ||
-      ctx.agentVersions !== undefined
+      ctx.agentVersions !== undefined ||
+      ctx.pinnedSettings !== undefined
   );
 }

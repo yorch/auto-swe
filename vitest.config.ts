@@ -94,6 +94,13 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/integrations'),
       },
       {
+        // Broad alias covers config/index, cache, registry, permissions,
+        // resolveSetting, types, and any future subpaths. Must come before the
+        // bare @auto-swe/shared catch-all.
+        find: '@auto-swe/shared/config',
+        replacement: path.resolve(__dirname, 'packages/shared/src/config'),
+      },
+      {
         find: '@auto-swe/shared/types/api',
         replacement: path.resolve(__dirname, 'packages/shared/src/types/api.ts'),
       },

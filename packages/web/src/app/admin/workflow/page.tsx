@@ -10,7 +10,7 @@ export default function AdminWorkflowPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="System-wide defaults applied to every new work request. Per-team overrides take precedence when set."
+        subtitle="System-wide defaults applied to every new work request. These are platform-wide — for the knobs a team or channel can override, see Settings."
         title="Admin — Workflow defaults"
       />
       <WorkflowDefaultsForm />

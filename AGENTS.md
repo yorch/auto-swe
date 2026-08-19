@@ -73,7 +73,7 @@ Run `ls packages/<name>/src` for the actual layout — only non-obvious rules li
 
 | Package            | Purpose                                              | Critical conventions                                                                                                                                                                          |
 | ------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill) |
+| `packages/shared`  | Prisma schema, DB client, shared types, workflow spec + interpreter, config registry | Singleton `PrismaClient` exported from `db.ts`; types re-exported via the `index.ts` barrel; `prisma/` holds `schema.prisma`, `seed.ts`, migrations; `skills/` holds built-in skill definitions (one file per skill); `config/` holds the setting registry + its resolver and permission rules |
 | `packages/gateway` | Fastify 5 HTTP API (auth, RBAC, routes, webhooks)    | All extensions use `fastify-plugin`; Zod validation via `fastify-type-provider-zod`; Octokit lives in `lib/github.ts`; entry point `src/index.ts`                                              |
 | `packages/worker`  | Temporal worker + Mastra agents                      | **`src/workflows/*` runs in a V8 isolate — `import type` only for external packages.** Activities are the deterministic boundary; agents/embeddings/models are imported FROM activities, never from workflows |
 | `packages/web`     | Next.js 16 dashboard (App Router)                    | TanStack Query for server state, Zustand for client state; `app/page.tsx` is the dashboard home                                                                                               |
@@ -139,7 +139,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "52 Prisma models", "28 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "54 Prisma models", "28 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -263,6 +263,39 @@ null = 15 s / 60 s).
 
 **Restart required:** `initAuth()` in `betterAuth.ts` reads OAuth credentials once at startup.
 Changing GitHub or Google OAuth credentials requires a gateway restart.
+
+### Setting Registry (operator policy)
+
+Knobs that are neither an integration credential nor bootstrap live in the **setting registry**:
+one declaration per knob in `packages/shared/src/config/registry.ts` carrying its Zod schema,
+default, the scopes it may be overridden at, the role required to change it, and whether it pins to
+a run. That declaration is what validates a write, resolves a read, drives the `/admin/settings`
+form, and gates permission — **adding a knob is a definition, not a migration plus a route plus a
+form field.**
+
+- Read with `resolveSetting(key, ctx)` / `resolveSettings(keys, ctx)` from
+  `@auto-swe/shared/config`. **Never re-introduce a module-scope `const` for an operator-tunable
+  value.** Pass the fullest scope context available — a lookup missing `teamId` silently resolves a
+  broader value.
+- A setting's identity is the property it is stored under in `SETTING_DEFINITIONS`; there is no
+  `key` field to keep in sync.
+- Where the knob also has a nullable column on its own entity (`SlackChannel.reactiveCooldownMinutes`),
+  that column wins and the definition must **not** list that scope in `overridableAt` — otherwise the
+  effective-config view reports an override the worker never reads.
+- Resolution is `run pin → WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → env var →
+  default`, behind the same ~30 s cache as the agent resolver. A stored value that fails its schema
+  degrades to the next tier rather than throwing.
+- `runPinned: true` freezes the value into `WorkflowRun.pinnedSettings` at run start. Use it for
+  anything a run makes a structural decision on — the interpreter bounds are pinned because the
+  workflow isolate cannot read the DB and a replay must not take a different path.
+- Storage is `config_settings`, one JSON value per `(key, scope)`, with **partial** unique indexes
+  per scope — so writes use `findFirst` + conditional create, never `upsert`, exactly like `Agent`.
+- Permissions are `config_permissions` rows, not code. `requiredRole` is a floor no grant can lower;
+  ADMINs bypass grants; managing grants is ADMIN-only.
+
+The singleton integration tables above are **not** absorbed into the registry — their shape is
+relational and their secrets use the AES-GCM envelope. Full reference:
+[`docs/configuration.md`](./docs/configuration.md).
 
 ### Agents, Skills, and Tool Access
 

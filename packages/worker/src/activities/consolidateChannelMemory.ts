@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_CONSOLIDATOR_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { Agent } from '@mastra/core/agent';
@@ -10,7 +11,6 @@ import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getModel } from '../lib/models.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
-import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,12 +109,19 @@ export async function consolidateChannelMemory(
     return EMPTY_RESULT;
   }
 
-  // Effective params: per-channel override ?? caller input ?? built-in default.
+  // Effective params: per-channel override ?? caller input ?? configured default.
+  // The registry default has to be the same one passive ingest uses — the two
+  // halves of the memory pipeline disagreeing about what counts as a duplicate
+  // is exactly the drift a shared setting exists to prevent.
   const minClusterSize = channel?.consolidationMinClusterSize ?? input.minClusterSize ?? 3;
   const similarityThreshold =
     channel?.consolidationSimilarityThreshold ??
     input.similarityThreshold ??
-    DEFAULT_MEMORY_DEDUP_THRESHOLD;
+    (await resolveSetting('channel.memoryDedupThreshold', {
+      channelId,
+      orgId: channel?.orgId ?? undefined,
+      teamId: channel?.teamId ?? undefined,
+    }));
 
   // Budget gate: skip consolidation entirely when the channel is over its monthly
   // cap, so an exhausted channel doesn't keep spending on every ambient fire.

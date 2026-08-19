@@ -79,9 +79,9 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import { _resetConfigCacheForTests } from './config/cache.js';
 import {
   assertBudgetAvailable,
   BUDGET_LIMITS,

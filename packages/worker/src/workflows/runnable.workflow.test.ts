@@ -42,6 +42,14 @@ const calls: {
 
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
 let currentSpec: Record<string, unknown> = {};
+/**
+ * Pinned-settings snapshot served by the fake createWorkflowRun. Undefined is
+ * the realistic default: every run row created before the column existed
+ * carries NULL, and the workflow must tolerate that — a workflow-task failure
+ * retries forever instead of surfacing, so an unguarded read here would strand
+ * those runs silently.
+ */
+let currentPinnedSettings: Record<string, unknown> | undefined;
 let updateDomainStateImpl: (workflowId: string, status: string) => Promise<void> = async (
   _wf,
   status
@@ -66,7 +74,7 @@ const fakeActivities = {
   createHumanStep: async () => {},
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
-    return { runId: 'run-test-1', spec: currentSpec };
+    return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
   },
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
@@ -118,6 +126,9 @@ beforeEach((ctx: TestContext) => {
   if (!env || !worker) {
     ctx.skip();
   }
+  // Default to the pre-existing-run shape so a test that cares about pinning
+  // has to opt in, and one that doesn't cannot accidentally depend on it.
+  currentPinnedSettings = undefined;
 });
 
 afterAll(async () => {
@@ -162,6 +173,15 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect((result as { status: string }).status).toBe('SUCCESS');
     expect(calls.domainStates).toContain('IMPLEMENTING');
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+  }, 120_000);
+
+  it('runs a spec with no pinned-settings snapshot at all', async () => {
+    // The pre-existing-run case: `pinned_settings` is NULL. The workflow must
+    // fall back to the interpreter defaults rather than throwing.
+    currentPinnedSettings = undefined;
+    currentSpec = makeSpec({ done: { result: {}, status: 'SUCCESS', type: 'terminate' } }, 'done');
+    const result = await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-nopins'));
+    expect((result as { status: string }).status).toBe('SUCCESS');
   }, 120_000);
 
   it('delivers a registered signal and routes onReceive', async () => {

@@ -32,6 +32,9 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     $transaction: vi.fn(),
     activeWorkflow: {
+      // The run's tenant is derived from here as well as from RunInput, because
+      // the Slack and scheduled launch paths carry the repo only on this row.
+      findFirst: vi.fn(async () => null),
       updateMany: vi.fn(),
     },
     agent: {
@@ -40,6 +43,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     agentTrace: {
       aggregate: vi.fn(),
     },
+    // Backs the config registry: no rows means every setting resolves to its
+    // definition default, i.e. the constant it replaced.
+    configSetting: { findMany: vi.fn(async () => []) },
     connection: {
       findUniqueOrThrow: vi.fn(),
     },
@@ -48,6 +54,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     pullRequest: {
       findFirst: vi.fn(),
+    },
+    runInput: {
+      findUnique: vi.fn(async () => null),
     },
     team: { findUnique: vi.fn() },
     workflowRun: {

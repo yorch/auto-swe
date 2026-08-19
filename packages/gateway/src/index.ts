@@ -23,6 +23,7 @@ import { temporalPlugin } from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { bundleRoutes } from './routes/bundles.js';
+import { configSettingsRoutes } from './routes/configSettings.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
@@ -279,6 +280,7 @@ async function start() {
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
+  await app.register(configSettingsRoutes, { prefix: '/api/v1/admin' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });
   await app.register(bundleRoutes, { prefix: '/api/v1/admin' });
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });

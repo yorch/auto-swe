@@ -1,3 +1,6 @@
+import type { Prisma } from '@auto-swe/shared';
+import type { SettingResolveCtx } from '@auto-swe/shared/config';
+import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -35,7 +38,10 @@ export interface CreateWorkflowRunInput {
  */
 export async function createWorkflowRun(
   input: CreateWorkflowRunInput
-): Promise<{ runId: string; spec: WorkflowSpec } | { error: string }> {
+): Promise<
+  | { runId: string; spec: WorkflowSpec; pinnedSettings?: Record<string, unknown> }
+  | { error: string }
+> {
   const version = await prisma.workflowTemplateVersion.findUnique({
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
   });
@@ -76,13 +82,23 @@ export async function createWorkflowRun(
     agentVersions[canaryAgentKey] = canaryVersion;
   }
 
+  // Freeze the registry settings marked `runPinned` for the life of this run,
+  // alongside the agent-version pin. The interpreter runs in the V8 isolate and
+  // cannot read the database, and a run that started under one transition
+  // ceiling must finish under the same one or its replay history stops matching
+  // its code — so these are resolved once, here, and carried forward.
+  const settingsCtx = await runSettingsContext(input);
+  const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
-  // original spec + agentVersions snapshot across Temporal retries.
+  // original spec, agentVersions and pinnedSettings snapshots across Temporal
+  // retries.
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
       isCanary,
+      pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -93,7 +109,60 @@ export async function createWorkflowRun(
     update: {},
     where: { workflowId: input.workflowId },
   });
-  return { runId: run.id, spec };
+
+  // Read the pin back off the row rather than trusting the value just computed:
+  // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
+  // must keep using that one.
+  let persisted =
+    run.pinnedSettings && typeof run.pinnedSettings === 'object'
+      ? (run.pinnedSettings as Record<string, unknown>)
+      : null;
+
+  if (!persisted) {
+    // The row pre-dates this column. Returning the fresh snapshot without
+    // storing it would leave the workflow reading pinned limits while
+    // `currentRequestContext()` reported none to its activities — a run that is
+    // neither pinned nor consistently live. Backfill so both sides agree.
+    await prisma.workflowRun.update({
+      data: { pinnedSettings: pinnedSettings as Prisma.InputJsonObject },
+      where: { id: run.id },
+    });
+    persisted = pinnedSettings;
+  }
+
+  return { pinnedSettings: persisted, runId: run.id, spec };
+}
+
+/// Scope context for the run's pinned-settings snapshot. The template comes from
+/// the input; team and org have to be derived, and they must land on the SAME
+/// tenant `currentRequestContext()` resolves for this run's activities — a
+/// snapshot pinned at GLOBAL while every other setting resolves at TEAM is worse
+/// than no pin at all.
+///
+/// Two sources, because the launch paths disagree: `POST /work-requests` sets
+/// `RunInput.connectionId`, while the Slack slash-command and scheduled-request
+/// paths leave it null and carry the repo on `ActiveWorkflow.repoId` instead.
+/// `currentRequestContext()` reads the latter, so this reads both.
+async function runSettingsContext(input: CreateWorkflowRunInput): Promise<SettingResolveCtx> {
+  const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
+
+  const [request, active] = await Promise.all([
+    input.workRequestId
+      ? prisma.runInput.findUnique({
+          select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
+          where: { id: input.workRequestId },
+        })
+      : null,
+    prisma.activeWorkflow.findFirst({
+      select: { repository: { select: { team: { select: { orgId: true } }, teamId: true } } },
+      where: { temporalWorkflowId: input.workflowId },
+    }),
+  ]);
+
+  const team = request?.connection ?? active?.repository;
+  ctx.teamId = team?.teamId ?? undefined;
+  ctx.orgId = team?.team?.orgId ?? undefined;
+  return ctx;
 }
 
 export interface RecordStepInput {

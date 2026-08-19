@@ -1,3 +1,4 @@
+import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
@@ -6,6 +7,10 @@ vi.mock('@auto-swe/shared/db', () => {
     // against the same mocked client so `channelMonthlyUsage.findUnique` backs it.
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prismaMock)),
     channelMonthlyUsage: { findUnique: vi.fn(), upsert: vi.fn() },
+    // Backs the config registry: no rows means every `channel.*` setting
+    // resolves to its definition default, which is the pre-registry behaviour
+    // these tests were written against.
+    configSetting: { findMany: vi.fn(async () => []) },
     slackChannel: { findUnique: vi.fn(), update: vi.fn() },
   };
   return { prisma: prismaMock };
@@ -54,6 +59,7 @@ import {
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
 const updateChannel = vi.mocked(prisma.slackChannel.update);
 const findUsage = vi.mocked(prisma.channelMonthlyUsage.findUnique);
+const findConfigSetting = vi.mocked(prisma.configSetting.findMany);
 
 function makeChannel(overrides: Record<string, unknown> = {}) {
   return {
@@ -77,6 +83,10 @@ function humanMsg(text: string, ts = '1700000000.000100') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The settings cache is process-global and keyed by resolution context, so a
+  // value resolved in one test would otherwise mask the override set in the next.
+  _resetConfigCacheForTests();
+  findConfigSetting.mockResolvedValue([]);
   resolveAgentSpecMock.mockResolvedValue({
     agentKey: 'channelAssistant',
     systemPrompt: '',
@@ -112,16 +122,29 @@ describe('shouldPostInterjection', () => {
 
 describe('buildReactivePrompt', () => {
   it('renders the transcript and a high-bar SKIP instruction', () => {
-    const prompt = buildReactivePrompt([humanMsg('how do I deploy?')], []);
+    const prompt = buildReactivePrompt([humanMsg('how do I deploy?')], [], 5);
     expect(prompt).toContain('how do I deploy?');
     expect(prompt).toContain('SKIP');
     expect(prompt).toContain('HIGH bar');
   });
 
+  it('injects only as many memory items as the resolved limit allows', () => {
+    const memory = Array.from({ length: 5 }, (_, i) => ({
+      id: `m${i}`,
+      similarity: 0.9,
+      summary: `fact ${i}`,
+    }));
+    const prompt = buildReactivePrompt([humanMsg('a question')], memory, 2);
+    expect(prompt).toContain('- fact 0');
+    expect(prompt).toContain('- fact 1');
+    expect(prompt).not.toContain('- fact 2');
+  });
+
   it('labels the bot vs humans and injects memory context', () => {
     const prompt = buildReactivePrompt(
       [{ isBot: true, text: 'earlier note', ts: '1', user: 'B1' }, humanMsg('a question')],
-      [{ id: 'm1', similarity: 0.9, summary: 'we use yarn release' }]
+      [{ id: 'm1', similarity: 0.9, summary: 'we use yarn release' }],
+      5
     );
     expect(prompt).toContain('assistant: earlier note');
     expect(prompt).toContain('<@U1>: a question');
@@ -220,6 +243,42 @@ describe('evaluateReactiveInterjection', () => {
     // Should be ~5 minutes before "now", not the 30-minute default.
     expect(oldestMs).toBeGreaterThanOrEqual(before - 5 * 60_000 - 1000);
     expect(oldestMs).toBeLessThanOrEqual(after - 5 * 60_000 + 1000);
+  });
+
+  it('takes the cooldown from the config registry when the channel column is null', async () => {
+    // 15 minutes ago clears the 10-minute default, but a TEAM-scoped override of
+    // 30 minutes should still hold it back.
+    findConfigSetting.mockResolvedValue([
+      { key: 'channel.reactiveCooldownMinutes', scope: 'TEAM', value: 30 },
+    ] as never);
+    findChannel.mockResolvedValue(
+      makeChannel({
+        lastReactiveAt: new Date(Date.now() - 15 * 60_000),
+        reactiveCooldownMinutes: null,
+      }) as never
+    );
+
+    const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+    expect(res.reason).toBe('cooldown');
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it('lets a per-channel column win over a registry override', async () => {
+    findConfigSetting.mockResolvedValue([
+      { key: 'channel.reactiveCooldownMinutes', scope: 'TEAM', value: 30 },
+    ] as never);
+    findChannel.mockResolvedValue(
+      makeChannel({
+        lastReactiveAt: new Date(Date.now() - 15 * 60_000),
+        reactiveCooldownMinutes: 1,
+      }) as never
+    );
+
+    const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+    expect(res.reason).not.toBe('cooldown');
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT post (and does not stamp cooldown) when the agent replies SKIP', async () => {

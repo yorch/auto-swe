@@ -312,6 +312,9 @@ model Organization {
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
 
+  configSettings      ConfigSetting[]
+  configPermissions   ConfigPermission[]
+
   @@map("organizations")
   skills            Skill[]
 }
@@ -354,6 +357,8 @@ model Team {
   providerCredentials ProviderCredential[]
   agents              Agent[]
   slackChannels       SlackChannel[]
+  configSettings      ConfigSetting[]
+  configPermissions   ConfigPermission[]
   memoryItems         MemoryItem[]             @relation("TeamMemoryItems")
 
   @@index([orgId])
@@ -561,6 +566,7 @@ model SlackChannel {
   monthlyUsage   ChannelMonthlyUsage[]
   openItems      ChannelOpenItem[]
   threadSessions ChannelThreadSession[]
+  configSettings ConfigSetting[]
 
   @@unique([workspaceId, slackChannelId])
   @@index([teamId])
@@ -701,6 +707,7 @@ model User {
   humanStepsResolved    WorkflowHumanStep[]
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  configPermissions     ConfigPermission[]
 
   @@map("users")
 }
@@ -899,6 +906,14 @@ model WorkflowRun {
   /// (cutting a new version) does not change an in-flight run. Null for runs
   /// created before this column existed (they resolve the latest version).
   agentVersions     Json?             @map("agent_versions")
+  /// Snapshot of every run-pinned registry setting, taken when the run began.
+  /// `resolveSetting` reads these instead of the live cascade for keys marked
+  /// `runPinned`, so changing a knob mid-run cannot alter a decision the run
+  /// has already made (fan-out width, transition ceilings, budget tiers). Keys
+  /// that are not run-pinned still re-resolve on every call, which is what lets
+  /// a model or credential edit land inside an in-flight workflow. Null for
+  /// runs created before this column existed — they resolve live.
+  pinnedSettings    Json?             @map("pinned_settings")
   /// True when this run was routed to the canary arm (evals P2 canary).
   /// Used to split EvalResult rows for canary vs control comparison.
   isCanary          Boolean           @default(false) @map("is_canary")
@@ -1210,6 +1225,7 @@ model WorkflowTemplate {
   workflowRuns          WorkflowRun[]
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  configSettings        ConfigSetting[]
 
   @@unique([teamId, name])
   @@map("workflow_templates")
@@ -1621,6 +1637,88 @@ model FigmaConfig {
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.
 /// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
 /// recorded). Written from the gateway routes that mutate these rows.
+/// A definition-driven configuration override. Unlike the singleton config
+/// tables (GitHubConfig, WorkflowDefaults, …) — whose shape is genuinely
+/// relational and stays where it is — these rows hold one JSON value per
+/// (key, scope), so a new operator knob costs a definition in
+/// `@auto-swe/shared/config/registry` rather than a migration.
+///
+/// The registry, not this table, is the source of truth for a key's type,
+/// default, which scopes it may be overridden at, and who may change it. A row
+/// here only ever means "at this scope, use this value instead of the default";
+/// a key with no row anywhere resolves to its definition default. Values are
+/// validated against the definition's Zod schema before they are written, so a
+/// row can only hold a shape the definition accepts.
+model ConfigSetting {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Registry key, e.g. `channel.reactiveCooldownMinutes`.
+  key                String
+  scope              ConfigScope
+  teamId             String?     @map("team_id") @db.Uuid
+  orgId              String?     @map("org_id") @db.Uuid
+  channelId          String?     @map("channel_id") @db.Uuid
+  workflowTemplateId String?     @map("workflow_template_id") @db.Uuid
+  value              Json
+  updatedById        String?     @map("updated_by_id") @db.Uuid
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  team             Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  organization     Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  channel          SlackChannel?     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  workflowTemplate WorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([scope, teamId])
+  @@index([scope, orgId])
+  @@index([scope, channelId])
+  @@index([scope, workflowTemplateId])
+  @@index([teamId])
+  @@index([orgId])
+  @@index([channelId])
+  @@index([workflowTemplateId])
+  @@map("config_settings")
+}
+
+/// A grant of write access to configuration: who may change which settings,
+/// and where. Deliberately data rather than a static map in code, so widening
+/// or narrowing who configures what is an admin action, not a deploy.
+///
+/// A grant matches when its `keyPattern` covers the setting key (exact,
+/// `group.*`, or `*`), its grantee matches the actor (either a specific
+/// `userId` or every user holding `role`), and its scope covers the scope being
+/// written. Platform ADMINs bypass grants entirely — they can already write
+/// every singleton config table, so requiring a self-grant would be ceremony.
+/// A definition's `requiredRole` is the floor: no grant can let an actor below
+/// it write that key.
+model ConfigPermission {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Exact setting key, a `group.*` prefix wildcard, or `*` for everything.
+  keyPattern  String      @map("key_pattern")
+  /// Grantee. Exactly one of `userId` / `role` is set (CHECK-enforced).
+  userId      String?     @map("user_id") @db.Uuid
+  role        Role?
+  /// Widest scope this grant authorises writes at. A TEAM grant authorises
+  /// TEAM and CHANNEL/WORKFLOW_TEMPLATE writes below that team; an
+  /// ORGANIZATION grant authorises anything inside the org.
+  scope       ConfigScope
+  teamId      String?     @map("team_id") @db.Uuid
+  orgId       String?     @map("org_id") @db.Uuid
+  createdById String?     @map("created_by_id") @db.Uuid
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team         Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([role])
+  @@index([teamId])
+  @@index([orgId])
+  @@map("config_permissions")
+}
+
 model ConfigAuditLog {
   id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   entityType String            @map("entity_type")

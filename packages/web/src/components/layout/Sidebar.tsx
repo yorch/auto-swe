@@ -178,6 +178,14 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['ADMIN'],
       },
       {
+        href: '/admin/settings',
+        icon: 'settings',
+        label: 'Settings',
+        // Not ADMIN-only: the page authorises per setting, so a lead holding a
+        // grant needs to be able to reach it.
+        roles: ['ADMIN', 'LEAD'],
+      },
+      {
         href: '/admin/workflow',
         icon: 'workflows',
         label: 'Workflow Defaults',

@@ -6,6 +6,7 @@ const otel = initTelemetry('auto-swe-worker');
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { NativeConnection, Runtime, Worker } from '@temporalio/worker';
 import * as activities from './activities/index.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
@@ -32,9 +33,17 @@ async function run() {
   // rotation until config is complete.
   await assertConfigReady();
 
-  const connection = await NativeConnection.connect({
-    address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
-  });
+  // Boot-time only: Temporal reads the concurrency cap when the worker is
+  // created, so a change to it needs a restart — which is what the setting's
+  // `restartRequired` flag tells an operator in the dashboard. Resolved
+  // alongside the connection rather than before it; only `Worker.create` needs
+  // both.
+  const [maxConcurrentActivities, connection] = await Promise.all([
+    resolveSetting('workspace.maxConcurrentActivities'),
+    NativeConnection.connect({
+      address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
+    }),
+  ]);
   await initTemporalClient();
 
   // Resolve workflow path relative to this file (ESM-compatible). Prefer
@@ -51,11 +60,10 @@ async function run() {
     // Most activities hold a Docker workspace (clone + container) — an
     // explicit cap keeps a burst of workflows from exhausting the Docker
     // host. The Temporal default (100) is far past what one host can serve.
-    // Override with WORKER_MAX_CONCURRENT_ACTIVITIES.
-    maxConcurrentActivityTaskExecutions: Number.parseInt(
-      process.env.WORKER_MAX_CONCURRENT_ACTIVITIES ?? '10',
-      10
-    ),
+    // Read once at boot from the config registry (`workspace.maxConcurrentActivities`,
+    // which still falls back to WORKER_MAX_CONCURRENT_ACTIVITIES), so the value
+    // is visible in the dashboard rather than only in the process environment.
+    maxConcurrentActivityTaskExecutions: maxConcurrentActivities,
     namespace: 'default',
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).

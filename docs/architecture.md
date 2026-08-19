@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 52 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 54 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline + a hand-written constraints/indexes migration |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -335,6 +335,11 @@ validates every required row at worker boot. Full rules in
 [AGENTS.md §6](../AGENTS.md#agents-skills-and-tool-access); the agent layer itself is in
 [agents.md](./agents.md).
 
+Operator policy — the tuning knobs that are not agent config — resolves through the same five scopes
+via the **setting registry**, which adds an env-var tier and a definition default below `GLOBAL`
+rather than throwing, and can freeze a value to a run. See
+[configuration.md](./configuration.md).
+
 ---
 
 ## 5. Authentication
@@ -371,7 +376,7 @@ instead. Tenant isolation is enforced in the application layer, not by database 
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 52 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 54 models.
 
 ```mermaid
 erDiagram

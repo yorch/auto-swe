@@ -252,10 +252,10 @@ describe('runSpec', () => {
       schemaVersion: SPEC_SCHEMA_VERSION,
     });
     const { dispatcher } = makeDispatcher({ signalQueue: {}, stepOutputs: {} });
-    await expect(runSpec(spec, baseCtx(), dispatcher, 50)).rejects.toThrow(/MAX_NODE_TRANSITIONS/);
+    await expect(runSpec(spec, baseCtx(), dispatcher, { maxTransitions: 50 })).rejects.toThrow(
+      /MAX_NODE_TRANSITIONS/
+    );
   });
-
-  // ── Phase 2: onFail semantics ──
 
   it('onFail=block (default): a passed=false output throws and aborts the run', async () => {
     const spec = parseWorkflowSpec({
@@ -454,6 +454,48 @@ describe('runSpec', () => {
     };
     expect(out.results.map((r) => r.result.branch)).toEqual(['a', 'b', 'c']);
     expect(out.results[0]?.exports).toEqual({ 'context.localBranch': 'a' });
+  });
+
+  it('fanOut: bounds branches by the caller-supplied concurrency when the node sets none', async () => {
+    // The registry-pinned width. The node has no `concurrency` of its own, so
+    // whatever runSpec was handed is what bounds the fan-out.
+    const spec = parseWorkflowSpec({
+      entry: 'init',
+      name: 'fanout-concurrency',
+      nodes: {
+        branchDone: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        done: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        fan: { join: 'done', over: { from: 'context.items' }, subgraph: 'work', type: 'fanOut' },
+        init: {
+          next: 'fan',
+          type: 'set',
+          values: { 'context.items': { literal: [1, 2, 3, 4, 5, 6, 7, 8] } },
+        },
+        work: { next: 'branchDone', step: 'slow', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+    let inFlight = 0;
+    let peak = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        // Async on purpose: a synchronous step never overlaps, so peak would
+        // read 1 regardless of the limit and the assertion would prove nothing.
+        slow: async () => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inFlight -= 1;
+          return {};
+        },
+      },
+    });
+
+    const result = await runSpec(spec, baseCtx(), dispatcher, { fanoutConcurrency: 2 });
+    expect(result.status).toBe('SUCCESS');
+    expect(peak).toBe(2);
   });
 
   it('fanOut: sealed child context — branch writes do not leak to parent', async () => {

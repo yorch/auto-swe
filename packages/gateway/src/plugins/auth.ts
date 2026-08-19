@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Role } from '@auto-swe/shared';
+import { roleMeets } from '@auto-swe/shared/config/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
@@ -33,15 +34,12 @@ declare module 'fastify' {
   }
 }
 
-// Role hierarchy: ADMIN > LEAD > ENGINEER
-const ROLE_HIERARCHY: Record<string, number> = {
-  ADMIN: 3,
-  ENGINEER: 1,
-  LEAD: 2,
-};
-
+// Role hierarchy: ADMIN > LEAD > ENGINEER. The ladder itself lives in
+// `@auto-swe/shared/config/permissions`, because the settings registry's
+// `requiredRole` floor has to rank roles the same way every other check in this
+// file does — two copies would let the two drift apart silently.
 function hasRole(userRole: string, requiredRole: string): boolean {
-  return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
+  return roleMeets(userRole as Role, requiredRole as Role);
 }
 
 // Org role hierarchy: ORG_ADMIN > ORG_MEMBER (P5 multi-org RBAC).
@@ -173,7 +171,7 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   });
 };
 
-export { authPlugin, hasRole, ROLE_HIERARCHY };
+export { authPlugin, hasRole };
 export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 
 // ── RBAC Hook Factory ──

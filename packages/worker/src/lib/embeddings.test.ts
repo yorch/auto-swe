@@ -34,8 +34,8 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { _resetConfigCacheForTests } from './config/cache.js';
 import { ConfigMissingError } from './config/resolver.js';
 import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
 
