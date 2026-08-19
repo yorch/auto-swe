@@ -14,10 +14,11 @@
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
-import type { DiffKind } from '@/lib/workflowLayout';
+import { type DiffKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 
-export const NODE_WIDTH = 220;
-export const NODE_HEIGHT = 88;
+// The card is sized by the same pair dagre is fed when it computes positions —
+// re-exported rather than redeclared so the two can never drift apart.
+export { NODE_HEIGHT, NODE_WIDTH };
 
 /** Edge "kinds" emitted by collectEdges in workflowLayout — duplicated here
  *  so the node knows which source handle ids it must expose. */
