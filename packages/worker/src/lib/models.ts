@@ -2,6 +2,7 @@ import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import type { LanguageModel as AiLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
 import type {
@@ -10,10 +11,15 @@ import type {
 } from './config/types.js';
 import { parseProviderModelSpec } from './providerUtils.js';
 
-// All Vercel AI SDK provider factories return the same LanguageModelV1 shape; we
-// derive the type from the existing anthropic provider so we don't take a hard
-// dependency on @ai-sdk/provider (the type-only package is a transitive dep).
-export type LanguageModel = ReturnType<typeof anthropic>;
+// The provider factories no longer agree on a return type: since
+// @ai-sdk/anthropic 4.0.34 the Anthropic and OpenAI providers return the
+// batch-capable `BatchLanguageModelV4`, while Google and the OpenAI-compatible
+// adapter still return plain `LanguageModelV4`. Deriving this alias from
+// `anthropic` therefore made the two narrower providers unassignable. Select
+// the v4 member of the SDK's own model union instead — that is the interface
+// every factory here implements, and it stays correct as providers gain
+// capabilities, without taking a direct dependency on @ai-sdk/provider.
+export type LanguageModel = Extract<AiLanguageModel, { specificationVersion: 'v4' }>;
 
 export type ModelBackedAgentKey = ConfigModelBackedAgentKey;
 
