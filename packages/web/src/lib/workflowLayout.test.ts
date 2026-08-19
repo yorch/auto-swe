@@ -1,9 +1,10 @@
 import { NodeSchema } from '@auto-swe/shared/workflow';
 import { makeSpec as spec } from '@auto-swe/shared/workflow/testHelpers';
 import { describe, expect, it } from 'vitest';
-import { handleKindsFor } from '@/components/workflow/dagNode';
+import { handlePortsFor } from '@/components/workflow/dagNode';
 import { makeDefaultNodeFor } from '@/components/workflow/makeDefaultNode';
 import { PRIMITIVE_GROUPS } from '@/components/workflow/NodePalette';
+import { specToFlow } from '@/components/workflow/specToFlow';
 import { layoutSpec, NODE_WIDTH } from './workflowLayout.js';
 
 describe('layoutSpec', () => {
@@ -102,26 +103,21 @@ describe('layoutSpec', () => {
 
   // Drift guard, driven by the Node union itself rather than a hardcoded list:
   // adding a 16th node type fails this automatically. `collectEdges` delegates
-  // to shared's `nodeEdges`, and `handleKindsFor` declares which source handles
-  // the rendered node exposes — an edge whose kind has no matching handle is
+  // to shared's `nodeEdges`, and `handlePortsFor` declares which source handles
+  // the rendered node exposes — an edge whose port has no matching handle is
   // one React Flow silently drops, which is exactly how agent / mcp / eval /
-  // containerStep came to render as dead ends.
-  //
-  // `humanDecision` is a known, pre-existing exception: `nodeEdges` labels each
-  // option edge `options[i].next`, the renderer flattens them to one `onSubmit`
-  // kind, and `handleKindsFor` exposes no `onSubmit` port for it — so a
-  // multi-option decision's edges do not render. Fixing that needs a product
-  // call (one port per option, or one shared port), because TemplateEditor
-  // treats a handle id as a top-level spec field name when drag-connecting.
+  // containerStep came to render as dead ends, and how a multi-option
+  // `humanDecision` rendered its timeout branch and none of its decisions.
   const NODE_TYPES = NodeSchema.options.map((o) => o.shape.type.value);
-  const HANDLE_PARITY_EXCEPTIONS = new Set(['humanDecision']);
 
   // The inverse direction, and the one that actually catches the original bug:
   // a node type that exposes a `next` port must emit a `next` edge when wired.
   // The parity test below cannot see this — a type that emits no edges at all
   // trivially has no orphaned ones.
   const NEXT_BEARING = NODE_TYPES.filter((t) =>
-    handleKindsFor(makeDefaultNodeFor({ kind: 'primitive', nodeType: t })).includes('next')
+    handlePortsFor(makeDefaultNodeFor({ kind: 'primitive', nodeType: t })).some(
+      (p) => p.id === 'next'
+    )
   );
 
   it.each(NEXT_BEARING)('a %s node emits its next edge once wired', (type) => {
@@ -129,17 +125,15 @@ describe('layoutSpec', () => {
     const result = layoutSpec(
       spec({ entry: 'a', nodes: { a: node, done: { status: 'SUCCESS', type: 'terminate' } } })
     );
-    expect(result.edges).toEqual([{ from: 'a', kind: 'next', to: 'done' }]);
+    expect(result.edges).toEqual([{ from: 'a', kind: 'next', port: 'next', to: 'done' }]);
   });
 
-  it.each(NODE_TYPES)('every edge kind a %s node emits has a rendered handle', (type) => {
+  it.each(NODE_TYPES)('every edge a %s node emits leaves through a rendered handle', (type) => {
     const node = makeDefaultNodeFor({ kind: 'primitive', nodeType: type });
-    const spec1 = spec({ entry: 'a', nodes: { a: node } });
-    const kinds = new Set(layoutSpec(spec1).edges.map((e) => e.kind));
-    const handles = new Set(handleKindsFor(node));
-    const orphaned = [...kinds].filter((k) => !handles.has(k));
+    const ports = new Set(handlePortsFor(node).map((p) => p.id));
+    const emitted = layoutSpec(spec({ entry: 'a', nodes: { a: node } })).edges.map((e) => e.port);
 
-    expect(orphaned).toEqual(HANDLE_PARITY_EXCEPTIONS.has(type) ? orphaned : []);
+    expect(emitted.filter((p) => !ports.has(p))).toEqual([]);
   });
 
   it('returns a bounding-box width and height that fit every node', () => {
@@ -165,5 +159,51 @@ describe('node-type coverage', () => {
 
     const declared = NodeSchema.options.map((o) => o.shape.type.value);
     expect([...offered].sort()).toEqual([...declared].sort());
+  });
+});
+
+describe('humanDecision option ports', () => {
+  const decision = {
+    onTimeout: 'expired',
+    options: [
+      { label: 'Ship it', next: 'ship', value: 'ship' },
+      { label: 'Hold', next: 'hold', value: 'hold' },
+    ],
+    timeout: '24h',
+    title: 'Ship?',
+    type: 'humanDecision' as const,
+  };
+  const graph = spec({
+    entry: 'decide',
+    nodes: {
+      decide: decision,
+      expired: { status: 'TIMED_OUT' as const, type: 'terminate' as const },
+      hold: { status: 'SKIPPED' as const, type: 'terminate' as const },
+      ship: { status: 'SUCCESS' as const, type: 'terminate' as const },
+    },
+  });
+
+  it('lays out every option edge, not just the timeout branch', () => {
+    expect(layoutSpec(graph).edges).toEqual([
+      { from: 'decide', kind: 'onTimeout', port: 'onTimeout', to: 'expired' },
+      { from: 'decide', kind: 'onSubmit', port: 'options[0].next', to: 'ship' },
+      { from: 'decide', kind: 'onSubmit', port: 'options[1].next', to: 'hold' },
+    ]);
+  });
+
+  it('draws one handle per option, labelled with the option text', () => {
+    expect(handlePortsFor(decision)).toEqual([
+      { id: 'onTimeout', kind: 'onTimeout', label: 'timeout' },
+      { id: 'options[0].next', kind: 'onSubmit', label: 'Ship it' },
+      { id: 'options[1].next', kind: 'onSubmit', label: 'Hold' },
+    ]);
+  });
+
+  it('gives each option edge a distinct React Flow id and source handle', () => {
+    const { edges } = specToFlow(graph, {});
+    const options = edges.filter((e) => e.sourceHandle?.startsWith('options['));
+
+    expect(options.map((e) => e.sourceHandle)).toEqual(['options[0].next', 'options[1].next']);
+    expect(new Set(edges.map((e) => e.id)).size).toBe(edges.length);
   });
 });

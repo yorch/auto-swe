@@ -27,7 +27,12 @@ export type EdgeKind =
 export interface LayoutEdge {
   from: string;
   to: string;
+  /** Styling/labelling bucket. */
   kind: EdgeKind;
+  /** The spec field this edge leaves through, and the source handle id the
+   *  node draws for it. Equal to `kind` except for a `humanDecision` option,
+   *  which is `options[i].next`. */
+  port: string;
 }
 
 export interface LayoutNode {
@@ -65,9 +70,11 @@ export const NODE_HEIGHT = 88;
 function collectEdges(node: Node, id: string): LayoutEdge[] {
   return nodeEdges(node).map(([field, to]) => ({
     from: id,
-    // `humanDecision` labels each option edge `options[i].next`; they all leave
-    // through the one `onSubmit` port. Every other field name is an EdgeKind.
+    // `humanDecision` labels each option edge `options[i].next` and draws one
+    // handle per option, so the kind is only the styling bucket there. Every
+    // other field name is itself an EdgeKind and its own port.
     kind: (field.startsWith('options[') ? 'onSubmit' : field) as EdgeKind,
+    port: field,
     to,
   }));
 }

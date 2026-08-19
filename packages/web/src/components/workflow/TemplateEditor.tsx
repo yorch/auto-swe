@@ -16,6 +16,7 @@
  */
 
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
+import { setNodeEdge } from '@auto-swe/shared/workflow';
 import {
   Background,
   BackgroundVariant,
@@ -34,7 +35,7 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { TOKEN } from '@/lib/palette';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
-import { DagNode, type DagNodeData, type HandleKind, handleKindsFor } from './dagNode';
+import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind } from './NodePalette';
@@ -112,24 +113,22 @@ function EditorInner({
       if (!c.source || !c.target || !c.sourceHandle) {
         return;
       }
-      const handleKind = c.sourceHandle as HandleKind;
       const sourceNode = spec.nodes[c.source];
       if (!sourceNode) {
         return;
       }
-      const valid = handleKindsFor(sourceNode);
-      if (!valid.includes(handleKind)) {
+      // A handle id is the spec field the edge leaves through — but not always
+      // a top-level one, so the write goes through `setNodeEdge` rather than an
+      // index assignment.
+      const field = c.sourceHandle;
+      if (!handlePortsFor(sourceNode).some((p) => p.id === field)) {
         return;
       }
-      const patched = {
-        ...(sourceNode as unknown as Record<string, unknown>),
-        [handleKind]: c.target,
-      };
       onChange({
         ...spec,
         nodes: {
           ...spec.nodes,
-          [c.source]: patched as WorkflowSpec['nodes'][string],
+          [c.source]: setNodeEdge(sourceNode, field, c.target),
         },
       });
     },

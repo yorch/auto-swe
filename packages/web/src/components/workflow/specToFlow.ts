@@ -130,7 +130,7 @@ export function specToFlow(
     const label = EDGE_LABEL[e.kind];
     return {
       animated: opts.statuses?.byNodeId[e.from]?.status === 'RUNNING',
-      id: `${e.from}-${e.kind}-${e.to}`,
+      id: `${e.from}-${e.port}-${e.to}`,
       ...(label && {
         label,
         labelBgPadding: [4, 2] as [number, number],
@@ -151,7 +151,7 @@ export function specToFlow(
         width: 16,
       },
       source: e.from,
-      sourceHandle: e.kind,
+      sourceHandle: e.port,
       style: {
         stroke: color,
         strokeDasharray: dashed ? '4 4' : undefined,

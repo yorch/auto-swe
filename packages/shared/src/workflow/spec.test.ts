@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
+import type { Node } from './spec.js';
+import {
+  nodeEdges,
+  parseWorkflowSpec,
+  readNodeEdge,
+  SPEC_SCHEMA_VERSION,
+  setNodeEdge,
+} from './spec.js';
 
 describe('parseWorkflowSpec', () => {
   const minimal = {
@@ -382,5 +389,57 @@ describe('agent node (P2)', () => {
         schemaVersion: SPEC_SCHEMA_VERSION,
       })
     ).toThrow();
+  });
+});
+
+describe('readNodeEdge / setNodeEdge', () => {
+  const decision: Node = {
+    onTimeout: 'expired',
+    options: [
+      { label: 'Ship it', next: 'ship', value: 'ship' },
+      { label: 'Hold', next: 'hold', value: 'hold' },
+    ],
+    timeout: '24h',
+    title: 'Ship?',
+    type: 'humanDecision',
+  };
+
+  /**
+   * These address a node by the field names `nodeEdges` emits, so what they
+   * have to agree on is that grammar — including the one indexed form.
+   */
+  it('round-trips every field nodeEdges emits', () => {
+    for (const [field, target] of nodeEdges(decision)) {
+      expect(readNodeEdge(decision, field)).toBe(target);
+    }
+  });
+
+  it('retargets one option without disturbing its siblings or its label', () => {
+    const next = setNodeEdge(decision, 'options[1].next', 'escalate');
+
+    expect(nodeEdges(next)).toEqual([
+      ['onTimeout', 'expired'],
+      ['options[0].next', 'ship'],
+      ['options[1].next', 'escalate'],
+    ]);
+    expect(next).toMatchObject({ options: [{ label: 'Ship it' }, { label: 'Hold' }] });
+    expect(decision.type === 'humanDecision' && decision.options[1].next).toBe('hold');
+  });
+
+  it('retargets a plain top-level edge', () => {
+    const step: Node = { next: 'b', step: 'x', type: 'step' };
+
+    expect(nodeEdges(setNodeEdge(step, 'next', 'c'))).toEqual([['next', 'c']]);
+    expect(nodeEdges(setNodeEdge(step, 'next', null))).toEqual([]);
+  });
+
+  it('ignores an option index that does not exist, and an option clear', () => {
+    expect(setNodeEdge(decision, 'options[7].next', 'nope')).toBe(decision);
+    expect(setNodeEdge(decision, 'options[0].next', null)).toBe(decision);
+    expect(readNodeEdge(decision, 'options[7].next')).toBeUndefined();
+  });
+
+  it('reads undefined for an option field on a node that has no options', () => {
+    expect(readNodeEdge({ next: 'b', step: 'x', type: 'step' }, 'options[0].next')).toBeUndefined();
   });
 });

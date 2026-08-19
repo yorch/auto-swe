@@ -8,12 +8,13 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
+import { readNodeEdge } from '@auto-swe/shared/workflow';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { type HandleKind, handleKindsFor } from './dagNode';
+import { type HandleKind, handlePortsFor } from './dagNode';
 import { type Binding, InputsBindingsSection } from './inspectorFields';
 import {
   AgentSection,
@@ -250,31 +251,31 @@ function EdgeConnectionsSection({
   node: SpecNode;
   nodeId: string;
   allNodeIds: string[];
-  onSetEdge: (field: HandleKind, target: string | null) => void;
+  onSetEdge: (field: string, target: string | null) => void;
 }) {
-  const handles = handleKindsFor(node);
+  const handles = handlePortsFor(node);
   if (handles.length === 0) {
     return null;
   }
   const otherIds = allNodeIds.filter((id) => id !== nodeId);
-  const nodeRecord = node as unknown as Record<string, unknown>;
 
   return (
     <div className="mt-6 space-y-3 border-t border-ink-600 pt-4">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
         Outgoing edges
       </div>
-      {handles.map((kind) => {
-        const current = (nodeRecord[kind] as string | undefined) ?? '';
-        const selectId = `edge-${kind}`;
+      {handles.map((h) => {
+        // An option port has no entry in HANDLE_LABEL_FULL — its label is the
+        // option's own text, which says more than "submit" would anyway.
+        const label = h.id === h.kind ? HANDLE_LABEL_FULL[h.kind] : h.label;
         return (
           <Select
             className="h-9 px-2 font-mono text-xs"
-            id={selectId}
-            key={kind}
-            label={HANDLE_LABEL_FULL[kind]}
-            onChange={(e) => onSetEdge(kind, e.target.value || null)}
-            value={current}
+            id={`edge-${h.id}`}
+            key={h.id}
+            label={label}
+            onChange={(e) => onSetEdge(h.id, e.target.value || null)}
+            value={readNodeEdge(node, h.id) ?? ''}
           >
             <option value="">— none —</option>
             {otherIds.map((id) => (
