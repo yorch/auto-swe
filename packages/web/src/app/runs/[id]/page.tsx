@@ -476,18 +476,12 @@ function WaterfallBar({
   }
 
   const startMs = new Date(step.startedAt).getTime();
-  const runStartMs = startMs; // relative to first step
-
   const endMs = step.endedAt ? new Date(step.endedAt).getTime() : startMs + totalMs * 0.1;
   const stepDurationMs = endMs - startMs;
 
-  const leftPct = 0;
   const widthPct = Math.max(2, (stepDurationMs / totalMs) * 100);
   const isFailed = step.status === 'FAILED';
   const isSkipped = step.status === 'SKIPPED';
-
-  void runStartMs;
-  void leftPct;
 
   return (
     <div className="flex items-center gap-3 py-1.5">
