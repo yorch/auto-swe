@@ -7,22 +7,36 @@ import type { WorkflowSummary } from '@auto-swe/shared/types/api';
 
 type LessonForChart = { failureType: string | null; createdAt: string };
 
+/**
+ * `YYYY-MM-DD` for a timestamp, in UTC. Bucket keys and the window below both
+ * use UTC so a run can never land on a key the window doesn't contain.
+ */
 function toDateKey(dateStr: string): string {
-  return new Date(dateStr).toISOString().slice(0, 10); // YYYY-MM-DD
+  return new Date(dateStr).toISOString().slice(0, 10);
 }
 
-function buildLast30Days(): string[] {
-  const days: string[] = [];
-  const today = new Date();
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+/**
+ * The trailing `days`-day window, ending today, as UTC date keys.
+ *
+ * Computed per call rather than once at module load: a dashboard left open
+ * across midnight kept bucketing into a stale window, and any run created
+ * after the rollover fell outside every bucket and vanished from the chart.
+ * Stepping by whole days in UTC also keeps the arithmetic and the keys on one
+ * calendar — mixing local `setDate` with UTC `toISOString` shifted every
+ * labelled bucket by a day for readers west of UTC.
+ */
+function lastDays(days: number): string[] {
+  const out: string[] = [];
+  const todayUtc = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate()
+  );
+  for (let i = days - 1; i >= 0; i--) {
+    out.push(new Date(todayUtc - i * 86_400_000).toISOString().slice(0, 10));
   }
-  return days;
+  return out;
 }
-
-const LAST_30_DAYS = buildLast30Days();
 
 // ── Workflow transformations ──────────────────────────────────────────
 
@@ -41,7 +55,7 @@ export function groupWorkflowsByDate(
   workflows: WorkflowSummary[],
   days = 30
 ): { date: string; completed: number; failed: number; active: number }[] {
-  const buckets = LAST_30_DAYS.slice(-days);
+  const buckets = lastDays(days);
   const map: Record<string, { completed: number; failed: number; active: number }> = {};
   for (const d of buckets) {
     map[d] = { active: 0, completed: 0, failed: 0 };
@@ -93,7 +107,7 @@ export function groupLessonsByDate(
   lessons: LessonForChart[],
   days = 30
 ): { date: string; count: number }[] {
-  const buckets = LAST_30_DAYS.slice(-days);
+  const buckets = lastDays(days);
   const map: Record<string, number> = {};
   for (const d of buckets) {
     map[d] = 0;

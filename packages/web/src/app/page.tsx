@@ -44,13 +44,7 @@ function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
                 href={`/runs/${step.runId}`}
               >
                 <div className="flex min-w-0 items-baseline gap-3">
-                  <span
-                    className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider"
-                    style={{
-                      background: 'var(--color-amber-400)/15',
-                      color: 'var(--color-amber-400)',
-                    }}
-                  >
+                  <span className="shrink-0 rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-400">
                     {step.kind}
                   </span>
                   <span className="truncate text-sm text-paper-200 group-hover:text-ember-400">

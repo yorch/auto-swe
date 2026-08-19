@@ -315,7 +315,9 @@ function LoginPageInner() {
         </header>
 
         <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-          <span>© {new Date().getFullYear()} · brnby</span>
+          {/* Prerendered at build time, so the baked-in year can disagree with the
+              client's clock across a New Year boundary. */}
+          <span suppressHydrationWarning>© {new Date().getFullYear()} · brnby</span>
           <span>v{APP_VERSION} · oauth + magic link + password</span>
         </footer>
       </aside>

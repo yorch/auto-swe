@@ -467,10 +467,12 @@ const PLAY_DURATION_S = 11;
 
 function WaterfallBar({
   currentMs,
+  runStartMs,
   step,
   totalMs,
 }: {
   currentMs: number;
+  runStartMs: number;
   step: WorkflowStepRecord;
   totalMs: number;
 }) {
@@ -482,6 +484,9 @@ function WaterfallBar({
   const endMs = step.endedAt ? new Date(step.endedAt).getTime() : startMs + totalMs * 0.1;
   const stepDurationMs = endMs - startMs;
 
+  // Offset from the run's start — without it every bar drew flush left and the
+  // panel showed durations stacked on top of each other rather than a timeline.
+  const leftPct = Math.min(Math.max(((startMs - runStartMs) / totalMs) * 100, 0), 100);
   const widthPct = Math.max(2, (stepDurationMs / totalMs) * 100);
   const isFailed = step.status === 'FAILED';
   const isSkipped = step.status === 'SKIPPED';
@@ -508,9 +513,9 @@ function WaterfallBar({
                 : 'var(--color-dust-400)',
             borderRadius: '4px',
             height: '100%',
-            left: 0,
+            left: `${leftPct}%`,
             position: 'absolute',
-            width: `${Math.min(widthPct, 100)}%`,
+            width: `${Math.min(widthPct, 100 - leftPct)}%`,
           }}
         />
         {/* Playhead indicator */}
@@ -556,6 +561,12 @@ function LayoutC({
     }
     return new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime();
   }, [run.startedAt, run.endedAt]);
+
+  /** Epoch ms of the run's start — the origin every waterfall bar offsets from. */
+  const runStartMs = useMemo(
+    () => (run.startedAt ? new Date(run.startedAt).getTime() : 0),
+    [run.startedAt]
+  );
 
   const [playhead, setPlayhead] = useState(0); // 0–1
   const [playing, setPlaying] = useState(false);
@@ -770,7 +781,13 @@ function LayoutC({
             <div className="px-5 py-3 border-b border-ink-600/30 shrink-0">
               <div className="kicker mb-2">Step timing</div>
               {run.steps.map((s: WorkflowStepRecord) => (
-                <WaterfallBar currentMs={currentMs} key={s.id} step={s} totalMs={totalMs} />
+                <WaterfallBar
+                  currentMs={currentMs}
+                  key={s.id}
+                  runStartMs={runStartMs}
+                  step={s}
+                  totalMs={totalMs}
+                />
               ))}
             </div>
           )}
