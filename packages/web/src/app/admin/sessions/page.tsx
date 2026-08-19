@@ -3,8 +3,9 @@
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Th } from '@/components/ui/Th';
 import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useWorkflows';
-import { cn, formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function AdminSessionsPage() {
   const { data: sessions, isLoading } = useAdminSessions();
@@ -95,18 +96,5 @@ export default function AdminSessionsPage() {
         </Card>
       </section>
     </div>
-  );
-}
-
-function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={cn(
-        'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
-        align === 'right' ? 'text-right' : 'text-left'
-      )}
-    >
-      {children}
-    </th>
   );
 }

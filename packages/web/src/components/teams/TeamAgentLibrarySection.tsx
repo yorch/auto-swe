@@ -1,6 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import {
+  cleanAgentPayload,
+  SkillRefEditor,
+  ToolKeysEditor,
+} from '@/components/agents/AgentEditorFields';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -22,10 +27,8 @@ import {
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
-import { type SkillOption, useSkills } from '@/hooks/useSkills';
+import { useSkills } from '@/hooks/useSkills';
 import { errMsg } from '@/lib/errors';
-
-const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
 
 const EMPTY: CreateTeamAgentBody = {
   description: '',
@@ -38,10 +41,6 @@ const EMPTY: CreateTeamAgentBody = {
   toolKeys: null,
 };
 
-function clean(o: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v !== undefined));
-}
-
 function modelLabel(a: AgentRow): string {
   if (a.modelSpec) {
     return a.modelSpec;
@@ -50,142 +49,6 @@ function modelLabel(a: AgentRow): string {
     return `↳ ${a.inheritsModelFrom}`;
   }
   return '—';
-}
-
-function SkillRefEditor({
-  refs,
-  skills,
-  onChange,
-}: {
-  refs: SkillRefInput[];
-  skills: SkillOption[];
-  onChange: (refs: SkillRefInput[]) => void;
-}) {
-  const attached = new Set(refs.map((r) => r.skillId));
-  const available = skills.filter((s) => !attached.has(s.id));
-
-  function add(skillId: string) {
-    onChange([...refs, { skillId, sortOrder: refs.length }]);
-  }
-  function remove(i: number) {
-    onChange(refs.filter((_, j) => j !== i).map((r, j) => ({ ...r, sortOrder: j })));
-  }
-  function move(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= refs.length) {
-      return;
-    }
-    const next = [...refs];
-    [next[i], next[j]] = [next[j], next[i]];
-    onChange(next.map((r, k) => ({ ...r, sortOrder: k })));
-  }
-  function nameFor(id: string) {
-    return skills.find((s) => s.id === id)?.name ?? id;
-  }
-
-  return (
-    <div className="space-y-2">
-      {refs.length > 0 && (
-        <ul className="space-y-1">
-          {refs.map((ref, i) => (
-            <li
-              className="flex items-center gap-2 rounded-[9px] border border-ink-400 bg-ink-900/40 px-3 py-2 text-sm"
-              key={ref.skillId}
-            >
-              <span className="flex-1 text-paper-200">{nameFor(ref.skillId)}</span>
-              <button
-                className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
-                disabled={i === 0}
-                onClick={() => move(i, -1)}
-                type="button"
-              >
-                ↑
-              </button>
-              <button
-                className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
-                disabled={i === refs.length - 1}
-                onClick={() => move(i, 1)}
-                type="button"
-              >
-                ↓
-              </button>
-              <button
-                className="text-brick-400 hover:text-brick-300"
-                onClick={() => remove(i)}
-                type="button"
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {available.length > 0 && (
-        <Select
-          onChange={(e) => {
-            if (e.target.value) {
-              add(e.target.value);
-            }
-          }}
-          value=""
-        >
-          <option value="">+ Add skill…</option>
-          {available.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </Select>
-      )}
-    </div>
-  );
-}
-
-function ToolKeysEditor({
-  value,
-  onChange,
-}: {
-  value: string[] | null;
-  onChange: (v: string[] | null) => void;
-}) {
-  const isCustom = value !== null;
-  function toggleKey(key: string, checked: boolean) {
-    const current = value ?? [];
-    onChange(checked ? [...current, key] : current.filter((k) => k !== key));
-  }
-  return (
-    <FieldWrapper hint={isCustom ? undefined : 'Inherits all available tools'} label="Tools">
-      <div className="space-y-2">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-paper-300">
-          <input
-            checked={isCustom}
-            className="accent-ember-400"
-            onChange={(e) => onChange(e.target.checked ? [] : null)}
-            type="checkbox"
-          />
-          Custom tool selection
-        </label>
-        {isCustom && (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-1">
-            {ALL_TOOL_KEYS.map((key) => (
-              <label
-                className="flex cursor-pointer items-center gap-2 text-sm text-paper-300"
-                key={key}
-              >
-                <input
-                  checked={value?.includes(key) ?? false}
-                  className="accent-ember-400"
-                  onChange={(e) => toggleKey(key, e.target.checked)}
-                  type="checkbox"
-                />
-                <span className="font-mono text-xs">{key}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
-    </FieldWrapper>
-  );
 }
 
 /**
@@ -222,7 +85,9 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   async function submitCreate() {
     setError(null);
     try {
-      await createAgent.mutateAsync(clean({ ...form }) as unknown as CreateTeamAgentBody);
+      await createAgent.mutateAsync(
+        cleanAgentPayload({ ...form }) as unknown as CreateTeamAgentBody
+      );
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
@@ -242,7 +107,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       }));
       await updateAgent.mutateAsync({
         body: {
-          ...(clean({
+          ...(cleanAgentPayload({
             description: editing.description ?? '',
             inheritsModelFrom: editing.inheritsModelFrom ?? '',
             modelSpec: editing.modelSpec ?? '',
