@@ -7,7 +7,11 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import { lookupPath } from '@auto-swe/shared/workflow/expr';
-import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
+import type {
+  CancellationToken,
+  Dispatcher,
+  InterpreterLimits,
+} from '@auto-swe/shared/workflow/interpreter';
 import { BranchCancelledError, runSpec } from '@auto-swe/shared/workflow/interpreter';
 import { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
 import type { Duration } from '@temporalio/common';
@@ -222,6 +226,38 @@ export interface RunnableWorkflowInput {
 
 // ── Workflow ──
 
+/// Reads the two interpreter bounds out of a run's pinned-settings snapshot.
+/// Anything missing or malformed falls through to the interpreter's own
+/// defaults rather than failing the run. The whole snapshot is optional: runs
+/// created before the column existed carry NULL, and a workflow that threw on
+/// that would strand every one of them — a workflow-task failure retries
+/// forever rather than surfacing.
+function readInterpreterLimits(
+  pinned: Record<string, unknown> | null | undefined
+): InterpreterLimits {
+  const limits: InterpreterLimits = {};
+  if (!pinned || typeof pinned !== 'object') {
+    return limits;
+  }
+  const maxTransitions = pinned['workflow.maxTransitions'];
+  if (
+    typeof maxTransitions === 'number' &&
+    Number.isInteger(maxTransitions) &&
+    maxTransitions > 0
+  ) {
+    limits.maxTransitions = maxTransitions;
+  }
+  const fanoutConcurrency = pinned['workflow.fanoutConcurrency'];
+  if (
+    typeof fanoutConcurrency === 'number' &&
+    Number.isInteger(fanoutConcurrency) &&
+    fanoutConcurrency > 0
+  ) {
+    limits.fanoutConcurrency = fanoutConcurrency;
+  }
+  return limits;
+}
+
 export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<WorkflowResult> {
   const workflowId = workflowInfo().workflowId;
 
@@ -239,6 +275,10 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   }
   const spec = runInfo.spec;
   const runId = runInfo.runId;
+  // Interpreter bounds come from the pinned-settings snapshot taken when the run
+  // row was created. Reading them here rather than resolving them live is what
+  // keeps a mid-run edit from changing the ceiling a replay was recorded under.
+  const interpreterLimits = readInterpreterLimits(runInfo.pinnedSettings);
 
   // 2. Register signal handlers for every signal name referenced in the spec.
   // SignalSlots owns the stale-payload-reset semantics so dispatcher remains
@@ -354,7 +394,7 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   let outcome: Awaited<ReturnType<typeof runSpec>> | null = null;
   let runError: unknown = null;
   try {
-    outcome = await runSpec(spec, initialCtx, dispatcher);
+    outcome = await runSpec(spec, initialCtx, dispatcher, interpreterLimits);
   } catch (err) {
     runError = err;
   }

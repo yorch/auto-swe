@@ -21,6 +21,7 @@
  */
 
 import crypto from 'node:crypto';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -28,6 +29,7 @@ import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/sh
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { putArtifact } from '../lib/artifactStore.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -62,8 +64,12 @@ export interface ShellStepResult {
   filesChanged: string[];
 }
 
-// Tiny (~5MB) helper image with git built-in, used by the prep + finalize phases.
-const GIT_HELPER_IMAGE = 'alpine/git:latest';
+// Tiny (~5MB) helper image with git built-in, used by the prep + finalize
+// phases. A registry setting rather than a constant so a deployment can pin a
+// digest instead of tracking the upstream `latest` tag.
+async function gitHelperImage(): Promise<string> {
+  return resolveSetting('workspace.gitHelperImage', await currentRequestContext());
+}
 
 /**
  * Redact the GitHub token from any string. `runDocker` invokes `git clone`
@@ -151,6 +157,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
  * default-branch retry. Caller owns volume lifecycle.
  */
 async function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: string): Promise<void> {
+  const image = await gitHelperImage();
   const tryClone = (refspec: string): Promise<string> =>
     runDocker(
       [
@@ -160,7 +167,7 @@ async function cloneIntoVolume(volumeName: string, meta: RepoMeta, branch: strin
         `${volumeName}:/workspace:rw`,
         '--entrypoint',
         'sh',
-        GIT_HELPER_IMAGE,
+        image,
         '-c',
         `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
       ],
@@ -229,7 +236,7 @@ async function finalizeWorkspaceVolume(
     `${volumeName}:/workspace:rw`,
     '--entrypoint',
     'sh',
-    GIT_HELPER_IMAGE,
+    await gitHelperImage(),
     '-c',
     script,
   ]);

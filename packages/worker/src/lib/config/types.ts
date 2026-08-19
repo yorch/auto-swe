@@ -32,6 +32,12 @@ export interface ResolveCtx {
   /// for a key, `resolveAgent` resolves that exact Agent version instead of the
   /// latest active one, freezing the run against later Agent edits.
   agentVersions?: Record<string, number>;
+  /// Run-start snapshot of every `runPinned` registry setting
+  /// (`WorkflowRun.pinnedSettings`). `resolveSetting` reads these instead of the
+  /// live cascade, so a knob a run has already made a structural decision on —
+  /// fan-out width, transition ceiling — cannot change underneath it. Undefined
+  /// outside a run, and for runs created before the column existed.
+  pinnedSettings?: Record<string, unknown>;
 }
 
 /// Resolved model + credential for a single role lookup. Returned by

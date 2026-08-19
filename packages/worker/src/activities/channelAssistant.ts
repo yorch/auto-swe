@@ -1,3 +1,4 @@
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
@@ -222,9 +223,13 @@ function buildRefineWorkflowTool(onRefine: (intent: RefineWorkflowIntent) => voi
 }
 
 /** Cap on how many retrieved memory items are injected into the prompt. */
+// Registry-backed (`channel.memoryContextItems`) — retained only as the
+// signature default for the two pure formatters below, which are unit-tested
+// directly and take the resolved value from their caller.
 const MAX_MEMORY_CONTEXT_ITEMS = 5;
 
 /** Cap on how many recent thread messages are injected as conversational context. */
+// Registry-backed (`channel.threadContextMessages`); see the note above.
 const MAX_THREAD_CONTEXT_MESSAGES = 15;
 
 /** Max chars kept per injected thread message (defensive against a huge paste). */
@@ -255,12 +260,16 @@ const ChannelMemorySummarySchema = z.object({
  * it. Pure (no I/O) so it's directly unit-testable. Returns `userText`
  * unchanged when there are no items.
  */
-export function formatMemoryContext(items: ChannelMemoryItem[], userText: string): string {
+export function formatMemoryContext(
+  items: ChannelMemoryItem[],
+  userText: string,
+  maxItems: number = MAX_MEMORY_CONTEXT_ITEMS
+): string {
   if (items.length === 0) {
     return userText;
   }
   const bullets = items
-    .slice(0, MAX_MEMORY_CONTEXT_ITEMS)
+    .slice(0, maxItems)
     .map((item) =>
       item.crossChannel ? `- [from another channel] ${item.summary}` : `- ${item.summary}`
     )
@@ -274,15 +283,19 @@ export function formatMemoryContext(items: ChannelMemoryItem[], userText: string
  * replying inside (not just channel memory). Returns `userText` unchanged when
  * there are no thread messages.
  *
- * Caps to the LAST {@link MAX_THREAD_CONTEXT_MESSAGES} messages (most recent
- * context wins) and truncates each line to {@link MAX_THREAD_MESSAGE_CHARS}.
+ * Caps to the LAST `maxMessages` messages (most recent context wins) and
+ * truncates each line to {@link MAX_THREAD_MESSAGE_CHARS}.
  * Messages with no text (e.g. a file-only post) are dropped. The bot's own past
  * messages are kept — they are valid context for a follow-up.
  */
-export function formatThreadContext(messages: SlackThreadMessage[], userText: string): string {
+export function formatThreadContext(
+  messages: SlackThreadMessage[],
+  userText: string,
+  maxMessages: number = MAX_THREAD_CONTEXT_MESSAGES
+): string {
   const lines = messages
     .filter((m) => m.text.trim().length > 0)
-    .slice(-MAX_THREAD_CONTEXT_MESSAGES)
+    .slice(-maxMessages)
     .map((m) => {
       const who = m.user ? `<@${m.user}>` : 'someone';
       const text = m.text.trim().slice(0, MAX_THREAD_MESSAGE_CHARS);
@@ -839,8 +852,20 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
 
   // Compose context: channel memory block first, then the thread transcript, then
   // the user's message at the bottom (closest to the model's attention).
-  const withMemory = formatMemoryContext(memory, input.userText);
-  const userMessage = formatThreadContext(thread, withMemory);
+  const contextLimits = await resolveSettings(
+    ['channel.memoryContextItems', 'channel.threadContextMessages'],
+    { channelId: input.channelId }
+  );
+  const withMemory = formatMemoryContext(
+    memory,
+    input.userText,
+    contextLimits['channel.memoryContextItems']
+  );
+  const userMessage = formatThreadContext(
+    thread,
+    withMemory,
+    contextLimits['channel.threadContextMessages']
+  );
 
   // Phase 4: scan the ingested channel message — untrusted user input fed to the
   // LLM — for injection/exfiltration patterns. ADVISORY only (mirrors the

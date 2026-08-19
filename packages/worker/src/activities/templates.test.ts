@@ -40,6 +40,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     agentTrace: {
       aggregate: vi.fn(),
     },
+    // Backs the config registry: no rows means every setting resolves to its
+    // definition default, i.e. the constant it replaced.
+    configSetting: { findMany: vi.fn(async () => []) },
     connection: {
       findUniqueOrThrow: vi.fn(),
     },
@@ -48,6 +51,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     pullRequest: {
       findFirst: vi.fn(),
+    },
+    runInput: {
+      findUnique: vi.fn(async () => null),
     },
     team: { findUnique: vi.fn() },
     workflowRun: {

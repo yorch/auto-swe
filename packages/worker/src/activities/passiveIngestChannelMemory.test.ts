@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
+    // Backs the config registry: no rows means every setting resolves to its
+    // definition default, i.e. the constant it replaced.
+    configSetting: { findMany: vi.fn(async () => []) },
     slackChannel: {
       findUnique: vi.fn(),
       update: vi.fn(),

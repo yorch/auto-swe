@@ -4,6 +4,7 @@ const findMany = vi.fn(async (_args?: unknown) => [] as unknown[]);
 
 vi.mock('../db.js', () => ({ prisma: { configSetting: { findMany } } }));
 
+import { isUnscoped } from '../lib/tenantGuard.js';
 import { _resetConfigCacheForTests } from './cache.js';
 import {
   invalidateSettingsCache,
@@ -196,5 +197,29 @@ describe('resolveEffectiveSettings', () => {
     });
     const pinned = effective.find((e) => e.key === 'workflow.maxTransitions');
     expect(pinned).toMatchObject({ source: 'PINNED', value: 250 });
+  });
+});
+
+describe('tenant guard', () => {
+  it('marks the override query as intentionally cross-tenant while it runs', async () => {
+    // The query's GLOBAL branch has no tenant predicate by design, so the guard
+    // would reject it as an unscoped findMany. The exemption has to still be in
+    // scope at the moment Prisma is called — an AsyncLocalStorage region that
+    // ended one await too early would let the guard fire in production under
+    // TENANT_GUARD_STRICT while every mocked test kept passing.
+    let exemptAtQueryTime: boolean | undefined;
+    findMany.mockImplementation(async () => {
+      exemptAtQueryTime = isUnscoped('ConfigSetting');
+      return [];
+    });
+
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+
+    expect(exemptAtQueryTime).toBe(true);
+  });
+
+  it('does not leave the exemption in place after resolution', async () => {
+    await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
+    expect(isUnscoped('ConfigSetting')).toBe(false);
   });
 });

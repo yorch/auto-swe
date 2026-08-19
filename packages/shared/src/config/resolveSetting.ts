@@ -1,3 +1,4 @@
+import { runUnscoped } from '../lib/tenantGuard.js';
 import { configCacheTtlMs, invalidatePrefix, withCache } from './cache.js';
 import {
   getSettingDefinition,
@@ -72,10 +73,21 @@ async function loadOverrides(
     orConditions.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: ctx.workflowTemplateId });
   }
 
-  const rows = await (await db()).configSetting.findMany({
-    select: { key: true, scope: true, value: true },
-    where: { key: { in: SETTING_KEYS }, OR: orConditions },
-  });
+  // Deliberately cross-tenant: the GLOBAL branch of this OR selects rows that
+  // belong to no tenant by definition — they are the deployment-wide defaults.
+  // Every other branch names exactly one tenant id taken from the caller's ctx,
+  // so the query can only widen to GLOBAL, never to another team's overrides.
+  const rows = await runUnscoped(
+    'GLOBAL settings are the deployment-wide defaults and have no tenant; the other OR branches are pinned to the caller ctx',
+    ['ConfigSetting'],
+    () =>
+      db().then((prisma) =>
+        prisma.configSetting.findMany({
+          select: { key: true, scope: true, value: true },
+          where: { key: { in: SETTING_KEYS }, OR: orConditions },
+        })
+      )
+  );
 
   const byKey = new Map<string, Map<SettingScope, unknown>>();
   for (const row of rows) {

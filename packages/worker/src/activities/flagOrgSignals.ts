@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   type OrgChannelMemoryItem,
@@ -37,8 +38,6 @@ const MAX_INTEREST_ITEMS = 10;
 const MAX_ORG_CANDIDATES = 8;
 
 /** Org-wide matches must clear a high similarity bar — flags should be strong, not chatty. */
-const ORG_SIMILARITY_THRESHOLD = 0.7;
-
 /** Org flags are digest-level: at most one per this window keeps them rare + signal-rich. */
 const DEFAULT_ORG_FLAG_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 hours
 
@@ -179,7 +178,11 @@ export async function flagOrgSignals(input: FlagOrgSignalsInput): Promise<FlagOr
       limit: MAX_ORG_CANDIDATES,
       orgId: channel.orgId,
       precomputed: queryEmbedding,
-      similarityThreshold: ORG_SIMILARITY_THRESHOLD,
+      similarityThreshold: await resolveSetting('memory.orgSimilarityThreshold', {
+        channelId: channel.id,
+        orgId: channel.orgId,
+        teamId: channel.teamId,
+      }),
     });
 
     // We've now paid the real cost — the embedding + the org pgvector search — so

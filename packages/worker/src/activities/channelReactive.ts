@@ -1,3 +1,4 @@
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { type ChannelMemoryItem, retrieveChannelMemory } from '../lib/channelMemory.js';
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
@@ -25,17 +26,11 @@ export interface ChannelReactiveResult {
   reason: 'disabled' | 'no-new-messages' | 'over-budget' | 'cooldown' | 'skip' | 'posted' | 'error';
 }
 
-/** Cap on how many recent channel messages are read + injected per tick. */
-const MAX_HISTORY_MESSAGES = 30;
-
-/** Cap on retrieved memory items injected as context. */
-const MAX_MEMORY_ITEMS = 5;
-
-/** Don't re-read more than this far back on a first run / long-idle channel. */
-const DEFAULT_MAX_LOOKBACK_MS = 30 * 60 * 1000;
-
-/** Minimum gap between two proactive interjections in a channel (rate limit). */
-const DEFAULT_REACTIVE_COOLDOWN_MS = 10 * 60 * 1000;
+// History depth, memory-item count, lookback window and interjection cooldown
+// are registry settings (`channel.*`), resolved per channel through the config
+// cascade. The nullable `SlackChannel` columns still win where they are set —
+// the registry supplies the default they fall back to, which is what those
+// columns' "null = built-in default" contract always meant.
 
 /** Below this length an "interjection" is a trivial ack not worth posting. */
 const MIN_INTERJECTION_LENGTH = 12;
@@ -70,7 +65,8 @@ export function shouldPostInterjection(reply: string): boolean {
  */
 export function buildReactivePrompt(
   messages: SlackChannelMessage[],
-  memory: ChannelMemoryItem[]
+  memory: ChannelMemoryItem[],
+  memoryItemLimit: number
 ): string {
   const transcript = messages
     .filter((m) => m.text.trim().length > 0)
@@ -83,7 +79,7 @@ export function buildReactivePrompt(
   const memoryBlock =
     memory.length > 0
       ? `\nRelevant context from this channel's memory:\n${memory
-          .slice(0, MAX_MEMORY_ITEMS)
+          .slice(0, memoryItemLimit)
           .map((m) => `- ${m.summary}`)
           .join('\n')}\n`
       : '';
@@ -120,7 +116,7 @@ export function buildReactivePrompt(
  *    than the channel's `lastReactiveCheckAt` cursor (advanced every tick). A quiet
  *    channel costs one cheap Slack read and zero tokens.
  *  - **Budget gate:** over the monthly cap ⇒ no LLM, no post (same gate as the turn).
- *  - **Cooldown:** at most one interjection per {@link DEFAULT_REACTIVE_COOLDOWN_MS}
+ *  - **Cooldown:** at most one interjection per `channel.reactiveCooldownMinutes`
  *    (`lastReactiveAt`); on cooldown we skip the LLM entirely (couldn't post anyway).
  *  - **SKIP-aware:** a `SKIP` / empty / trivial reply is not posted.
  *
@@ -156,14 +152,19 @@ export async function evaluateReactiveInterjection(
       return { posted: false, reason: 'disabled' };
     }
 
+    const tuning = await resolveSettings(
+      [
+        'channel.historyMessageLimit',
+        'channel.memoryContextItems',
+        'channel.reactiveCooldownMinutes',
+        'channel.reactiveLookbackMinutes',
+      ],
+      { channelId: channel.id, orgId: channel.orgId, teamId: channel.teamId }
+    );
     const reactiveCooldownMs =
-      channel.reactiveCooldownMinutes != null
-        ? channel.reactiveCooldownMinutes * 60_000
-        : DEFAULT_REACTIVE_COOLDOWN_MS;
+      (channel.reactiveCooldownMinutes ?? tuning['channel.reactiveCooldownMinutes']) * 60_000;
     const reactiveLookbackMs =
-      channel.reactiveLookbackMinutes != null
-        ? channel.reactiveLookbackMinutes * 60_000
-        : DEFAULT_MAX_LOOKBACK_MS;
+      (channel.reactiveLookbackMinutes ?? tuning['channel.reactiveLookbackMinutes']) * 60_000;
 
     const now = new Date();
     // Read messages since the cursor, but never further back than the lookback
@@ -175,7 +176,7 @@ export async function evaluateReactiveInterjection(
         : lookbackFloor;
 
     const messages = await fetchChannelHistory(channel.slackChannelId, {
-      limit: MAX_HISTORY_MESSAGES,
+      limit: tuning['channel.historyMessageLimit'],
       oldestTs: dateToSlackTs(cursor),
     });
     const humanMessages = messages.filter((m) => !m.isBot && m.text.trim().length > 0);
@@ -254,7 +255,7 @@ export async function evaluateReactiveInterjection(
         personaPrompt,
         teamId: channel.teamId,
       },
-      buildReactivePrompt(messages, memory),
+      buildReactivePrompt(messages, memory, tuning['channel.memoryContextItems']),
       'llm.channel_reactive'
     );
     if (!turn) {

@@ -20,6 +20,18 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+// Backs the config registry: no rows means the metadata-blocking settings
+// resolve to their definition defaults (blocking on, alpine:3.20).
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { configSetting: { findMany: vi.fn(async () => []) } },
+}));
+
+// `createWorkspace` resolves settings through the activity's request context,
+// which needs a Temporal activity to exist; outside one it returns an empty ctx.
+vi.mock('../lib/config/contextLookup.js', () => ({
+  currentRequestContext: vi.fn(async () => ({})),
+}));
+
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync } from '../lib/execUtils.js';
 import { buildMetadataBlockArgs, createWorkspace, shellQuote } from './workspace.js';

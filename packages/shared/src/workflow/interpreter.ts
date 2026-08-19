@@ -239,13 +239,29 @@ interface BranchOutcome {
 interface Cursor {
   count: number;
   cap: number;
+  /// Fan-out width used when a node does not set its own `concurrency`. Rides
+  /// the cursor because it already reaches every walk frame, including the
+  /// fan-out one, without a second parameter on eight signatures.
+  fanoutConcurrency: number;
+}
+
+/// Per-run bounds on how far a spec may expand. Resolved from the config
+/// registry and pinned to the run before it starts — the interpreter runs in
+/// the Temporal V8 isolate and cannot read them itself, and a run must finish
+/// under the same limits it started with or its replay history stops matching
+/// its code.
+export interface InterpreterLimits {
+  maxTransitions?: number;
+  /// Applies only to fan-out nodes that do not set `concurrency` themselves; an
+  /// explicit value on the node always wins.
+  fanoutConcurrency?: number;
 }
 
 export async function runSpec(
   spec: WorkflowSpec,
   initialContext: Context,
   dispatcher: Dispatcher,
-  maxTransitions = DEFAULT_MAX_TRANSITIONS
+  limits: InterpreterLimits = {}
 ): Promise<InterpreterResult> {
   const ctx: Context = { ...initialContext };
   if (!('nodes' in ctx)) {
@@ -255,7 +271,11 @@ export async function runSpec(
     ctx.context = {};
   }
 
-  const cursor: Cursor = { cap: maxTransitions, count: 0 };
+  const cursor: Cursor = {
+    cap: limits.maxTransitions ?? DEFAULT_MAX_TRANSITIONS,
+    count: 0,
+    fanoutConcurrency: limits.fanoutConcurrency ?? DEFAULT_FANOUT_CONCURRENCY,
+  };
   const outcome = await walk(spec, spec.entry, ctx, dispatcher, cursor, '');
 
   return {
@@ -938,7 +958,7 @@ async function runFanOut(
   }
   const raw: unknown[] = resolved;
 
-  const concurrency = Math.max(1, node.concurrency ?? DEFAULT_FANOUT_CONCURRENCY);
+  const concurrency = Math.max(1, node.concurrency ?? cursor.fanoutConcurrency);
 
   await safeRecord(dispatcher, {
     inputs: {

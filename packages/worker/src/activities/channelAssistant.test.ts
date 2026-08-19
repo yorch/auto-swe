@@ -10,6 +10,9 @@ vi.mock('@auto-swe/shared/db', () => {
       findMany: vi.fn(),
     },
     channelMonthlyUsage: { findUnique: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    // Backs the config registry: no rows means every setting resolves to its
+    // definition default, i.e. the constant it replaced.
+    configSetting: { findMany: vi.fn(async () => []) },
     slackChannel: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };

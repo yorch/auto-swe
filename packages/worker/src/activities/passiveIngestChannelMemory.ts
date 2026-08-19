@@ -1,3 +1,4 @@
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_PASSIVE_INGEST_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { Agent } from '@mastra/core/agent';
@@ -11,7 +12,6 @@ import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.
 import { getModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
-import { DEFAULT_MEMORY_DEDUP_THRESHOLD } from './channelConstants.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,8 +38,9 @@ const PassiveIngestOutputSchema = z.object({
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const PASSIVE_INGEST_LIMIT = 50;
-const DEDUP_THRESHOLD = DEFAULT_MEMORY_DEDUP_THRESHOLD;
+// Batch size and dedup threshold are registry settings
+// (`channel.passiveIngestLimit`, `channel.memoryDedupThreshold`), resolved per
+// channel. The constants remain as the definitions' defaults.
 
 // ── Activity ─────────────────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ const DEDUP_THRESHOLD = DEFAULT_MEMORY_DEDUP_THRESHOLD;
  * Cursor: `SlackChannel.passiveIngestCursor` is a raw Slack `ts` string
  * (e.g. `"1700000000.123456"`). On each fire we fetch messages AFTER this
  * cursor (exclusive), process them, then advance the cursor to the newest ts
- * seen. When the cursor is null we start from the last PASSIVE_INGEST_LIMIT
+ * seen. When the cursor is null we start from the last `channel.passiveIngestLimit`
  * messages (no unbounded catch-up on first enable).
  *
  * De-dup: before writing each fact we embed it and call
@@ -96,9 +97,14 @@ export async function passiveIngestChannelMemory(
       return EMPTY;
     }
 
+    const tuning = await resolveSettings(
+      ['channel.memoryDedupThreshold', 'channel.passiveIngestLimit'],
+      { channelId, orgId: channel.orgId, teamId: channel.teamId }
+    );
+
     // Fetch messages since cursor (exclusive). Returns [] on any Slack API error.
     const messages = await fetchChannelHistory(channel.slackChannelId, {
-      limit: PASSIVE_INGEST_LIMIT,
+      limit: tuning['channel.passiveIngestLimit'],
       oldestTs: channel.passiveIngestCursor ?? undefined,
     });
 
@@ -221,7 +227,7 @@ export async function passiveIngestChannelMemory(
             scopeColumn: 'channel_id',
             scopeId: channelId,
             selectColumns: ['id'],
-            similarityThreshold: DEDUP_THRESHOLD,
+            similarityThreshold: tuning['channel.memoryDedupThreshold'],
           });
           if (similar.length > 0) {
             continue;

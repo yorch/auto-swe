@@ -1,3 +1,6 @@
+import type { Prisma } from '@auto-swe/shared';
+import type { SettingResolveCtx } from '@auto-swe/shared/config';
+import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -35,7 +38,10 @@ export interface CreateWorkflowRunInput {
  */
 export async function createWorkflowRun(
   input: CreateWorkflowRunInput
-): Promise<{ runId: string; spec: WorkflowSpec } | { error: string }> {
+): Promise<
+  | { runId: string; spec: WorkflowSpec; pinnedSettings?: Record<string, unknown> }
+  | { error: string }
+> {
   const version = await prisma.workflowTemplateVersion.findUnique({
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
   });
@@ -76,13 +82,23 @@ export async function createWorkflowRun(
     agentVersions[canaryAgentKey] = canaryVersion;
   }
 
+  // Freeze the registry settings marked `runPinned` for the life of this run,
+  // alongside the agent-version pin. The interpreter runs in the V8 isolate and
+  // cannot read the database, and a run that started under one transition
+  // ceiling must finish under the same one or its replay history stops matching
+  // its code — so these are resolved once, here, and carried forward.
+  const settingsCtx = await runSettingsContext(input);
+  const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
-  // original spec + agentVersions snapshot across Temporal retries.
+  // original spec, agentVersions and pinnedSettings snapshots across Temporal
+  // retries.
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
       isCanary,
+      pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -93,7 +109,31 @@ export async function createWorkflowRun(
     update: {},
     where: { workflowId: input.workflowId },
   });
-  return { runId: run.id, spec };
+  // Read the pin back off the row rather than trusting the value just computed:
+  // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
+  // must keep using that one.
+  const persisted =
+    run.pinnedSettings && typeof run.pinnedSettings === 'object'
+      ? (run.pinnedSettings as Record<string, unknown>)
+      : pinnedSettings;
+  return { pinnedSettings: persisted, runId: run.id, spec };
+}
+
+/// Scope context for the run's pinned-settings snapshot. The template is known
+/// from the input; team and org come from the work request's connection, which
+/// is the same tenant the run's activities resolve against later.
+async function runSettingsContext(input: CreateWorkflowRunInput): Promise<SettingResolveCtx> {
+  const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
+  if (!input.workRequestId) {
+    return ctx;
+  }
+  const request = await prisma.runInput.findUnique({
+    select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
+    where: { id: input.workRequestId },
+  });
+  ctx.teamId = request?.connection?.teamId;
+  ctx.orgId = request?.connection?.team?.orgId;
+  return ctx;
 }
 
 export interface RecordStepInput {
